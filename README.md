@@ -14,6 +14,15 @@ NextExpress is a port of the legendary AmiExpress BBS software, ported to Rust t
 
 This is a bit of a hobby project, but, I welcome contributions. 
 
+Please note this is quite **experimental** still; there's likely bugs or issues. Please be warned.
+
+## Goal
+* A port that honours the original, and the 1990s
+* Modernises in areas, and adds new features
+* Easy to run
+* The ability to run native doors without recompilation (stretch goal)
+* Ports of interesting doors / features
+
 ## Thanks
 Thank you to @dmcoles for his [original Amiga rewrite](https://github.com/dmcoles/AmiExpress).
 
