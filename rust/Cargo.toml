@@ -1,0 +1,24 @@
+[package]
+name = "nextexpress"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust port of the AmiExpress BBS system."
+license = "MIT"
+publish = false
+
+[lib]
+name = "nextexpress"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nextexpress"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

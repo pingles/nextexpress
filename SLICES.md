@@ -102,7 +102,7 @@ that pass, and `cargo test`, `cargo build`, `cargo fmt --check` and
 
 | # | Slice | Status |
 | ---: | --- | :---: |
-| 1 | Cargo crate skeleton | Todo |
+| 1 | Cargo crate skeleton | Done |
 | 2 | User entity (login-time fields only) | Todo |
 | 3 | In-memory `UserRepository` port + adapter | Todo |
 | 4 | Password verification adapter (single algorithm) | Todo |
