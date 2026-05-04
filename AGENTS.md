@@ -1,11 +1,22 @@
 # AGENTS.md
 
-NextExpress is a port of AmiExpress to Rust, enabling it to be run
+NextExpress is a port of the AmiExpress BBS system to Rust, enabling it to be run
 across more platforms.
 
 We strive for compatibility to the existing behaviour where possible.
 However, we choose a more modern approach where sensible (e.g. configuration
 via files rather than a separate program).
+
+## Repository
+
+```
+amiexpress/  # Amiga E rewrite of AmiExpress. Not to be modified, used as source
+specs/       # Allium specs describing behaviour of E rewrite above.
+rust/        # Implement your Rust code here.
+```
+[Allium specs](https://juxt.github.io/allium/) in `specs` describe the key behaviour. Favour using this to determine how something should work before looking at the Amiga source.
+
+Always use the `amiexpress` source when referencing original strings/messages/commands etc.
 
 ## Key Workflow
 
@@ -35,11 +46,3 @@ Lean towards hexagonal architecture: core domain components shouldn't depend on 
 2. No compile warnings `cargo build`
 3. Code is formatted `cargo fmt --check`
 4. Clippy has no warnings `cargo clippy -- -D warnings`
-
-## Repository
-
-```
-amiexpress/  # Amiga E rewrite of AmiExpress. Not to be modified, used as source
-specs/       # Allium specs describing behaviour of E rewrite above.
-rust/        # Implement your Rust code here.
-```
