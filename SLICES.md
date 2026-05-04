@@ -38,6 +38,31 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | 14 | [slices/phase14.md](slices/phase14.md) | 65–68 | User self-service |
 | Future | [slices/future.md](slices/future.md) | — | Not yet sliced (FTP, HTTPd, QWK, FTN, OLM, …) |
 
+## Concurrency model
+
+The BBS is one process serving many concurrent sessions. We use tokio
+for the async runtime: the listener is async, each accepted connection
+runs in its own tokio task, and shared stores sit behind async-aware
+locks (`tokio::sync::Mutex` / `RwLock`, or `dashmap` where appropriate).
+
+The `Node` entity is the unit of concurrency. At most
+`core/config.max_nodes` sessions run at once; the supervisor enforces
+this with a `Semaphore` and the `OneActiveSessionPerNode` invariant
+(`session.allium`). Sessions don't share state beyond what the spec
+models — the user record, the message base, the file area — so
+contention is fine-grained: one lock per message-base or area, never a
+global one. `messaging.allium`'s `lock_msgbase` predicate is one such
+lock; `User` mutations from a single session are serialised by virtue
+of one task per session.
+
+Wire protocols are pluggable. Telnet is the first transport (Slice 8);
+SSH and FTP are listed under future phases and will plug into the same
+per-task accept-loop pattern. From the supervisor's point of view a
+transport is just an `AsyncRead + AsyncWrite` byte stream.
+
+Async-friendliness is therefore part of the design from Slice 1 (which
+brings in tokio) onwards, not something we retrofit later.
+
 ## How slices grow the schema
 
 Each slice introduces only the data shape — entity fields, enum variants,
@@ -84,7 +109,7 @@ that pass, and `cargo test`, `cargo build`, `cargo fmt --check` and
 | 5 | Node entity (Phase 1 statuses only) | Todo |
 | 6 | Session entity skeleton | Todo |
 | 7 | `AcceptConnection` rule | Todo |
-| 8 | Telnet adapter (await + banner) | Todo |
+| 8 | Telnet listener + per-session task | Todo |
 | 9 | `PromptForName` + `NameTyped` rules (existing user path only) | Todo |
 | 10 | `VerifyPassword` rule (happy path) | Todo |
 | 11 | `VerifyPassword` rule (failure path) | Todo |

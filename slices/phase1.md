@@ -41,11 +41,11 @@ table and asset inventory.
 - **In Scope**
   - `Node` entity (`core.allium:Node`) with `number`, `status` and the subset of `Status` needed for the sign-in / log-off loop: `idle`, `connecting`, `logged_on`, `logging_off`.
   - The `idle -> connecting`, `connecting -> idle`, `connecting -> logged_on`, `logged_on -> logging_off`, `logging_off -> idle` transitions enforced.
+  - A `NodePool` holding `config.max_nodes` nodes, allocating an idle one atomically (the supervisor will use this from Slice 8). Tests prove two concurrent allocations claim distinct nodes.
 - **Out of Scope**
   - `reserved` status + `reserved_for` field + `ReservedHasUser` invariant — Slice 24.
   - `suspended`, `shutting_down` — Slice 25.
   - `logging_on` intermediate state — added when a slice needs to distinguish it from `connecting`.
-  - Multi-node concurrency (the BBS singleton runs nodes sequentially for now).
 
 ## Slice 6 — Session entity skeleton
 - **In Scope**
@@ -63,20 +63,23 @@ table and asset inventory.
 ## Slice 7 — `AcceptConnection` rule
 - **In Scope**
   - `session.allium:AcceptConnection` — creates a fresh `Session` in `connecting`, sets `connected_at`, `last_input_at`, `online_baud`, zero retry counters; flips node status to `connecting`.
-  - Rejects when there is already a non-ended session for the node.
+  - Rejects when there is already a non-ended session for the node. Runs against an already-locked node from the `NodePool`, so the "no other session on this node" check is local; concurrency safety is the pool's job.
   - This slice introduces `core.allium:config.max_nodes` (the only config key it reads) with the spec default of `32`.
 - **Out of Scope**
   - The boolean-flag `ensures` clauses on the rule (`ansi_colour: true`, `quick_logon: false`, `rip_mode: false`, `quiet_mode: false`, `cmd_shortcuts: false`, `display_name_type: handle`) — these fields don't exist yet; they're populated by their owning slices.
   - Wire-level transports — this slice tests the rule via direct invocation only.
 
-## Slice 8 — Telnet adapter (await + banner)
+## Slice 8 — Telnet listener + per-session task
 - **In Scope**
-  - Telnet listener with line-mode IAC negotiation (so the user sees what they type).
-  - On accept, invoke `AcceptConnection` and write the BBSTITLE screen if a file exists at `bbs.path/Screens/BBSTITLE.txt`, otherwise a built-in fallback ("NextExpress\n").
-  - End-to-end test: connect, read banner, drop connection.
+  - Async telnet listener (`tokio::net::TcpListener`) with line-mode IAC negotiation (so the user sees what they type).
+  - For each accepted TCP connection: try to allocate a node from the `NodePool` (Slice 5); if all `config.max_nodes` are in use, send a "BBS busy" line and close. On success, spawn a `tokio::task` that owns the connection for its lifetime and invokes `AcceptConnection` (Slice 7).
+  - The session task writes the BBSTITLE screen if a file exists at `bbs.path/Screens/BBSTITLE.txt`, otherwise a built-in fallback ("NextExpress\n"), then drops.
+  - Concurrent end-to-end test: open `max_nodes + 1` simultaneous connections, assert that the first `max_nodes` each see the banner and the surplus is rejected. Assert that closing one frees its node so a fresh connection can grab it.
 - **Out of Scope**
   - ANSI / RIP / colour negotiation (Slice 65).
-  - FTP (`session.allium:LogonChannel.ftp`) and serial transports.
+  - SSH and FTP transports — see [`future.md`](future.md).
+  - A `Transport` trait — extracted when a second transport adapter lands.
+  - Modem / serial CD.
 
 ## Slice 9 — `PromptForName` + `NameTyped` rules (existing user path only)
 - **In Scope**

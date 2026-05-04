@@ -7,6 +7,7 @@ their phase becomes the next focus.
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
+- **SSH transport adapter** — second wire protocol after Telnet (Slice 8). Plugs into the same per-task accept loop; no new domain rules. Likely uses `russh` or similar. Defining a `Transport` trait that both Telnet and SSH implement falls naturally out of this slice.
 - **FTP control adapter** (`session.allium:LogonChannel.ftp` + `amiexpress/ftpd.e`).
 - **HTTPd** (`amiexpress/httpd.e`) for webby file listings.
 - **QWK packet generation** (excluded from current specs — see `messaging.allium` Scope).
