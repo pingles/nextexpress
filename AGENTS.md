@@ -41,5 +41,5 @@ Lean towards hexagonal architecture: core domain components shouldn't depend on 
 ```
 amiexpress/  # Amiga E rewrite of AmiExpress. Not to be modified, used as source
 specs/       # Allium specs describing behaviour of E rewrite above.
-
+rust/        # Implement your Rust code here.
 ```
