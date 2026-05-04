@@ -1,0 +1,336 @@
+-- allium: 3
+-- conferences.allium
+--
+-- Conference and message-base joining. The user picks a conference at
+-- logon (auto-rejoin), and may switch with the J command at any point.
+-- Joining performs side-effects: load message-pointers, run conference
+-- bulletins, optionally trigger a mail scan.
+--
+-- Scope
+--   Includes:
+--     - Joining and re-joining conferences and message bases
+--     - Conference access checks (membership grants are in core.allium)
+--     - The conference scan ("show me which confs have new mail")
+--     - Per-conference name-type promotion (handle / real / internet)
+--     - Sysop-only conference creation and access editing
+--
+--   Excludes:
+--     - The actual mail scan logic (see messaging.allium)
+--     - File-area transfers in joined conferences (see files.allium)
+--     - "Custom" message bases (FTN, QWK, UUCP gateways) are external
+
+use "./core.allium" as core
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+-- Sessions are defined and lifecycled in session.allium. We do not
+-- import that module by alias because `session` is also a common local
+-- variable name in this file's rules; instead we declare Session as a
+-- type placeholder and let the spec checker reconcile the two definitions.
+external entity Session {}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+-- Whether a join should auto-trigger a mail scan, skip it, or force-scan
+-- regardless of the membership's last_scanned pointer. The legacy code
+-- has FORCE_MAILSCAN_NOFORCE / ALL / SKIP — same idea.
+enum MailScanMode {
+    follow_pointer       -- scan only if highest_message > last_scanned
+    skip                 -- never scan during this join
+    force_all            -- scan from message 1
+}
+
+-- How the user reached a join. Affects which screens are shown.
+enum JoinReason {
+    auto_rejoin           -- on logon, returning to last conference
+    explicit_join         -- user typed J or selected a conference
+    conf_scan_walk        -- the conf-scan stepped them through each conf
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- One row per (session, conference) pair: records the conference the
+-- session is currently in. Mutated whenever the user joins a different
+-- conference. The legacy code keeps just two integers (currentConf,
+-- currentMsgBase) on the session; we model the visit history because
+-- it lets the BBS report "today you visited X, Y, Z" and is cheap.
+entity ConferenceVisit {
+    session: Session
+    conference: core/Conference
+    msgbase: core/MessageBase
+    joined_at: Timestamp
+    left_at: Timestamp?
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- The user (or the auto-rejoin flow) requests a join. If they have access
+-- to the conference, the join proceeds; otherwise we walk forwards through
+-- the conference list until we find one they can access, falling all the
+-- way through to a no-access disconnect.
+rule JoinConference {
+    when: JoinConferenceRequested(session, target_conference, target_msgbase, reason, scan_mode)
+    requires: session.state in {onboarded, menu}
+
+    let user = session.user
+
+    let resolved_conference =
+        if has_membership(user, target_conference): target_conference
+        else: first_accessible_conference(user)
+
+    let resolved_msgbase =
+        if target_msgbase != null and msgbase_belongs_to(target_msgbase, resolved_conference):
+            target_msgbase
+        else:
+            primary_msgbase_of(resolved_conference)
+
+    ensures:
+        if resolved_conference = null:
+            -- No conferences accessible at all. Disconnect.
+            session.state = logging_off
+            session.logoff_reason = no_conference_access
+        else:
+            ConferenceVisit.created(
+                session: session,
+                conference: resolved_conference,
+                msgbase: resolved_msgbase,
+                joined_at: now
+            )
+            user.last_joined_conference = resolved_conference
+            user.last_joined_msgbase = resolved_msgbase
+
+    @guidance
+        -- The display-name type for the session is set from the conference's
+        -- accepted_name_type (e.g. real-name conferences flip the session
+        -- to real_name). This is encoded in core.allium on Conference and
+        -- propagated by a JoinedConferenceForNameType rule below.
+}
+
+rule JoinedConferenceForNameType {
+    when: visit: ConferenceVisit.created
+    -- The session's display-name type follows the joined conference.
+    ensures: session.display_name_type = visit.conference.accepted_name_type
+}
+
+-- Bulletin/welcome material runs after the join completes, unless the
+-- session is in quick-logon mode or the join is part of a conference scan.
+rule ShowConferenceBulletin {
+    when: visit: ConferenceVisit.created
+    requires: not session.quick_logon
+    -- Conference bulletins are skipped during a multi-conference walk.
+    requires: not exists ConferenceScan{session: session, in_progress: true}
+
+    ensures: ConferenceBulletinDisplayed(session: session, conference: visit.conference)
+}
+
+-- Optionally trigger a mail scan after the join.
+rule ScanMailOnJoin {
+    when: visit: ConferenceVisit.created
+
+    let pointers = read_pointers_for(visit.session.user, visit.msgbase)
+
+    ensures:
+        if scan_mode_for(visit) = force_all
+            or (scan_mode_for(visit) = follow_pointer
+                and visit.msgbase.highest_message > pointers.last_scanned):
+            MailScanRequested(
+                session: visit.session,
+                conference: visit.conference,
+                msgbase: visit.msgbase,
+                from_message: if scan_mode_for(visit) = force_all: 1 else: pointers.last_scanned + 1
+            )
+}
+
+-- Switching conferences from inside the menu: closes the previous visit.
+rule LeaveConferenceOnSwitch {
+    when: new_visit: ConferenceVisit.created
+
+    -- Mark every prior open visit on the same session as left.
+    ensures:
+        for prior in ConferenceVisits where session = new_visit.session and left_at = null:
+            if prior != new_visit:
+                prior.left_at = now
+}
+
+-- A "conference scan" walks the user through every conference they have
+-- access to, optionally pausing for mail scans. The legacy code uses this
+-- on logon to surface "you have new mail in 3 conferences".
+entity ConferenceScan {
+    session: Session
+    in_progress: Boolean
+    next_conference: core/Conference?
+    started_at: Timestamp
+}
+
+rule StartConferenceScan {
+    when: ConferenceScanRequested(session)
+    requires: session.state in {onboarded, menu}
+
+    ensures: ConferenceScan.created(
+        session: session,
+        in_progress: true,
+        next_conference: first_accessible_conference(session.user),
+        started_at: now
+    )
+}
+
+rule StepConferenceScan {
+    when: scan: ConferenceScan.next_conference != null
+    requires: scan.in_progress
+
+    let conf = scan.next_conference
+
+    ensures: JoinConferenceRequested(
+        session: scan.session,
+        target_conference: conf,
+        target_msgbase: primary_msgbase_of(conf),
+        reason: conf_scan_walk,
+        scan_mode: follow_pointer
+    )
+    ensures: scan.next_conference = next_accessible_conference_after(scan.session.user, conf)
+}
+
+rule FinishConferenceScan {
+    when: scan: ConferenceScan.next_conference = null
+    requires: scan.in_progress
+
+    ensures: scan.in_progress = false
+
+    -- Re-join the user's last conference so they end up where they started.
+    ensures:
+        if scan.session.user.last_joined_conference != null:
+            JoinConferenceRequested(
+                session: scan.session,
+                target_conference: scan.session.user.last_joined_conference,
+                target_msgbase: scan.session.user.last_joined_msgbase,
+                reason: explicit_join,
+                scan_mode: skip
+            )
+}
+
+------------------------------------------------------------
+-- Sysop conference administration
+------------------------------------------------------------
+
+-- Create a new conference. This is a sysop-only flow (legacy:
+-- conferenceMaintenance). The actual physical layout (which directory
+-- holds messages) is implementation detail.
+rule SysopCreatesConference {
+    when: SysopCreatesConference(actor, profile)
+    requires: actor.is_sysop or has_access(actor, create_conference)
+
+    ensures: core/Conference.created(
+        number: profile.number,
+        name: profile.name,
+        handle_for_msgs: profile.handle_for_msgs,
+        is_custom: profile.is_custom,
+        accepted_name_type: profile.accepted_name_type,
+        free_downloads: profile.free_downloads,
+        default_ratio_mode: profile.default_ratio_mode,
+        default_ratio_value: profile.default_ratio_value
+    )
+    ensures: core/MessageBase.created(
+        conference: profile,                            -- newly-created Conference
+        number: 1,
+        name: "main",
+        lowest_message: 1,
+        lowest_undeleted_message: 1,
+        highest_message: 0
+    )
+}
+
+-- Grant or revoke a user's access to a conference.
+rule SysopGrantsConferenceAccess {
+    when: SysopGrantsConferenceAccess(actor, user, conference)
+    requires: actor.is_sysop
+
+    let existing = ConferenceMembership{user: user, conference: conference}
+
+    ensures:
+        if exists existing:
+            existing.granted = true
+        else:
+            core/ConferenceMembership.created(
+                user: user,
+                conference: conference,
+                granted: true,
+                bytes_uploaded: { count: 0 },
+                bytes_downloaded: { count: 0 },
+                files_uploaded: 0,
+                files_downloaded: 0,
+                messages_posted: 0,
+                ratio_mode: disabled,
+                ratio_value: 0
+            )
+}
+
+rule SysopRevokesConferenceAccess {
+    when: SysopRevokesConferenceAccess(actor, user, conference)
+    requires: actor.is_sysop
+
+    let membership = ConferenceMembership{user: user, conference: conference}
+    requires: exists membership
+
+    ensures: membership.granted = false
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant SessionsHaveAtMostOneOpenVisit {
+    for s in Sessions:
+        for v1 in ConferenceVisits where session = s and left_at = null:
+            for v2 in ConferenceVisits where session = s and left_at = null:
+                v1 = v2
+}
+
+invariant VisitedMsgBaseBelongsToVisitedConference {
+    for v in ConferenceVisits:
+        v.msgbase.conference = v.conference
+}
+
+------------------------------------------------------------
+-- Black box functions
+------------------------------------------------------------
+
+-- True if the user has a granted ConferenceMembership for this conference.
+-- has_membership(user, conference)
+
+-- The lowest-numbered conference with a granted membership, or null.
+-- first_accessible_conference(user)
+
+-- The next conference (after the supplied one) the user has access to,
+-- or null when no more remain. Walks in number order.
+-- next_accessible_conference_after(user, conference)
+
+-- True if the message base lives inside this conference.
+-- msgbase_belongs_to(msgbase, conference)
+
+-- The conference's primary (number 1) message base.
+-- primary_msgbase_of(conference)
+
+-- The user's read-pointers row for this message base.
+-- read_pointers_for(user, msgbase)
+
+-- The mail-scan mode the original join request asked for.
+-- scan_mode_for(visit)
+
+-- True when the user has a particular access right (e.g. create_conference).
+-- has_access(user, right)
+
+------------------------------------------------------------
+-- Open questions
+------------------------------------------------------------
+
+open question "Conference visit history: legacy stores only currentConf/currentMsgBase. Do we keep an explicit visit history (this spec), or collapse to a single 'current' field on Session?"
+
+open question "Should 'Free Downloads' really be per-conference and per-file-area? The legacy code lets either level set it; we currently let the file area override the conference."

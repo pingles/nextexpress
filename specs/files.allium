@@ -1,0 +1,506 @@
+-- allium: 3
+-- files.allium
+--
+-- File areas: uploads, downloads, ratios and daily byte caps. The user
+-- nominates a list of files (the "flagged" list), the BBS validates ratios
+-- and time, then the actual transfer runs through whichever protocol the
+-- user has selected.
+--
+-- Scope
+--   Includes:
+--     - File entity in a file area
+--     - Flagged-files list (per session)
+--     - Ratio enforcement (by-files and by-bytes)
+--     - Daily byte cap enforcement
+--     - Time-cost budgeting (download takes time; uploads add time)
+--     - Sysop upload (puts files anywhere on the system)
+--     - File maintenance (delete, move between conferences)
+--     - Background file checking (asynchronous integrity check after upload)
+--     - Free downloads (some conferences/areas don't charge ratio)
+--     - Credit accounts (paid users skip ratio enforcement)
+--
+--   Excludes:
+--     - Wire protocols (Zmodem, Xmodem, Hydra, FTP, HTTP) — see protocol library
+--     - File-id.diz extraction details (deferred to upload-handler library)
+--     - Disk-space-check details (a hardware concern)
+--     - Anti-virus scanning (configurable hook, not domain)
+
+use "./core.allium" as core
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+-- Sessions live in session.allium. Declared external rather than imported
+-- by alias because `session` is a common local variable name in rules.
+external entity Session {}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+-- The state a file is in within a file area. The legacy code partitions
+-- the directory into "main", "hold" (sysop review), "playpen" (still
+-- uploading) and "lcfiles" (low-credit files). We model this as a
+-- single status field on File.
+enum FileStatus {
+    in_playpen          -- transfer in progress
+    held_for_review     -- needs sysop validation before going public
+    available           -- visible in listings, downloadable
+    lcfiles             -- "low-credit" — visible but counts more strongly
+    quarantined         -- failed background check; pending sysop action
+    removed             -- deleted; row kept for audit
+}
+
+-- Direction of transfer.
+enum TransferDirection {
+    upload
+    download
+}
+
+-- Why a transfer ended.
+enum TransferOutcome {
+    completed
+    aborted_by_user
+    carrier_lost
+    failed_integrity_check
+    skipped_duplicate
+    skipped_other
+    failed_no_space
+    failed_ratio
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- A single uploaded or sysop-imported file.
+entity File {
+    area: core/FileArea
+    name: String                   -- 12-char filename in the legacy code
+    size: core/Bytes
+    status: FileStatus
+    description: String
+    uploaded_by: core/User?        -- null for sysop-imported
+    uploaded_at: Timestamp
+    last_downloaded_at: Timestamp?
+    download_count: Integer
+
+    transitions status {
+        in_playpen -> held_for_review
+        in_playpen -> available
+        in_playpen -> quarantined
+        held_for_review -> available
+        held_for_review -> quarantined
+        held_for_review -> removed
+        available -> lcfiles
+        available -> quarantined
+        available -> removed
+        lcfiles -> available
+        lcfiles -> removed
+        quarantined -> available
+        quarantined -> removed
+        terminal: removed
+    }
+}
+
+-- A file the user has "flagged" for download. The list lives for the
+-- duration of the session; the user reviews it before kicking off a
+-- batch download.
+entity FlaggedFile {
+    session: Session
+    file: File
+    flagged_at: Timestamp
+}
+
+-- A single transfer event: one row per attempt to upload or download
+-- one file. Used for accounting and the U/D log.
+entity Transfer {
+    session: Session
+    user: core/User
+    file: File
+    direction: TransferDirection
+    started_at: Timestamp
+    finished_at: Timestamp?
+    bytes_transferred: core/Bytes
+    cps: Integer                   -- bytes per second
+    outcome: TransferOutcome?      when finished_at != null
+    is_free_download: Boolean      -- did this transfer skip ratio accounting?
+}
+
+-- The result of pre-flight checks on a download batch. Holds the
+-- breakdown the BBS shows the user before the actual transfer.
+value DownloadEstimate {
+    total_bytes: core/Bytes
+    file_count: Integer
+    estimated_minutes: Integer     -- using the user's last CPS
+    bytes_remaining_after: core/Bytes
+    files_remaining_after: Integer
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- Flag a file for download.
+rule FlagFile {
+    when: FlagFile(s, file)
+    requires: s.state = menu
+    requires: s.user != null
+    requires: file.status in {available, lcfiles}
+    requires: has_access(s.user, download)
+    requires: not exists FlaggedFile{session: s, file: file}
+
+    let count = (FlaggedFiles where session = s).count
+    requires: count < max_flagged_files()
+
+    ensures: FlaggedFile.created(
+        session: s,
+        file: file,
+        flagged_at: now
+    )
+}
+
+rule UnflagFile {
+    when: UnflagFile(session, file)
+    let flagged = FlaggedFile{session: session, file: file}
+    requires: exists flagged
+
+    ensures: not exists flagged
+}
+
+-- Pre-flight a download. The user has flagged a list of files; before the
+-- transfer starts, the BBS checks time and ratio. Failure here means the
+-- transfer never begins.
+rule CheckDownloadEligibility {
+    when: CheckDownloadEligibility(session)
+    requires: session.state = menu
+    requires: session.user != null
+
+    let user = session.user
+    let flagged = FlaggedFiles where session = session
+    let total_size = sum_sizes(flagged -> file)
+    let billable_size = if any_credit_by_kb(): kilobytes_of(total_size) else: total_size
+
+    let estimated_minutes = estimate_minutes(total_size, user_cps(user))
+
+    -- Time budget.
+    let has_enough_time =
+        has_access(user, override_time_limit)
+        or session.time_remaining >= estimated_minutes * 1.minute
+
+    -- Daily byte cap.
+    let within_daily_cap =
+        user.daily_byte_limit.count = 0
+        or billable_size.count <= session.bytes_remaining_today.count
+
+    -- Ratio.
+    let within_ratio = ratio_check_passes(user, flagged) or credit_account_active(user)
+
+    let reason =
+        if not has_enough_time: out_of_time
+        else if not within_daily_cap: failed_ratio
+        else if not within_ratio: failed_ratio
+        else: completed
+
+    ensures: DownloadEligibility(
+        session: session,
+        ok: has_enough_time and within_daily_cap and within_ratio,
+        reason: reason,
+        estimate: { total_bytes: total_size,
+                    file_count: flagged.count,
+                    estimated_minutes: estimated_minutes,
+                    bytes_remaining_after:
+                        if within_daily_cap:
+                            { count: session.bytes_remaining_today.count - billable_size.count }
+                        else:
+                            { count: 0 },
+                    files_remaining_after: 0 }
+    )
+}
+
+-- Begin a download batch. Pre-flight has passed.
+rule BeginDownload {
+    when: DownloadStarted(session, file)
+    requires: session.state = menu
+    requires: file.status in {available, lcfiles}
+
+    ensures: Transfer.created(
+        session: session,
+        user: session.user,
+        file: file,
+        direction: download,
+        started_at: now,
+        bytes_transferred: { count: 0 },
+        cps: 0,
+        is_free_download: file.area.free_downloads or file.area.conference.free_downloads
+    )
+}
+
+-- A download completed. Apply the user's daily/lifetime tallies, the
+-- conference's per-conf tally and the file's download counter.
+rule CompleteDownload {
+    when: TransferEnded(transfer, outcome, bytes_transferred, cps)
+    requires: transfer.direction = download
+    requires: transfer.finished_at = null
+
+    ensures: transfer.finished_at = now
+    ensures: transfer.outcome = outcome
+    ensures: transfer.bytes_transferred = bytes_transferred
+    ensures: transfer.cps = cps
+
+    -- Successful download: charge the user.
+    ensures:
+        if outcome = completed and not transfer.is_free_download:
+            transfer.user.bytes_downloaded_total =
+                { count: transfer.user.bytes_downloaded_total.count + bytes_transferred.count }
+            transfer.user.daily_bytes_downloaded =
+                { count: transfer.user.daily_bytes_downloaded.count + bytes_transferred.count }
+            transfer.file.download_count = transfer.file.download_count + 1
+            transfer.file.last_downloaded_at = now
+
+            -- Per-conference accounting if enabled.
+            let membership = ConferenceMembership{user: transfer.user, conference: transfer.file.area.conference}:
+                if exists membership and membership.granted:
+                    membership.bytes_downloaded =
+                        { count: membership.bytes_downloaded.count + bytes_transferred.count }
+                    membership.files_downloaded = membership.files_downloaded + 1
+}
+
+-- Begin an upload session. The BBS allocates a playpen slot.
+rule BeginUpload {
+    when: UploadStarted(session, file_name)
+    requires: session.state = menu
+    requires: session.user != null
+    requires: has_access(session.user, upload)
+
+    let visit = current_visit(session)
+    requires: visit != null
+
+    let area = upload_area_for(visit, session)
+
+    ensures: File.created(
+        area: area,
+        name: file_name,
+        size: { count: 0 },
+        status: in_playpen,
+        description: "",
+        uploaded_by: session.user,
+        uploaded_at: now,
+        download_count: 0
+    )
+    ensures: Transfer.created(
+        session: session,
+        user: session.user,
+        file: File,
+        direction: upload,
+        started_at: now,
+        bytes_transferred: { count: 0 },
+        cps: 0,
+        is_free_download: false
+    )
+}
+
+-- An upload completed.
+rule CompleteUpload {
+    when: TransferEnded(transfer, outcome, bytes_transferred, cps)
+    requires: transfer.direction = upload
+    requires: transfer.finished_at = null
+
+    ensures: transfer.finished_at = now
+    ensures: transfer.outcome = outcome
+    ensures: transfer.bytes_transferred = bytes_transferred
+    ensures: transfer.cps = cps
+    ensures: transfer.file.size = bytes_transferred
+
+    ensures:
+        if outcome = completed:
+            transfer.user.bytes_uploaded_total =
+                { count: transfer.user.bytes_uploaded_total.count + bytes_transferred.count }
+
+            let membership = ConferenceMembership{user: transfer.user, conference: transfer.file.area.conference}:
+                if exists membership and membership.granted:
+                    membership.bytes_uploaded =
+                        { count: membership.bytes_uploaded.count + bytes_transferred.count }
+                    membership.files_uploaded = membership.files_uploaded + 1
+
+            -- Move file out of playpen. If hold-for-review is configured for
+            -- this area, the file lands in held_for_review; otherwise it
+            -- becomes available immediately.
+            if requires_review(transfer.file.area):
+                transfer.file.status = held_for_review
+            else:
+                transfer.file.status = available
+
+            -- Reward the user with extra session time, proportional to the
+            -- size and CPS. This is the "uploads bring time" feature; the
+            -- formula is implementation-specific.
+            session.time_remaining = session.time_remaining + upload_time_bonus(bytes_transferred, cps)
+        else:
+            -- Failed upload: drop the playpen entry.
+            transfer.file.status = removed
+}
+
+-- Background file check for an uploaded file. Triggered after the upload
+-- completes; runs anti-virus or archive validation. Configured per node.
+rule BackgroundCheck {
+    when: file: File.status transitions_to held_for_review
+
+    -- Only run when the user opted in or the node forces background checks.
+    -- Otherwise the file stays in held_for_review for sysop attention.
+    requires: bg_check_configured()
+
+    ensures: BackgroundCheckRequested(file: file, started_at: now)
+}
+
+rule BackgroundCheckPassed {
+    when: BackgroundCheckPassed(file)
+    requires: file.status in {held_for_review, in_playpen}
+
+    ensures: file.status = available
+}
+
+rule BackgroundCheckFailed {
+    when: BackgroundCheckFailed(file, reason)
+    requires: file.status in {held_for_review, in_playpen}
+
+    ensures: file.status = quarantined
+}
+
+-- Sysop upload: place a file directly into any conference's file area,
+-- bypassing the user's normal upload flow. Used for sysop-imported files.
+rule SysopUploadFile {
+    when: SysopUploadFile(actor, target_area, file_name, size, description)
+    requires: actor.is_sysop or actor.access_level >= 210
+
+    ensures: File.created(
+        area: target_area,
+        name: file_name,
+        size: size,
+        status: available,
+        description: description,
+        uploaded_by: null,
+        uploaded_at: now,
+        download_count: 0
+    )
+}
+
+-- Move a file from one file area to another. The legacy FM command.
+rule MoveFile {
+    when: MoveFile(actor, file, target_area)
+    requires: actor.is_sysop or has_access(actor, edit_files)
+    requires: file.status != removed
+
+    ensures: file.area = target_area
+}
+
+-- Delete a file. The legacy code soft-deletes (status = removed) and lets
+-- a sysop optionally purge the row later. We follow that pattern.
+rule DeleteFile {
+    when: DeleteFile(actor, target_file)
+    requires: actor.is_sysop or has_access(actor, edit_files)
+    requires: target_file.status != removed
+
+    ensures: target_file.status = removed
+
+    -- Any FlaggedFile entries pointing at this file are dropped.
+    ensures:
+        for fl in FlaggedFiles where file = target_file:
+            not exists fl
+}
+
+-- Sysop reviews a held file and admits it.
+rule AdmitHeldFile {
+    when: AdmitHeldFile(actor, file)
+    requires: actor.is_sysop
+    requires: file.status = held_for_review
+
+    ensures: file.status = available
+}
+
+-- Daily reset: bytesA = bytes available today. Triggered when the user's
+-- first session of the day starts (see session.allium); we don't model
+-- the trigger here, but the reset of daily_bytes_downloaded happens there.
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant FlaggedFilesAreDownloadable {
+    for f in FlaggedFiles:
+        f.file.status in {available, lcfiles}
+}
+
+invariant TransferBytesNonNegative {
+    for t in Transfers:
+        t.bytes_transferred.count >= 0
+}
+
+invariant FileSizeNonNegative {
+    for f in Files:
+        f.size.count >= 0
+}
+
+invariant DailyDownloadsLeQuota {
+    for u in Users:
+        u.daily_byte_limit.count = 0
+            or u.daily_bytes_downloaded.count <= u.daily_byte_limit.count
+}
+
+------------------------------------------------------------
+-- Black box functions
+------------------------------------------------------------
+
+-- The maximum number of files the BBS will let any user flag at once.
+-- Legacy: MAX_FLAGGED_FILES = 1000.
+-- max_flagged_files()
+
+-- Sum the sizes of a collection of files.
+-- sum_sizes(files)
+
+-- Convert bytes to whole kilobytes (legacy CREDITBYKB toggle).
+-- kilobytes_of(bytes)
+
+-- Whether the BBS is configured to count file budgets in KB rather than
+-- bytes. The legacy toggle is sopt.toggles[TOGGLES_CREDITBYKB].
+-- any_credit_by_kb()
+
+-- The user's typical CPS, taken from their last download or from baud/10.
+-- user_cps(user)
+
+-- Estimate minutes to transfer this many bytes at this CPS.
+-- estimate_minutes(bytes, cps)
+
+-- True when the user's ratio (mode + value) admits this batch.
+-- ratio_check_passes(user, flagged_files)
+
+-- True when the user has a paid credit account currently active.
+-- credit_account_active(user)
+
+-- Where in the file system the upload should land. Determined by the
+-- session's currently-joined conference + file area, with a per-area
+-- DEFAULT_UPLOAD override.
+-- upload_area_for(visit, session)
+
+-- True if uploads to this area need sysop review.
+-- requires_review(file_area)
+
+-- Bonus session time granted for an upload, computed from bytes and CPS.
+-- The legacy formula is "(bytes / 2 + 60) seconds".
+-- upload_time_bonus(bytes, cps)
+
+-- True when the BBS is configured to run background validation on uploads.
+-- bg_check_configured()
+
+-- The user's session's currently-open ConferenceVisit.
+-- current_visit(session)
+
+------------------------------------------------------------
+-- Open questions
+------------------------------------------------------------
+
+open question "Free-resuming: legacy lets users with ACS_FREE_RESUMING resume an aborted download without a fresh ratio check. Worth modelling as a session flag, or a separate Transfer.kind value?"
+
+open question "FlaggedFile is per-Session today, but the legacy code persists the list across sessions for the same user. Should it move to per-User?"
+
+open question "The 'lcfiles' (low-credit files) area is poorly documented in the legacy code. Treating it as a status here; could equally be a separate FileArea variant."

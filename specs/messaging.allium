@@ -1,0 +1,507 @@
+-- allium: 3
+-- messaging.allium
+--
+-- The mail/messaging subsystem: posting, reading, replying, forwarding,
+-- moving and deleting messages within a conference's message base. Each
+-- message is addressed to a specific recipient (or to broadcast targets
+-- ALL / EALL); the BBS scans for unread mail at logon and on join.
+--
+-- Scope
+--   Includes:
+--     - Mail entity and lifecycle (drafted -> public/private/deleted)
+--     - Posting, reading, replying, forwarding, moving, deleting
+--     - File attachments to messages
+--     - Mail scan (find new mail across joined conferences)
+--     - Comment to sysop (a special message)
+--     - Censored users (their messages default to private)
+--     - EALL (broadcast) and ALL (per-conference) addressees
+--
+--   Excludes:
+--     - The line/full-screen editor itself (presentation, see editor)
+--     - QWK packet generation (use qwk library spec)
+--     - FTN/UUCP gateways (use ftn library spec / external)
+--     - Custom message bases (delegated to bridges)
+
+use "./core.allium" as core
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+-- Sessions are defined in session.allium. Declared external rather than
+-- imported because `session` is a heavily-used local variable name in the
+-- rules below.
+external entity Session {}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+-- Visibility of a message. Censored users have their posts forced to
+-- `private_to_sysop`; the sysop sees the same letter glyph in lower case
+-- on the listing screen.
+enum MailVisibility {
+    public                 -- visible to anyone with conference access
+    private                -- visible to addressee and sysop only
+    private_to_sysop       -- censored: only sysop reads it
+    deleted                -- soft-deleted; not shown to ordinary readers
+}
+
+-- Special addressees that are not user handles. The legacy code treats
+-- ALL and EALL as case-insensitive strings in the toName field; we model
+-- them as discriminator values so addressee resolution is explicit.
+enum BroadcastTo {
+    none                   -- normal user addressee
+    all                    -- everyone in this conference
+    eall                   -- everyone across all conferences (echo-all)
+}
+
+-- Whether the conference shows ALL-addressed messages to all readers, or
+-- only to the local conference. Modelled as a per-conference toggle.
+enum AllScanScope {
+    local                  -- ALL is read like a "to me" only by current users
+    all_users_in_conf      -- ALL is broadcast to every member of the conf
+}
+
+-- The kind of "ALL" / "EALL" routing on a message. Some bases reject EALL
+-- (external bases cannot fan out to other systems).
+enum AllowedAddressing {
+    individual_only        -- you must address a specific user
+    individual_or_all      -- ALL is permitted
+    individual_or_eall     -- EALL is permitted
+    any                    -- individual, ALL, EALL all permitted
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- A persistent mail message. Once written, only the author or the sysop
+-- may edit (the legacy code uses access >= 210 for the sysop check) or
+-- delete it. Moving a message to another base is modelled as a deletion
+-- followed by a creation.
+entity Mail {
+    -- Storage co-ordinates.
+    msgbase: core/MessageBase
+    number: Integer                    -- unique within msgbase, monotonic
+
+    -- Header.
+    visibility: MailVisibility
+    from_name: String                  -- as displayed; depends on session/conf name-type
+    to_name: String                    -- handle, ALL or EALL
+    broadcast_to: BroadcastTo
+    subject: String
+    posted_at: Timestamp
+    received_at: Timestamp?            -- when addressee first read it
+
+    -- Author (resolved from from_name at post time). Stable across renames.
+    author: core/User
+
+    -- Optional addressee user (null for ALL / EALL).
+    addressee: core/User?              when broadcast_to = none
+
+    -- Body. The legacy code stores the body as a separate file alongside
+    -- the header; conceptually it is one message.
+    body: String
+
+    -- Attachments.
+    attachments: MailAttachment with mail = this
+
+    -- External-message-base bridging. When the message base is a bridge
+    -- to (say) FTN, ext_msg_num holds the foreign id; otherwise -1.
+    ext_msg_num: Integer
+
+    -- Derived.
+    is_deleted: visibility = deleted
+    is_to_sysop: addressee != null and addressee.is_sysop
+    is_unread: received_at = null and broadcast_to = none
+
+    transitions visibility {
+        public -> deleted
+        private -> deleted
+        private_to_sysop -> deleted
+        public -> private              -- sysop changing sensitivity
+        private -> public
+        terminal: deleted
+    }
+
+    invariant FromNameMatchesAuthor {
+        from_name = display_name_of(author, msgbase.conference)
+    }
+
+    invariant DeletedMessagesHaveNoActiveReceived {
+        visibility = deleted implies received_at = null
+    }
+}
+
+-- A file attached to a message. The file itself lives outside the spec
+-- (in the file area) and is referenced by name. Three attachment types
+-- exist in the legacy code: comment-only (filename in file comment),
+-- COPY (file copied alongside), and A-list (manifest of multiple files).
+entity MailAttachment {
+    mail: Mail
+    file_name: String
+    file_size: core/Bytes
+}
+
+-- A request from one user to "forward" an existing message. Forwarding
+-- copies the original body into a new message, optionally adding a note,
+-- and addresses the result to a different user.
+value MailForwardRequest {
+    source: Mail
+    new_addressee: core/User
+    additional_note: String?
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- The user composes a new message. The name they type is resolved (or
+-- promoted to ALL / EALL); the message is written with `visibility`
+-- determined by the user's censored flag.
+rule PostMail {
+    when: PostMail(session, draft)
+    requires: session.state = menu
+    requires: session.user != null
+    requires: has_access(session.user, enter_message)
+
+    let visit = current_visit(session)
+    requires: visit != null
+
+    let lock = lock_msgbase(visit.msgbase)
+    requires: lock                                  -- another node holds it: rule fails
+
+    let visibility =
+        if draft.broadcast_to = eall: public
+        else if session.user.censored: private_to_sysop
+        else if draft.private: private
+        else: public
+
+    let resolved_addressee =
+        if draft.broadcast_to != none: null
+        else: lookup_user_by_name(draft.to_name, visit.msgbase.conference.accepted_name_type)
+
+    requires: draft.broadcast_to != eall or addressing_allows(visit.msgbase, eall)
+    requires: draft.broadcast_to != all or addressing_allows(visit.msgbase, all)
+    requires: draft.broadcast_to != none or resolved_addressee != null
+
+    let next_number = visit.msgbase.highest_message + 1
+
+    ensures: Mail.created(
+        msgbase: visit.msgbase,
+        number: next_number,
+        visibility: visibility,
+        from_name: display_name_of(session.user, visit.msgbase.conference),
+        to_name: draft.to_name,
+        broadcast_to: draft.broadcast_to,
+        subject: draft.subject,
+        body: draft.body,
+        posted_at: now,
+        received_at: null,
+        author: session.user,
+        addressee: resolved_addressee,
+        ext_msg_num: -1
+    )
+    ensures: visit.msgbase.highest_message = next_number
+    ensures: session.user.messages_posted = session.user.messages_posted + 1
+
+    -- Per-conference message count.
+    ensures:
+        let membership = ConferenceMembership{user: session.user, conference: visit.msgbase.conference}:
+            if exists membership:
+                membership.messages_posted = membership.messages_posted + 1
+
+    -- Notify the sysop if this was a comment-to-sysop.
+    ensures:
+        if resolved_addressee != null and resolved_addressee.is_sysop:
+            CommentToSysopPosted(message: Mail, by: session.user)
+
+    @guidance
+        -- The legacy code creates an "EXT-OUT" file when the message base is
+        -- bridged to an external system (FTN/QWK). That side-effect is
+        -- handled by the bridge implementation, not modelled here.
+}
+
+-- A comment-to-sysop is a message specifically addressed to the sysop. It
+-- is the same as PostMail but exposed as a separate menu entry (C command)
+-- because it is the canonical "I need the operator" channel.
+rule PostCommentToSysop {
+    when: PostCommentToSysop(session, subject, body)
+    requires: session.state = menu
+    requires: session.user != null
+    requires: has_access(session.user, comment_to_sysop)
+
+    ensures: PostMail(
+        session: session,
+        draft: { broadcast_to: none,
+                 to_name: "Sysop",
+                 private: true,
+                 subject: subject,
+                 body: body }
+    )
+}
+
+-- Reading a message. If the reader is the addressee and the message has
+-- not been received before, mark it received. Replies are handled by the
+-- separate ReplyToMail rule.
+rule ReadMail {
+    when: ReadMail(session, mail)
+    requires: session.state = menu
+    requires: session.user != null
+    requires: has_access(session.user, read_message)
+    requires: not mail.is_deleted
+    requires: can_read(session.user, mail)
+
+    let pointers = read_pointers_for(session.user, mail.msgbase)
+
+    ensures:
+        if mail.is_unread and mail.addressee = session.user:
+            mail.received_at = now
+        if pointers != null and mail.number > pointers.last_read:
+            pointers.last_read = mail.number
+}
+
+-- Reply to a message. Equivalent to PostMail with the to_name set to the
+-- original author's name (or back to ALL on a broadcast reply).
+rule ReplyToMail {
+    when: ReplyToMail(session, source, draft)
+    requires: session.state = menu
+    requires: source.visibility != deleted
+
+    let reply_to_name =
+        if source.broadcast_to = all and reply_keeps_broadcast(draft): "ALL"
+        else: source.from_name
+
+    ensures: PostMail(
+        session: session,
+        draft: { broadcast_to: if reply_to_name = "ALL": all else: none,
+                 to_name: reply_to_name,
+                 private: draft.private,
+                 subject: draft.subject,
+                 body: draft.body }
+    )
+}
+
+-- Forward a message. Creates a new message in the same base, addressed
+-- to a different recipient, with the original body included.
+rule ForwardMail {
+    when: ForwardMail(session, request)
+    requires: session.state = menu
+    requires: not request.source.is_deleted
+
+    let composed_body =
+        forward_header_for(request.source) + "\n" +
+        request.source.body +
+        if request.additional_note != null: "\n--\n" + request.additional_note else: ""
+
+    ensures: PostMail(
+        session: session,
+        draft: { broadcast_to: none,
+                 to_name: display_name_of(request.new_addressee, current_visit(session).msgbase.conference),
+                 private: request.source.visibility != public,
+                 subject: "Fwd: " + request.source.subject,
+                 body: composed_body }
+    )
+}
+
+-- Move a message to a different conference / message base. The legacy FM
+-- command does the equivalent of "create new + delete old"; we model the
+-- pair as an atomic move so the message ID changes but the content is
+-- preserved.
+rule MoveMail {
+    when: MoveMail(session, mail, target_conference, target_msgbase)
+    requires: session.state = menu
+    requires: session.user != null
+    requires: has_access(session.user, message_edit) or session.user.is_sysop
+    requires: target_msgbase.conference = target_conference
+    requires: target_msgbase != mail.msgbase
+
+    let next_number = target_msgbase.highest_message + 1
+
+    ensures: Mail.created(
+        msgbase: target_msgbase,
+        number: next_number,
+        visibility: mail.visibility,
+        from_name: mail.from_name,
+        to_name: mail.to_name,
+        broadcast_to: mail.broadcast_to,
+        subject: mail.subject,
+        body: mail.body,
+        posted_at: mail.posted_at,
+        received_at: mail.received_at,
+        author: mail.author,
+        addressee: mail.addressee,
+        ext_msg_num: -1
+    )
+    ensures: target_msgbase.highest_message = next_number
+
+    -- Old mail soft-deleted; its body file is removed by the storage layer.
+    ensures: mail.visibility = deleted
+
+    -- Also move attachments: each attachment row points to the new mail.
+    ensures:
+        for a in mail.attachments:
+            MailAttachment.created(mail: target_msgbase, file_name: a.file_name, file_size: a.file_size)
+}
+
+-- Delete a message. Ordinary users may delete only their own mail (sent
+-- by them or addressed to them); the sysop may delete any message.
+rule DeleteMail {
+    when: DeleteMail(session, mail)
+    requires: session.state = menu
+    requires: session.user != null
+    requires: not mail.is_deleted
+    requires:
+        session.user.is_sysop
+        or session.user.access_level >= 210
+        or mail.author = session.user
+        or mail.addressee = session.user
+
+    ensures: mail.visibility = deleted
+
+    -- Bump the lowest-undeleted pointer if we just deleted it.
+    ensures:
+        if mail.msgbase.lowest_undeleted_message = mail.number:
+            mail.msgbase.lowest_undeleted_message = mail.msgbase.lowest_undeleted_message + 1
+
+    -- Also detach any attachments.
+    ensures:
+        for a in mail.attachments:
+            not exists a
+}
+
+-- Edit the header of a previously-posted message. Sysop only.
+rule EditMailHeader {
+    when: EditMailHeader(session, mail, new_subject, new_to_name)
+    requires: session.user.is_sysop or session.user.access_level >= 210
+
+    ensures:
+        if new_subject != null:
+            mail.subject = new_subject
+        if new_to_name != null:
+            mail.to_name = new_to_name
+            mail.addressee = lookup_user_by_name(new_to_name, mail.msgbase.conference.accepted_name_type)
+}
+
+-- Mail scan: find unread messages addressed to the current user (or ALL,
+-- or EALL) within a single message base. Triggered on join, or by the
+-- M / N menu commands. The user may then walk into the listing.
+rule ScanMail {
+    when: MailScanRequested(session, conference, msgbase, from_message)
+    requires: session.state in {onboarded, menu}
+    requires: session.user != null
+
+    let pointers = read_pointers_for(session.user, msgbase)
+    let from = if from_message > 0: from_message else: pointers.last_scanned + 1
+
+    ensures: MailScanCompleted(
+        session: session,
+        msgbase: msgbase,
+        unread_count: count_unread_for(session.user, msgbase, from),
+        first_unread_number: first_unread_number_for(session.user, msgbase, from)
+    )
+    ensures: pointers.last_scanned = max_of(pointers.last_scanned, msgbase.highest_message)
+}
+
+-- Attach a file to a message during composition. Two paths exist:
+-- (1) the user pre-uploads the file then references it; (2) the user
+-- composes the message first, then uploads the file as a follow-up.
+-- Both result in the same MailAttachment row.
+rule AttachFileToMail {
+    when: AttachFileToMail(session, mail, file_name, file_size)
+    requires: session.user = mail.author or session.user.is_sysop
+    requires: not mail.is_deleted
+    requires: has_access(session.user, attach_files)
+
+    ensures: MailAttachment.created(
+        mail: mail,
+        file_name: file_name,
+        file_size: file_size
+    )
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant MessageNumbersUniquePerBase {
+    for m1 in Mails:
+        for m2 in Mails:
+            m1 != m2 and m1.msgbase = m2.msgbase
+                implies m1.number != m2.number
+}
+
+invariant HighestMessageMatchesMaxNumber {
+    for b in MessageBases:
+        b.highest_message =
+            max_or_zero(Mails where msgbase = b -> number)
+}
+
+invariant DeletedMessagesNotAddressableByLastRead {
+    for p in ReadPointers:
+        for m in Mails where msgbase = p.msgbase and number = p.last_read:
+            not m.is_deleted
+}
+
+invariant ExternalMessagesHaveExtId {
+    for m in Mails:
+        m.msgbase.conference.is_custom implies m.ext_msg_num >= 0
+}
+
+------------------------------------------------------------
+-- Black box functions
+------------------------------------------------------------
+
+-- True when the user is allowed to read this message: either the message is
+-- public, or the user is the author/addressee/sysop.
+-- can_read(user, mail)
+
+-- Resolve a typed name to a user, using the conference's preferred name type.
+-- lookup_user_by_name(typed, name_type)
+
+-- The display string for a user inside a given conference.
+-- display_name_of(user, conference)
+
+-- The current visit (open ConferenceVisit) for a session.
+-- current_visit(session)
+
+-- Lock the message base so a single writer can mutate it safely. Returns
+-- false if another node already holds the lock.
+-- lock_msgbase(msgbase)
+
+-- Whether the message base accepts an "ALL" or "EALL" addressee.
+-- addressing_allows(msgbase, broadcast_kind)
+
+-- Should the reply preserve the broadcast addressee from the source?
+-- reply_keeps_broadcast(draft)
+
+-- The user's read-pointers row for a message base.
+-- read_pointers_for(user, msgbase)
+
+-- "From: ... Date: ... Subject: ..." block prepended when forwarding.
+-- forward_header_for(mail)
+
+-- Count the unread messages addressed to a user in a base, starting at
+-- a given message number.
+-- count_unread_for(user, msgbase, from)
+
+-- The number of the first unread message for the user in the base.
+-- first_unread_number_for(user, msgbase, from)
+
+-- The maximum message number in a collection, or 0 if the collection
+-- is empty.
+-- max_or_zero(numbers)
+
+-- Two-arg max for integers.
+-- max_of(a, b)
+
+------------------------------------------------------------
+-- Open questions
+------------------------------------------------------------
+
+open question "EALL routing across conferences: does an EALL post fan out at write time (expensive, eager) or scan time (lazy, hides the message in source base only)? Legacy is lazy."
+
+open question "Message-base locking: should the lock be modelled as a value type, or as an entity with its own lifecycle? Currently treated as a black-box predicate."
+
+open question "Attachment pluralisation: the legacy code supports up to ~10 attachments per message (the A-file is a manifest). Should we cap MailAttachment.count, or let Conference / Sysop decide?"

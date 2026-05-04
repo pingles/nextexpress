@@ -1,0 +1,408 @@
+-- allium: 3
+-- core.allium
+--
+-- Core domain entities for the AmiExpress BBS: users, accounts, conferences,
+-- message bases and nodes. All other specs in this directory depend on this one.
+--
+-- Scope
+--   Includes:
+--     - User accounts (handles, credentials, access levels, ratios, time/byte budgets)
+--     - Conferences (forum-like containers for messages and files)
+--     - Message bases (sub-areas within a conference where mail is posted)
+--     - Per-user, per-conference state (last message read, conference ratios, byte tallies)
+--     - Nodes (concurrent virtual seats users connect to)
+--
+--   Excludes:
+--     - Session lifecycle           (see session.allium)
+--     - Messaging behaviour         (see messaging.allium)
+--     - File area behaviour         (see files.allium)
+--     - Conference join workflow    (see conferences.allium)
+--     - Wire protocols (telnet/zmodem/xmodem/hydra/ftp/smtp/iemsi) — incidental
+--     - Tooltype config storage     — Amiga-specific persistence; replaced by file-based
+--                                     configuration in the modern port (see AGENTS.md)
+--     - Amiga icon/window/MUI       — UI surface, not BBS domain
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+-- Bytes is a non-negative count of octets transferred or budgeted.
+-- The legacy implementation packs this into BCD because the Amiga only had
+-- 32-bit integers; that is a storage decision and is not reflected here.
+value Bytes {
+    count: Integer
+}
+
+-- A pair of conference + message-base co-ordinates.
+value MessageBaseRef {
+    conference: Conference
+    msgbase: MessageBase
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+-- How the user's display name is rendered when reading or posting messages
+-- in a given conference. Some message bases require legal names or
+-- internet-style names for inter-network gateway compatibility (FTN, QWK).
+enum NameType {
+    handle              -- the BBS username (default)
+    real_name           -- legal name, used in real-name conferences
+    internet_name       -- internet-style identity, used for gateway conferences
+}
+
+-- Algorithm used to verify the user's password. Older accounts are stored
+-- with the legacy hash; new accounts and password changes adopt whichever
+-- algorithm is configured at the time of the change. Migration is in-place:
+-- a successful login under a stronger algorithm is the moment we re-hash.
+enum PasswordHashKind {
+    legacy              -- pre-PBKDF2 fixed hash; retained for older accounts
+    pbkdf2_5
+    pbkdf2_50
+    pbkdf2_100
+    pbkdf2_1000
+    pbkdf2_10000
+}
+
+-- Ratio enforcement mode for a user (or per-conference override).
+-- The historical names (secBoard / secLibrary) reflect the menu where the
+-- field originally appeared rather than its meaning, so we rename here.
+enum RatioMode {
+    disabled            -- ratios are not enforced
+    by_files            -- enforce file-count ratio (uploads:downloads)
+    by_bytes            -- enforce byte-count ratio (bytes uploaded vs downloaded)
+}
+
+-- The protocol family the user has selected as their preferred transfer.
+-- The actual wire format is delegated to a transfer library spec.
+enum TransferProtocol {
+    zmodem
+    xmodem
+    ymodem
+    hydra
+    other
+}
+
+-- Bit-flags persisted on the user record. Each flag records a user preference
+-- that the BBS reads in many places; expressing them as named enum values
+-- rather than bitmask integers makes the intent explicit.
+enum UserFlag {
+    show_new_user_message       -- show "new user" greeting once
+    auto_join_first_conf
+    show_one_time_messages
+    screen_clear_after_message
+    is_donor                    -- has paid; affects screens, not access
+    editor_full_screen
+    editor_prompts
+    background_file_check       -- check uploads asynchronously
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- A registered user of the BBS.
+--
+-- The legacy on-disk layout splits this across three files (user, userKeys,
+-- userMisc) for backwards compatibility with older /X versions; the spec
+-- treats the conceptual user as one entity. Translation back to three
+-- structs is a serialisation concern.
+entity User {
+    -- Identity.
+    slot_number: Integer                -- stable account id (1 = sysop)
+    handle: String                      -- unique login name (max 30 chars)
+    real_name: String?                  -- legal name; required by some confs
+    internet_name: String?              -- short internet-style alias
+    location: String?                   -- "City, State" free text
+    phone_number: String?
+    email: String?
+
+    -- Authentication state.
+    password_hash_kind: PasswordHashKind
+    password_hash: String               -- opaque digest; verified by hash() below
+    password_salt: String?              -- present for pbkdf2_* kinds
+    password_last_updated: Timestamp
+    invalid_attempts: Integer
+    force_password_reset: Boolean
+    account_locked: Boolean             -- set when too many bad passwords or by sysop
+
+    -- Authorisation.
+    -- access_level corresponds to the "secStatus" field in the legacy code.
+    -- 0 = locked out, 1 = nearly-locked, 2..255 = ordinary access tiers,
+    -- with higher numbers granting more commands. The exact mapping from
+    -- access_level to allowed commands is configured outside the BBS spec.
+    access_level: Integer
+    is_new_user: Boolean                -- account awaits sysop validation
+    censored: Boolean                   -- messages posted are private to sysop
+
+    -- Ratios. Govern download-vs-upload accounting.
+    ratio_mode: RatioMode
+    ratio_value: Integer                -- e.g. 3 = three downloads per upload
+                                        --      0 with mode != disabled means infinite
+
+    -- Time accounting.
+    -- The BBS resets daily counters when the user's first call of a new day
+    -- crosses 06:00 (see updateTimeUsed). Per-call limits are enforced in
+    -- session.allium; this entity holds only the persistent state.
+    time_limit_per_call: Duration       -- limit for any single call
+    time_limit_per_day: Duration        -- combined limit per calendar day
+    time_used_today: Duration
+    time_remaining_today: Duration      -- derived in session rules
+    times_called: Integer
+    times_called_today: Integer
+    last_call: Timestamp
+    account_created: Timestamp
+
+    -- Byte accounting.
+    bytes_downloaded_total: Bytes
+    bytes_uploaded_total: Bytes
+    daily_byte_limit: Bytes             -- 0 means unlimited
+    daily_bytes_downloaded: Bytes
+
+    -- Message activity.
+    messages_posted: Integer
+
+    -- Conference access.
+    -- The legacy format is a fixed 10-byte string with one access-flag per
+    -- conference. We replace it with an explicit per-conference access set
+    -- (see ConferenceMembership below).
+    memberships: ConferenceMembership with user = this
+    last_joined_conference: Conference?
+    last_joined_msgbase: MessageBase?
+
+    -- Sysop chat allowance.
+    chat_minutes_remaining: Duration
+    chat_minutes_per_call: Duration
+
+    -- Display preferences.
+    expert_mode: Boolean                -- skip menus
+    line_length: Integer                -- terminal width, 0 = auto
+    ansi_colour: Boolean
+    preferred_protocol: TransferProtocol
+    flags: Set<UserFlag>
+
+    -- Lifetime credit account (paid memberships).
+    credit_account: CreditAccount?
+
+    -- Derived.
+    is_sysop: slot_number = 1
+    is_locked_out: access_level <= 1 or account_locked
+
+    -- Invariants.
+    invariant LockoutClearsAttempts {
+        account_locked implies invalid_attempts = 0
+    }
+
+    invariant SaltMatchesAlgorithm {
+        password_hash_kind in {pbkdf2_5, pbkdf2_50, pbkdf2_100, pbkdf2_1000, pbkdf2_10000}
+            implies password_salt != null
+    }
+}
+
+-- Persistent records of paid access. The credit account is independent of
+-- the user's ratio: it tops up bytes/files spent over a period.
+value CreditAccount {
+    days_credited: Integer
+    amount_paid: Decimal
+    start_date: Timestamp
+    total_paid_to_date: Decimal
+    last_total_paid_date: Timestamp
+    track_uploads: Boolean
+    track_downloads: Boolean
+}
+
+-- A discussion area. Each conference contains one or more message bases
+-- (sub-forums) and a file area; some conferences are "custom" and delegate
+-- their message storage to an external bridge (e.g. a UUCP/QWK gateway).
+entity Conference {
+    number: Integer                     -- 1-indexed, displayed to users
+    name: String                        -- e.g. "Programming"
+    handle_for_msgs: String             -- short name used in mail headers
+    is_custom: Boolean                  -- delegates msg storage externally
+    accepted_name_type: NameType        -- which form of identity to display
+
+    -- Free-downloads conferences let users pull files without ratio penalty.
+    free_downloads: Boolean
+
+    -- Default ratios for conference-accounting mode (see ratio above).
+    default_ratio_mode: RatioMode
+    default_ratio_value: Integer
+
+    msgbases: MessageBase with conference = this
+    file_areas: FileArea with conference = this
+    memberships: ConferenceMembership with conference = this
+
+    invariant AtLeastOneMessageBase {
+        msgbases.count >= 1
+    }
+}
+
+-- A sub-forum within a conference. Most conferences have just one
+-- (msgbase 1); larger boards split discussion into themed bases.
+entity MessageBase {
+    conference: Conference
+    number: Integer                     -- 1-indexed within its conference
+    name: String
+
+    -- High-water marks for the on-disk message store. Held centrally rather
+    -- than recomputed because some conferences are external and supply their
+    -- own counters via a bridge.
+    lowest_message: Integer
+    lowest_undeleted_message: Integer
+    highest_message: Integer
+
+    msgbase_ref: msgbase_ref_for(this)  -- helper for cross-references
+}
+
+-- Per-user, per-conference state. This subsumes both the conference-access
+-- bit and the legacy confDB record. One row exists for each (user, conference)
+-- the user has access to; users without a row have no access.
+entity ConferenceMembership {
+    user: User
+    conference: Conference
+
+    granted: Boolean                    -- false rows can be kept for history
+
+    -- Per-conference accounting (active when conference accounting is on).
+    bytes_uploaded: Bytes
+    bytes_downloaded: Bytes
+    files_uploaded: Integer
+    files_downloaded: Integer
+    messages_posted: Integer
+
+    ratio_mode: RatioMode               -- overrides user.ratio_mode if non-disabled
+    ratio_value: Integer
+
+    -- Read pointers. Per (user, msgbase), updated as the user reads messages.
+    pointers: ReadPointers with membership = this
+
+    invariant GrantedRowsHaveSomePointers {
+        granted implies pointers.count >= 1
+    }
+}
+
+-- Per-user, per-message-base read state.
+--
+-- The legacy implementation packs a "newSinceDate" timestamp plus a single
+-- "last read" pointer into the same conference-record; we split the two
+-- because they answer different questions ("show me what's new since I last
+-- looked" vs "where did I get up to in this thread"). Real-time mail scans
+-- check both.
+entity ReadPointers {
+    membership: ConferenceMembership
+    msgbase: MessageBase
+
+    last_read: Integer                  -- highest message # actually read
+    last_scanned: Integer               -- highest message # auto-scanned for new mail
+    new_since: Timestamp                -- "show me messages newer than this"
+
+    invariant ReadDoesNotExceedScanned {
+        last_read <= last_scanned
+    }
+}
+
+-- A file storage area within a conference. The actual upload/download
+-- behaviour is in files.allium; this entity holds only the metadata.
+entity FileArea {
+    conference: Conference
+    number: Integer                     -- 1-indexed within conference
+    name: String                        -- e.g. "Utilities"
+    upload_path: String?                -- override default upload location
+    free_downloads: Boolean             -- override conference-level setting
+}
+
+-- A node represents a single concurrent session slot. The BBS supports up
+-- to 32 nodes, and historically each node mapped to a serial port.
+-- A node is in use whenever a session is bound to it; otherwise it is idle.
+entity Node {
+    number: Integer                     -- 1..32
+    status: idle | reserved | connecting | logging_on | logged_on | logging_off | suspended | shutting_down
+    reserved_for: User?                 -- when status = reserved
+
+    transitions status {
+        idle -> reserved
+        idle -> connecting
+        idle -> shutting_down
+        idle -> suspended
+        reserved -> idle
+        reserved -> connecting
+        connecting -> logging_on
+        connecting -> idle              -- carrier dropped before logon
+        logging_on -> logged_on
+        logging_on -> logging_off       -- failed authentication or refused
+        logged_on -> logging_off
+        logging_off -> idle
+        suspended -> idle
+        shutting_down -> idle
+        terminal: idle
+    }
+
+    invariant ReservedHasUser {
+        status = reserved implies reserved_for != null
+    }
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    -- Maximum simultaneous nodes the BBS will host.
+    max_nodes: Integer = 32
+
+    -- Authentication.
+    min_password_length: Integer = 4
+    -- 1..4 = number of categories required (lower/upper/digit/symbol).
+    min_password_categories: Integer = 0
+    max_password_failures: Integer = 3
+    -- 0 disables expiry.
+    password_expiry_days: Integer = 0
+    -- Algorithm used for new passwords.
+    password_hash_kind: PasswordHashKind = pbkdf2_10000
+
+    -- Daily reset boundary, expressed as seconds past midnight UTC at
+    -- which "today" rolls over. The legacy code uses 21600 (06:00).
+    daily_reset_offset: Duration = 6.hours
+
+    -- Idle disconnect.
+    input_timeout: Duration = 5.minutes
+    -- Whether an input timeout is treated as a clean logoff (true) or
+    -- a carrier loss (false). The latter is the historical default.
+    treat_timeout_as_logoff: Boolean = false
+
+    -- Default ratio for new accounts created via self-service.
+    default_ratio_mode: RatioMode = by_files
+    default_ratio_value: Integer = 3
+}
+
+------------------------------------------------------------
+-- Black box functions
+------------------------------------------------------------
+
+-- Verifies a candidate password against the stored hash.
+--
+-- The legacy code uses pkcs5_pbkdf2 (and a 32-bit one-way hash for legacy).
+-- The Rust port should treat verify_password as the single source of truth:
+-- hashing details (rounds, salt length) are determined by the hash kind.
+--
+-- Returns true if the candidate matches.
+-- verify_password(user, candidate)
+
+-- Computes the next on-disk hash for a new password using the configured
+-- hash kind. Returns the hash bytes plus the salt used (null for legacy).
+-- compute_password_hash(candidate, kind)
+
+-- Helper used by ReadPointers projections; defined as a named expression so
+-- entities elsewhere can pattern match on a (conference, msgbase) pair.
+-- msgbase_ref_for(msgbase) = MessageBaseRef{ conference: msgbase.conference, msgbase: msgbase }
+
+------------------------------------------------------------
+-- Open questions
+------------------------------------------------------------
+
+open question "Translator/multi-language support: the legacy code carries a translator system that rewrites prompts at output time. Treat as a presentation layer, or model as a Conference-level setting?"
+
+open question "Do we keep the 'expert mode' as a User-level toggle, or move to a per-conference Settings entity? The legacy code lets the user toggle it once and applies it globally."
+
+open question "Custom message bases (FTN, QWK, UUCP gateways) are external entities to this spec. Should they be modelled as Surface boundaries, or as deferred specifications?"

@@ -1,0 +1,697 @@
+-- allium: 3
+-- session.allium
+--
+-- Session lifecycle: from the BBS waiting on a node, through connection,
+-- authentication, and logon, to the menu loop, suspension, logoff and
+-- shutdown.
+--
+-- Scope
+--   Includes:
+--     - Session state machine (await -> connecting -> logging_on -> logged_on -> logging_off)
+--     - Authentication and password verification
+--     - New-user registration flow
+--     - Account lockout (excessive password failures)
+--     - Forced password reset (expired or sysop-flagged)
+--     - Session-wide time enforcement
+--     - Caller logging
+--     - Sysop direct logon, suspension and reservation flows
+--
+--   Excludes:
+--     - Wire transports (telnet IAC, FTP control connection, serial CD)
+--       — these are surface concerns; session sees only "remote" or "local"
+--     - IEMSI auto-handshake (a presentation optimisation; out of scope)
+--     - Email reset-code generation (mail delivery, see mailer library spec)
+--     - Conference joining behaviour (see conferences.allium)
+
+use "./core.allium" as core
+
+------------------------------------------------------------
+-- Given
+------------------------------------------------------------
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+-- A reference to a node owned by core.allium. Sessions are bound to nodes;
+-- the same node hosts a sequence of sessions over its lifetime.
+external entity Node {}
+
+-- A registered user. Authentication mutates the User's lockout state, so
+-- this spec writes to that entity, but the User definition lives in core.
+external entity User {}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+-- How the user has reached the BBS. The transport itself (telnet, serial,
+-- FTP control connection) is incidental — the session only cares whether
+-- it is local (sysop console), remote (over a network), or via FTP.
+enum LogonChannel {
+    sysop_console       -- sysop pressing F1/F2 at the BBS console
+    local               -- "local logon" key, no carrier
+    remote              -- normal user, via telnet or modem
+    ftp                 -- file-transfer-only logon over FTP
+}
+
+-- Why a session is logging off. Used to write the right line to the
+-- callers log and decide whether the user gets their upload credit back.
+enum LogoffReason {
+    normal_logoff           -- user typed G/Goodbye or timeout-as-logoff
+    carrier_loss            -- transport closed unexpectedly
+    input_timeout           -- inactivity beyond input_timeout
+    excessive_password_fails
+    locked_account
+    no_conference_access    -- user has access to zero conferences
+    not_allowed_at_baud     -- baud-rate restrictions; rare
+    out_of_time             -- daily time exhausted before logon completes
+    reserved_for_other      -- node was reserved for someone else
+    relogon                 -- user requested re-logon (loops back to logon)
+    sysop_kicked            -- sysop kicked the user from another node
+    new_user_rejected       -- new-user pw failed, autoval rejected, etc.
+    uucp_handed_off         -- "UUCP." prefix; we drop into uucico
+}
+
+-- Result of looking the typed name up in the user database.
+enum NameLookupResult {
+    found
+    not_found
+    user_typed_NEW          -- the literal handle "NEW" — request to register
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- A single in-progress or completed visit to the BBS. Created when a
+-- node accepts a connection or the sysop hits the local-logon key, ended
+-- by `logoff_at`.
+--
+-- A session is the unit of accounting: time and bytes spent during one
+-- session feed back into User totals at logoff.
+entity Session {
+    node: Node
+    channel: LogonChannel
+    state: connecting | identifying | authenticating | new_user_registering | onboarded | menu | logging_off | ended
+
+    -- Identity. Empty until the user has typed and chosen a name.
+    user: User?                                 when state in {authenticating, new_user_registering, onboarded, menu, logging_off, ended}
+    typed_name: String?
+    name_retry_count: Integer
+    password_retry_count: Integer
+
+    -- Resolved name presentation for any conference joined during the session.
+    display_name_type: core/NameType
+
+    -- Timing.
+    connected_at: Timestamp
+    authenticated_at: Timestamp?                when state in {onboarded, menu, logging_off, ended}
+    logoff_at: Timestamp?                       when state in {ended}
+    last_input_at: Timestamp                    -- updated whenever the user types
+    online_baud: Integer                        -- 0 for local
+
+    -- Time-budget tracking, populated at logon and decreased as the
+    -- session continues. When time_remaining reaches zero, the session
+    -- is forced into logging_off.
+    time_remaining: Duration                    when state in {onboarded, menu, logging_off}
+    bytes_remaining_today: core/Bytes           when state in {onboarded, menu, logging_off}
+
+    -- Outcome.
+    logoff_reason: LogoffReason                 when state = ended
+
+    -- Did this session adopt a temporary access uplift? Used by sysops to
+    -- grant short-lived elevated rights without editing the user record.
+    temp_access: TempAccess?                    when state in {onboarded, menu, logging_off}
+
+    -- Was this session granted to a specifically reserved user?
+    reserved_for: User?
+
+    -- Booleans the legacy code keeps as session-globals.
+    quick_logon: Boolean                        -- skip bulletins and welcome screens
+    rip_mode: Boolean                           -- the user accepts RIP graphics
+    ansi_colour: Boolean
+    quiet_mode: Boolean                         -- suppress OLM and join broadcasts
+    cmd_shortcuts: Boolean                      -- one-key menu shortcuts
+
+    -- Derived.
+    is_remote: channel in {remote, ftp}
+    is_authenticated: state in {onboarded, menu, logging_off, ended} and user != null
+
+    transitions state {
+        connecting -> identifying
+        connecting -> ended                     -- carrier dropped during banner
+        identifying -> authenticating
+        identifying -> new_user_registering
+        identifying -> ended                    -- abandoned, too many retries
+        authenticating -> onboarded
+        authenticating -> ended
+        new_user_registering -> onboarded
+        new_user_registering -> ended
+        onboarded -> menu
+        onboarded -> logging_off
+        menu -> logging_off
+        logging_off -> ended
+        terminal: ended
+    }
+
+    invariant AuthenticatedSessionsHaveUsers {
+        state in {onboarded, menu, logging_off, ended} and logoff_reason != new_user_rejected
+            implies user != null
+    }
+}
+
+-- A short-lived elevation granted by the sysop while a user is online.
+-- Discarded at logoff; legacy code keeps it as a session-global.
+value TempAccess {
+    access_level: Integer
+    ratio_mode: core/RatioMode
+    ratio_value: Integer
+    time_total: Duration
+    -- Conference access overrides for the session lifetime.
+    granted_conferences: Set<Integer>
+}
+
+-- A line written to the BBS-wide caller log. Each session generates a
+-- handful of these (welcome, password failures, key actions, logoff).
+entity CallerLog {
+    session: Session
+    at: Timestamp
+    text: String
+    is_password_failure: Boolean        -- displayed in red on sysop console
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- A node accepts a connection. The transport (modem CD, telnet TCP accept,
+-- FTP control connection) is upstream; we only see the result.
+rule AcceptConnection {
+    when: AcceptConnection(node, channel, baud)
+
+    requires: not exists Sessions where node = node and state != ended
+
+    ensures: Session.created(
+        node: node,
+        channel: channel,
+        state: connecting,
+        connected_at: now,
+        last_input_at: now,
+        online_baud: baud,
+        ansi_colour: true,
+        quick_logon: false,
+        rip_mode: false,
+        quiet_mode: false,
+        cmd_shortcuts: false,
+        name_retry_count: 0,
+        password_retry_count: 0,
+        display_name_type: handle
+    )
+    ensures: node.status = connecting
+}
+
+-- After the welcome banner, the user is prompted for their handle.
+rule PromptForName {
+    when: BannerDisplayed(session)
+    requires: session.state = connecting
+    ensures: session.state = identifying
+}
+
+-- A name was typed. The system looks it up: existing user, unknown user,
+-- or the literal "NEW" handle.
+rule NameTyped {
+    when: NameTyped(session, typed)
+    requires: session.state = identifying
+
+    let lookup = lookup_name(typed)
+
+    ensures:
+        if lookup = found:
+            session.typed_name = typed
+            session.user = user_for_name(typed)
+            session.state = authenticating
+        else if lookup = user_typed_NEW:
+            session.state = new_user_registering
+        else:
+            session.name_retry_count = session.name_retry_count + 1
+            if session.name_retry_count >= 5:
+                session.state = ended
+                session.logoff_at = now
+                session.logoff_reason = new_user_rejected
+
+    @guidance
+        -- The legacy code offers "[R]etry / [C]ontinue as new user" between
+        -- not-found attempts; that prompt is presentation and not modelled
+        -- here. The retry counter is what matters: five strikes and out.
+}
+
+-- A password attempt for an existing user.
+rule VerifyPassword {
+    when: PasswordEntered(session, candidate)
+    requires: session.state = authenticating
+    requires: session.user != null
+
+    let user = session.user
+    let matches = verify_password(user, candidate)
+
+    ensures:
+        if matches:
+            user.invalid_attempts = 0
+            session.authenticated_at = now
+            session.state = onboarded
+        else:
+            user.invalid_attempts = user.invalid_attempts + 1
+            session.password_retry_count = session.password_retry_count + 1
+            CallerLog.created(
+                session: session,
+                at: now,
+                text: "Password failure",
+                is_password_failure: true
+            )
+            if user.invalid_attempts >= core/config.max_password_failures:
+                user.account_locked = true
+                user.invalid_attempts = 0
+                session.state = logging_off
+                session.logoff_reason = locked_account
+            else if session.password_retry_count >= core/config.max_password_failures:
+                session.state = logging_off
+                session.logoff_reason = excessive_password_fails
+
+    @guidance
+        -- The legacy code also offers an email-based reset-code flow on the
+        -- third failure, when the user has an email on file and SMTP is
+        -- configured. Treat that as an out-of-band reset and model it in
+        -- the mailer library spec; from this rule's perspective the user
+        -- either provides the right password or they do not.
+}
+
+-- Once authenticated, the per-day counters need rolling over if this is
+-- the user's first call of "today".
+rule InitialiseDailyBudget {
+    when: session: Session.state transitions_to onboarded
+    requires: session.user != null
+
+    let user = session.user
+    let day_boundary = floor_to_day(now - core/config.daily_reset_offset)
+    let last_call_day = floor_to_day(user.last_call - core/config.daily_reset_offset)
+    let is_new_day = day_boundary != last_call_day
+
+    ensures:
+        if is_new_day:
+            user.times_called_today = 0
+            user.time_used_today = 0.seconds
+            user.daily_bytes_downloaded = { count: 0 }
+            user.chat_minutes_remaining = user.chat_minutes_per_call
+        else:
+            user.times_called_today = user.times_called_today + 1
+        session.time_remaining = user.time_limit_per_call
+        session.bytes_remaining_today =
+            if user.daily_byte_limit.count = 0:
+                { count: 2_147_483_647 }
+            else:
+                { count: user.daily_byte_limit.count - user.daily_bytes_downloaded.count }
+}
+
+-- Lockout-state checks: if the user is locked or their access level is
+-- too low, the session bounces them straight to logging_off, optionally
+-- giving them one chance to leave a comment for the sysop.
+rule RejectLockedOrInsufficientAccess {
+    when: session: Session.state becomes onboarded
+    requires: session.user != null
+    requires: session.user.is_locked_out or session.user.account_locked
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason =
+        if session.user.account_locked: locked_account else: new_user_rejected
+    ensures: CallerLog.created(
+        session: session,
+        at: now,
+        text: "Logon rejected: account locked or below access threshold",
+        is_password_failure: false
+    )
+}
+
+-- Force a password reset when the configured expiry has elapsed since the
+-- last update, or the sysop has flagged the account.
+rule ForcePasswordReset {
+    when: session: Session.state becomes onboarded
+    requires: session.user != null
+    requires: not session.user.account_locked
+
+    let user = session.user
+    let expired = core/config.password_expiry_days > 0
+        and now - user.password_last_updated > core/config.password_expiry_days * 1.day
+
+    ensures:
+        if expired or user.force_password_reset:
+            user.force_password_reset = true
+
+    @guidance
+        -- The follow-up "type a new password" exchange is a sub-flow
+        -- triggered while state = onboarded and force_password_reset = true.
+        -- We do not model the prompt explicitly: the rule that completes
+        -- the change resets force_password_reset.
+}
+
+-- The user successfully changes their password during a forced reset.
+rule CompletePasswordReset {
+    when: PasswordChanged(session, new_password)
+    requires: session.state = onboarded
+    requires: session.user != null
+    requires: session.user.force_password_reset
+    requires: meets_password_strength(new_password)
+    requires: not verify_password(session.user, new_password)  -- must differ from old
+
+    let new_hash = compute_password_hash(new_password, core/config.password_hash_kind)
+
+    ensures: session.user.password_hash = new_hash.hash
+    ensures: session.user.password_salt = new_hash.salt
+    ensures: session.user.password_hash_kind = core/config.password_hash_kind
+    ensures: session.user.password_last_updated = now
+    ensures: session.user.force_password_reset = false
+}
+
+-- A new user completes registration. Triggered by the registration flow
+-- collecting handle, location, phone, email, password, line-length and
+-- computer type.
+rule CompleteNewUserRegistration {
+    when: NewUserRegistered(session, profile)
+    requires: session.state = new_user_registering
+
+    let new_hash = compute_password_hash(profile.password, core/config.password_hash_kind)
+
+    ensures: User.created(
+        slot_number: next_free_slot(),
+        handle: profile.handle,
+        location: profile.location,
+        phone_number: profile.phone_number,
+        email: profile.email,
+        password_hash: new_hash.hash,
+        password_salt: new_hash.salt,
+        password_hash_kind: core/config.password_hash_kind,
+        password_last_updated: now,
+        invalid_attempts: 0,
+        force_password_reset: false,
+        account_locked: false,
+        access_level: 2,                       -- minimum non-locked
+        is_new_user: true,
+        censored: false,
+        ratio_mode: core/config.default_ratio_mode,
+        ratio_value: core/config.default_ratio_value,
+        bytes_downloaded_total: { count: 0 },
+        bytes_uploaded_total: { count: 0 },
+        daily_bytes_downloaded: { count: 0 },
+        daily_byte_limit: { count: 0 },
+        messages_posted: 0,
+        times_called: 0,
+        times_called_today: 0,
+        time_used_today: 0.seconds,
+        time_limit_per_call: 30.minutes,
+        time_limit_per_day: 1.hour,
+        time_remaining_today: 1.hour,
+        last_call: now,
+        account_created: now,
+        chat_minutes_remaining: 0.seconds,
+        chat_minutes_per_call: 0.seconds,
+        expert_mode: false,
+        ansi_colour: profile.ansi_colour,
+        line_length: profile.line_length,
+        preferred_protocol: zmodem,
+        flags: profile.flags
+    )
+    ensures: session.state = onboarded
+    ensures: session.authenticated_at = now
+}
+
+-- The user has finished any on-logon screens and reaches the menu.
+rule EnterMenu {
+    when: OnboardingComplete(session)
+    requires: session.state = onboarded
+    requires: not session.user.force_password_reset
+
+    ensures: session.state = menu
+    ensures: session.user.times_called = session.user.times_called + 1
+    ensures: CallerLog.created(
+        session: session,
+        at: now,
+        text: format_logon_line(session),
+        is_password_failure: false
+    )
+}
+
+-- Periodic time-decrement: every minute the session has been active counts
+-- against the user's per-call and per-day allowances.
+rule UpdateTimeUsed {
+    when: session: Session.last_input_at + 1.minute <= now
+    requires: session.state in {onboarded, menu}
+    requires: session.user != null
+
+    ensures: session.time_remaining = session.time_remaining - 1.minute
+    ensures: session.user.time_used_today = session.user.time_used_today + 1.minute
+}
+
+-- Time exhausted.
+rule TimeExpired {
+    when: session: Session.time_remaining <= 0.seconds
+    requires: session.state in {onboarded, menu}
+    requires: session.user != null
+    -- Sysop accounts can be configured to bypass time enforcement entirely;
+    -- that is expressed as a check on access_level which we leave to the
+    -- access-rights system.
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason = out_of_time
+}
+
+-- Idle disconnect.
+rule IdleTimeout {
+    when: session: Session.last_input_at + core/config.input_timeout <= now
+    requires: session.state in {identifying, authenticating, new_user_registering, onboarded, menu}
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason =
+        if core/config.treat_timeout_as_logoff: input_timeout else: carrier_loss
+}
+
+-- Carrier loss: the transport reports the connection has gone away.
+rule CarrierLost {
+    when: CarrierDropped(session)
+    requires: session.state in {connecting, identifying, authenticating, new_user_registering, onboarded, menu}
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason = carrier_loss
+}
+
+-- The user types G/Goodbye (or whatever the configured logoff command is).
+rule UserRequestsLogoff {
+    when: LogoffRequested(session)
+    requires: session.state in {onboarded, menu}
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason = normal_logoff
+}
+
+-- A re-logon: the session ends but the same node immediately accepts a
+-- new logon attempt. The legacy code uses this for sysop "switch user"
+-- and for users who want to come back on with a different validation.
+rule RelogonRequested {
+    when: RelogonRequested(session)
+    requires: session.state in {onboarded, menu}
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason = relogon
+}
+
+-- The sysop kicks the user from another node.
+rule SysopKick {
+    when: SysopKicksSession(session)
+    requires: session.state in {onboarded, menu, logging_off}
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason = sysop_kicked
+}
+
+-- Final logoff: persist the session's outcome to the user record and
+-- release the node.
+rule FinaliseLogoff {
+    when: session: Session.state transitions_to logging_off
+    requires: session.user != null
+
+    ensures: session.user.last_call = now
+    ensures: session.user.time_used_today = session.user.time_used_today + (now - session.connected_at)
+    ensures:
+        if session.temp_access != null:
+            -- Temporary access is by design ephemeral; we apply nothing
+            -- back to the user record, just discard the override.
+            session.temp_access = null
+    ensures: CallerLog.created(
+        session: session,
+        at: now,
+        text: format_logoff_line(session),
+        is_password_failure: false
+    )
+    ensures: session.state = ended
+    ensures: session.logoff_at = now
+}
+
+-- Logoff for sessions that never authenticated (typed-name failure, etc.).
+-- The user record is null, so we only emit the caller-log line.
+rule FinaliseUnauthenticatedLogoff {
+    when: session: Session.state transitions_to logging_off
+    requires: session.user = null
+
+    ensures: CallerLog.created(
+        session: session,
+        at: now,
+        text: format_logoff_line(session),
+        is_password_failure: false
+    )
+    ensures: session.state = ended
+    ensures: session.logoff_at = now
+}
+
+-- Releasing the node.
+rule ReleaseNode {
+    when: session: Session.state transitions_to ended
+
+    ensures: session.node.status = idle
+    ensures:
+        if session.logoff_reason = relogon:
+            session.node.status = connecting
+}
+
+-- Sysop direct logon at the BBS console: bypasses the password prompt,
+-- reuses the sysop User (slot_number = 1). The legacy code uses F1 (sysop
+-- logon) and F2 (local logon) at the await screen.
+rule SysopDirectLogon {
+    when: SysopLogonRequested(node)
+    requires: node.status in {idle, reserved}
+
+    ensures: Session.created(
+        node: node,
+        channel: sysop_console,
+        state: onboarded,                       -- skip identifying/authenticating
+        connected_at: now,
+        last_input_at: now,
+        authenticated_at: now,
+        user: sysop_user(),
+        online_baud: 0,
+        ansi_colour: true,
+        quick_logon: true,
+        rip_mode: false,
+        quiet_mode: false,
+        cmd_shortcuts: false,
+        name_retry_count: 0,
+        password_retry_count: 0,
+        display_name_type: handle
+    )
+}
+
+-- Reserve a node for a specific user. Until that user logs on (or the
+-- reservation is cleared), other connections are rejected.
+rule ReserveNodeForUser {
+    when: SysopReservesNode(node, user)
+    requires: node.status in {idle, reserved}
+
+    ensures: node.status = reserved
+    ensures: node.reserved_for = user
+}
+
+rule ClearNodeReservation {
+    when: SysopClearsReservation(node)
+    requires: node.status = reserved
+
+    ensures: node.status = idle
+    ensures: node.reserved_for = null
+}
+
+-- Suspend the BBS for a node (sysop maintenance window).
+rule SuspendNode {
+    when: SuspendNodeRequested(node)
+    requires: node.status = idle
+
+    ensures: node.status = suspended
+}
+
+rule ResumeNode {
+    when: ResumeNodeRequested(node)
+    requires: node.status = suspended
+
+    ensures: node.status = idle
+}
+
+-- BBS-wide shutdown.
+rule InitiateShutdown {
+    when: ShutdownRequested()
+
+    ensures:
+        for n in Nodes where status = idle:
+            n.status = shutting_down
+
+    @guidance
+        -- Active sessions are not yanked: each transitions to logging_off
+        -- on its own clock (UserRequestsLogoff or carrier loss). The
+        -- shutdown is therefore cooperative.
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant OneActiveSessionPerNode {
+    for n in Nodes:
+        for s1 in Sessions:
+            for s2 in Sessions:
+                s1 != s2 and s1.node = n and s2.node = n
+                    implies (s1.state = ended or s2.state = ended)
+}
+
+invariant LockedAccountsCannotEnterMenu {
+    for s in Sessions:
+        s.state = menu and s.user != null implies not s.user.account_locked
+}
+
+invariant SessionRetriesBounded {
+    for s in Sessions:
+        s.name_retry_count <= 5 and s.password_retry_count <= core/config.max_password_failures
+}
+
+------------------------------------------------------------
+-- Black box functions
+------------------------------------------------------------
+
+-- Look up by handle, returns one of {found, not_found, user_typed_NEW}.
+-- Wildcards are not allowed in input; the legacy code rejects '*' early.
+-- lookup_name(typed)
+
+-- Resolve a handle to its user. Only valid when lookup_name returned `found`.
+-- user_for_name(typed)
+
+-- The sysop user (slot_number = 1).
+-- sysop_user()
+
+-- Allocate the next free slot number for a new user.
+-- next_free_slot()
+
+-- Format the logon caller-log line. Includes user, location, baud, channel.
+-- format_logon_line(session)
+
+-- Format the logoff caller-log line. Includes time used, byte tallies.
+-- format_logoff_line(session)
+
+-- Bucket a timestamp into "what day is this" given the daily_reset_offset.
+-- floor_to_day(timestamp)
+
+-- True when a candidate password meets length and category requirements.
+-- meets_password_strength(candidate)
+
+------------------------------------------------------------
+-- Open questions
+------------------------------------------------------------
+
+open question "How should we model 'instantLogon' (sysop key combination that triggers an immediate logon)? Currently treated as a SysopLogonRequested but with extra branches in the legacy code."
+
+open question "Should baud-rate-based login windows (only-allow-2400-baud-between-0900-and-1700) be modelled in this spec, or pushed to a separate access-policy spec?"
+
+open question "Multi-line transitions for relogon: the legacy code goes logging_off -> logon (skipping ended). Modelled here as ended -> connecting via ReleaseNode. Is that the right reification?"
