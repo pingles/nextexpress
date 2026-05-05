@@ -52,6 +52,20 @@ pub enum LogoffReason {
     NormalLogoff,
 }
 
+/// Policy decision after a password failure has been recorded on a
+/// session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordFailureDecision {
+    /// Keep the session in password authentication.
+    Continue,
+    /// End the session because the session-level failure limit was
+    /// reached.
+    EndSession,
+    /// Lock the user's account because the user-level failure limit
+    /// was reached.
+    LockAccount,
+}
+
 /// Domain policy values that influence a session's behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionPolicy {
@@ -74,13 +88,32 @@ impl SessionPolicy {
         }
     }
 
-    /// Returns the bad-password limit.
+    /// Decides what should happen after a password failure has been
+    /// recorded on `session`.
+    ///
+    /// The account-level lockout decision wins over the session-level
+    /// end decision when both counters have reached the configured
+    /// limit.
+    ///
+    /// # Parameters
+    /// - `session`: the session whose password-failure counters should
+    ///   be assessed.
     ///
     /// # Returns
-    /// The number of consecutive failed password attempts that ends a
-    /// session or locks the account.
-    pub fn max_password_failures(&self) -> u32 {
-        self.max_password_failures
+    /// A [`PasswordFailureDecision`] describing whether the session
+    /// may continue, should end, or should lock the bound account.
+    pub fn password_failure_decision(&self, session: &Session) -> PasswordFailureDecision {
+        let user_failures = session
+            .user()
+            .map(|user| user.invalid_attempts())
+            .unwrap_or_default();
+        if user_failures >= self.max_password_failures {
+            PasswordFailureDecision::LockAccount
+        } else if session.password_retry_count() >= self.max_password_failures {
+            PasswordFailureDecision::EndSession
+        } else {
+            PasswordFailureDecision::Continue
+        }
     }
 }
 
@@ -518,21 +551,21 @@ impl Session {
             is_password_failure: true,
         };
 
-        let user_attempts = self.user.as_ref().expect("user present").invalid_attempts();
-        let max_password_failures = policy.max_password_failures();
-        let outcome = if user_attempts >= max_password_failures {
-            self.user.as_mut().expect("user present").lock_account();
-            self.transition_to(SessionState::LoggingOff)
-                .expect("authenticating -> logging_off is permitted");
-            self.logoff_reason = Some(LogoffReason::LockedAccount);
-            VerifyPasswordOutcome::AccountLocked
-        } else if self.password_retry_count >= max_password_failures {
-            self.transition_to(SessionState::LoggingOff)
-                .expect("authenticating -> logging_off is permitted");
-            self.logoff_reason = Some(LogoffReason::ExcessivePasswordFails);
-            VerifyPasswordOutcome::TooManyFailures
-        } else {
-            VerifyPasswordOutcome::NotMatching
+        let outcome = match policy.password_failure_decision(self) {
+            PasswordFailureDecision::LockAccount => {
+                self.user.as_mut().expect("user present").lock_account();
+                self.transition_to(SessionState::LoggingOff)
+                    .expect("authenticating -> logging_off is permitted");
+                self.logoff_reason = Some(LogoffReason::LockedAccount);
+                VerifyPasswordOutcome::AccountLocked
+            }
+            PasswordFailureDecision::EndSession => {
+                self.transition_to(SessionState::LoggingOff)
+                    .expect("authenticating -> logging_off is permitted");
+                self.logoff_reason = Some(LogoffReason::ExcessivePasswordFails);
+                VerifyPasswordOutcome::TooManyFailures
+            }
+            PasswordFailureDecision::Continue => VerifyPasswordOutcome::NotMatching,
         };
         Ok((outcome, entry))
     }
@@ -1035,6 +1068,43 @@ mod tests {
         assert_eq!(s.user().unwrap().invalid_attempts(), 1);
         assert_eq!(entry.text, "Password failure");
         assert!(entry.is_password_failure);
+    }
+
+    #[test]
+    fn session_policy_continues_below_password_failure_limit() {
+        let mut s = authenticated_session();
+        s.password_retry_count = 1;
+        s.user.as_mut().unwrap().bump_invalid_attempts();
+
+        assert_eq!(
+            SessionPolicy::new(3).password_failure_decision(&s),
+            PasswordFailureDecision::Continue
+        );
+    }
+
+    #[test]
+    fn session_policy_locks_account_when_user_failures_reach_limit() {
+        let mut s = authenticated_session();
+        s.password_retry_count = 3;
+        for _ in 0..3 {
+            s.user.as_mut().unwrap().bump_invalid_attempts();
+        }
+
+        assert_eq!(
+            SessionPolicy::new(3).password_failure_decision(&s),
+            PasswordFailureDecision::LockAccount
+        );
+    }
+
+    #[test]
+    fn session_policy_ends_session_when_session_failures_reach_limit() {
+        let mut s = authenticated_session();
+        s.password_retry_count = 3;
+
+        assert_eq!(
+            SessionPolicy::new(3).password_failure_decision(&s),
+            PasswordFailureDecision::EndSession
+        );
     }
 
     #[test]

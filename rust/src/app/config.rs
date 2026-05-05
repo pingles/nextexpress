@@ -17,6 +17,10 @@ const DEFAULT_PORT: u16 = 2323;
 /// Default number of simultaneous nodes (`core.allium:config.max_nodes`).
 const DEFAULT_MAX_NODES: u32 = 32;
 
+/// Default consecutive bad-password attempts before lockout
+/// (`core.allium:config.max_password_failures`).
+const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
+
 /// Runtime configuration of the BBS.
 ///
 /// Every field corresponds to one of the documented `core.allium:config`
@@ -48,7 +52,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             max_nodes: DEFAULT_MAX_NODES,
             bbs_path: PathBuf::from("."),
-            max_password_failures: SessionPolicy::default().max_password_failures(),
+            max_password_failures: DEFAULT_MAX_PASSWORD_FAILURES,
         }
     }
 }
