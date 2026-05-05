@@ -22,7 +22,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | Phase | File | Slices | Theme |
 | --- | --- | --- | --- |
 | 0 | [slices/phase0.md](slices/phase0.md) | 1 | Project foundations |
-| 1 | [slices/phase1.md](slices/phase1.md) | 2–13, 13a | Sign in, see the menu, log off |
+| 1 | [slices/phase1.md](slices/phase1.md) | 2–13, 8a, 13a | Sign in, see the menu, log off |
 | 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow |
 | 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding |
 | 4 | [slices/phase4.md](slices/phase4.md) | 22–26 | Sysop console & node controls |
@@ -92,6 +92,101 @@ Concretely:
   rule reads it (e.g. `max_password_failures` lands with the
   password-failure slice, `input_timeout` with the idle-timeout slice).
 
+## Adapter contracts
+
+The Allium specs in `specs/` deliberately exclude wire-level concerns
+(see `session.allium`'s "Excludes: Wire transports (telnet IAC, FTP
+control connection, serial CD) — these are surface concerns; session
+sees only `remote` or `local`"). That's correct hexagonal modelling
+— the domain shouldn't know whether bytes flow over telnet, SSH, FTP
+or serial — but it leaves a class of obligations on every user-facing
+transport adapter that no Allium rule will ever describe. Those
+obligations are written down here so each adapter slice owns them
+explicitly instead of inheriting silent expectations.
+
+### Wire-quality checklist for user-facing transport adapters
+
+Any slice that introduces or extends a user-facing transport adapter
+(today: telnet — Slice 8 / Slice 8a; future: SSH, FTP, web, …) must
+satisfy this checklist before it can be marked **Done**. Each item is
+testable; the slice owns failing tests and adapter code that makes
+them pass.
+
+1. **Input echo, visibility-aware.** Every typed printable byte is
+   echoed back to the client. The default mode is *visible* (echo
+   the literal byte). At password-class prompts the mode is *masked*
+   (echo `*` instead) — the password must never appear on the wire.
+   Mirrors `amiexpress/express.e:2342` (`aePuts(cmdCharString)` in
+   `lineInput`) and `amiexpress/express.e:1543` (`serPuts('*')` in
+   `getPass2`).
+2. **Line editing.** `<BS>` (`0x08`) and `<DEL>` (`0x7F`) remove the
+   previous byte from the input buffer and emit `<BS><SPACE><BS>` to
+   the client to erase the position visually. A backspace at an empty
+   buffer is a no-op (no underflow, no spurious echo). Mirrors
+   `amiexpress/express.e:1530-1538` (`getPass2`) and `:2304-2320`
+   (`lineInput`).
+3. **CRLF discipline on every server-originated byte stream.** All
+   server output uses telnet `\r\n`, not bare `\n` and not Amiga
+   `\b\n`. Disk-loaded screen files authored on the original Amiga
+   (which used `\b\n` as end-of-line) are translated to `\r\n` on the
+   way out. Pressing `<Enter>` echoes a CRLF so the cursor advances
+   on the client.
+4. **Control-byte filtering.** Bytes below `0x20`, other than the
+   four explicitly handled ones (`<CR>`, `<LF>`, `<BS>`, `<DEL>`),
+   are silently dropped from accepted input. Mirrors `lineInput`'s
+   `IF (ch>31)` guard at `amiexpress/express.e:2335`.
+5. **Protocol-level negotiation handled, not echoed.** Any `IAC`
+   sequences (telnet option negotiation, subnegotiation) are consumed
+   by the adapter and never appear in the input buffer fed to the
+   domain. The set of negotiations the adapter advertises (e.g.
+   `WILL ECHO`, `WILL SUPPRESS-GO-AHEAD`) creates obligations the
+   adapter must then fulfil.
+6. **End-to-end byte assertion in the phase smoke test.** The
+   wire-and-smoke closing slice for any phase that exposes new
+   user-facing prompts must read the bytes the client actually
+   receives between writes — not just look for the next prompt — and
+   assert that visible echo / mask invariants hold there. A test
+   that only checks "the next prompt appeared" passes against a
+   server that ignores everything until `\r\n` and never echoes.
+
+### Original strings: parity with the AmiExpress source
+
+Where the original BBS already has a user-facing string — a prompt,
+an error message, a banner, a status line, a command character — we
+use it verbatim. We don't invent new wording when a legacy original
+exists, even when the legacy wording is awkward, ungrammatical, or
+slightly inconsistent with itself. Parity with what the existing
+sysop and user community already know is the goal; reflowing the
+prose costs that parity for nothing in return.
+
+Concretely, each slice that introduces a user-facing string must:
+
+- **Find the original first.** Grep the `amiexpress/` tree (typically
+  `express.e`, sometimes `axenums.e`, `axconsts.e`, or an asset under
+  `deployment/`) for the prompt, message or command. AGENTS.md's
+  rule applies: "Always use the `amiexpress` source when referencing
+  original strings/messages/commands etc."
+- **Carry the source line as a comment** next to the constant or
+  string literal, of the form
+  `// amiexpress/express.e:NNNN`.
+  This makes the lineage auditable and lets future readers verify
+  parity at a glance.
+- **Translate Amiga line endings only.** The legacy `\b\n` becomes
+  telnet `\r\n`; legacy `[<n>m` ANSI escapes pass through unchanged;
+  the textual content is preserved character-for-character (modulo
+  obvious mojibake of `©` / `é` / similar from the original file's
+  encoding, which we restore via `\u{...}` escapes).
+- **Document any deliberate departure** in the slice's In Scope, with
+  reasoning. "We renamed X to Y because Z" belongs in the slice spec
+  so it isn't quietly drift.
+
+If an asset (`Menu.txt`, `BBSTITLE.txt`, screen file) ships in
+`amiexpress/deployment/binaries.lha` (see the asset inventory at the
+foot of this file), the adapter loads that asset rather than
+rendering a built-in fallback. The fallback exists only for the
+"sysop hasn't dropped the file in place yet" case and is built to
+look as close to the legacy default as we can make it.
+
 ## Progress
 
 A slice is **Done** only when every Allium rule, invariant and black-box
@@ -126,6 +221,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 6 | Session entity skeleton | Done |
 | 7 | `AcceptConnection` rule | Done |
 | 8 | Telnet listener + per-session task | Done |
+| 8a | Telnet wire-quality (echo, password masking, line editing, AmiExpress prompts) | Done |
 | 9 | `PromptForName` + `NameTyped` rules (existing user path only) | Done |
 | 10 | `VerifyPassword` rule (happy path) | Done |
 | 11 | `VerifyPassword` rule (failure path) | Done |

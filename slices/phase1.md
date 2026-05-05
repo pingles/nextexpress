@@ -71,15 +71,35 @@ table and asset inventory.
 
 ## Slice 8 — Telnet listener + per-session task
 - **In Scope**
-  - Async telnet listener (`tokio::net::TcpListener`) with line-mode IAC negotiation (so the user sees what they type).
+  - Async telnet listener (`tokio::net::TcpListener`) with line-mode IAC negotiation (advertises `WILL ECHO`, `WILL SUPPRESS-GO-AHEAD`, `DO SUPPRESS-GO-AHEAD`). Note that advertising `WILL ECHO` creates an obligation to actually echo, which Slice 8a discharges.
   - For each accepted TCP connection: try to allocate a node from the `NodePool` (Slice 5); if all `config.max_nodes` are in use, send a "BBS busy" line and close. On success, spawn a `tokio::task` that owns the connection for its lifetime and invokes `AcceptConnection` (Slice 7).
   - The session task writes the BBSTITLE screen if a file exists at `bbs.path/Screens/BBSTITLE.txt`, otherwise a built-in fallback ("NextExpress\n"), then drops.
   - Concurrent end-to-end test: open `max_nodes + 1` simultaneous connections, assert that the first `max_nodes` each see the banner and the surplus is rejected. Assert that closing one frees its node so a fresh connection can grab it.
 - **Out of Scope**
+  - Wire-quality (echo, password masking, line editing, source-faithful prompts) — Slice 8a.
   - ANSI / RIP / colour negotiation (Slice 65).
   - SSH and FTP transports — see [`future.md`](future.md).
   - A `Transport` trait — extracted when a second transport adapter lands.
   - Modem / serial CD.
+
+## Slice 8a — Telnet wire-quality (echo, password masking, line editing, AmiExpress prompts)
+- **In Scope**
+  - Discharges every item on the **Wire-quality checklist** in [SLICES.md](../SLICES.md#wire-quality-checklist-for-user-facing-transport-adapters) for the telnet adapter:
+    1. **Visible vs masked echo.** `read_telnet_line` takes an `EchoMode { Visible, Masked }`; the name and menu prompts use `Visible` (mirrors `amiexpress/express.e:2342`), the password prompt uses `Masked` (mirrors `amiexpress/express.e:1543` — `serPuts('*')` in `getPass2`). The password never appears on the wire in plaintext.
+    2. **Line editing.** `<BS>` (`0x08`) and `<DEL>` (`0x7F`) drop the previous byte from the input buffer and emit `<BS><SPACE><BS>` to the client. BS at an empty buffer is a no-op. Mirrors `amiexpress/express.e:1530-1538` and `:2304-2320`.
+    3. **CRLF discipline.** All server output is telnet `\r\n`. `<Enter>` from the client triggers a `\r\n` echo so the cursor advances. Disk-loaded `BBSTITLE.txt` is run through the same `\b\n -> \r\n` translation as `Conf02/Menu.txt` so screens authored on the original Amiga render correctly on Linux/macOS/Windows clients.
+    4. **Control-byte filtering.** Bytes below `0x20` (other than CR/LF/BS/DEL) are silently dropped from accepted input, matching `lineInput`'s `IF (ch>31)` guard at `amiexpress/express.e:2335`.
+    5. **IAC consumed, not stored.** Telnet option negotiation bytes are eaten by the adapter and never reach the input buffer the domain sees. (Already in slice 8; restated here as a requirement of the contract.)
+    6. **End-to-end byte assertions in the phase smoke test.** `tests/phase1_smoke.rs` reads the bytes returned to the client between writes and asserts that `sysop` is echoed at the name prompt and that `sysop` (the password) does NOT appear in the bytes between password-submit and the next prompt — a regression guard against accidentally re-introducing plaintext password echo.
+  - Source-faithful prompts. The user-visible strings introduced or revised here come from the AmiExpress source verbatim, with a `// amiexpress/<file>:<line>` comment next to each constant:
+    - Name prompt: `\r\nEnter your Name: ` (`amiexpress/express.e:31774` for the literal, `:29571` for the `\b\n<prompt> ` wrap).
+    - AmiExpress copyright line: `AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n` (`amiexpress/express.e:25690`).
+  - NextExpress copyright line printed above the AmiExpress one, derived at compile time from `CARGO_PKG_VERSION`.
+  - Tests in `src/adapters/telnet_listener.rs` cover each of the six checklist items independently; the smoke test asserts the end-to-end echo invariant on the running binary.
+- **Out of Scope**
+  - Mid-line cursor movement and ANSI escape handling for arrow keys / `Ctrl-X` / history (`amiexpress/express.e:2235-2299`) — adds in the toggles / expert-mode slice (Slice 65) where it pulls its weight.
+  - `VIEW_PASSWORD` tooltype that reveals real password chars on the local sysop console (`amiexpress/express.e:1544`) — irrelevant until Slice 22 introduces sysop direct logon.
+  - Translator / multi-language overrides (`NAME_PROMPT2` tooltype at `amiexpress/express.e:31770`) — sysop tooltype configuration is out of scope for the whole port (per AGENTS.md, "configuration via files rather than a separate program").
 
 ## Slice 9 — `PromptForName` + `NameTyped` rules (existing user path only)
 - **In Scope**
