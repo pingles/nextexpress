@@ -103,18 +103,18 @@ that pass, and `cargo test`, `cargo build`, `cargo fmt --check` and
 | # | Slice | Status |
 | ---: | --- | :---: |
 | 1 | Cargo crate skeleton | Done |
-| 2 | User entity (login-time fields only) | Todo |
-| 3 | In-memory `UserRepository` port + adapter | Todo |
-| 4 | Password verification adapter (single algorithm) | Todo |
-| 5 | Node entity (Phase 1 statuses only) | Todo |
-| 6 | Session entity skeleton | Todo |
-| 7 | `AcceptConnection` rule | Todo |
-| 8 | Telnet listener + per-session task | Todo |
-| 9 | `PromptForName` + `NameTyped` rules (existing user path only) | Todo |
-| 10 | `VerifyPassword` rule (happy path) | Todo |
-| 11 | `VerifyPassword` rule (failure path) | Todo |
-| 12 | `EnterMenu` + display the conference menu | Todo |
-| 13 | `UserRequestsLogoff` + `FinaliseLogoff` + `ReleaseNode` | Todo |
+| 2 | User entity (login-time fields only) | Done |
+| 3 | In-memory `UserRepository` port + adapter | Done |
+| 4 | Password verification adapter (single algorithm) | Done |
+| 5 | Node entity (Phase 1 statuses only) | Done |
+| 6 | Session entity skeleton | Done |
+| 7 | `AcceptConnection` rule | Done |
+| 8 | Telnet listener + per-session task | Done |
+| 9 | `PromptForName` + `NameTyped` rules (existing user path only) | Done |
+| 10 | `VerifyPassword` rule (happy path) | Done |
+| 11 | `VerifyPassword` rule (failure path) | Done |
+| 12 | `EnterMenu` + display the conference menu | Done |
+| 13 | `UserRequestsLogoff` + `FinaliseLogoff` + `ReleaseNode` | Done |
 | 14 | Daily time budget initialisation + decrement | Todo |
 | 15 | Forced password reset | Todo |
 | 16 | Account-locked / insufficient-access rejection | Todo |
