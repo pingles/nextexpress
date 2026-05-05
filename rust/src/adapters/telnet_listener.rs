@@ -8,7 +8,6 @@
 
 use std::io;
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -16,6 +15,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
 use crate::app::node_pool::NodePool;
+use crate::app::screens::ScreenRepository;
 use crate::app::session_flow;
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::config::Config;
@@ -23,6 +23,7 @@ use crate::domain::password::PasswordHasher;
 use crate::domain::session::{LogonChannel, NameTypedOutcome, Session, VerifyPasswordOutcome};
 use crate::domain::user_repository::UserRepository;
 
+use super::file_screen_repository::FileScreenRepository;
 use super::telnet_line::{read_telnet_line, EchoMode};
 
 /// Bytes sent at the start of every accepted connection to set up
@@ -39,11 +40,6 @@ const IAC_INIT: &[u8] = &[
 
 /// Sent to clients that arrive when every node is in use.
 const BUSY_LINE: &[u8] = b"All BBS nodes are busy. Please try again later.\r\n";
-
-/// Built-in fallback banner used when the configured `BBSTITLE.txt`
-/// file is missing. Telnet line ending (CRLF) so it renders correctly
-/// on Linux and macOS clients that don't translate bare LF.
-const FALLBACK_BANNER: &[u8] = b"NextExpress\r\n";
 
 /// Two-line copyright block printed on every accepted connection,
 /// directly after the BBS title banner. The NextExpress line sits
@@ -87,10 +83,6 @@ const AUTHENTICATED_LINE: &[u8] = b"Authenticated.\r\n";
 /// retry counts and lockout; for now we just inform and close.
 const WRONG_PASSWORD_LINE: &[u8] = b"Incorrect password.\r\n";
 
-/// Built-in fallback menu used when the configured `Conf02/Menu.txt`
-/// file is missing.
-const FALLBACK_MENU: &[u8] = b"[ Default menu - type G to log off ]\r\n";
-
 /// Prompt printed after each menu screen, awaiting a command.
 const MENU_PROMPT: &[u8] = b"Command: ";
 
@@ -109,15 +101,18 @@ type SharedHasher = Arc<dyn PasswordHasher + Send + Sync + 'static>;
 /// Type alias for the caller-log appender the listener drives.
 type SharedCallerLog = Arc<dyn CallerLogAppender + Send + Sync + 'static>;
 
+/// Type alias for the screen repository the listener reads from.
+type SharedScreens = Arc<dyn ScreenRepository + Send + Sync + 'static>;
+
 /// Telnet listener and the application state it drives.
 pub struct TelnetListener {
     listener: TcpListener,
     pool: Arc<NodePool>,
-    bbs_path: PathBuf,
     max_password_failures: u32,
     user_repo: SharedUserRepo,
     hasher: SharedHasher,
     caller_log: SharedCallerLog,
+    screens: SharedScreens,
 }
 
 impl TelnetListener {
@@ -133,16 +128,32 @@ impl TelnetListener {
         hasher: SharedHasher,
         caller_log: SharedCallerLog,
     ) -> io::Result<Self> {
+        let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
+        Self::bind_with_screens(addr, config, user_repo, hasher, caller_log, screens).await
+    }
+
+    /// Binds a [`TcpListener`] using an injected screen repository.
+    ///
+    /// # Errors
+    /// Returns the underlying [`io::Error`] if the bind fails.
+    pub async fn bind_with_screens<A: ToSocketAddrs>(
+        addr: A,
+        config: Config,
+        user_repo: SharedUserRepo,
+        hasher: SharedHasher,
+        caller_log: SharedCallerLog,
+        screens: SharedScreens,
+    ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let pool = Arc::new(NodePool::new(config.max_nodes));
         Ok(Self {
             listener,
             pool,
-            bbs_path: config.bbs_path,
             max_password_failures: config.max_password_failures,
             user_repo,
             hasher,
             caller_log,
+            screens,
         })
     }
 
@@ -170,14 +181,14 @@ impl TelnetListener {
         loop {
             let (stream, _peer) = self.listener.accept().await?;
             let pool = self.pool.clone();
-            let bbs_path = self.bbs_path.clone();
             let repo = self.user_repo.clone();
             let hasher = self.hasher.clone();
             let log = self.caller_log.clone();
+            let screens = self.screens.clone();
             let max_pw_fails = self.max_password_failures;
             tokio::spawn(async move {
-                let _ = handle_connection(stream, pool, bbs_path, repo, hasher, log, max_pw_fails)
-                    .await;
+                let _ =
+                    handle_connection(stream, pool, repo, hasher, log, screens, max_pw_fails).await;
             });
         }
     }
@@ -192,10 +203,10 @@ impl TelnetListener {
 async fn handle_connection(
     mut stream: TcpStream,
     pool: Arc<NodePool>,
-    bbs_path: PathBuf,
     user_repo: SharedUserRepo,
     hasher: SharedHasher,
     caller_log: SharedCallerLog,
+    screens: SharedScreens,
     max_password_failures: u32,
 ) -> io::Result<()> {
     let Some(node_number) = pool.allocate().await else {
@@ -206,11 +217,11 @@ async fn handle_connection(
 
     let result = run_session(
         &mut stream,
-        &bbs_path,
         node_number,
         user_repo.as_ref(),
         hasher.as_ref(),
         caller_log.as_ref(),
+        screens.as_ref(),
         max_password_failures,
     )
     .await;
@@ -223,11 +234,11 @@ async fn handle_connection(
 #[allow(clippy::too_many_arguments)]
 async fn run_session(
     stream: &mut TcpStream,
-    bbs_path: &Path,
     node_number: u32,
     user_repo: &(dyn UserRepository + Send + Sync),
     hasher: &(dyn PasswordHasher + Send + Sync),
     caller_log: &(dyn CallerLogAppender + Send + Sync),
+    screens: &(dyn ScreenRepository + Send + Sync),
     max_password_failures: u32,
 ) -> io::Result<()> {
     stream.write_all(IAC_INIT).await?;
@@ -248,7 +259,7 @@ async fn run_session(
     )
     .expect("freshly allocated node has no existing session");
 
-    let banner = read_banner(bbs_path).await;
+    let banner = screens.banner().await;
     stream.write_all(&banner).await?;
     stream.write_all(COPYRIGHT_LINES).await?;
 
@@ -336,7 +347,7 @@ async fn run_session(
     // Menu loop (Slice 13). Phase 1 only implements `G` (goodbye).
     // Future slices add the rest of the legacy AmiExpress menu.
     loop {
-        let menu = read_default_menu(bbs_path).await;
+        let menu = screens.default_menu().await;
         stream.write_all(&menu).await?;
         stream.write_all(MENU_PROMPT).await?;
         stream.flush().await?;
@@ -354,49 +365,6 @@ async fn run_session(
         }
         stream.write_all(UNKNOWN_COMMAND_LINE).await?;
     }
-}
-
-/// Reads `bbs_path/Screens/BBSTITLE.txt`, falling back to the built-in
-/// banner if the file is missing or unreadable. Amiga `\b\n` line
-/// endings in the file are translated to telnet `\r\n` so files
-/// authored on the original system render correctly on
-/// Linux / macOS / Windows clients.
-async fn read_banner(bbs_path: &Path) -> Vec<u8> {
-    let path = bbs_path.join("Screens").join("BBSTITLE.txt");
-    match tokio::fs::read(&path).await {
-        Ok(bytes) => translate_amiga_line_endings(&bytes),
-        Err(_) => FALLBACK_BANNER.to_vec(),
-    }
-}
-
-/// Reads `bbs_path/Conf02/Menu.txt`, normalising the Amiga-era `\b\n`
-/// line terminator to telnet `\r\n`. Falls back to a built-in menu if
-/// the file is missing or unreadable.
-async fn read_default_menu(bbs_path: &Path) -> Vec<u8> {
-    let path = bbs_path.join("Conf02").join("Menu.txt");
-    let raw = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
-        Err(_) => return FALLBACK_MENU.to_vec(),
-    };
-    translate_amiga_line_endings(&raw)
-}
-
-/// Replaces the Amiga `\b\n` (BS+LF) sequence with the telnet `\r\n`
-/// (CR+LF). Other bytes — including ANSI escapes — pass through.
-fn translate_amiga_line_endings(input: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(input.len());
-    let mut i = 0;
-    while i < input.len() {
-        if i + 1 < input.len() && input[i] == 0x08 && input[i + 1] == b'\n' {
-            out.push(b'\r');
-            out.push(b'\n');
-            i += 2;
-        } else {
-            out.push(input[i]);
-            i += 1;
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -987,26 +955,6 @@ mod tests {
             contains(&buf, b"Enter your Name: "),
             "expected re-prompt: {buf:?}"
         );
-    }
-
-    #[test]
-    fn translate_amiga_line_endings_replaces_bs_lf() {
-        assert_eq!(translate_amiga_line_endings(b"foo\x08\nbar"), b"foo\r\nbar");
-    }
-
-    #[test]
-    fn translate_amiga_line_endings_preserves_ansi_escapes() {
-        let ansi = b"\x1b[31mRED\x1b[0m\x08\n";
-        assert_eq!(
-            translate_amiga_line_endings(ansi),
-            b"\x1b[31mRED\x1b[0m\r\n"
-        );
-    }
-
-    #[test]
-    fn translate_amiga_line_endings_leaves_other_bytes_alone() {
-        assert_eq!(translate_amiga_line_endings(b"hello"), b"hello");
-        assert_eq!(translate_amiga_line_endings(b"a\x08b"), b"a\x08b");
     }
 
     #[tokio::test]

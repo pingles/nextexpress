@@ -21,6 +21,7 @@ use crate::domain::user_repository::UserRepository;
 
 pub mod config_loader;
 pub mod node_pool;
+pub mod screens;
 pub mod seed;
 pub mod session_flow;
 
