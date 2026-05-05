@@ -229,6 +229,11 @@ async fn run_session(
 ) -> io::Result<()> {
     stream.write_all(IAC_INIT).await?;
 
+    // Single-byte pushback slot owned by this session. Lets
+    // `read_telnet_line` peek at the byte after a CR without
+    // consuming it if it isn't a trailer (see `try_consume_cr_trailer`).
+    let mut pushback: Option<u8> = None;
+
     // Invoke AcceptConnection. The pool already moved the node to
     // `Connecting` atomically, so no other session can be active here.
     let mut session = Session::accept_connection(
@@ -251,7 +256,7 @@ async fn run_session(
     loop {
         stream.write_all(NAME_PROMPT).await?;
         stream.flush().await?;
-        let Some(typed) = read_telnet_line(stream, EchoMode::Visible).await? else {
+        let Some(typed) = read_telnet_line(stream, &mut pushback, EchoMode::Visible).await? else {
             return Ok(()); // EOF before name typed
         };
 
@@ -279,7 +284,8 @@ async fn run_session(
     loop {
         stream.write_all(PASSWORD_PROMPT).await?;
         stream.flush().await?;
-        let Some(password) = read_telnet_line(stream, EchoMode::Masked).await? else {
+        let Some(password) = read_telnet_line(stream, &mut pushback, EchoMode::Masked).await?
+        else {
             return Ok(()); // EOF before password typed
         };
 
@@ -331,7 +337,7 @@ async fn run_session(
         stream.write_all(&menu).await?;
         stream.write_all(MENU_PROMPT).await?;
         stream.flush().await?;
-        let Some(line) = read_telnet_line(stream, EchoMode::Visible).await? else {
+        let Some(line) = read_telnet_line(stream, &mut pushback, EchoMode::Visible).await? else {
             return Ok(());
         };
         let cmd = line.trim().to_ascii_uppercase();
@@ -375,45 +381,52 @@ enum EchoMode {
 /// Reads one line of input from `stream`, stripping IAC sequences and
 /// echoing typed bytes back to the client according to `echo`.
 ///
+/// `pushback` is a one-byte slot owned by the caller and reused across
+/// consecutive prompts. It lets us look at the byte that follows a CR
+/// without committing to consuming it: if it turns out not to be the
+/// expected LF/NUL trailer, we stash it in `pushback` so the next
+/// invocation of this function sees it as the first byte of input.
+/// Without this, a SyncTerm-style client that sends a bare CR for
+/// `<Enter>` would force the user to press Enter twice (we'd block
+/// waiting for a trailer that never arrives).
+///
 /// Returns `Ok(Some(line))` on success, `Ok(None)` on EOF before any
 /// terminator was seen.
-async fn read_telnet_line(stream: &mut TcpStream, echo: EchoMode) -> io::Result<Option<String>> {
+async fn read_telnet_line(
+    stream: &mut TcpStream,
+    pushback: &mut Option<u8>,
+    echo: EchoMode,
+) -> io::Result<Option<String>> {
     let mut buf = Vec::with_capacity(64);
-    let mut byte = [0u8; 1];
     loop {
-        let n = stream.read(&mut byte).await?;
-        if n == 0 {
+        let Some(b) = read_one(stream, pushback).await? else {
             return if buf.is_empty() {
                 Ok(None)
             } else {
                 Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
             };
-        }
-        match byte[0] {
+        };
+        match b {
             0xFF => {
                 // IAC. Consume the command (and option byte for the
                 // 3-byte negotiations).
-                let nb = stream.read(&mut byte).await?;
-                if nb == 0 {
+                let Some(cmd) = read_one(stream, pushback).await? else {
                     return Ok(None);
-                }
-                let cmd = byte[0];
+                };
                 if (0xFB..=0xFE).contains(&cmd) {
                     // WILL / WONT / DO / DONT — one option byte follows.
-                    let _ = stream.read(&mut byte).await?;
+                    let _ = read_one(stream, pushback).await?;
                 } else if cmd == 0xFA {
                     // SB ... IAC SE; consume until SE.
                     loop {
-                        let n2 = stream.read(&mut byte).await?;
-                        if n2 == 0 {
+                        let Some(b1) = read_one(stream, pushback).await? else {
                             return Ok(None);
-                        }
-                        if byte[0] == 0xFF {
-                            let n3 = stream.read(&mut byte).await?;
-                            if n3 == 0 {
+                        };
+                        if b1 == 0xFF {
+                            let Some(b2) = read_one(stream, pushback).await? else {
                                 return Ok(None);
-                            }
-                            if byte[0] == 0xF0 {
+                            };
+                            if b2 == 0xF0 {
                                 break;
                             }
                         }
@@ -421,9 +434,13 @@ async fn read_telnet_line(stream: &mut TcpStream, echo: EchoMode) -> io::Result<
                 }
             }
             b'\r' => {
-                // Telnet sends CR+LF or CR+NUL for line breaks; peek
-                // and discard the trailing byte if present.
-                let _ = stream.read(&mut byte).await?;
+                // RFC 854 says the network virtual-terminal newline
+                // is CR+LF; RFC 1123 §3.3.1 also accepts CR+NUL;
+                // SyncTerm and friends send a bare CR. Try to peek
+                // the next byte non-blockingly: if it's an LF or NUL
+                // trailer, swallow it; otherwise push it back so the
+                // next prompt's `read_telnet_line` sees it.
+                try_consume_cr_trailer(stream, pushback)?;
                 stream.write_all(b"\r\n").await?;
                 return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
             }
@@ -452,6 +469,47 @@ async fn read_telnet_line(stream: &mut TcpStream, echo: EchoMode) -> io::Result<
             _ => {}
         }
     }
+}
+
+/// Returns one byte from `pushback` if any, otherwise blocks reading
+/// from `stream`. `Ok(None)` means EOF.
+async fn read_one(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Result<Option<u8>> {
+    if let Some(b) = pushback.take() {
+        return Ok(Some(b));
+    }
+    let mut byte = [0u8; 1];
+    let n = stream.read(&mut byte).await?;
+    if n == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(byte[0]))
+    }
+}
+
+/// Inspects the next available byte non-blockingly. If it's `<LF>` or
+/// `<NUL>` (the two canonical CR trailers per RFC 854 / RFC 1123), it
+/// is consumed. If it's anything else (or there's nothing queued), it
+/// is left for a subsequent read — non-trailer bytes are stashed in
+/// `pushback` so they aren't lost.
+fn try_consume_cr_trailer(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Result<()> {
+    if let Some(b) = pushback.take() {
+        if b != b'\n' && b != 0 {
+            *pushback = Some(b);
+        }
+        return Ok(());
+    }
+    let mut byte = [0u8; 1];
+    match stream.try_read(&mut byte) {
+        Ok(0) => {} // EOF
+        Ok(_) => {
+            if byte[0] != b'\n' && byte[0] != 0 {
+                *pushback = Some(byte[0]);
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+        Err(error) => return Err(error),
+    }
+    Ok(())
 }
 
 /// Reads `bbs_path/Screens/BBSTITLE.txt`, falling back to the built-in
@@ -966,6 +1024,39 @@ mod tests {
         assert!(
             contains(&buf, b"Password: "),
             "BS at start should be ignored; 'alice' should authenticate normally: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bare_cr_at_name_prompt_advances_without_blocking_on_trailer() {
+        // SyncTerm (and other BBS-oriented clients) send a bare CR
+        // for <Enter> rather than the CR+LF / CR+NUL pair some other
+        // clients send. We must not block waiting for a trailer that
+        // never arrives — otherwise the user has to press Enter
+        // twice before the server reacts.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r").await.unwrap();
+        let buf = drain_until(&mut stream, b"Password: ").await;
+        assert!(
+            contains(&buf, b"Password: "),
+            "bare CR should advance to password prompt: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn cr_nul_trailer_at_name_prompt_advances() {
+        // Telnet's traditional newline per RFC 854 is CR+NUL — we
+        // must accept that as a single line break.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\0").await.unwrap();
+        let buf = drain_until(&mut stream, b"Password: ").await;
+        assert!(
+            contains(&buf, b"Password: "),
+            "CR+NUL trailer should be treated as one line break: {buf:?}"
         );
     }
 
