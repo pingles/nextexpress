@@ -251,7 +251,7 @@ async fn run_session(
     loop {
         stream.write_all(NAME_PROMPT).await?;
         stream.flush().await?;
-        let Some(typed) = read_telnet_line(stream).await? else {
+        let Some(typed) = read_telnet_line(stream, EchoMode::Visible).await? else {
             return Ok(()); // EOF before name typed
         };
 
@@ -279,7 +279,7 @@ async fn run_session(
     loop {
         stream.write_all(PASSWORD_PROMPT).await?;
         stream.flush().await?;
-        let Some(password) = read_telnet_line(stream).await? else {
+        let Some(password) = read_telnet_line(stream, EchoMode::Masked).await? else {
             return Ok(()); // EOF before password typed
         };
 
@@ -331,7 +331,7 @@ async fn run_session(
         stream.write_all(&menu).await?;
         stream.write_all(MENU_PROMPT).await?;
         stream.flush().await?;
-        let Some(line) = read_telnet_line(stream).await? else {
+        let Some(line) = read_telnet_line(stream, EchoMode::Visible).await? else {
             return Ok(());
         };
         let cmd = line.trim().to_ascii_uppercase();
@@ -348,11 +348,36 @@ async fn run_session(
     }
 }
 
-/// Reads one line of input from `stream`, stripping IAC sequences.
+/// How [`read_telnet_line`] should echo the bytes it accepts.
+///
+/// Because the listener advertises `IAC WILL ECHO` to the client at
+/// connect time, well-behaved clients (SyncTerm, PuTTY, telnet(1))
+/// suppress their local echo and rely on the server to reflect typed
+/// characters. Mirrors the original AmiExpress behaviour:
+/// - [`Visible`][Self::Visible] for ordinary line input
+///   (`amiexpress/express.e:2342` echoes the typed char in `lineInput`).
+/// - [`Masked`][Self::Masked] at the password prompt
+///   (`amiexpress/express.e:1543` sends `*` over the wire instead of
+///   the typed character in `getPass2`).
+///
+/// In both modes a single byte (`0x08` BS, `0x7F` DEL) is treated as
+/// "delete the previous character" and echoed as `<BS><SPACE><BS>`,
+/// the classic terminal triplet that erases one position in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EchoMode {
+    /// Echo each accepted byte back to the client verbatim.
+    Visible,
+    /// Echo `*` instead of the accepted byte. Used at the password
+    /// prompt so passwords don't appear on the user's terminal.
+    Masked,
+}
+
+/// Reads one line of input from `stream`, stripping IAC sequences and
+/// echoing typed bytes back to the client according to `echo`.
 ///
 /// Returns `Ok(Some(line))` on success, `Ok(None)` on EOF before any
 /// terminator was seen.
-async fn read_telnet_line(stream: &mut TcpStream) -> io::Result<Option<String>> {
+async fn read_telnet_line(stream: &mut TcpStream, echo: EchoMode) -> io::Result<Option<String>> {
     let mut buf = Vec::with_capacity(64);
     let mut byte = [0u8; 1];
     loop {
@@ -399,12 +424,32 @@ async fn read_telnet_line(stream: &mut TcpStream) -> io::Result<Option<String>> 
                 // Telnet sends CR+LF or CR+NUL for line breaks; peek
                 // and discard the trailing byte if present.
                 let _ = stream.read(&mut byte).await?;
+                stream.write_all(b"\r\n").await?;
                 return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
             }
             b'\n' => {
+                stream.write_all(b"\r\n").await?;
                 return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
             }
-            b => buf.push(b),
+            0x08 | 0x7F => {
+                // Backspace / DEL: drop the previous byte if any and
+                // erase one column on the user's terminal with the
+                // classic <BS><SPACE><BS> triplet.
+                if buf.pop().is_some() {
+                    stream.write_all(b"\x08 \x08").await?;
+                }
+            }
+            b if b >= 0x20 => {
+                buf.push(b);
+                let echoed = match echo {
+                    EchoMode::Visible => b,
+                    EchoMode::Masked => b'*',
+                };
+                stream.write_all(&[echoed]).await?;
+            }
+            // Other control bytes (Ctrl-* etc.): silently ignored,
+            // matching `lineInput`'s `IF (ch>31)` guard.
+            _ => {}
         }
     }
 }
@@ -744,12 +789,22 @@ mod tests {
         addr
     }
 
-    /// Reads bytes from `stream` until `needle` appears or EOF.
+    /// Reads bytes from `stream` until `needle` appears, EOF arrives,
+    /// or 2s elapse with no further data. The timeout matters: under
+    /// the default kernel buffering, a broken server will simply leave
+    /// us blocked on `read` forever. With this we surface the failure
+    /// in a couple of seconds instead.
     async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut chunk = [0u8; 256];
         for _ in 0..200 {
-            let n = stream.read(&mut chunk).await.unwrap_or(0);
+            let read =
+                tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut chunk))
+                    .await;
+            let n = match read {
+                Ok(Ok(n)) => n,
+                _ => 0,
+            };
             if n == 0 {
                 break;
             }
@@ -826,6 +881,115 @@ mod tests {
     /// Returns the byte index of the first occurrence of `needle` in `haystack`.
     fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
+    #[tokio::test]
+    async fn name_prompt_echoes_each_typed_character() {
+        // express.e:2342 echoes the typed character back to the user
+        // for ordinary line input. Our `IAC WILL ECHO` advertisement
+        // means the client suppresses local echo, so we have to.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice").await.unwrap();
+        let buf = drain_until(&mut stream, b"alice").await;
+        assert!(
+            contains(&buf, b"alice"),
+            "expected typed handle echoed back to client: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn password_prompt_masks_typed_characters_with_asterisks() {
+        // express.e:1543 sends a literal '*' on the wire for every
+        // password byte, regardless of the local-console echo. The
+        // VIEW_PASSWORD tooltype only affects the sysop's local
+        // console, never the wire.
+        let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, b"Password: ").await;
+        stream.write_all(b"secret").await.unwrap();
+        let buf = drain_until(&mut stream, b"******").await;
+        assert!(
+            contains(&buf, b"******"),
+            "expected six asterisks for a six-char password: {buf:?}"
+        );
+        assert!(
+            !contains(&buf, b"secret"),
+            "password must NEVER be echoed in plaintext: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn backspace_at_name_prompt_emits_bs_space_bs() {
+        // express.e:2304-2320 erases the previous character with the
+        // classic '<BS><SPACE><BS>' triplet. We mirror that.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"a\x08").await.unwrap();
+        let buf = drain_until(&mut stream, b"a\x08 \x08").await;
+        assert!(
+            contains(&buf, b"a\x08 \x08"),
+            "expected typed 'a' echo followed by BS-SPACE-BS: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn backspace_actually_deletes_from_typed_name() {
+        // BS isn't just cosmetic — it must remove the previous byte
+        // from what the server eventually submits to `name_typed`.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        // 'aliceX' + BS + Enter -> handle should be 'alice', advancing
+        // to the password prompt instead of "Unknown user".
+        stream.write_all(b"aliceX\x08\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"Password: ").await;
+        assert!(
+            contains(&buf, b"Password: "),
+            "BS should leave handle as 'alice', advancing to password: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn backspace_on_empty_buffer_is_a_noop() {
+        // Don't underflow or echo anything if the user mashes BS at
+        // the start of the line.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"\x08\x08alice\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"Password: ").await;
+        assert!(
+            contains(&buf, b"Password: "),
+            "BS at start should be ignored; 'alice' should authenticate normally: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn enter_at_name_prompt_emits_crlf_to_client() {
+        // After echoing the typed name, the server must also echo a
+        // CRLF when the user presses Enter so the cursor moves to the
+        // next line on the client display.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        // We expect bytes between the echoed 'e' (last char of alice)
+        // and the next "Password: " prompt to include "\r\n".
+        let buf = drain_until(&mut stream, b"Password: ").await;
+        let after_alice = find_subslice(&buf, b"alice")
+            .map(|i| i + b"alice".len())
+            .expect("'alice' echo present");
+        let pwd_index = find_subslice(&buf, b"Password: ").expect("Password prompt present");
+        let between = &buf[after_alice..pwd_index];
+        assert!(
+            contains(between, b"\r\n"),
+            "expected CRLF between echoed handle and Password prompt: {between:?}"
+        );
     }
 
     #[tokio::test]

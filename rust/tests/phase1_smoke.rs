@@ -76,6 +76,10 @@ fn read_listen_addr(child: &mut Child) -> Result<String, String> {
 }
 
 /// Walks the full Phase 1 path: login → password → menu → G → goodbye.
+///
+/// Also verifies the echo contract our `IAC WILL ECHO` advertisement
+/// promises: visible characters at the name and menu prompts, asterisk
+/// masking at the password prompt.
 fn walk_signin_loop(addr: &str) -> Result<(), String> {
     let mut stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
     stream
@@ -85,14 +89,49 @@ fn walk_signin_loop(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
 
-    drain_until(&mut stream, b"Password: ").map_err(|e| format!("Password prompt: {e}"))?;
+    let between_handle_and_password = drain_until_capturing(&mut stream, b"Password: ")
+        .map_err(|e| format!("Password prompt: {e}"))?;
+    if !contains(&between_handle_and_password, b"sysop") {
+        return Err(format!(
+            "expected 'sysop' echoed back after typing the handle, got {:?}",
+            String::from_utf8_lossy(&between_handle_and_password)
+        ));
+    }
+
     write_line(&mut stream, b"sysop")?;
 
-    drain_until(&mut stream, b"Command: ").map_err(|e| format!("Command prompt: {e}"))?;
-    write_line(&mut stream, b"G")?;
+    let between_password_and_menu = drain_until_capturing(&mut stream, b"Command: ")
+        .map_err(|e| format!("Command prompt: {e}"))?;
+    if !contains(&between_password_and_menu, b"*****") {
+        return Err(format!(
+            "expected at least five '*' echoes for the masked password, got {:?}",
+            String::from_utf8_lossy(&between_password_and_menu)
+        ));
+    }
+    if contains_password_plaintext(&between_password_and_menu) {
+        return Err(format!(
+            "password 'sysop' must NEVER appear in plaintext echo: {:?}",
+            String::from_utf8_lossy(&between_password_and_menu)
+        ));
+    }
 
+    write_line(&mut stream, b"G")?;
     drain_until(&mut stream, b"Goodbye").map_err(|e| format!("Goodbye line: {e}"))?;
     Ok(())
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// True when the bytes returned to the client between sending the
+/// password and seeing the next prompt contain the literal handle
+/// `sysop` — which would mean the server didn't mask the password
+/// (the seed user happens to share the literal `sysop` in both fields,
+/// so we have to be careful: the handle was already echoed in the
+/// previous segment, but the password segment must not contain it).
+fn contains_password_plaintext(segment: &[u8]) -> bool {
+    contains(segment, b"sysop")
 }
 
 fn write_line(stream: &mut TcpStream, body: &[u8]) -> Result<(), String> {
@@ -109,6 +148,13 @@ fn write_line(stream: &mut TcpStream, body: &[u8]) -> Result<(), String> {
 /// Reads from `stream` until `needle` appears in the accumulated buffer
 /// or `NEEDLE_DEADLINE` elapses.
 fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Result<(), String> {
+    drain_until_capturing(stream, needle).map(|_| ())
+}
+
+/// Like [`drain_until`] but returns the bytes consumed up to and
+/// including the needle. The caller can then assert echo invariants
+/// on the captured segment.
+fn drain_until_capturing(stream: &mut TcpStream, needle: &[u8]) -> Result<Vec<u8>, String> {
     let deadline = Instant::now() + NEEDLE_DEADLINE;
     let mut buf = [0u8; 256];
     let mut acc = Vec::new();
@@ -122,7 +168,7 @@ fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Result<(), String> {
         if n > 0 {
             acc.extend_from_slice(&buf[..n]);
             if acc.windows(needle.len()).any(|w| w == needle) {
-                return Ok(());
+                return Ok(acc);
             }
         }
     }
