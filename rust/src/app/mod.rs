@@ -2,7 +2,7 @@
 //!
 //! Wires [`crate::adapters`] into [`crate::domain`] and drives the BBS.
 //! Slice 13a turned the entry point into a real composition root: it
-//! reads a [`Config`][crate::domain::config::Config] from an optional
+//! reads a [`Config`][crate::app::config::Config] from an optional
 //! TOML file, seeds a default sysop user when the in-memory repository
 //! is empty, binds the [`TelnetListener`] and runs forever.
 
@@ -19,6 +19,7 @@ use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::password::PasswordHasher;
 use crate::domain::user_repository::UserRepository;
 
+pub mod config;
 pub mod config_loader;
 pub mod node_pool;
 pub mod screens;

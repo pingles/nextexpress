@@ -6,7 +6,6 @@
 //! `specs/` demand them.
 
 pub mod caller_log;
-pub mod config;
 pub mod node;
 pub mod password;
 pub mod session;

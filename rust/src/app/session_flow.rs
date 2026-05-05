@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::{
-    EnterMenuError, NameTypedError, NameTypedOutcome, Session, SessionState,
+    EnterMenuError, NameTypedError, NameTypedOutcome, Session, SessionPolicy, SessionState,
     SessionTransitionError, VerifyPasswordError, VerifyPasswordOutcome,
 };
 use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
@@ -128,7 +128,8 @@ where
 ///
 /// Verifies `candidate` through `hasher`, applies the resulting
 /// [`Session`] transition, and appends password-failure caller-log
-/// entries when credentials do not match.
+/// entries when credentials do not match. The supplied
+/// [`SessionPolicy`] controls password-failure limits.
 ///
 /// # Errors
 /// Returns [`VerifyPasswordError::WrongState`] when `session` is not in
@@ -142,7 +143,7 @@ pub fn verify_password<R, H, L>(
     user_repo: &R,
     hasher: &H,
     caller_log: &L,
-    max_password_failures: u32,
+    policy: SessionPolicy,
     now: SystemTime,
 ) -> Result<VerifyPasswordOutcome, VerifyPasswordFlowError>
 where
@@ -170,7 +171,7 @@ where
         Ok(outcome)
     } else {
         let (outcome, entry) = session
-            .apply_password_mismatch(max_password_failures, now)
+            .apply_password_mismatch(policy, now)
             .map_err(VerifyPasswordFlowError::Session)?;
         save_bound_user(session, user_repo).map_err(VerifyPasswordFlowError::Save)?;
         caller_log.append(entry);
@@ -389,7 +390,7 @@ mod tests {
             &repo,
             &good_hasher(),
             &log,
-            3,
+            SessionPolicy::new(3),
             SystemTime::UNIX_EPOCH,
         )
         .unwrap();
@@ -412,7 +413,7 @@ mod tests {
             &repo,
             &good_hasher(),
             &log,
-            3,
+            SessionPolicy::new(3),
             SystemTime::UNIX_EPOCH,
         )
         .unwrap();
@@ -435,7 +436,7 @@ mod tests {
             &repo,
             &good_hasher(),
             &log,
-            3,
+            SessionPolicy::new(3),
             SystemTime::UNIX_EPOCH,
         )
         .unwrap();

@@ -14,6 +14,10 @@ use crate::domain::user::User;
 /// Maximum number of unknown handle entries before a session is ended.
 const MAX_NAME_RETRIES: u32 = 5;
 
+/// Default consecutive bad-password attempts before a session ends or
+/// account lockout applies.
+const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
+
 /// How the user reached the BBS (spec: `session.allium:LogonChannel`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogonChannel {
@@ -46,6 +50,44 @@ pub enum LogoffReason {
     LockedAccount,
     /// User typed `G` (or the configured logoff command).
     NormalLogoff,
+}
+
+/// Domain policy values that influence a session's behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionPolicy {
+    max_password_failures: u32,
+}
+
+impl SessionPolicy {
+    /// Constructs a session policy.
+    ///
+    /// # Parameters
+    /// - `max_password_failures`: the number of consecutive bad
+    ///   password attempts that ends the session or locks the account.
+    ///
+    /// # Returns
+    /// A [`SessionPolicy`] carrying the supplied password-failure
+    /// limit.
+    pub fn new(max_password_failures: u32) -> Self {
+        Self {
+            max_password_failures,
+        }
+    }
+
+    /// Returns the bad-password limit.
+    ///
+    /// # Returns
+    /// The number of consecutive failed password attempts that ends a
+    /// session or locks the account.
+    pub fn max_password_failures(&self) -> u32 {
+        self.max_password_failures
+    }
+}
+
+impl Default for SessionPolicy {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_PASSWORD_FAILURES)
+    }
 }
 
 /// Lifecycle state of a [`Session`] (spec: `session.allium:Session.state`).
@@ -450,8 +492,8 @@ impl Session {
     ///
     /// Increments `user.invalid_attempts` and `password_retry_count`,
     /// returns the caller-log "Password failure" entry, and may move the
-    /// session to [`SessionState::LoggingOff`] when either failure limit
-    /// is reached.
+    /// session to [`SessionState::LoggingOff`] when the
+    /// [`SessionPolicy`] failure limit is reached.
     ///
     /// # Errors
     /// Returns [`VerifyPasswordError::WrongState`] if the session is
@@ -459,7 +501,7 @@ impl Session {
     /// [`VerifyPasswordError::UserMissing`] if no user is bound.
     pub fn apply_password_mismatch(
         &mut self,
-        max_password_failures: u32,
+        policy: SessionPolicy,
         now: SystemTime,
     ) -> Result<(VerifyPasswordOutcome, CallerLog), VerifyPasswordError> {
         if self.state != SessionState::Authenticating {
@@ -477,6 +519,7 @@ impl Session {
         };
 
         let user_attempts = self.user.as_ref().expect("user present").invalid_attempts();
+        let max_password_failures = policy.max_password_failures();
         let outcome = if user_attempts >= max_password_failures {
             self.user.as_mut().expect("user present").lock_account();
             self.transition_to(SessionState::LoggingOff)
@@ -984,7 +1027,7 @@ mod tests {
     fn verify_password_mismatch_bumps_counters() {
         let mut s = authenticated_session();
         let (outcome, entry) = s
-            .apply_password_mismatch(3, SystemTime::UNIX_EPOCH)
+            .apply_password_mismatch(SessionPolicy::new(3), SystemTime::UNIX_EPOCH)
             .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::NotMatching);
         assert_eq!(s.state(), SessionState::Authenticating);
@@ -998,7 +1041,7 @@ mod tests {
     fn verify_password_locks_account_when_user_attempts_reach_max() {
         let mut s = authenticated_session();
         let (outcome, _entry) = s
-            .apply_password_mismatch(1, SystemTime::UNIX_EPOCH)
+            .apply_password_mismatch(SessionPolicy::new(1), SystemTime::UNIX_EPOCH)
             .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::AccountLocked);
         assert_eq!(s.state(), SessionState::LoggingOff);
@@ -1016,14 +1059,14 @@ mod tests {
         // user-level check wins. This test manually clears the user
         // counter mid-session to exercise the session-level branch.
         let mut s = authenticated_session();
-        s.apply_password_mismatch(5, SystemTime::UNIX_EPOCH)
+        s.apply_password_mismatch(SessionPolicy::new(5), SystemTime::UNIX_EPOCH)
             .unwrap();
-        s.apply_password_mismatch(5, SystemTime::UNIX_EPOCH)
+        s.apply_password_mismatch(SessionPolicy::new(5), SystemTime::UNIX_EPOCH)
             .unwrap();
         // Simulate an out-of-band reset of the user-level counter.
         s.user.as_mut().unwrap().clear_invalid_attempts();
         let (outcome, _entry) = s
-            .apply_password_mismatch(3, SystemTime::UNIX_EPOCH)
+            .apply_password_mismatch(SessionPolicy::new(3), SystemTime::UNIX_EPOCH)
             .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::TooManyFailures);
         assert_eq!(s.state(), SessionState::LoggingOff);

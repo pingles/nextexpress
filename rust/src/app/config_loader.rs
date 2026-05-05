@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use crate::domain::config::{Config, ConfigError};
+use crate::app::config::{Config, ConfigError};
 
 /// Errors returned by [`load_config`].
 #[derive(Debug)]

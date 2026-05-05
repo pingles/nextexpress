@@ -1,4 +1,4 @@
-//! BBS configuration (spec: `core.allium:config`).
+//! Runtime BBS configuration (spec: `core.allium:config`).
 //!
 //! Config keys land here as the slice that first reads them is
 //! implemented. Slice 7 introduces `max_nodes`; Slice 8 introduces
@@ -9,23 +9,21 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::domain::session::SessionPolicy;
+
 /// Default TCP port the telnet listener binds on (`core.allium:config.port`).
 const DEFAULT_PORT: u16 = 2323;
 
 /// Default number of simultaneous nodes (`core.allium:config.max_nodes`).
 const DEFAULT_MAX_NODES: u32 = 32;
 
-/// Default consecutive bad-password attempts before lockout
-/// (`core.allium:config.max_password_failures`).
-const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
-
 /// Runtime configuration of the BBS.
 ///
 /// Every field corresponds to one of the documented `core.allium:config`
 /// keys. The struct deserialises from TOML via [`Config::from_toml_str`];
 /// missing fields fall back to [`Config::default`] so a half-written
-/// config doesn't surprise an operator with a different default than the
-/// one a fresh install would pick.
+/// config doesn't surprise an operator with a different runtime default
+/// than the one a fresh install would pick.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -50,7 +48,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             max_nodes: DEFAULT_MAX_NODES,
             bbs_path: PathBuf::from("."),
-            max_password_failures: DEFAULT_MAX_PASSWORD_FAILURES,
+            max_password_failures: SessionPolicy::default().max_password_failures(),
         }
     }
 }
@@ -92,6 +90,15 @@ impl Config {
     pub fn from_toml_str(input: &str) -> Result<Self, ConfigError> {
         toml::from_str(input).map_err(ConfigError::Parse)
     }
+
+    /// Converts runtime config into session-domain policy.
+    ///
+    /// # Returns
+    /// A [`SessionPolicy`] containing the configured
+    /// `max_password_failures` limit.
+    pub fn session_policy(&self) -> SessionPolicy {
+        SessionPolicy::new(self.max_password_failures)
+    }
 }
 
 #[cfg(test)]
@@ -111,6 +118,15 @@ mod tests {
     #[test]
     fn default_max_password_failures_is_three() {
         assert_eq!(Config::default().max_password_failures, 3);
+    }
+
+    #[test]
+    fn session_policy_uses_configured_password_failure_limit() {
+        let config = Config {
+            max_password_failures: 5,
+            ..Config::default()
+        };
+        assert_eq!(config.session_policy(), SessionPolicy::new(5));
     }
 
     #[test]

@@ -14,13 +14,15 @@ use std::time::SystemTime;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
+use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::screens::ScreenRepository;
 use crate::app::session_flow;
 use crate::domain::caller_log::CallerLogAppender;
-use crate::domain::config::Config;
 use crate::domain::password::PasswordHasher;
-use crate::domain::session::{LogonChannel, NameTypedOutcome, Session, VerifyPasswordOutcome};
+use crate::domain::session::{
+    LogonChannel, NameTypedOutcome, Session, SessionPolicy, VerifyPasswordOutcome,
+};
 use crate::domain::user_repository::UserRepository;
 
 use super::file_screen_repository::FileScreenRepository;
@@ -108,7 +110,7 @@ type SharedScreens = Arc<dyn ScreenRepository + Send + Sync + 'static>;
 pub struct TelnetListener {
     listener: TcpListener,
     pool: Arc<NodePool>,
-    max_password_failures: u32,
+    session_policy: SessionPolicy,
     user_repo: SharedUserRepo,
     hasher: SharedHasher,
     caller_log: SharedCallerLog,
@@ -149,7 +151,7 @@ impl TelnetListener {
         Ok(Self {
             listener,
             pool,
-            max_password_failures: config.max_password_failures,
+            session_policy: config.session_policy(),
             user_repo,
             hasher,
             caller_log,
@@ -185,10 +187,10 @@ impl TelnetListener {
             let hasher = self.hasher.clone();
             let log = self.caller_log.clone();
             let screens = self.screens.clone();
-            let max_pw_fails = self.max_password_failures;
+            let session_policy = self.session_policy;
             tokio::spawn(async move {
-                let _ =
-                    handle_connection(stream, pool, repo, hasher, log, screens, max_pw_fails).await;
+                let _ = handle_connection(stream, pool, repo, hasher, log, screens, session_policy)
+                    .await;
             });
         }
     }
@@ -207,7 +209,7 @@ async fn handle_connection(
     hasher: SharedHasher,
     caller_log: SharedCallerLog,
     screens: SharedScreens,
-    max_password_failures: u32,
+    session_policy: SessionPolicy,
 ) -> io::Result<()> {
     let Some(node_number) = pool.allocate().await else {
         stream.write_all(BUSY_LINE).await?;
@@ -222,7 +224,7 @@ async fn handle_connection(
         hasher.as_ref(),
         caller_log.as_ref(),
         screens.as_ref(),
-        max_password_failures,
+        session_policy,
     )
     .await;
     let _ = pool.release(node_number).await;
@@ -239,7 +241,7 @@ async fn run_session(
     hasher: &(dyn PasswordHasher + Send + Sync),
     caller_log: &(dyn CallerLogAppender + Send + Sync),
     screens: &(dyn ScreenRepository + Send + Sync),
-    max_password_failures: u32,
+    session_policy: SessionPolicy,
 ) -> io::Result<()> {
     stream.write_all(IAC_INIT).await?;
 
@@ -309,7 +311,7 @@ async fn run_session(
             user_repo,
             hasher,
             caller_log,
-            max_password_failures,
+            session_policy,
             SystemTime::now(),
         )
         .expect("session is in authenticating with a user");
