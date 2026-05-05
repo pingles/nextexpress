@@ -55,7 +55,7 @@ impl Node {
     /// # Errors
     /// Returns [`TransitionError`] if the spec does not allow a
     /// transition from the current status to `target`.
-    pub fn transition_to(&mut self, target: NodeStatus) -> Result<(), TransitionError> {
+    pub(crate) fn transition_to(&mut self, target: NodeStatus) -> Result<(), TransitionError> {
         if !is_transition_allowed(self.status, target) {
             return Err(TransitionError {
                 from: self.status,
@@ -67,8 +67,8 @@ impl Node {
     }
 }
 
-/// Returned by [`Node::transition_to`] when the requested transition
-/// is not in the spec's transition table for the Phase 1 subset.
+/// Returned when the requested transition is not in the spec's
+/// transition table for the Phase 1 subset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransitionError {
     /// Status the node was in when the transition was attempted.

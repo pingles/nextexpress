@@ -220,7 +220,7 @@ impl Session {
     /// # Errors
     /// Returns [`SessionTransitionError`] if the spec does not permit
     /// the transition (Phase 1 subset of `session.allium:Session.state`).
-    pub fn transition_to(&mut self, target: SessionState) -> Result<(), SessionTransitionError> {
+    fn transition_to(&mut self, target: SessionState) -> Result<(), SessionTransitionError> {
         if !is_session_transition_allowed(self.state, target) {
             return Err(SessionTransitionError {
                 from: self.state,
@@ -229,14 +229,6 @@ impl Session {
         }
         self.state = target;
         Ok(())
-    }
-
-    /// Records the user this session has identified as.
-    ///
-    /// Used by `session.allium:NameTyped` (Slice 9). Slice 6 exposes
-    /// it so tests can construct sessions in authenticated states.
-    pub fn set_user(&mut self, user: User) {
-        self.user = Some(user);
     }
 
     /// `session.allium:AcceptConnection` rule.
@@ -659,8 +651,8 @@ fn format_logoff_line(session: &Session) -> String {
     )
 }
 
-/// Returned by [`Session::transition_to`] when the requested transition
-/// is not in the spec's transition table for the Phase 1 subset.
+/// Returned when the requested transition is not in the spec's
+/// transition table for the Phase 1 subset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionTransitionError {
     /// State the session was in when the transition was attempted.
@@ -818,19 +810,19 @@ mod tests {
     #[test]
     fn onboarded_session_with_user_is_authenticated() {
         let mut session = new_session(LogonChannel::Remote);
-        session.transition_to(SessionState::Identifying).unwrap();
-        session.transition_to(SessionState::Authenticating).unwrap();
-        session.set_user(alice());
-        session.transition_to(SessionState::Onboarded).unwrap();
+        session.prompt_for_name().unwrap();
+        session.record_identified_user("alice", alice()).unwrap();
+        session
+            .apply_password_match(SystemTime::UNIX_EPOCH)
+            .unwrap();
         assert!(session.is_authenticated());
     }
 
     #[test]
     fn authenticating_with_user_is_not_yet_authenticated() {
         let mut session = new_session(LogonChannel::Remote);
-        session.transition_to(SessionState::Identifying).unwrap();
-        session.transition_to(SessionState::Authenticating).unwrap();
-        session.set_user(alice());
+        session.prompt_for_name().unwrap();
+        session.record_identified_user("alice", alice()).unwrap();
         assert!(!session.is_authenticated());
     }
 
