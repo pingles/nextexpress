@@ -15,6 +15,7 @@ use std::time::SystemTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
+use crate::app::session_flow;
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::config::Config;
 use crate::domain::node_pool::NodePool;
@@ -260,9 +261,9 @@ async fn run_session(
             return Ok(()); // EOF before name typed
         };
 
-        let outcome = session
-            .name_typed(typed.trim(), user_repo, SystemTime::now())
-            .expect("session is in identifying");
+        let outcome =
+            session_flow::name_typed(&mut session, typed.trim(), user_repo, SystemTime::now())
+                .expect("session is in identifying");
         match outcome {
             NameTypedOutcome::Authenticated => break,
             NameTypedOutcome::NotFound => {
@@ -289,15 +290,15 @@ async fn run_session(
             return Ok(()); // EOF before password typed
         };
 
-        let outcome = session
-            .verify_password(
-                password.trim(),
-                hasher,
-                caller_log,
-                max_password_failures,
-                SystemTime::now(),
-            )
-            .expect("session is in authenticating with a user");
+        let outcome = session_flow::verify_password(
+            &mut session,
+            password.trim(),
+            hasher,
+            caller_log,
+            max_password_failures,
+            SystemTime::now(),
+        )
+        .expect("session is in authenticating with a user");
         match outcome {
             VerifyPasswordOutcome::Authenticated => {
                 stream.write_all(AUTHENTICATED_LINE).await?;
@@ -326,8 +327,7 @@ async fn run_session(
 
     // EnterMenu (Slice 12): increment user.times_called, transition
     // to Menu, write the logon caller-log line and display the menu.
-    session
-        .enter_menu(caller_log, SystemTime::now())
+    session_flow::enter_menu(&mut session, caller_log, SystemTime::now())
         .expect("session is in onboarded with a user");
 
     // Menu loop (Slice 13). Phase 1 only implements `G` (goodbye).
@@ -343,8 +343,7 @@ async fn run_session(
         let cmd = line.trim().to_ascii_uppercase();
         if cmd == "G" {
             session.user_requests_logoff().expect("session is in menu");
-            session
-                .finalise_logoff(caller_log, SystemTime::now())
+            session_flow::finalise_logoff(&mut session, caller_log, SystemTime::now())
                 .expect("session is in logging_off");
             stream.write_all(GOODBYE_LINE).await?;
             stream.flush().await?;

@@ -7,10 +7,12 @@
 
 use std::time::SystemTime;
 
-use crate::domain::caller_log::{CallerLog, CallerLogAppender};
-use crate::domain::password::{PasswordError, PasswordHasher};
+use crate::domain::caller_log::CallerLog;
+use crate::domain::password::PasswordError;
 use crate::domain::user::User;
-use crate::domain::user_repository::{NameLookupResult, UserRepository};
+
+/// Maximum number of unknown handle entries before a session is ended.
+const MAX_NAME_RETRIES: u32 = 5;
 
 /// How the user reached the BBS (spec: `session.allium:LogonChannel`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -279,24 +281,73 @@ impl Session {
         self.transition_to(SessionState::Identifying)
     }
 
-    /// `session.allium:NameTyped` rule.
+    /// Applies the successful branch of `session.allium:NameTyped`.
     ///
-    /// Looks `typed` up via `repo` and updates the session per the
-    /// spec's branching:
-    /// - `Found`: stores the typed name and resolved user, transitions
-    ///   to [`SessionState::Authenticating`].
-    /// - `NotFound`: increments [`Self::name_retry_count`]. After five
-    ///   strikes the session ends with
-    ///   [`LogoffReason::NewUserRejected`].
-    /// - `UserTypedNew`: returns
-    ///   [`NameTypedOutcome::NewUserRejected`] without changing state;
-    ///   wired up to the registration flow in Slice 19.
+    /// The caller has already resolved `typed` to `user` through a
+    /// repository. This method stores both on the session and moves it
+    /// to [`SessionState::Authenticating`].
     ///
     /// # Errors
     /// Returns [`NameTypedError::WrongState`] if the session is not in
-    /// [`SessionState::Identifying`], or
-    /// [`NameTypedError::UserDisappeared`] if `repo` reports `Found`
-    /// but [`UserRepository::user_for_name`] returns `None`.
+    /// [`SessionState::Identifying`].
+    pub fn record_identified_user(
+        &mut self,
+        typed: &str,
+        user: User,
+    ) -> Result<NameTypedOutcome, NameTypedError> {
+        if self.state != SessionState::Identifying {
+            return Err(NameTypedError::WrongState(self.state));
+        }
+        self.typed_name = Some(typed.to_string());
+        self.user = Some(user);
+        self.transition_to(SessionState::Authenticating)
+            .expect("identifying -> authenticating is permitted");
+        Ok(NameTypedOutcome::Authenticated)
+    }
+
+    /// Applies the unknown-handle branch of `session.allium:NameTyped`.
+    ///
+    /// Increments [`Self::name_retry_count`]. After five strikes, the
+    /// session ends with [`LogoffReason::NewUserRejected`].
+    ///
+    /// # Errors
+    /// Returns [`NameTypedError::WrongState`] if the session is not in
+    /// [`SessionState::Identifying`].
+    pub fn record_unknown_name(
+        &mut self,
+        now: SystemTime,
+    ) -> Result<NameTypedOutcome, NameTypedError> {
+        if self.state != SessionState::Identifying {
+            return Err(NameTypedError::WrongState(self.state));
+        }
+        self.name_retry_count += 1;
+        if self.name_retry_count >= MAX_NAME_RETRIES {
+            self.transition_to(SessionState::Ended)
+                .expect("identifying -> ended is permitted");
+            self.logoff_reason = Some(LogoffReason::NewUserRejected);
+            self.logoff_at = Some(now);
+            Ok(NameTypedOutcome::SessionEnded)
+        } else {
+            Ok(NameTypedOutcome::NotFound)
+        }
+    }
+
+    /// Applies the Phase 1 `NEW` branch of `session.allium:NameTyped`.
+    ///
+    /// Slice 19 wires this up to the registration flow. Until then, the
+    /// session stays in [`SessionState::Identifying`] and the caller can
+    /// present a rejection/retry prompt.
+    ///
+    /// # Errors
+    /// Returns [`NameTypedError::WrongState`] if the session is not in
+    /// [`SessionState::Identifying`].
+    pub fn reject_new_user_request(&self) -> Result<NameTypedOutcome, NameTypedError> {
+        if self.state != SessionState::Identifying {
+            return Err(NameTypedError::WrongState(self.state));
+        }
+        Ok(NameTypedOutcome::NewUserRejected)
+    }
+
     /// `session.allium:UserRequestsLogoff` rule.
     ///
     /// Transitions [`SessionState::Onboarded`] or
@@ -321,14 +372,10 @@ impl Session {
     /// # Errors
     /// Returns [`SessionTransitionError`] if the session is not in
     /// [`SessionState::LoggingOff`].
-    pub fn finalise_logoff<L>(
+    pub fn finalise_logoff(
         &mut self,
-        caller_log: &L,
         now: SystemTime,
-    ) -> Result<(), SessionTransitionError>
-    where
-        L: CallerLogAppender + ?Sized,
-    {
+    ) -> Result<CallerLog, SessionTransitionError> {
         if self.state != SessionState::LoggingOff {
             return Err(SessionTransitionError {
                 from: self.state,
@@ -339,16 +386,16 @@ impl Session {
             user.record_last_call(now);
         }
         let line = format_logoff_line(self);
-        caller_log.append(CallerLog {
+        let entry = CallerLog {
             session_node: self.node_number,
             at: now,
             text: line,
             is_password_failure: false,
-        });
+        };
         self.transition_to(SessionState::Ended)
             .expect("logging_off -> ended is permitted");
         self.logoff_at = Some(now);
-        Ok(())
+        Ok(entry)
     }
 
     /// `session.allium:EnterMenu` rule.
@@ -361,10 +408,7 @@ impl Session {
     /// Returns [`EnterMenuError::WrongState`] when not in
     /// [`SessionState::Onboarded`] or
     /// [`EnterMenuError::UserMissing`] when no user is bound.
-    pub fn enter_menu<L>(&mut self, caller_log: &L, now: SystemTime) -> Result<(), EnterMenuError>
-    where
-        L: CallerLogAppender + ?Sized,
-    {
+    pub fn enter_menu(&mut self, now: SystemTime) -> Result<CallerLog, EnterMenuError> {
         if self.state != SessionState::Onboarded {
             return Err(EnterMenuError::WrongState(self.state));
         }
@@ -378,134 +422,84 @@ impl Session {
         self.transition_to(SessionState::Menu)
             .expect("onboarded -> menu is permitted");
         let line = format_logon_line(self);
-        caller_log.append(CallerLog {
+        Ok(CallerLog {
             session_node: self.node_number,
             at: now,
             text: line,
             is_password_failure: false,
-        });
-        Ok(())
+        })
     }
 
-    /// `session.allium:VerifyPassword` rule.
+    /// Applies the matching branch of `session.allium:VerifyPassword`.
     ///
-    /// On a matching candidate: clears `user.invalid_attempts`, sets
-    /// `authenticated_at`, transitions to [`SessionState::Onboarded`].
-    ///
-    /// On a mismatch: increments `user.invalid_attempts` and
-    /// `password_retry_count`, appends a caller-log "Password failure"
-    /// entry, and:
-    /// - locks the account and ends the session
-    ///   ([`LogoffReason::LockedAccount`]) when
-    ///   `user.invalid_attempts >= max_password_failures`;
-    /// - otherwise ends the session
-    ///   ([`LogoffReason::ExcessivePasswordFails`]) when
-    ///   `password_retry_count >= max_password_failures`;
-    /// - otherwise leaves the session in
-    ///   [`SessionState::Authenticating`] for another attempt.
+    /// Clears `user.invalid_attempts`, sets `authenticated_at`, and
+    /// transitions to [`SessionState::Onboarded`].
     ///
     /// # Errors
-    /// Returns [`VerifyPasswordError::WrongState`] if not in
-    /// [`SessionState::Authenticating`],
-    /// [`VerifyPasswordError::UserMissing`] if no user is bound to
-    /// the session, or [`VerifyPasswordError::HashKindUnsupported`]
-    /// if the hasher rejects the user's stored hash kind.
-    pub fn verify_password<H, L>(
+    /// Returns [`VerifyPasswordError::WrongState`] if the session is
+    /// not in [`SessionState::Authenticating`], or
+    /// [`VerifyPasswordError::UserMissing`] if no user is bound.
+    pub fn apply_password_match(
         &mut self,
-        candidate: &str,
-        hasher: &H,
-        caller_log: &L,
-        max_password_failures: u32,
         now: SystemTime,
-    ) -> Result<VerifyPasswordOutcome, VerifyPasswordError>
-    where
-        H: PasswordHasher + ?Sized,
-        L: CallerLogAppender + ?Sized,
-    {
+    ) -> Result<VerifyPasswordOutcome, VerifyPasswordError> {
         if self.state != SessionState::Authenticating {
             return Err(VerifyPasswordError::WrongState(self.state));
         }
-        let user = self.user.as_ref().ok_or(VerifyPasswordError::UserMissing)?;
-        let matches = hasher
-            .verify_password(user, candidate)
-            .map_err(VerifyPasswordError::HashKindUnsupported)?;
-        if matches {
-            let user_mut = self
-                .user
-                .as_mut()
-                .expect("user existed at top of method; still present");
-            user_mut.clear_invalid_attempts();
-            self.authenticated_at = Some(now);
-            self.transition_to(SessionState::Onboarded)
-                .expect("authenticating -> onboarded is permitted");
-            return Ok(VerifyPasswordOutcome::Authenticated);
-        }
+        let user_mut = self.user.as_mut().ok_or(VerifyPasswordError::UserMissing)?;
+        user_mut.clear_invalid_attempts();
+        self.authenticated_at = Some(now);
+        self.transition_to(SessionState::Onboarded)
+            .expect("authenticating -> onboarded is permitted");
+        Ok(VerifyPasswordOutcome::Authenticated)
+    }
 
-        let user_mut = self
-            .user
-            .as_mut()
-            .expect("user existed at top of method; still present");
+    /// Applies the non-matching branch of `session.allium:VerifyPassword`.
+    ///
+    /// Increments `user.invalid_attempts` and `password_retry_count`,
+    /// returns the caller-log "Password failure" entry, and may move the
+    /// session to [`SessionState::LoggingOff`] when either failure limit
+    /// is reached.
+    ///
+    /// # Errors
+    /// Returns [`VerifyPasswordError::WrongState`] if the session is
+    /// not in [`SessionState::Authenticating`], or
+    /// [`VerifyPasswordError::UserMissing`] if no user is bound.
+    pub fn apply_password_mismatch(
+        &mut self,
+        max_password_failures: u32,
+        now: SystemTime,
+    ) -> Result<(VerifyPasswordOutcome, CallerLog), VerifyPasswordError> {
+        if self.state != SessionState::Authenticating {
+            return Err(VerifyPasswordError::WrongState(self.state));
+        }
+        let user_mut = self.user.as_mut().ok_or(VerifyPasswordError::UserMissing)?;
         user_mut.bump_invalid_attempts();
         self.password_retry_count = self.password_retry_count.saturating_add(1);
 
-        caller_log.append(CallerLog {
+        let entry = CallerLog {
             session_node: self.node_number,
             at: now,
             text: "Password failure".to_string(),
             is_password_failure: true,
-        });
+        };
 
         let user_attempts = self.user.as_ref().expect("user present").invalid_attempts();
-        if user_attempts >= max_password_failures {
+        let outcome = if user_attempts >= max_password_failures {
             self.user.as_mut().expect("user present").lock_account();
             self.transition_to(SessionState::LoggingOff)
                 .expect("authenticating -> logging_off is permitted");
             self.logoff_reason = Some(LogoffReason::LockedAccount);
-            Ok(VerifyPasswordOutcome::AccountLocked)
+            VerifyPasswordOutcome::AccountLocked
         } else if self.password_retry_count >= max_password_failures {
             self.transition_to(SessionState::LoggingOff)
                 .expect("authenticating -> logging_off is permitted");
             self.logoff_reason = Some(LogoffReason::ExcessivePasswordFails);
-            Ok(VerifyPasswordOutcome::TooManyFailures)
+            VerifyPasswordOutcome::TooManyFailures
         } else {
-            Ok(VerifyPasswordOutcome::NotMatching)
-        }
-    }
-
-    pub fn name_typed<R: UserRepository + ?Sized>(
-        &mut self,
-        typed: &str,
-        repo: &R,
-        now: SystemTime,
-    ) -> Result<NameTypedOutcome, NameTypedError> {
-        if self.state != SessionState::Identifying {
-            return Err(NameTypedError::WrongState(self.state));
-        }
-        match repo.lookup_name(typed) {
-            NameLookupResult::Found => {
-                let user = repo
-                    .user_for_name(typed)
-                    .ok_or(NameTypedError::UserDisappeared)?;
-                self.typed_name = Some(typed.to_string());
-                self.user = Some(user);
-                self.transition_to(SessionState::Authenticating)
-                    .expect("identifying -> authenticating is permitted");
-                Ok(NameTypedOutcome::Authenticated)
-            }
-            NameLookupResult::NotFound => {
-                self.name_retry_count += 1;
-                if self.name_retry_count >= 5 {
-                    self.transition_to(SessionState::Ended)
-                        .expect("identifying -> ended is permitted");
-                    self.logoff_reason = Some(LogoffReason::NewUserRejected);
-                    self.logoff_at = Some(now);
-                    Ok(NameTypedOutcome::SessionEnded)
-                } else {
-                    Ok(NameTypedOutcome::NotFound)
-                }
-            }
-            NameLookupResult::UserTypedNew => Ok(NameTypedOutcome::NewUserRejected),
-        }
+            VerifyPasswordOutcome::NotMatching
+        };
+        Ok((outcome, entry))
     }
 }
 
@@ -901,78 +895,6 @@ mod tests {
         .expect("ended session should not block accept");
     }
 
-    use std::sync::Mutex;
-
-    use crate::domain::caller_log::CallerLog;
-    use crate::domain::password::{ComputedHash, PasswordHashKind};
-
-    /// Domain-internal test double for [`CallerLogAppender`]. Stores
-    /// appended entries for inspection.
-    #[derive(Default)]
-    struct TestLog {
-        entries: Mutex<Vec<CallerLog>>,
-    }
-
-    impl CallerLogAppender for TestLog {
-        fn append(&self, entry: CallerLog) {
-            self.entries.lock().unwrap().push(entry);
-        }
-    }
-
-    impl TestLog {
-        fn entries(&self) -> Vec<CallerLog> {
-            self.entries.lock().unwrap().clone()
-        }
-    }
-
-    /// Domain-internal test double for [`PasswordHasher`]. Verifies
-    /// against a known-good password and never errors.
-    struct TestHasher {
-        good_password: String,
-    }
-
-    impl PasswordHasher for TestHasher {
-        fn verify_password(&self, _user: &User, candidate: &str) -> Result<bool, PasswordError> {
-            Ok(candidate == self.good_password)
-        }
-
-        fn compute_password_hash(
-            &self,
-            candidate: &str,
-            _kind: PasswordHashKind,
-        ) -> Result<ComputedHash, PasswordError> {
-            Ok(ComputedHash {
-                hash: candidate.to_string(),
-                salt: Some("test".to_string()),
-            })
-        }
-    }
-
-    /// Domain-internal test double for [`UserRepository`]. We can't
-    /// reach into [`crate::adapters`] from `domain` (the
-    /// architecture test rejects that), so we hand-roll the minimum
-    /// behaviour these tests need.
-    struct TestRepo {
-        users: Vec<User>,
-    }
-
-    impl UserRepository for TestRepo {
-        fn lookup_name(&self, typed: &str) -> NameLookupResult {
-            if typed == "NEW" {
-                return NameLookupResult::UserTypedNew;
-            }
-            if self.users.iter().any(|u| u.handle() == typed) {
-                NameLookupResult::Found
-            } else {
-                NameLookupResult::NotFound
-            }
-        }
-
-        fn user_for_name(&self, handle: &str) -> Option<User> {
-            self.users.iter().find(|u| u.handle() == handle).cloned()
-        }
-    }
-
     #[test]
     fn prompt_for_name_moves_to_identifying() {
         let mut s = new_session(LogonChannel::Remote);
@@ -992,13 +914,10 @@ mod tests {
 
     #[test]
     fn name_typed_found_advances_to_authenticating() {
-        let repo = TestRepo {
-            users: vec![alice()],
-        };
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         let outcome = s
-            .name_typed("alice", &repo, SystemTime::UNIX_EPOCH)
+            .record_identified_user("alice", alice())
             .expect("name_typed");
         assert_eq!(outcome, NameTypedOutcome::Authenticated);
         assert_eq!(s.state(), SessionState::Authenticating);
@@ -1008,12 +927,9 @@ mod tests {
 
     #[test]
     fn name_typed_not_found_increments_retry() {
-        let repo = TestRepo {
-            users: vec![alice()],
-        };
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        let outcome = s.name_typed("bob", &repo, SystemTime::UNIX_EPOCH).unwrap();
+        let outcome = s.record_unknown_name(SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(outcome, NameTypedOutcome::NotFound);
         assert_eq!(s.state(), SessionState::Identifying);
         assert_eq!(s.name_retry_count(), 1);
@@ -1021,22 +937,16 @@ mod tests {
 
     #[test]
     fn name_typed_five_strikes_ends_session() {
-        let repo = TestRepo {
-            users: vec![alice()],
-        };
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         for _ in 0..4 {
             assert_eq!(
-                s.name_typed("nobody", &repo, SystemTime::UNIX_EPOCH)
-                    .unwrap(),
+                s.record_unknown_name(SystemTime::UNIX_EPOCH).unwrap(),
                 NameTypedOutcome::NotFound
             );
         }
         assert_eq!(s.name_retry_count(), 4);
-        let outcome = s
-            .name_typed("nobody", &repo, SystemTime::UNIX_EPOCH)
-            .unwrap();
+        let outcome = s.record_unknown_name(SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(outcome, NameTypedOutcome::SessionEnded);
         assert_eq!(s.state(), SessionState::Ended);
         assert_eq!(s.logoff_reason(), Some(LogoffReason::NewUserRejected));
@@ -1045,12 +955,9 @@ mod tests {
 
     #[test]
     fn name_typed_new_keyword_returns_new_user_rejected() {
-        let repo = TestRepo {
-            users: vec![alice()],
-        };
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        let outcome = s.name_typed("NEW", &repo, SystemTime::UNIX_EPOCH).unwrap();
+        let outcome = s.reject_new_user_request().unwrap();
         assert_eq!(outcome, NameTypedOutcome::NewUserRejected);
         // No state change, no retry bump.
         assert_eq!(s.state(), SessionState::Identifying);
@@ -1060,33 +967,19 @@ mod tests {
     fn authenticated_session() -> Session {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        let repo = TestRepo {
-            users: vec![alice()],
-        };
-        s.name_typed("alice", &repo, SystemTime::UNIX_EPOCH)
-            .unwrap();
+        s.record_identified_user("alice", alice()).unwrap();
         s
-    }
-
-    fn good_hasher() -> TestHasher {
-        TestHasher {
-            good_password: "secret".to_string(),
-        }
     }
 
     #[test]
     fn verify_password_match_advances_to_onboarded() {
         let mut s = authenticated_session();
-        let log = TestLog::default();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(60);
-        let outcome = s
-            .verify_password("secret", &good_hasher(), &log, 3, now)
-            .unwrap();
+        let outcome = s.apply_password_match(now).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::Authenticated);
         assert_eq!(s.state(), SessionState::Onboarded);
         assert_eq!(s.authenticated_at(), Some(now));
         assert!(s.is_authenticated());
-        assert!(log.entries().is_empty(), "no caller log on success");
     }
 
     #[test]
@@ -1095,35 +988,29 @@ mod tests {
         // Pre-existing attempts on the user (e.g. from a prior failed
         // session) should be cleared on success.
         s.user.as_mut().unwrap().bump_invalid_attempts();
-        let log = TestLog::default();
-        s.verify_password("secret", &good_hasher(), &log, 3, SystemTime::UNIX_EPOCH)
-            .unwrap();
+        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(s.user().unwrap().invalid_attempts(), 0);
     }
 
     #[test]
     fn verify_password_mismatch_bumps_counters() {
         let mut s = authenticated_session();
-        let log = TestLog::default();
-        let outcome = s
-            .verify_password("wrong", &good_hasher(), &log, 3, SystemTime::UNIX_EPOCH)
+        let (outcome, entry) = s
+            .apply_password_mismatch(3, SystemTime::UNIX_EPOCH)
             .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::NotMatching);
         assert_eq!(s.state(), SessionState::Authenticating);
         assert_eq!(s.password_retry_count(), 1);
         assert_eq!(s.user().unwrap().invalid_attempts(), 1);
-        let entries = log.entries();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].text, "Password failure");
-        assert!(entries[0].is_password_failure);
+        assert_eq!(entry.text, "Password failure");
+        assert!(entry.is_password_failure);
     }
 
     #[test]
     fn verify_password_locks_account_when_user_attempts_reach_max() {
         let mut s = authenticated_session();
-        let log = TestLog::default();
-        let outcome = s
-            .verify_password("wrong", &good_hasher(), &log, 1, SystemTime::UNIX_EPOCH)
+        let (outcome, _entry) = s
+            .apply_password_mismatch(1, SystemTime::UNIX_EPOCH)
             .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::AccountLocked);
         assert_eq!(s.state(), SessionState::LoggingOff);
@@ -1141,15 +1028,14 @@ mod tests {
         // user-level check wins. This test manually clears the user
         // counter mid-session to exercise the session-level branch.
         let mut s = authenticated_session();
-        let log = TestLog::default();
-        s.verify_password("wrong", &good_hasher(), &log, 5, SystemTime::UNIX_EPOCH)
+        s.apply_password_mismatch(5, SystemTime::UNIX_EPOCH)
             .unwrap();
-        s.verify_password("wrong", &good_hasher(), &log, 5, SystemTime::UNIX_EPOCH)
+        s.apply_password_mismatch(5, SystemTime::UNIX_EPOCH)
             .unwrap();
         // Simulate an out-of-band reset of the user-level counter.
         s.user.as_mut().unwrap().clear_invalid_attempts();
-        let outcome = s
-            .verify_password("wrong", &good_hasher(), &log, 3, SystemTime::UNIX_EPOCH)
+        let (outcome, _entry) = s
+            .apply_password_mismatch(3, SystemTime::UNIX_EPOCH)
             .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::TooManyFailures);
         assert_eq!(s.state(), SessionState::LoggingOff);
@@ -1163,29 +1049,25 @@ mod tests {
     #[test]
     fn enter_menu_advances_state_and_logs() {
         let mut s = authenticated_session();
-        let log = TestLog::default();
         // Get to onboarded via successful verify.
-        s.verify_password("secret", &good_hasher(), &log, 3, SystemTime::UNIX_EPOCH)
-            .unwrap();
+        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(120);
-        s.enter_menu(&log, now).unwrap();
+        let entry = s.enter_menu(now).unwrap();
         assert_eq!(s.state(), SessionState::Menu);
         assert_eq!(s.user().unwrap().times_called(), 1);
-        let entries = log.entries();
         assert!(
-            entries.iter().any(|e| e.text.contains("Logon:")
-                && e.text.contains("alice")
-                && !e.is_password_failure),
-            "expected logon caller-log entry, got {entries:?}"
+            entry.text.contains("Logon:")
+                && entry.text.contains("alice")
+                && !entry.is_password_failure,
+            "expected logon caller-log entry, got {entry:?}"
         );
     }
 
     #[test]
     fn enter_menu_outside_onboarded_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let log = TestLog::default();
         let err = s
-            .enter_menu(&log, SystemTime::UNIX_EPOCH)
+            .enter_menu(SystemTime::UNIX_EPOCH)
             .expect_err("must be onboarded");
         assert!(matches!(err, EnterMenuError::WrongState(_)));
     }
@@ -1193,10 +1075,8 @@ mod tests {
     /// Drives a session from connecting to menu via the rule chain.
     fn session_at_menu() -> Session {
         let mut s = authenticated_session();
-        let log = TestLog::default();
-        s.verify_password("secret", &good_hasher(), &log, 3, SystemTime::UNIX_EPOCH)
-            .unwrap();
-        s.enter_menu(&log, SystemTime::UNIX_EPOCH).unwrap();
+        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
         s
     }
 
@@ -1211,9 +1091,7 @@ mod tests {
     #[test]
     fn user_requests_logoff_from_onboarded_is_allowed() {
         let mut s = authenticated_session();
-        let log = TestLog::default();
-        s.verify_password("secret", &good_hasher(), &log, 3, SystemTime::UNIX_EPOCH)
-            .unwrap();
+        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
         s.user_requests_logoff().unwrap();
         assert_eq!(s.state(), SessionState::LoggingOff);
     }
@@ -1231,27 +1109,22 @@ mod tests {
     fn finalise_logoff_updates_user_and_logs_goodbye() {
         let mut s = session_at_menu();
         s.user_requests_logoff().unwrap();
-        let log = TestLog::default();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(300);
-        s.finalise_logoff(&log, now).unwrap();
+        let entry = s.finalise_logoff(now).unwrap();
         assert_eq!(s.state(), SessionState::Ended);
         assert_eq!(s.logoff_at(), Some(now));
         assert_eq!(s.user().unwrap().last_call(), Some(now));
-        let entries = log.entries();
         assert!(
-            entries
-                .iter()
-                .any(|e| e.text.contains("Logoff:") && e.text.contains("alice")),
-            "expected logoff caller-log entry, got {entries:?}"
+            entry.text.contains("Logoff:") && entry.text.contains("alice"),
+            "expected logoff caller-log entry, got {entry:?}"
         );
     }
 
     #[test]
     fn finalise_logoff_outside_logging_off_errors() {
         let mut s = session_at_menu();
-        let log = TestLog::default();
         let err = s
-            .finalise_logoff(&log, SystemTime::UNIX_EPOCH)
+            .finalise_logoff(SystemTime::UNIX_EPOCH)
             .expect_err("must be logging_off");
         assert_eq!(err.from, SessionState::Menu);
     }
@@ -1259,21 +1132,17 @@ mod tests {
     #[test]
     fn verify_password_outside_authenticating_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let log = TestLog::default();
         let err = s
-            .verify_password("secret", &good_hasher(), &log, 3, SystemTime::UNIX_EPOCH)
+            .apply_password_match(SystemTime::UNIX_EPOCH)
             .expect_err("must be authenticating");
         assert!(matches!(err, VerifyPasswordError::WrongState(_)));
     }
 
     #[test]
     fn name_typed_outside_identifying_errors() {
-        let repo = TestRepo {
-            users: vec![alice()],
-        };
         let mut s = new_session(LogonChannel::Remote);
         let err = s
-            .name_typed("alice", &repo, SystemTime::UNIX_EPOCH)
+            .record_identified_user("alice", alice())
             .expect_err("must be in identifying");
         assert!(matches!(err, NameTypedError::WrongState(_)));
     }
