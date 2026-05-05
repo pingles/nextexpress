@@ -4,36 +4,48 @@
 //! file-backed adapter is deferred until the on-disk format is firmed up
 //! (see [`SLICES.md`](../../../SLICES.md)).
 
+use std::sync::Mutex;
+
 use crate::domain::user::User;
-use crate::domain::user_repository::{NameLookupResult, UserRepository};
+use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
 
 /// In-memory adapter seeded from a static [`Vec<User>`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct InMemoryUserRepository {
-    users: Vec<User>,
+    users: Mutex<Vec<User>>,
 }
 
 impl InMemoryUserRepository {
     /// Constructs a repository pre-populated with `users`.
     pub fn new(users: Vec<User>) -> Self {
-        Self { users }
+        Self {
+            users: Mutex::new(users),
+        }
     }
 }
 
 impl UserRepository for InMemoryUserRepository {
-    fn lookup_name(&self, typed: &str) -> NameLookupResult {
+    fn find_by_handle(&self, typed: &str) -> NameLookupResult {
         if typed == "NEW" {
             return NameLookupResult::UserTypedNew;
         }
-        if self.users.iter().any(|u| u.handle() == typed) {
-            NameLookupResult::Found
+        let users = self.users.lock().expect("user repository mutex");
+        if let Some(user) = users.iter().find(|u| u.handle() == typed) {
+            NameLookupResult::Found(user.clone())
         } else {
             NameLookupResult::NotFound
         }
     }
 
-    fn user_for_name(&self, handle: &str) -> Option<User> {
-        self.users.iter().find(|u| u.handle() == handle).cloned()
+    fn save(&self, user: User) -> Result<(), UserRepositoryError> {
+        let mut users = self.users.lock().expect("user repository mutex");
+        let Some(existing) = users.iter_mut().find(|u| u.handle() == user.handle()) else {
+            return Err(UserRepositoryError::UserNotFound {
+                handle: user.handle().to_string(),
+            });
+        };
+        *existing = user;
+        Ok(())
     }
 }
 
@@ -60,37 +72,63 @@ mod tests {
     #[test]
     fn existing_handle_returns_found() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        assert_eq!(repo.lookup_name("alice"), NameLookupResult::Found);
+        match repo.find_by_handle("alice") {
+            NameLookupResult::Found(user) => assert_eq!(user.handle(), "alice"),
+            other => panic!("expected found, got {other:?}"),
+        }
     }
 
     #[test]
     fn unknown_handle_returns_not_found() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        assert_eq!(repo.lookup_name("bob"), NameLookupResult::NotFound);
+        assert!(matches!(
+            repo.find_by_handle("bob"),
+            NameLookupResult::NotFound
+        ));
     }
 
     #[test]
     fn literal_new_keyword_returns_user_typed_new() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        assert_eq!(repo.lookup_name("NEW"), NameLookupResult::UserTypedNew);
+        assert!(matches!(
+            repo.find_by_handle("NEW"),
+            NameLookupResult::UserTypedNew
+        ));
     }
 
     #[test]
     fn wildcard_input_does_not_glob_match() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        assert_eq!(repo.lookup_name("a*"), NameLookupResult::NotFound);
+        assert!(matches!(
+            repo.find_by_handle("a*"),
+            NameLookupResult::NotFound
+        ));
     }
 
     #[test]
-    fn user_for_name_returns_matching_user() {
+    fn save_updates_matching_user() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        let user = repo.user_for_name("alice").expect("user present");
-        assert_eq!(user.handle(), "alice");
+        let mut user = user_with_handle(2, "alice");
+        user.bump_times_called();
+        repo.save(user).expect("save");
+
+        match repo.find_by_handle("alice") {
+            NameLookupResult::Found(user) => assert_eq!(user.times_called(), 1),
+            other => panic!("expected found, got {other:?}"),
+        }
     }
 
     #[test]
-    fn user_for_name_returns_none_for_unknown() {
+    fn save_unknown_user_errors() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        assert!(repo.user_for_name("bob").is_none());
+        let error = repo
+            .save(user_with_handle(3, "bob"))
+            .expect_err("unknown user should error");
+        assert_eq!(
+            error,
+            UserRepositoryError::UserNotFound {
+                handle: "bob".to_string()
+            }
+        );
     }
 }

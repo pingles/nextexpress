@@ -544,16 +544,12 @@ pub enum NameTypedOutcome {
 pub enum NameTypedError {
     /// The session is not in [`SessionState::Identifying`].
     WrongState(SessionState),
-    /// The repository reported `Found` but its `user_for_name`
-    /// returned `None`. Indicates a data-race in the repository.
-    UserDisappeared,
 }
 
 impl std::fmt::Display for NameTypedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::WrongState(s) => write!(f, "name typed in unexpected state: {s:?}"),
-            Self::UserDisappeared => write!(f, "user lookup raced and lost"),
         }
     }
 }

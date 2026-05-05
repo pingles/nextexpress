@@ -13,7 +13,88 @@ use crate::domain::session::{
     EnterMenuError, NameTypedError, NameTypedOutcome, Session, SessionState,
     SessionTransitionError, VerifyPasswordError, VerifyPasswordOutcome,
 };
-use crate::domain::user_repository::{NameLookupResult, UserRepository};
+use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
+
+/// Errors returned by [`verify_password`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyPasswordFlowError {
+    /// The underlying session rule failed.
+    Session(VerifyPasswordError),
+    /// The changed user record could not be persisted.
+    Save(UserRepositoryError),
+}
+
+impl std::fmt::Display for VerifyPasswordFlowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(error) => write!(f, "{error}"),
+            Self::Save(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for VerifyPasswordFlowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Session(error) => Some(error),
+            Self::Save(error) => Some(error),
+        }
+    }
+}
+
+/// Errors returned by [`enter_menu`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnterMenuFlowError {
+    /// The underlying session rule failed.
+    Session(EnterMenuError),
+    /// The changed user record could not be persisted.
+    Save(UserRepositoryError),
+}
+
+impl std::fmt::Display for EnterMenuFlowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(error) => write!(f, "{error}"),
+            Self::Save(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for EnterMenuFlowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Session(error) => Some(error),
+            Self::Save(error) => Some(error),
+        }
+    }
+}
+
+/// Errors returned by [`finalise_logoff`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FinaliseLogoffFlowError {
+    /// The underlying session rule failed.
+    Session(SessionTransitionError),
+    /// The changed user record could not be persisted.
+    Save(UserRepositoryError),
+}
+
+impl std::fmt::Display for FinaliseLogoffFlowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(error) => write!(f, "{error}"),
+            Self::Save(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for FinaliseLogoffFlowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Session(error) => Some(error),
+            Self::Save(error) => Some(error),
+        }
+    }
+}
 
 /// Handles `session.allium:NameTyped`.
 ///
@@ -22,9 +103,7 @@ use crate::domain::user_repository::{NameLookupResult, UserRepository};
 ///
 /// # Errors
 /// Returns [`NameTypedError::WrongState`] when `session` is not in
-/// [`SessionState::Identifying`], or [`NameTypedError::UserDisappeared`]
-/// when the repository reports a found user but cannot return the
-/// corresponding record.
+/// [`SessionState::Identifying`].
 pub fn name_typed<R>(
     session: &mut Session,
     typed: &str,
@@ -38,13 +117,8 @@ where
         return Err(NameTypedError::WrongState(session.state()));
     }
 
-    match repo.lookup_name(typed) {
-        NameLookupResult::Found => {
-            let user = repo
-                .user_for_name(typed)
-                .ok_or(NameTypedError::UserDisappeared)?;
-            session.record_identified_user(typed, user)
-        }
+    match repo.find_by_handle(typed) {
+        NameLookupResult::Found(user) => session.record_identified_user(typed, user),
         NameLookupResult::NotFound => session.record_unknown_name(now),
         NameLookupResult::UserTypedNew => session.reject_new_user_request(),
     }
@@ -62,30 +136,43 @@ where
 /// when no user is bound, or
 /// [`VerifyPasswordError::HashKindUnsupported`] when the hasher rejects
 /// the stored password kind.
-pub fn verify_password<H, L>(
+pub fn verify_password<R, H, L>(
     session: &mut Session,
     candidate: &str,
+    user_repo: &R,
     hasher: &H,
     caller_log: &L,
     max_password_failures: u32,
     now: SystemTime,
-) -> Result<VerifyPasswordOutcome, VerifyPasswordError>
+) -> Result<VerifyPasswordOutcome, VerifyPasswordFlowError>
 where
+    R: UserRepository + ?Sized,
     H: PasswordHasher + ?Sized,
     L: CallerLogAppender + ?Sized,
 {
     if session.state() != SessionState::Authenticating {
-        return Err(VerifyPasswordError::WrongState(session.state()));
+        return Err(VerifyPasswordFlowError::Session(
+            VerifyPasswordError::WrongState(session.state()),
+        ));
     }
-    let user = session.user().ok_or(VerifyPasswordError::UserMissing)?;
-    let matches = hasher
-        .verify_password(user, candidate)
-        .map_err(VerifyPasswordError::HashKindUnsupported)?;
+    let user = session.user().ok_or(VerifyPasswordFlowError::Session(
+        VerifyPasswordError::UserMissing,
+    ))?;
+    let matches = hasher.verify_password(user, candidate).map_err(|error| {
+        VerifyPasswordFlowError::Session(VerifyPasswordError::HashKindUnsupported(error))
+    })?;
 
     if matches {
-        session.apply_password_match(now)
+        let outcome = session
+            .apply_password_match(now)
+            .map_err(VerifyPasswordFlowError::Session)?;
+        save_bound_user(session, user_repo).map_err(VerifyPasswordFlowError::Save)?;
+        Ok(outcome)
     } else {
-        let (outcome, entry) = session.apply_password_mismatch(max_password_failures, now)?;
+        let (outcome, entry) = session
+            .apply_password_mismatch(max_password_failures, now)
+            .map_err(VerifyPasswordFlowError::Session)?;
+        save_bound_user(session, user_repo).map_err(VerifyPasswordFlowError::Save)?;
         caller_log.append(entry);
         Ok(outcome)
     }
@@ -98,15 +185,20 @@ where
 ///
 /// # Errors
 /// Returns [`EnterMenuError`] when the session cannot enter the menu.
-pub fn enter_menu<L>(
+pub fn enter_menu<R, L>(
     session: &mut Session,
+    user_repo: &R,
     caller_log: &L,
     now: SystemTime,
-) -> Result<(), EnterMenuError>
+) -> Result<(), EnterMenuFlowError>
 where
+    R: UserRepository + ?Sized,
     L: CallerLogAppender + ?Sized,
 {
-    let entry = session.enter_menu(now)?;
+    let entry = session
+        .enter_menu(now)
+        .map_err(EnterMenuFlowError::Session)?;
+    save_bound_user(session, user_repo).map_err(EnterMenuFlowError::Save)?;
     caller_log.append(entry);
     Ok(())
 }
@@ -118,17 +210,33 @@ where
 ///
 /// # Errors
 /// Returns [`SessionTransitionError`] when the session is not logging off.
-pub fn finalise_logoff<L>(
+pub fn finalise_logoff<R, L>(
     session: &mut Session,
+    user_repo: &R,
     caller_log: &L,
     now: SystemTime,
-) -> Result<(), SessionTransitionError>
+) -> Result<(), FinaliseLogoffFlowError>
 where
+    R: UserRepository + ?Sized,
     L: CallerLogAppender + ?Sized,
 {
-    let entry = session.finalise_logoff(now)?;
+    let entry = session
+        .finalise_logoff(now)
+        .map_err(FinaliseLogoffFlowError::Session)?;
+    save_bound_user(session, user_repo).map_err(FinaliseLogoffFlowError::Save)?;
     caller_log.append(entry);
     Ok(())
+}
+
+fn save_bound_user<R>(session: &Session, user_repo: &R) -> Result<(), UserRepositoryError>
+where
+    R: UserRepository + ?Sized,
+{
+    if let Some(user) = session.user() {
+        user_repo.save(user.clone())
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -181,27 +289,48 @@ mod tests {
     }
 
     struct TestRepo {
-        users: Vec<User>,
-        disappear_on_fetch: bool,
+        users: Mutex<Vec<User>>,
     }
 
     impl UserRepository for TestRepo {
-        fn lookup_name(&self, typed: &str) -> NameLookupResult {
+        fn find_by_handle(&self, typed: &str) -> NameLookupResult {
             if typed == "NEW" {
                 return NameLookupResult::UserTypedNew;
             }
-            if self.users.iter().any(|u| u.handle() == typed) {
-                NameLookupResult::Found
+            let users = self.users.lock().unwrap();
+            if let Some(user) = users.iter().find(|u| u.handle() == typed) {
+                NameLookupResult::Found(user.clone())
             } else {
                 NameLookupResult::NotFound
             }
         }
 
-        fn user_for_name(&self, handle: &str) -> Option<User> {
-            if self.disappear_on_fetch {
-                return None;
+        fn save(&self, user: User) -> Result<(), UserRepositoryError> {
+            let mut users = self.users.lock().unwrap();
+            let Some(existing) = users.iter_mut().find(|u| u.handle() == user.handle()) else {
+                return Err(UserRepositoryError::UserNotFound {
+                    handle: user.handle().to_string(),
+                });
+            };
+            *existing = user;
+            Ok(())
+        }
+    }
+
+    impl TestRepo {
+        fn new(users: Vec<User>) -> Self {
+            Self {
+                users: Mutex::new(users),
             }
-            self.users.iter().find(|u| u.handle() == handle).cloned()
+        }
+
+        fn find_saved(&self, handle: &str) -> User {
+            let users = self.users.lock().unwrap();
+            users
+                .iter()
+                .find(|u| u.handle() == handle)
+                .expect("saved user")
+                .clone()
         }
     }
 
@@ -240,10 +369,7 @@ mod tests {
 
     #[test]
     fn name_typed_found_binds_user() {
-        let repo = TestRepo {
-            users: vec![alice()],
-            disappear_on_fetch: false,
-        };
+        let repo = TestRepo::new(vec![alice()]);
         let mut session = session_identifying();
         let outcome = name_typed(&mut session, "alice", &repo, SystemTime::UNIX_EPOCH).unwrap();
 
@@ -253,25 +379,14 @@ mod tests {
     }
 
     #[test]
-    fn name_typed_detects_user_disappeared() {
-        let repo = TestRepo {
-            users: vec![alice()],
-            disappear_on_fetch: true,
-        };
-        let mut session = session_identifying();
-        let error = name_typed(&mut session, "alice", &repo, SystemTime::UNIX_EPOCH)
-            .expect_err("missing user should error");
-
-        assert_eq!(error, NameTypedError::UserDisappeared);
-    }
-
-    #[test]
     fn verify_password_mismatch_appends_password_failure_log() {
+        let repo = TestRepo::new(vec![alice()]);
         let mut session = session_authenticating();
         let log = TestLog::default();
         let outcome = verify_password(
             &mut session,
             "wrong",
+            &repo,
             &good_hasher(),
             &log,
             3,
@@ -283,15 +398,18 @@ mod tests {
         let entries = log.entries();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].is_password_failure);
+        assert_eq!(repo.find_saved("alice").invalid_attempts(), 1);
     }
 
     #[test]
     fn enter_menu_appends_logon_entry() {
+        let repo = TestRepo::new(vec![alice()]);
         let mut session = session_authenticating();
         let log = TestLog::default();
         verify_password(
             &mut session,
             "secret",
+            &repo,
             &good_hasher(),
             &log,
             3,
@@ -299,31 +417,38 @@ mod tests {
         )
         .unwrap();
 
-        enter_menu(&mut session, &log, SystemTime::UNIX_EPOCH).unwrap();
+        enter_menu(&mut session, &repo, &log, SystemTime::UNIX_EPOCH).unwrap();
 
         assert_eq!(session.state(), SessionState::Menu);
         assert!(log.entries().iter().any(|e| e.text.contains("Logon:")));
+        assert_eq!(repo.find_saved("alice").times_called(), 1);
     }
 
     #[test]
     fn finalise_logoff_appends_logoff_entry() {
+        let repo = TestRepo::new(vec![alice()]);
         let mut session = session_authenticating();
         let log = TestLog::default();
         verify_password(
             &mut session,
             "secret",
+            &repo,
             &good_hasher(),
             &log,
             3,
             SystemTime::UNIX_EPOCH,
         )
         .unwrap();
-        enter_menu(&mut session, &log, SystemTime::UNIX_EPOCH).unwrap();
+        enter_menu(&mut session, &repo, &log, SystemTime::UNIX_EPOCH).unwrap();
         session.user_requests_logoff().unwrap();
 
-        finalise_logoff(&mut session, &log, SystemTime::UNIX_EPOCH).unwrap();
+        finalise_logoff(&mut session, &repo, &log, SystemTime::UNIX_EPOCH).unwrap();
 
         assert_eq!(session.state(), SessionState::Ended);
         assert!(log.entries().iter().any(|e| e.text.contains("Logoff:")));
+        assert_eq!(
+            repo.find_saved("alice").last_call(),
+            Some(SystemTime::UNIX_EPOCH)
+        );
     }
 }

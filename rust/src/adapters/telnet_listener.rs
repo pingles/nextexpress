@@ -293,6 +293,7 @@ async fn run_session(
         let outcome = session_flow::verify_password(
             &mut session,
             password.trim(),
+            user_repo,
             hasher,
             caller_log,
             max_password_failures,
@@ -327,7 +328,7 @@ async fn run_session(
 
     // EnterMenu (Slice 12): increment user.times_called, transition
     // to Menu, write the logon caller-log line and display the menu.
-    session_flow::enter_menu(&mut session, caller_log, SystemTime::now())
+    session_flow::enter_menu(&mut session, user_repo, caller_log, SystemTime::now())
         .expect("session is in onboarded with a user");
 
     // Menu loop (Slice 13). Phase 1 only implements `G` (goodbye).
@@ -343,7 +344,7 @@ async fn run_session(
         let cmd = line.trim().to_ascii_uppercase();
         if cmd == "G" {
             session.user_requests_logoff().expect("session is in menu");
-            session_flow::finalise_logoff(&mut session, caller_log, SystemTime::now())
+            session_flow::finalise_logoff(&mut session, user_repo, caller_log, SystemTime::now())
                 .expect("session is in logging_off");
             stream.write_all(GOODBYE_LINE).await?;
             stream.flush().await?;
