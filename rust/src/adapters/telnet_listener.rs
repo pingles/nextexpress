@@ -38,11 +38,29 @@ const IAC_INIT: &[u8] = &[
 const BUSY_LINE: &[u8] = b"All BBS nodes are busy. Please try again later.\r\n";
 
 /// Built-in fallback banner used when the configured `BBSTITLE.txt`
-/// file is missing.
-const FALLBACK_BANNER: &[u8] = b"NextExpress\n";
+/// file is missing. Telnet line ending (CRLF) so it renders correctly
+/// on Linux and macOS clients that don't translate bare LF.
+const FALLBACK_BANNER: &[u8] = b"NextExpress\r\n";
 
-/// Prompt sent before reading the user's handle.
-const NAME_PROMPT: &[u8] = b"Login: ";
+/// Two-line copyright block printed on every accepted connection,
+/// directly after the BBS title banner. The NextExpress line sits
+/// above the AmiExpress line to make the lineage obvious; the
+/// AmiExpress line mirrors the original BBS's banner verbatim
+/// (`amiexpress/express.e:25690`, modulo the legacy file's mojibake of
+/// the © glyph).
+const COPYRIGHT_LINES: &[u8] = concat!(
+    "NextExpress ",
+    env!("CARGO_PKG_VERSION"),
+    " Copyright \u{00A9}2026\r\n",
+    "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
+)
+.as_bytes();
+
+/// Prompt sent before reading the user's handle. Mirrors the original
+/// AmiExpress wire format: a CRLF prefix and trailing space around the
+/// default `NAME_PROMPT` of `Enter your Name:` (see
+/// `amiexpress/express.e:29571` and `:31774`).
+const NAME_PROMPT: &[u8] = b"\r\nEnter your Name: ";
 
 /// Sent after a not-found name lookup to invite a retry.
 const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
@@ -224,6 +242,7 @@ async fn run_session(
 
     let banner = read_banner(bbs_path).await;
     stream.write_all(&banner).await?;
+    stream.write_all(COPYRIGHT_LINES).await?;
 
     session
         .prompt_for_name()
@@ -391,12 +410,16 @@ async fn read_telnet_line(stream: &mut TcpStream) -> io::Result<Option<String>> 
 }
 
 /// Reads `bbs_path/Screens/BBSTITLE.txt`, falling back to the built-in
-/// banner if the file is missing or unreadable.
+/// banner if the file is missing or unreadable. Amiga `\b\n` line
+/// endings in the file are translated to telnet `\r\n` so files
+/// authored on the original system render correctly on
+/// Linux / macOS / Windows clients.
 async fn read_banner(bbs_path: &Path) -> Vec<u8> {
     let path = bbs_path.join("Screens").join("BBSTITLE.txt");
-    tokio::fs::read(&path)
-        .await
-        .unwrap_or_else(|_| FALLBACK_BANNER.to_vec())
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => translate_amiga_line_endings(&bytes),
+        Err(_) => FALLBACK_BANNER.to_vec(),
+    }
 }
 
 /// Reads `bbs_path/Conf02/Menu.txt`, normalising the Amiga-era `\b\n`
@@ -743,18 +766,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_prompt_appears_after_banner() {
+    async fn name_prompt_matches_amiexpress_wording() {
+        // express.e:31774 sets the default name prompt to
+        // 'Enter your Name:' and express.e:29571 prints it as
+        // '\b\n<prompt> ' — i.e. CRLF prefix and trailing space on the
+        // wire.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let buf = drain_until(&mut stream, b"Login: ").await;
-        assert!(contains(&buf, b"Login: "), "expected Login prompt: {buf:?}");
+        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        assert!(
+            contains(&buf, b"\r\nEnter your Name: "),
+            "expected CRLF-prefixed AmiExpress name prompt: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_displays_amiexpress_copyright_line() {
+        // Mirrors express.e:25690 's 'AmiExpress \s Copyright ©<years> Darren Coles'.
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        assert!(
+            contains(
+                &buf,
+                "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n".as_bytes()
+            ),
+            "expected AmiExpress copyright line: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_displays_nextexpress_copyright_line() {
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        let needle = format!(
+            "NextExpress {} Copyright \u{00A9}2026\r\n",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(
+            contains(&buf, needle.as_bytes()),
+            "expected NextExpress copyright line: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn nextexpress_copyright_appears_above_amiexpress_copyright() {
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        let nx_index = find_subslice(&buf, b"NextExpress ").expect("NextExpress line present");
+        let ax_index = find_subslice(&buf, b"AmiExpress 5 ").expect("AmiExpress line present");
+        assert!(
+            nx_index < ax_index,
+            "NextExpress line should appear above AmiExpress line: {buf:?}"
+        );
+    }
+
+    /// Returns the byte index of the first occurrence of `needle` in `haystack`.
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
     }
 
     #[tokio::test]
     async fn existing_handle_advances_to_password_prompt() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Login: ").await;
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let buf = drain_until(&mut stream, b"Password: ").await;
         assert!(
@@ -767,7 +845,7 @@ mod tests {
     async fn correct_password_authenticates_user() {
         let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Login: ").await;
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, b"Password: ").await;
         stream.write_all(b"secret\r\n").await.unwrap();
@@ -783,7 +861,7 @@ mod tests {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
         for _ in 0..5 {
-            let _ = drain_until(&mut stream, b"Login: ").await;
+            let _ = drain_until(&mut stream, b"Enter your Name: ").await;
             stream.write_all(b"nobody\r\n").await.unwrap();
         }
         let buf = drain_until(&mut stream, b"Too many").await;
@@ -797,16 +875,19 @@ mod tests {
     async fn new_keyword_is_rejected_and_re_prompts() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Login: ").await;
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         // Read until we see BOTH the rejection and a fresh prompt.
         // (TCP may merge them into one read or split across reads.)
-        let buf = drain_until_both(&mut stream, b"not yet supported", b"Login: ").await;
+        let buf = drain_until_both(&mut stream, b"not yet supported", b"Enter your Name: ").await;
         assert!(
             contains(&buf, b"not yet supported"),
             "expected NEW rejection: {buf:?}"
         );
-        assert!(contains(&buf, b"Login: "), "expected re-prompt: {buf:?}");
+        assert!(
+            contains(&buf, b"Enter your Name: "),
+            "expected re-prompt: {buf:?}"
+        );
     }
 
     #[test]
@@ -860,7 +941,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Login: ").await;
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, b"Password: ").await;
         stream.write_all(b"secret\r\n").await.unwrap();
@@ -939,7 +1020,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Login: ").await;
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, b"Password: ").await;
         stream.write_all(b"secret\r\n").await.unwrap();
