@@ -245,7 +245,7 @@ impl Session {
     /// `existing_session_for_node` already holds an active session for
     /// that node — the spec's `OneActiveSessionPerNode` invariant. The
     /// caller (typically the supervisor on top of
-    /// [`crate::domain::node_pool::NodePool`]) is responsible for
+    /// [`crate::app::node_pool::NodePool`]) is responsible for
     /// ensuring the underlying node is in
     /// [`crate::domain::node::NodeStatus::Connecting`] before
     /// invoking this rule (the pool's `allocate` does that

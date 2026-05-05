@@ -8,7 +8,6 @@
 pub mod caller_log;
 pub mod config;
 pub mod node;
-pub mod node_pool;
 pub mod password;
 pub mod session;
 pub mod user;

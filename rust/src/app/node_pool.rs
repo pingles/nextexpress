@@ -1,11 +1,9 @@
 //! [`NodePool`]: a fixed-size pool of [`Node`] entities, with atomic
 //! allocation semantics for concurrent sessions.
 //!
-//! The pool is the unit of concurrency for the BBS: at most
-//! `core.allium:config.max_nodes` sessions can be active at once
-//! (Slice 7 introduces that config key). The supervisor (Slice 8) calls
-//! [`NodePool::allocate`] for each accepted connection and
-//! [`NodePool::release`] when the session ends.
+//! The pool is application runtime state rather than pure domain logic:
+//! it protects domain [`Node`] values with an async-aware lock so
+//! transports can safely allocate nodes concurrently.
 
 use tokio::sync::Mutex;
 
@@ -43,8 +41,7 @@ impl NodePool {
     /// # Errors
     /// Returns [`ReleaseError::UnknownNode`] if no node has that number,
     /// or [`ReleaseError::InvalidTransition`] if the node's current
-    /// status does not permit returning to idle (callers are expected
-    /// to drive the node through `LoggingOff` first).
+    /// status does not permit returning to idle.
     pub async fn release(&self, number: u32) -> Result<(), ReleaseError> {
         let mut nodes = self.nodes.lock().await;
         let node = nodes
@@ -120,10 +117,6 @@ mod tests {
     async fn released_node_can_be_reallocated() {
         let pool = NodePool::new(1);
         let first = pool.allocate().await.expect("first");
-        // Walk through the spec-permitted path back to idle.
-        // (allocate left it Connecting; LoggingOff is reachable via
-        //  Connecting -> LoggedOn -> LoggingOff -> Idle.)
-        // The pool only exposes release(), which goes Connecting -> Idle.
         pool.release(first).await.expect("connecting -> idle");
         assert_eq!(pool.status_of(first).await, Some(NodeStatus::Idle));
         let second = pool.allocate().await.expect("after release");
@@ -139,9 +132,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_allocations_yield_distinct_nodes() {
-        // Two concurrent allocations must claim distinct nodes — the
-        // pool's atomicity guarantee. We run many trials so a racy
-        // implementation has a high chance of producing a duplicate.
+        // Two concurrent allocations must claim distinct nodes. Run
+        // many trials so a racy implementation has a high chance of
+        // producing a duplicate.
         for _ in 0..50 {
             let pool = Arc::new(NodePool::new(2));
             let a = pool.clone();

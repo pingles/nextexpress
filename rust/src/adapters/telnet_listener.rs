@@ -1,7 +1,7 @@
 //! Telnet listener and per-session task (Slice 8 / Slice 9).
 //!
 //! Boots a [`tokio::net::TcpListener`], allocates a node from the
-//! domain [`NodePool`] for every accepted connection, invokes the
+//! application [`NodePool`] for every accepted connection, invokes the
 //! `AcceptConnection`, `PromptForName` and `NameTyped` rules.
 //! Subsequent slices extend the per-session task with the
 //! `VerifyPassword` and menu rules.
@@ -15,10 +15,10 @@ use std::time::SystemTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
+use crate::app::node_pool::NodePool;
 use crate::app::session_flow;
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::config::Config;
-use crate::domain::node_pool::NodePool;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::{LogonChannel, NameTypedOutcome, Session, VerifyPasswordOutcome};
 use crate::domain::user_repository::UserRepository;
