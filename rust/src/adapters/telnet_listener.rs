@@ -75,7 +75,7 @@ const NEW_NOT_SUPPORTED_LINE: &[u8] =
 const TOO_MANY_RETRIES_LINE: &[u8] = b"Too many failed login attempts. Goodbye.\r\n";
 
 /// Prompt for the user's password.
-const PASSWORD_PROMPT: &[u8] = b"Password: ";
+const PASSWORD_PROMPT: &[u8] = b"PassWord: ";
 
 /// Sent after a successful authentication. The conference menu lands
 /// in Slice 12; until then we acknowledge and idle.
@@ -781,7 +781,7 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
-        let _ = drain_until(&mut stream, b"Password: ").await;
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret").await.unwrap();
         let buf = drain_until(&mut stream, b"******").await;
         assert!(
@@ -819,9 +819,9 @@ mod tests {
         // 'aliceX' + BS + Enter -> handle should be 'alice', advancing
         // to the password prompt instead of "Unknown user".
         stream.write_all(b"aliceX\x08\r\n").await.unwrap();
-        let buf = drain_until(&mut stream, b"Password: ").await;
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
-            contains(&buf, b"Password: "),
+            contains(&buf, PASSWORD_PROMPT),
             "BS should leave handle as 'alice', advancing to password: {buf:?}"
         );
     }
@@ -834,9 +834,9 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"\x08\x08alice\r\n").await.unwrap();
-        let buf = drain_until(&mut stream, b"Password: ").await;
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
-            contains(&buf, b"Password: "),
+            contains(&buf, PASSWORD_PROMPT),
             "BS at start should be ignored; 'alice' should authenticate normally: {buf:?}"
         );
     }
@@ -852,9 +852,9 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r").await.unwrap();
-        let buf = drain_until(&mut stream, b"Password: ").await;
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
-            contains(&buf, b"Password: "),
+            contains(&buf, PASSWORD_PROMPT),
             "bare CR should advance to password prompt: {buf:?}"
         );
     }
@@ -867,9 +867,9 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\0").await.unwrap();
-        let buf = drain_until(&mut stream, b"Password: ").await;
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
-            contains(&buf, b"Password: "),
+            contains(&buf, PASSWORD_PROMPT),
             "CR+NUL trailer should be treated as one line break: {buf:?}"
         );
     }
@@ -885,11 +885,11 @@ mod tests {
         stream.write_all(b"alice\r\n").await.unwrap();
         // We expect bytes between the echoed 'e' (last char of alice)
         // and the next "Password: " prompt to include "\r\n".
-        let buf = drain_until(&mut stream, b"Password: ").await;
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         let after_alice = find_subslice(&buf, b"alice")
             .map(|i| i + b"alice".len())
             .expect("'alice' echo present");
-        let pwd_index = find_subslice(&buf, b"Password: ").expect("Password prompt present");
+        let pwd_index = find_subslice(&buf, PASSWORD_PROMPT).expect("Password prompt present");
         let between = &buf[after_alice..pwd_index];
         assert!(
             contains(between, b"\r\n"),
@@ -903,9 +903,9 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
-        let buf = drain_until(&mut stream, b"Password: ").await;
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
-            contains(&buf, b"Password: "),
+            contains(&buf, PASSWORD_PROMPT),
             "expected password prompt: {buf:?}"
         );
     }
@@ -916,7 +916,7 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
-        let _ = drain_until(&mut stream, b"Password: ").await;
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
         let buf = drain_until(&mut stream, b"Authenticated").await;
         assert!(
@@ -992,7 +992,7 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
-        let _ = drain_until(&mut stream, b"Password: ").await;
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
         let _ = drain_until(&mut stream, b"Command: ").await;
         stream.write_all(b"G\r\n").await.unwrap();
@@ -1071,7 +1071,7 @@ mod tests {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
-        let _ = drain_until(&mut stream, b"Password: ").await;
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
         let buf = drain_until(&mut stream, b"MENU CONTENT").await;
         assert!(

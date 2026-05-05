@@ -89,7 +89,7 @@ fn walk_signin_loop(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
 
-    let between_handle_and_password = drain_until_capturing(&mut stream, b"Password: ")
+    let between_handle_and_password = drain_until_capturing(&mut stream, b"PassWord: ")
         .map_err(|e| format!("Password prompt: {e}"))?;
     if !contains(&between_handle_and_password, b"sysop") {
         return Err(format!(
