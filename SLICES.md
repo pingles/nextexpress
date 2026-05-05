@@ -22,7 +22,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | Phase | File | Slices | Theme |
 | --- | --- | --- | --- |
 | 0 | [slices/phase0.md](slices/phase0.md) | 1 | Project foundations |
-| 1 | [slices/phase1.md](slices/phase1.md) | 2–13 | Sign in, see the menu, log off |
+| 1 | [slices/phase1.md](slices/phase1.md) | 2–13, 13a | Sign in, see the menu, log off |
 | 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow |
 | 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding |
 | 4 | [slices/phase4.md](slices/phase4.md) | 22–26 | Sysop console & node controls |
@@ -100,6 +100,22 @@ that pass, and `cargo test`, `cargo build`, `cargo fmt --check` and
 `cargo clippy -- -D warnings` are all clean. Anything else is **Todo**
 (or **In progress** while a slice is being worked on).
 
+A **phase** whose theme names a user-facing capability ("Sign in, see
+the menu, log off", "Conferences (read)", "Files (transfer)", and so
+on) is **Done** only once that capability is reachable by running the
+compiled binary — not merely the library or per-test in-process
+listeners. Every such phase therefore owns a closing slice that wires
+the composition root (`app::main`), pins down the runtime config
+acquisition story (config file? built-in defaults? CLI flags?) and the
+seed-data story (how does an installer get a user record on disk to
+log in as?), and adds a smoke test that spawns the binary process and
+exercises the headline flow end-to-end. Library-level slice tests are
+necessary but not sufficient: a phase whose binary wouldn't actually
+deliver its theme is **In progress**, not Done — even if every named
+rule has its own green test. Future-phase slice tables therefore each
+end with a "Phase N — wire and smoke" closing slice; the lack of one
+in Phase 1 is a planning bug being fixed by Slice 13a below.
+
 | # | Slice | Status |
 | ---: | --- | :---: |
 | 1 | Cargo crate skeleton | Done |
@@ -115,6 +131,7 @@ that pass, and `cargo test`, `cargo build`, `cargo fmt --check` and
 | 11 | `VerifyPassword` rule (failure path) | Done |
 | 12 | `EnterMenu` + display the conference menu | Done |
 | 13 | `UserRequestsLogoff` + `FinaliseLogoff` + `ReleaseNode` | Done |
+| 13a | Phase 1 wire-and-smoke (composition root + sysop seed) | Done |
 | 14 | Daily time budget initialisation + decrement | Todo |
 | 15 | Forced password reset | Todo |
 | 16 | Account-locked / insufficient-access rejection | Todo |

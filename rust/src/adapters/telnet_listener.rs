@@ -460,6 +460,7 @@ mod tests {
             max_nodes,
             bbs_path: nonexistent_bbs(),
             max_password_failures: 3,
+            ..Config::default()
         }
     }
 
@@ -588,6 +589,7 @@ mod tests {
             max_nodes: 1,
             bbs_path: dir.path().to_path_buf(),
             max_password_failures: 3,
+            ..Config::default()
         };
         let listener = Arc::new(
             TelnetListener::bind(
@@ -837,6 +839,7 @@ mod tests {
             max_nodes: 1,
             bbs_path: dir.path().to_path_buf(),
             max_password_failures: 3,
+            ..Config::default()
         };
         let log = Arc::new(InMemoryCallerLog::new());
         let listener = Arc::new(
@@ -917,6 +920,7 @@ mod tests {
             max_nodes: 1,
             bbs_path: dir.path().to_path_buf(),
             max_password_failures: 3,
+            ..Config::default()
         };
         let listener = Arc::new(
             TelnetListener::bind(

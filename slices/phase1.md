@@ -128,3 +128,16 @@ table and asset inventory.
   - Accumulating `time_used_today` — Slice 14 introduces that field.
   - `relogon` re-entry (Slice 23).
   - `format_logoff_line`'s byte-tally fields (filled in once Phase 11 lands transfer accounting).
+
+## Slice 13a — Phase 1 wire-and-smoke (composition root + sysop seed)
+- **In Scope**
+  - Adds `core.allium:config.port` (the TCP port the telnet listener binds on; default `2323`, the AmiExpress-era convention). First read by this slice.
+  - `app::main` becomes a real composition root: parses an optional single positional CLI arg as a TOML config path, falls back to `Config::default()` when absent, builds the [`Pbkdf2PasswordHasher`], the [`InMemoryUserRepository`], the [`InMemoryCallerLog`] and the [`TelnetListener`], then `println!`s `Listening on <local_addr>` (a single line, no extra adornment) and calls `listener.run().await`.
+  - Config file format: TOML, parsed by `serde` + the `toml` crate. Schema is exactly today's `Config` struct (`port`, `max_nodes`, `bbs_path`, `max_password_failures`); every field is optional and falls back to `Config::default()`. Missing config arg = use defaults; malformed config = panic with a clear "couldn't parse <path>: <error>" message.
+  - Seed-data fallback: when the configured `InMemoryUserRepository` ends up empty (which is the only path today, since the slice does **not** introduce a `[[users]]` schema), `app::main` inserts one slot-1 `User` with handle `sysop`, password `sysop` hashed with `Pbkdf210000`, and `access_level = 255`. A `WARNING: seeded default sysop credentials …` line is printed to stderr alongside the `Listening on …` stdout line.
+  - Binary smoke test (`tests/phase1_smoke.rs`): spawns the `nextexpress` binary as a subprocess (located via `env!("CARGO_BIN_EXE_nextexpress")`), feeds it a temp TOML with `port = 0`, parses `Listening on <addr>` from stdout, opens a real `TcpStream`, walks the full Phase 1 flow (`Login: sysop` → `Password: sysop` → command `G` → `Goodbye!`) and asserts the connection closes. Kills the child on the way out.
+- **Out of Scope**
+  - A `[[users]]` array in the config file or any other on-disk user format — deferred to whichever slice eventually replaces `InMemoryUserRepository` with a persistent store. The hardcoded sysop fallback is explicitly a dev seed.
+  - `0.0.0.0` / multi-interface bind, IPv6 selection, TLS, SSH transport — Phase 1 binds `127.0.0.1` only.
+  - A first-run installer / interactive setup — `nextexpress` with no args is sufficient to telnet against; richer ergonomics arrive when later phases need them.
+  - Logging framework — `println!`/`eprintln!` is enough until structured logging is genuinely needed.
