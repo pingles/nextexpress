@@ -14,11 +14,15 @@ pub struct InMemoryCallerLog {
 
 impl InMemoryCallerLog {
     /// Constructs an empty log.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Returns a snapshot of the entries logged so far.
+    ///
+    /// # Panics
+    /// Panics if another thread poisoned the in-memory log mutex.
     pub fn entries(&self) -> Vec<CallerLog> {
         self.entries.lock().expect("caller log mutex").clone()
     }

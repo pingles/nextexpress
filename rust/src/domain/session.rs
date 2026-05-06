@@ -19,7 +19,7 @@ const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
 
 /// Default offset past midnight UTC used by
 /// [`SessionPolicy::new`] when no explicit value is supplied. Mirrors
-/// the legacy AmiExpress constant `21600` seconds (six hours) at
+/// the legacy `AmiExpress` constant `21600` seconds (six hours) at
 /// `amiexpress/express.e:529`.
 const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
 
@@ -114,6 +114,7 @@ impl SessionPolicy {
     /// # Returns
     /// A [`SessionPolicy`] carrying the supplied password-failure
     /// limit and the listed defaults.
+    #[must_use]
     pub fn new(max_password_failures: u32) -> Self {
         Self {
             max_password_failures,
@@ -128,18 +129,21 @@ impl SessionPolicy {
 
     /// Returns a copy of `self` with [`Self::daily_reset_offset`]
     /// replaced by `offset`.
+    #[must_use]
     pub fn with_daily_reset_offset(mut self, offset: Duration) -> Self {
         self.daily_reset_offset = offset;
         self
     }
 
     /// Returns the configured daily reset offset (Slice 14).
+    #[must_use]
     pub fn daily_reset_offset(&self) -> Duration {
         self.daily_reset_offset
     }
 
     /// Returns a copy of `self` with [`Self::password_expiry_days`]
     /// replaced by `days`. `0` disables expiry.
+    #[must_use]
     pub fn with_password_expiry_days(mut self, days: u32) -> Self {
         self.password_expiry_days = days;
         self
@@ -147,12 +151,14 @@ impl SessionPolicy {
 
     /// Returns the configured password expiry, in days (Slice 15).
     /// `0` disables expiry.
+    #[must_use]
     pub fn password_expiry_days(&self) -> u32 {
         self.password_expiry_days
     }
 
     /// Returns a copy of `self` with [`Self::min_password_length`]
     /// replaced by `length`. `0` disables the length check.
+    #[must_use]
     pub fn with_min_password_length(mut self, length: u32) -> Self {
         self.min_password_length = length;
         self
@@ -160,6 +166,7 @@ impl SessionPolicy {
 
     /// Returns the configured minimum password length (Slice 15).
     /// `0` disables the length check.
+    #[must_use]
     pub fn min_password_length(&self) -> u32 {
         self.min_password_length
     }
@@ -167,6 +174,7 @@ impl SessionPolicy {
     /// Returns a copy of `self` with [`Self::min_password_categories`]
     /// replaced by `categories`. `0` disables the category check;
     /// values above `4` are treated as `4`.
+    #[must_use]
     pub fn with_min_password_categories(mut self, categories: u32) -> Self {
         self.min_password_categories = categories;
         self
@@ -174,12 +182,14 @@ impl SessionPolicy {
 
     /// Returns the configured minimum password categories (Slice 15).
     /// `0` disables the category check.
+    #[must_use]
     pub fn min_password_categories(&self) -> u32 {
         self.min_password_categories
     }
 
     /// Returns a copy of `self` with [`Self::input_timeout`] replaced
     /// by `timeout`. Slice 17.
+    #[must_use]
     pub fn with_input_timeout(mut self, timeout: Duration) -> Self {
         self.input_timeout = timeout;
         self
@@ -188,12 +198,14 @@ impl SessionPolicy {
     /// Returns the configured per-input idle timeout (Slice 17).
     /// Mirrors `core/config.input_timeout`; the default is five
     /// minutes.
+    #[must_use]
     pub fn input_timeout(&self) -> Duration {
         self.input_timeout
     }
 
     /// Returns a copy of `self` with
     /// [`Self::treat_timeout_as_logoff`] replaced by `value`.
+    #[must_use]
     pub fn with_treat_timeout_as_logoff(mut self, value: bool) -> Self {
         self.treat_timeout_as_logoff = value;
         self
@@ -203,6 +215,7 @@ impl SessionPolicy {
     /// [`LogoffReason::InputTimeout`] (`true`) or
     /// [`LogoffReason::CarrierLoss`] (`false`). Mirrors
     /// `core/config.treat_timeout_as_logoff`. Slice 17.
+    #[must_use]
     pub fn treat_timeout_as_logoff(&self) -> bool {
         self.treat_timeout_as_logoff
     }
@@ -221,10 +234,11 @@ impl SessionPolicy {
     /// # Returns
     /// A [`PasswordFailureDecision`] describing whether the session
     /// may continue, should end, or should lock the bound account.
+    #[must_use]
     pub fn password_failure_decision(&self, session: &Session) -> PasswordFailureDecision {
         let user_failures = session
             .user()
-            .map(|user| user.invalid_attempts())
+            .map(super::user::User::invalid_attempts)
             .unwrap_or_default();
         if user_failures >= self.max_password_failures {
             PasswordFailureDecision::LockAccount
@@ -296,6 +310,7 @@ impl Session {
     /// - `online_baud`: connection baud (0 for local sessions).
     /// - `connected_at`: timestamp the transport accepted the
     ///   connection. Also used as the initial `last_input_at`.
+    #[must_use]
     pub fn new(
         node_number: u32,
         channel: LogonChannel,
@@ -323,69 +338,82 @@ impl Session {
     }
 
     /// Returns this session's node number.
+    #[must_use]
     pub fn node_number(&self) -> u32 {
         self.node_number
     }
 
     /// Returns the channel the session was opened on.
+    #[must_use]
     pub fn channel(&self) -> LogonChannel {
         self.channel
     }
 
     /// Returns the current lifecycle state.
+    #[must_use]
     pub fn state(&self) -> SessionState {
         self.state
     }
 
     /// Returns the user this session has identified as, if any.
+    #[must_use]
     pub fn user(&self) -> Option<&User> {
         self.user.as_ref()
     }
 
     /// Returns the handle the user typed at the identify prompt, if any.
+    #[must_use]
     pub fn typed_name(&self) -> Option<&str> {
         self.typed_name.as_deref()
     }
 
     /// Returns the number of name-not-found strikes accumulated on this
     /// session.
+    #[must_use]
     pub fn name_retry_count(&self) -> u32 {
         self.name_retry_count
     }
 
     /// Returns the number of bad-password strikes accumulated on this
     /// session.
+    #[must_use]
     pub fn password_retry_count(&self) -> u32 {
         self.password_retry_count
     }
 
     /// Returns the timestamp the connection was accepted.
+    #[must_use]
     pub fn connected_at(&self) -> SystemTime {
         self.connected_at
     }
 
     /// Returns the timestamp of the last input received from the user.
+    #[must_use]
     pub fn last_input_at(&self) -> SystemTime {
         self.last_input_at
     }
 
     /// Returns the connection baud rate (0 for local sessions).
+    #[must_use]
     pub fn online_baud(&self) -> u32 {
         self.online_baud
     }
 
     /// Returns the timestamp at which authentication completed, if it
     /// has.
+    #[must_use]
     pub fn authenticated_at(&self) -> Option<SystemTime> {
         self.authenticated_at
     }
 
     /// Returns the timestamp the session ended, if it has.
+    #[must_use]
     pub fn logoff_at(&self) -> Option<SystemTime> {
         self.logoff_at
     }
 
     /// Returns the reason recorded for the session ending, if any.
+    #[must_use]
     pub fn logoff_reason(&self) -> Option<LogoffReason> {
         self.logoff_reason
     }
@@ -395,6 +423,7 @@ impl Session {
     /// Set on the `authenticating -> onboarded` transition by
     /// [`Session::initialise_daily_budget`] and decremented each minute
     /// by [`Session::tick_minute`]. Slice 14.
+    #[must_use]
     pub fn time_remaining(&self) -> Duration {
         self.time_remaining
     }
@@ -404,6 +433,7 @@ impl Session {
     /// satisfied for this session. Always `true` when no gate is
     /// configured. Read by `CompleteNewUserRegistration` as a
     /// precondition.
+    #[must_use]
     pub fn new_user_password_verified(&self) -> bool {
         self.new_user_password_verified
     }
@@ -412,17 +442,20 @@ impl Session {
     /// this session. Bounded by
     /// `core/config.max_new_user_password_attempts` per the
     /// `SessionRetriesBounded` invariant.
+    #[must_use]
     pub fn new_user_password_attempts(&self) -> u32 {
         self.new_user_password_attempts
     }
 
     /// Spec-derived predicate: `channel in {remote, ftp}`.
+    #[must_use]
     pub fn is_remote(&self) -> bool {
         matches!(self.channel, LogonChannel::Remote | LogonChannel::Ftp)
     }
 
     /// Spec-derived predicate:
     /// `state in {onboarded, menu, logging_off, ended} and user != null`.
+    #[must_use]
     pub fn is_authenticated(&self) -> bool {
         self.user.is_some()
             && matches!(
@@ -438,6 +471,7 @@ impl Session {
     /// state is anything except [`SessionState::Ended`]). Helper for
     /// the `OneActiveSessionPerNode` invariant: an active session is
     /// one whose state is not the terminal `Ended`.
+    #[must_use]
     pub fn is_active(&self) -> bool {
         self.state != SessionState::Ended
     }
@@ -481,7 +515,7 @@ impl Session {
         connected_at: SystemTime,
         existing_session_for_node: Option<&Session>,
     ) -> Result<Self, AcceptConnectionError> {
-        if existing_session_for_node.is_some_and(|s| s.is_active()) {
+        if existing_session_for_node.is_some_and(Session::is_active) {
             return Err(AcceptConnectionError::AlreadyActiveSession);
         }
         Ok(Self::new(node_number, channel, online_baud, connected_at))
@@ -954,8 +988,8 @@ impl Session {
     /// `session.allium:RejectLockedOrInsufficientAccess` rule
     /// (Slice 16).
     ///
-    /// When the bound user is locked out (account_locked or
-    /// access_level <= 1), transitions the session to
+    /// When the bound user is locked out (`account_locked` or
+    /// `access_level` <= 1), transitions the session to
     /// [`SessionState::LoggingOff`] with the appropriate
     /// [`LogoffReason`] and returns the spec's rejection caller-log
     /// entry. Otherwise returns `None`.
@@ -1134,7 +1168,7 @@ impl Session {
     /// `time_remaining` is then set to `user.time_limit_per_call`.
     ///
     /// The accounting day boundary is `daily_reset_offset` past
-    /// midnight UTC (the legacy AmiExpress default is six hours, so
+    /// midnight UTC (the legacy `AmiExpress` default is six hours, so
     /// the day rolls over at 06:00 UTC).
     ///
     /// # Errors
@@ -1578,7 +1612,7 @@ impl std::error::Error for TickMinuteError {}
 /// `session.allium:floor_to_day` black-box helper.
 ///
 /// Buckets `at` into a day index where the boundary sits
-/// `offset` past midnight UTC. The legacy AmiExpress equivalent is
+/// `offset` past midnight UTC. The legacy `AmiExpress` equivalent is
 /// `Div(currTime - 21600, 86400)` (six-hour offset) — see
 /// `amiexpress/express.e:529`.
 fn floor_to_day(at: SystemTime, offset: Duration) -> i64 {
@@ -1593,10 +1627,10 @@ fn floor_to_day(at: SystemTime, offset: Duration) -> i64 {
 /// `session.allium:format_logon_line` black-box helper.
 ///
 /// Produces the line written to the caller log when a session reaches
-/// the menu. The legacy AmiExpress format is something like
+/// the menu. The legacy `AmiExpress` format is something like
 /// `Logon: alice (node 1, 9600 baud, remote)`; we match that shape.
 fn format_logon_line(session: &Session) -> String {
-    let handle = session.user.as_ref().map(|u| u.handle()).unwrap_or("?");
+    let handle = session.user.as_ref().map_or("?", super::user::User::handle);
     let channel = match session.channel {
         LogonChannel::SysopConsole => "sysop_console",
         LogonChannel::Local => "local",
@@ -1614,7 +1648,7 @@ fn format_logon_line(session: &Session) -> String {
 /// Phase 1 emits a minimal line. Slice 53 onward extends it with
 /// transfer accounting (`bytes_uploaded`, `bytes_downloaded`).
 fn format_logoff_line(session: &Session) -> String {
-    let handle = session.user.as_ref().map(|u| u.handle()).unwrap_or("?");
+    let handle = session.user.as_ref().map_or("?", super::user::User::handle);
     let reason = match session.logoff_reason {
         Some(LogoffReason::NormalLogoff) => "normal_logoff",
         Some(LogoffReason::NewUserRejected) => "new_user_rejected",
@@ -1671,26 +1705,24 @@ impl std::error::Error for SessionTransitionError {}
 ///   rules end an in-progress registration (Slice 19 brings the
 ///   state in; both rules' `requires:` lists already name it).
 fn is_session_transition_allowed(from: SessionState, to: SessionState) -> bool {
-    use SessionState::*;
+    use SessionState::{
+        Authenticating, Connecting, Ended, Identifying, LoggingOff, Menu, NewUserRegistering,
+        Onboarded,
+    };
     matches!(
         (from, to),
-        (Connecting, Identifying)
-            | (Connecting, LoggingOff)
-            | (Connecting, Ended)
-            | (Identifying, Authenticating)
-            | (Identifying, NewUserRegistering)
-            | (Identifying, LoggingOff)
-            | (Identifying, Ended)
-            | (Authenticating, Onboarded)
-            | (Authenticating, Ended)
-            | (Authenticating, LoggingOff)
-            | (NewUserRegistering, Onboarded)
-            | (NewUserRegistering, LoggingOff)
-            | (NewUserRegistering, Ended)
+        (Connecting, Identifying | LoggingOff | Ended)
+            | (
+                Identifying,
+                Authenticating | NewUserRegistering | LoggingOff | Ended
+            )
+            | (Authenticating | NewUserRegistering, Onboarded)
+            | (Authenticating | NewUserRegistering | LoggingOff, Ended)
+            | (
+                Authenticating | NewUserRegistering | Onboarded | Menu,
+                LoggingOff
+            )
             | (Onboarded, Menu)
-            | (Onboarded, LoggingOff)
-            | (Menu, LoggingOff)
-            | (LoggingOff, Ended)
     )
 }
 
@@ -1904,7 +1936,10 @@ mod tests {
         assert_eq!(outcome, NameTypedOutcome::Authenticated);
         assert_eq!(s.state(), SessionState::Authenticating);
         assert_eq!(s.typed_name(), Some("alice"));
-        assert_eq!(s.user().map(|u| u.handle()), Some("alice"));
+        assert_eq!(
+            s.user().map(super::super::user::User::handle),
+            Some("alice")
+        );
     }
 
     #[test]
@@ -2127,7 +2162,10 @@ mod tests {
         assert!(rejection.is_none(), "fresh new user should not be rejected");
         assert_eq!(s.state(), SessionState::Onboarded);
         assert_eq!(s.authenticated_at(), Some(now));
-        assert_eq!(s.user().map(|u| u.handle()), Some("newbie"));
+        assert_eq!(
+            s.user().map(super::super::user::User::handle),
+            Some("newbie")
+        );
         // InitialiseDailyBudget consequent ran via on_enter_onboarded.
         assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
     }

@@ -199,7 +199,7 @@ impl std::error::Error for VerifyNewUserPasswordFlowError {
 /// Handles `session.allium:VerifyNewUserPassword` (Slice 20a).
 ///
 /// Compares `candidate` against `gate.new_user_password` under the
-/// case-insensitive equality the legacy AmiExpress source uses
+/// case-insensitive equality the legacy `AmiExpress` source uses
 /// (`StriCmp` at `amiexpress/express.e:30027`), then applies the
 /// resulting [`Session`] transition. On a mismatch the caller-log
 /// "New-user password failure" entry is appended to `caller_log`; the
@@ -808,7 +808,10 @@ mod tests {
 
         assert_eq!(outcome, NameTypedOutcome::Authenticated);
         assert_eq!(session.state(), SessionState::Authenticating);
-        assert_eq!(session.user().map(|u| u.handle()), Some("alice"));
+        assert_eq!(
+            session.user().map(crate::domain::user::User::handle),
+            Some("alice")
+        );
     }
 
     #[test]
@@ -1258,7 +1261,10 @@ mod tests {
         .expect("registration");
 
         assert_eq!(session.state(), SessionState::Onboarded);
-        assert_eq!(session.user().map(|u| u.handle()), Some("newbie"));
+        assert_eq!(
+            session.user().map(crate::domain::user::User::handle),
+            Some("newbie")
+        );
         assert!(session.user().unwrap().is_new_user());
         assert_eq!(session.user().unwrap().slot_number(), 1);
         assert_eq!(session.user().unwrap().access_level(), 2);

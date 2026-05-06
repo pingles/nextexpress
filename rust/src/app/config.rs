@@ -25,7 +25,7 @@ const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
 
 /// Default offset past midnight UTC at which the daily counters roll
 /// over (`core.allium:config.daily_reset_offset`). Mirrors the legacy
-/// AmiExpress constant `21600` seconds (six hours) at
+/// `AmiExpress` constant `21600` seconds (six hours) at
 /// `amiexpress/express.e:529`.
 const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
 
@@ -252,6 +252,7 @@ impl Config {
     /// the config exposes: `max_password_failures`,
     /// `daily_reset_offset`, `password_expiry_days`,
     /// `min_password_length` and `min_password_categories`.
+    #[must_use]
     pub fn session_policy(&self) -> SessionPolicy {
         SessionPolicy::new(self.max_password_failures)
             .with_daily_reset_offset(self.daily_reset_offset)

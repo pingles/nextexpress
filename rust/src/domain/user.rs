@@ -208,49 +208,58 @@ impl User {
     }
 
     /// Returns `true` when this user is the sysop (slot `1`).
+    #[must_use]
     pub fn is_sysop(&self) -> bool {
         self.slot_number == 1
     }
 
     /// Returns this user's stable slot number
     /// (`core.allium:User.slot_number`).
+    #[must_use]
     pub fn slot_number(&self) -> u32 {
         self.slot_number
     }
 
     /// Returns the user's handle (login name).
+    #[must_use]
     pub fn handle(&self) -> &str {
         &self.handle
     }
 
     /// Returns the algorithm used to verify the stored password hash.
+    #[must_use]
     pub fn password_hash_kind(&self) -> PasswordHashKind {
         self.password_hash_kind
     }
 
     /// Returns the opaque stored password hash.
+    #[must_use]
     pub fn password_hash(&self) -> &str {
         &self.password_hash
     }
 
     /// Returns the salt the stored password hash was bound to, if the
     /// algorithm uses one.
+    #[must_use]
     pub fn password_salt(&self) -> Option<&str> {
         self.password_salt.as_deref()
     }
 
     /// Returns the number of recent invalid password attempts. Cleared
     /// to zero when the account is locked or a successful login lands.
+    #[must_use]
     pub fn invalid_attempts(&self) -> u32 {
         self.invalid_attempts
     }
 
     /// Returns whether the account is currently locked out.
+    #[must_use]
     pub fn is_account_locked(&self) -> bool {
         self.account_locked
     }
 
     /// Returns the user's access tier (`0..=255`).
+    #[must_use]
     pub fn access_level(&self) -> u8 {
         self.access_level
     }
@@ -262,6 +271,7 @@ impl User {
     /// reserved as "below the minimum non-locked tier" per the spec
     /// (new users start at `2`). Either lower bound, or an
     /// independently set `account_locked` flag, qualifies.
+    #[must_use]
     pub fn is_locked_out(&self) -> bool {
         self.access_level <= 1 || self.account_locked
     }
@@ -286,12 +296,14 @@ impl User {
     }
 
     /// Returns the number of completed logons recorded for this user.
+    #[must_use]
     pub fn times_called(&self) -> u32 {
         self.times_called
     }
 
     /// Returns the timestamp of the most recently completed logon, if
     /// any.
+    #[must_use]
     pub fn last_call(&self) -> Option<SystemTime> {
         self.last_call
     }
@@ -309,24 +321,28 @@ impl User {
     }
 
     /// Returns the per-call time allowance configured for this user.
+    #[must_use]
     pub fn time_limit_per_call(&self) -> Duration {
         self.time_limit_per_call
     }
 
     /// Returns the per-day combined time allowance configured for this
     /// user.
+    #[must_use]
     pub fn time_limit_per_day(&self) -> Duration {
         self.time_limit_per_day
     }
 
     /// Returns how much wall-clock time the user has burned through
     /// today, accumulated across calls in the current accounting day.
+    #[must_use]
     pub fn time_used_today(&self) -> Duration {
         self.time_used_today
     }
 
     /// Returns the number of completed logons recorded for this user
     /// in the current accounting day.
+    #[must_use]
     pub fn times_called_today(&self) -> u32 {
         self.times_called_today
     }
@@ -369,6 +385,7 @@ impl User {
     /// Returns the timestamp the user's password hash was last
     /// rotated. Used by `session.allium:ForcePasswordReset` to detect
     /// expiry against `core/config.password_expiry_days` (Slice 15).
+    #[must_use]
     pub fn password_last_updated(&self) -> SystemTime {
         self.password_last_updated
     }
@@ -377,6 +394,7 @@ impl User {
     /// password-change sub-flow (`session.allium:Session.user.force_password_reset`,
     /// Slice 15). Set by `ForcePasswordReset`, cleared by
     /// `CompletePasswordReset`.
+    #[must_use]
     pub fn force_password_reset(&self) -> bool {
         self.force_password_reset
     }
@@ -393,47 +411,56 @@ impl User {
     /// `session.allium:CompleteNewUserRegistration` (Slice 20);
     /// cleared by the sysop validate-user workflow that lands in
     /// Phase 6.
+    #[must_use]
     pub fn is_new_user(&self) -> bool {
         self.is_new_user
     }
 
     /// Returns the user's free-text "City, State" location, if any.
+    #[must_use]
     pub fn location(&self) -> Option<&str> {
         self.location.as_deref()
     }
 
     /// Returns the user's phone number on file, if any.
+    #[must_use]
     pub fn phone_number(&self) -> Option<&str> {
         self.phone_number.as_deref()
     }
 
     /// Returns the user's email address on file, if any.
+    #[must_use]
     pub fn email(&self) -> Option<&str> {
         self.email.as_deref()
     }
 
     /// Returns the user's preferred terminal width (`0` = auto).
+    #[must_use]
     pub fn line_length(&self) -> u32 {
         self.line_length
     }
 
     /// Returns whether the user wants ANSI colour output.
+    #[must_use]
     pub fn ansi_colour(&self) -> bool {
         self.ansi_colour
     }
 
     /// Returns the timestamp the account was first created.
+    #[must_use]
     pub fn account_created(&self) -> SystemTime {
         self.account_created
     }
 
     /// Returns the user's preference flags
     /// (`core.allium:User.flags`).
+    #[must_use]
     pub fn flags(&self) -> &BTreeSet<UserFlag> {
         &self.flags
     }
 
     /// Returns the ratio enforcement mode in effect for this user.
+    #[must_use]
     pub fn ratio_mode(&self) -> RatioMode {
         self.ratio_mode
     }
@@ -441,6 +468,7 @@ impl User {
     /// Returns the configured ratio threshold (e.g. `3` = three
     /// downloads per upload). `0` with a non-disabled mode means
     /// infinite.
+    #[must_use]
     pub fn ratio_value(&self) -> u32 {
         self.ratio_value
     }

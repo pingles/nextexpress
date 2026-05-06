@@ -47,9 +47,9 @@ const IAC_INIT: &[u8] = &[
 const BUSY_LINE: &[u8] = b"All BBS nodes are busy. Please try again later.\r\n";
 
 /// Two-line copyright block printed on every accepted connection,
-/// directly after the BBS title banner. The NextExpress line sits
-/// above the AmiExpress line to make the lineage obvious; the
-/// AmiExpress line mirrors the original BBS's banner verbatim
+/// directly after the BBS title banner. The `NextExpress` line sits
+/// above the `AmiExpress` line to make the lineage obvious; the
+/// `AmiExpress` line mirrors the original BBS's banner verbatim
 /// (`amiexpress/express.e:25690`, modulo the legacy file's mojibake of
 /// the © glyph).
 const COPYRIGHT_LINES: &[u8] = concat!(
@@ -61,7 +61,7 @@ const COPYRIGHT_LINES: &[u8] = concat!(
 .as_bytes();
 
 /// Prompt sent before reading the user's handle. Mirrors the original
-/// AmiExpress wire format: a CRLF prefix and trailing space around the
+/// `AmiExpress` wire format: a CRLF prefix and trailing space around the
 /// default `NAME_PROMPT` of `Enter your Name:` (see
 /// `amiexpress/express.e:29571` and `:31774`).
 const NAME_PROMPT: &[u8] = b"\r\nEnter your Name: ";
@@ -343,7 +343,7 @@ enum ReadOutcome {
 
 /// Reads a single line from `stream`, bounded by `timeout`. On a
 /// successful read updates `session.last_input_at` to satisfy the
-/// "Telnet adapter resets last_input_at on every input chunk" wire
+/// "Telnet adapter resets `last_input_at` on every input chunk" wire
 /// obligation (Slice 17, see `SLICES.md` adapter checklist).
 async fn read_line_with_idle_timeout(
     stream: &mut TcpStream,
@@ -409,7 +409,7 @@ fn handle_carrier_loss(
 }
 
 /// Maximum handle attempts during registration before the session
-/// bails. Mirrors the original AmiExpress `doNewUser` retry budget at
+/// bails. Mirrors the original `AmiExpress` `doNewUser` retry budget at
 /// `amiexpress/express.e:30150`.
 const MAX_REGISTRATION_HANDLE_ATTEMPTS: u32 = 5;
 
@@ -1882,9 +1882,8 @@ mod tests {
         let mut chunk = [0u8; 256];
         for _ in 0..50 {
             match stream.read(&mut chunk).await {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(n) => tail.extend_from_slice(&chunk[..n]),
-                Err(_) => break,
             }
         }
 

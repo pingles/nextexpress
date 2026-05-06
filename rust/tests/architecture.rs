@@ -42,8 +42,7 @@ fn use_violates(line: &str, forbidden: &str) -> bool {
     let trimmed = line.trim_start();
     let after_pub = trimmed
         .strip_prefix("pub ")
-        .map(str::trim_start)
-        .unwrap_or(trimmed);
+        .map_or(trimmed, str::trim_start);
     let Some(rest) = after_pub.strip_prefix("use ") else {
         return false;
     };

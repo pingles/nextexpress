@@ -54,7 +54,7 @@ impl std::error::Error for UserRepositoryError {}
 /// Port over the user database.
 ///
 /// Implementations are expected to reject inputs containing wildcards
-/// (the legacy AmiExpress code rejects `'*'` early) by returning
+/// (the legacy `AmiExpress` code rejects `'*'` early) by returning
 /// [`NameLookupResult::NotFound`].
 pub trait UserRepository {
     /// Resolves `typed` to a [`NameLookupResult`].

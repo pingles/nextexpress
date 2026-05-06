@@ -70,8 +70,15 @@ impl std::error::Error for PasswordError {}
 /// - `candidate`: the plaintext password.
 /// - `min_length`: minimum character count.
 /// - `min_categories`: minimum distinct character categories.
+#[must_use]
 pub fn meets_password_strength(candidate: &str, min_length: u32, min_categories: u32) -> bool {
-    if min_length > 0 && (candidate.chars().count() as u32) < min_length {
+    if min_length > 0
+        && candidate
+            .chars()
+            .take(usize::try_from(min_length).unwrap_or(usize::MAX))
+            .count()
+            < usize::try_from(min_length).unwrap_or(usize::MAX)
+    {
         return false;
     }
     if min_categories > 0 {
@@ -91,7 +98,7 @@ pub fn meets_password_strength(candidate: &str, min_length: u32, min_categories:
                 symbol = true;
             }
         }
-        let categories = (lower as u32) + (upper as u32) + (digit as u32) + (symbol as u32);
+        let categories = u32::from(lower) + u32::from(upper) + u32::from(digit) + u32::from(symbol);
         if categories < cap {
             return false;
         }

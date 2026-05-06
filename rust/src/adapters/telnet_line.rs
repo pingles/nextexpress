@@ -12,9 +12,9 @@ use tokio::net::TcpStream;
 /// How [`read_telnet_line`] should echo the bytes it accepts.
 ///
 /// Because the listener advertises `IAC WILL ECHO` to the client at
-/// connect time, well-behaved clients (SyncTerm, PuTTY, telnet(1))
+/// connect time, well-behaved clients (`SyncTerm`, `PuTTY`, telnet(1))
 /// suppress their local echo and rely on the server to reflect typed
-/// characters. Mirrors the original AmiExpress behaviour:
+/// characters. Mirrors the original `AmiExpress` behaviour:
 /// - [`Visible`][Self::Visible] for ordinary line input
 ///   (`amiexpress/express.e:2342` echoes the typed char in `lineInput`).
 /// - [`Masked`][Self::Masked] at the password prompt

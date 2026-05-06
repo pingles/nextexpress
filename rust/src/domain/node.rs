@@ -33,6 +33,7 @@ pub struct Node {
 impl Node {
     /// Constructs a new node with the given `number` (1-based) in the
     /// [`NodeStatus::Idle`] status.
+    #[must_use]
     pub fn new(number: u32) -> Self {
         Self {
             number,
@@ -41,11 +42,13 @@ impl Node {
     }
 
     /// Returns this node's display number.
+    #[must_use]
     pub fn number(&self) -> u32 {
         self.number
     }
 
     /// Returns this node's current status.
+    #[must_use]
     pub fn status(&self) -> NodeStatus {
         self.status
     }
@@ -95,10 +98,12 @@ fn is_transition_allowed(from: NodeStatus, to: NodeStatus) -> bool {
     matches!(
         (from, to),
         (NodeStatus::Idle, NodeStatus::Connecting)
-            | (NodeStatus::Connecting, NodeStatus::Idle)
+            | (
+                NodeStatus::Connecting | NodeStatus::LoggingOff,
+                NodeStatus::Idle
+            )
             | (NodeStatus::Connecting, NodeStatus::LoggedOn)
             | (NodeStatus::LoggedOn, NodeStatus::LoggingOff)
-            | (NodeStatus::LoggingOff, NodeStatus::Idle)
     )
 }
 

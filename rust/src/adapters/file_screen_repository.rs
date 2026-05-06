@@ -17,7 +17,7 @@ const FALLBACK_MENU: &[u8] = b"[ Default menu - type G to log off ]\r\n";
 
 /// Built-in fallback NEWUSERPW screen used when the configured
 /// `Screens/NEWUSERPW.txt` file is missing. Mirrors the spirit of the
-/// legacy AmiExpress prompt (`amiexpress/express.e:30014`): a short
+/// legacy `AmiExpress` prompt (`amiexpress/express.e:30014`): a short
 /// announcement that the user is now in the registration sub-flow.
 const FALLBACK_NEW_USER_PW: &[u8] = b"\r\nNew user registration.\r\n";
 
@@ -40,6 +40,7 @@ pub struct FileScreenRepository {
 
 impl FileScreenRepository {
     /// Constructs a repository rooted at `bbs_path`.
+    #[must_use]
     pub fn new(bbs_path: PathBuf) -> Self {
         Self {
             bbs_path,
@@ -126,11 +127,7 @@ fn normalise_to_crlf(input: &[u8]) -> Vec<u8> {
     let mut i = 0;
     while i < input.len() {
         match input[i] {
-            0x08 if i + 1 < input.len() && input[i + 1] == b'\n' => {
-                out.extend_from_slice(b"\r\n");
-                i += 2;
-            }
-            b'\r' if i + 1 < input.len() && input[i + 1] == b'\n' => {
+            0x08 | b'\r' if i + 1 < input.len() && input[i + 1] == b'\n' => {
                 out.extend_from_slice(b"\r\n");
                 i += 2;
             }

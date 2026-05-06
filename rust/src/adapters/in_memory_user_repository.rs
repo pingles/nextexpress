@@ -17,6 +17,7 @@ pub struct InMemoryUserRepository {
 
 impl InMemoryUserRepository {
     /// Constructs a repository pre-populated with `users`.
+    #[must_use]
     pub fn new(users: Vec<User>) -> Self {
         Self {
             users: Mutex::new(users),

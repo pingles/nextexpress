@@ -59,7 +59,7 @@ impl NodePool {
         nodes
             .iter()
             .find(|n| n.number() == number)
-            .map(|n| n.status())
+            .map(super::super::domain::node::Node::status)
     }
 }
 

@@ -27,6 +27,7 @@ pub struct Pbkdf2PasswordHasher;
 
 impl Pbkdf2PasswordHasher {
     /// Constructs a new hasher.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -35,13 +36,12 @@ impl Pbkdf2PasswordHasher {
 impl PasswordHasher for Pbkdf2PasswordHasher {
     fn verify_password(&self, user: &User, candidate: &str) -> Result<bool, PasswordError> {
         let kind = user.password_hash_kind();
-        let rounds = rounds_for(kind)?;
+        let rounds = rounds_for(kind);
         let salt = user
             .password_salt()
             .expect("PBKDF2 user has salt — invariant SaltMatchesAlgorithm");
-        let salt_bytes = match hex::decode(salt) {
-            Ok(b) => b,
-            Err(_) => return Ok(false),
+        let Ok(salt_bytes) = hex::decode(salt) else {
+            return Ok(false);
         };
         let computed = pbkdf2_hex(candidate.as_bytes(), &salt_bytes, rounds);
         Ok(constant_time_eq(
@@ -55,7 +55,7 @@ impl PasswordHasher for Pbkdf2PasswordHasher {
         candidate: &str,
         kind: PasswordHashKind,
     ) -> Result<ComputedHash, PasswordError> {
-        let rounds = rounds_for(kind)?;
+        let rounds = rounds_for(kind);
         let mut salt_bytes = [0u8; SALT_BYTES];
         rand::thread_rng().fill_bytes(&mut salt_bytes);
         let hash = pbkdf2_hex(candidate.as_bytes(), &salt_bytes, rounds);
@@ -66,13 +66,13 @@ impl PasswordHasher for Pbkdf2PasswordHasher {
     }
 }
 
-/// Returns the iteration count for `kind`, or
-/// [`PasswordError::UnsupportedHashKind`] if this hasher does not
-/// implement it. The match is exhaustive today; later slices that add
-/// variants must extend it.
-fn rounds_for(kind: PasswordHashKind) -> Result<u32, PasswordError> {
+/// Returns the iteration count for `kind`.
+///
+/// The match is exhaustive today; later slices that add variants must
+/// extend it.
+fn rounds_for(kind: PasswordHashKind) -> u32 {
     match kind {
-        PasswordHashKind::Pbkdf210000 => Ok(PBKDF2_ROUNDS),
+        PasswordHashKind::Pbkdf210000 => PBKDF2_ROUNDS,
     }
 }
 

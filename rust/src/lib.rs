@@ -1,4 +1,4 @@
-//! NextExpress: a Rust port of the AmiExpress BBS.
+//! `NextExpress`: a Rust port of the `AmiExpress` BBS.
 //!
 //! The crate is organised in three top-level modules following a
 //! hexagonal (ports and adapters) layout:
