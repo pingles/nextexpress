@@ -374,6 +374,35 @@ config {
     -- Default ratio for new accounts created via self-service.
     default_ratio_mode: RatioMode = by_files
     default_ratio_value: Integer = 3
+
+    -- New-user registration gate.
+    --
+    -- Whether the BBS accepts new-user registrations at all. The legacy
+    -- AmiExpress wired this through asset presence: dropping a
+    -- SCREEN_NONEWUSERS file in place blocked all new registrations
+    -- (express.e:30008), and SCREEN_NONEWATBAUD did the same per baud
+    -- (express.e:30010). The modern config exposes the gate explicitly;
+    -- adapters may still honour the legacy asset-presence convention as a
+    -- deployment-time alias for setting this flag to false.
+    allow_new_users: Boolean = true
+
+    -- Optional sysop-set password that gates new-user registration. When
+    -- non-null, every new user must type this password (3 attempts) before
+    -- the registration form is offered. Mirrors `cmds.newUserPw` in the
+    -- legacy AmiExpress source (express.e:30013). Null disables the gate.
+    --
+    -- The legacy code stored this in plaintext as a tooltype and compared
+    -- with `StriCmp` (case-insensitive). The spec records the same
+    -- semantics (case-insensitive equality against `candidate`); how the
+    -- adapter persists the secret is a deployment decision (plaintext
+    -- match for parity, hash-and-compare for hardening — the
+    -- VerifyNewUserPassword rule does not see the storage form).
+    new_user_password: String? = null
+
+    -- How many incorrect attempts at `new_user_password` are tolerated
+    -- before the session is dropped. The legacy code hard-codes three
+    -- (express.e:30037-30042); we keep the default and let sites tune.
+    max_new_user_password_attempts: Integer = 3
 }
 
 ------------------------------------------------------------

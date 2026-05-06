@@ -22,6 +22,15 @@
 --     - IEMSI auto-handshake (a presentation optimisation; out of scope)
 --     - Email reset-code generation (mail delivery, see mailer library spec)
 --     - Conference joining behaviour (see conferences.allium)
+--     - SCREEN_* asset rendering — the *content* of a screen is sysop-supplied
+--       presentation, and the wire-side decision to display one is an adapter
+--       concern. The behavioural *gates* the screens herald (e.g. the new-user
+--       password challenge at SCREEN_NEWUSERPW, the registration block at
+--       SCREEN_NONEWUSERS, the lockout at SCREEN_LOCKOUT0/1) ARE in scope and
+--       are modelled below; rules name the screens they expect adapters to
+--       render in `@guidance` blocks. See SCREENS.md at the repo root for the
+--       full screen catalogue and the built-in fallback prompts adapters use
+--       when the asset is missing.
 
 use "./core.allium" as core
 
@@ -101,6 +110,15 @@ entity Session {
     name_retry_count: Integer
     password_retry_count: Integer
 
+    -- New-user password gate state. `verified` is true once the typed
+    -- password has matched `core/config.new_user_password`, OR
+    -- immediately on entering `new_user_registering` when no gate is
+    -- configured (`core/config.new_user_password = null`). `attempts`
+    -- counts incorrect entries against
+    -- `core/config.max_new_user_password_attempts`.
+    new_user_password_verified: Boolean         when state = new_user_registering
+    new_user_password_attempts: Integer         when state = new_user_registering
+
     -- Resolved name presentation for any conference joined during the session.
     display_name_type: core/NameType
 
@@ -140,13 +158,17 @@ entity Session {
 
     transitions state {
         connecting -> identifying
+        connecting -> logging_off               -- carrier loss during banner
         connecting -> ended                     -- carrier dropped during banner
         identifying -> authenticating
         identifying -> new_user_registering
+        identifying -> logging_off              -- carrier loss / idle timeout
         identifying -> ended                    -- abandoned, too many retries
         authenticating -> onboarded
+        authenticating -> logging_off           -- excessive password failures, lockout
         authenticating -> ended
         new_user_registering -> onboarded
+        new_user_registering -> logging_off     -- gate failed, carrier loss, idle timeout
         new_user_registering -> ended
         onboarded -> menu
         onboarded -> logging_off
@@ -244,6 +266,99 @@ rule NameTyped {
         -- The legacy code offers "[R]etry / [C]ontinue as new user" between
         -- not-found attempts; that prompt is presentation and not modelled
         -- here. The retry counter is what matters: five strikes and out.
+        --
+        -- Adapters typically render a name prompt that mirrors AmiExpress's
+        -- 'Enter your Name: ' (express.e:31774). The transition into
+        -- new_user_registering immediately fires `RejectDisallowedRegistration`
+        -- and `InitialiseNewUserGate` below — adapters drive the registration
+        -- sub-flow off whichever rule wins.
+}
+
+-- New-user registration is gated by `core/config.allow_new_users`. When
+-- false, a session that would have entered new_user_registering bounces
+-- straight to logging_off. The legacy AmiExpress wired this via the
+-- presence of SCREEN_NONEWUSERS or SCREEN_NONEWATBAUD assets
+-- (express.e:30008-30010); adapters that want to keep that "drop a file
+-- in place" workflow should treat asset presence as setting the flag.
+rule RejectDisallowedRegistration {
+    when: session: Session.state becomes new_user_registering
+    requires: not core/config.allow_new_users
+
+    ensures: session.state = logging_off
+    ensures: session.logoff_reason = new_user_rejected
+
+    @guidance
+        -- Adapters render SCREEN_NONEWUSERS (or SCREEN_NONEWATBAUD if the
+        -- restriction is per-baud) above the disconnect, and otherwise
+        -- emit a built-in "New user registration is not available" line
+        -- as the fall-back when no asset is on disk. See SCREENS.md for
+        -- the prompt text and the asset-presence convention.
+}
+
+-- Initialise the new-user password gate state. Fires on every entry to
+-- `new_user_registering` for sessions that registration is allowed for;
+-- runs alongside (not after) `RejectDisallowedRegistration`, with
+-- mutually exclusive `requires` so exactly one applies per transition.
+rule InitialiseNewUserGate {
+    when: session: Session.state becomes new_user_registering
+    requires: core/config.allow_new_users
+
+    ensures: session.new_user_password_attempts = 0
+    ensures:
+        session.new_user_password_verified =
+            (core/config.new_user_password = null)
+
+    @guidance
+        -- When `core/config.new_user_password != null`, the adapter
+        -- should now display SCREEN_NEWUSERPW and prompt the user with
+        -- the legacy 'Enter New User Password: ' (express.e:30018) —
+        -- VerifyNewUserPassword below applies the typed password. When
+        -- null (no gate), `new_user_password_verified` is set true by
+        -- this rule and CompleteNewUserRegistration may fire as soon as
+        -- the registration form has been collected.
+}
+
+-- The new-user password gate. Each typed candidate is verified against
+-- `core/config.new_user_password`; on success the session is marked
+-- verified and registration proceeds. On failure the attempt counter
+-- climbs and the session is dropped once it reaches
+-- `core/config.max_new_user_password_attempts`.
+rule VerifyNewUserPassword {
+    when: NewUserPasswordEntered(session, candidate)
+    requires: session.state = new_user_registering
+    requires: not session.new_user_password_verified
+    requires: core/config.new_user_password != null
+
+    let matches = matches_new_user_password(candidate)
+
+    ensures:
+        if matches:
+            session.new_user_password_verified = true
+        else:
+            session.new_user_password_attempts =
+                session.new_user_password_attempts + 1
+            CallerLog.created(
+                session: session,
+                at: now,
+                text: "New-user password failure",
+                is_password_failure: true
+            )
+            if session.new_user_password_attempts >=
+                    core/config.max_new_user_password_attempts:
+                session.state = logging_off
+                session.logoff_reason = new_user_rejected
+
+    @guidance
+        -- Adapters render SCREEN_NEWUSERPW once at the top of the gate,
+        -- then loop the prompt 'Enter New User Password: '
+        -- (express.e:30018) up to `max_new_user_password_attempts`
+        -- times. After each failure the legacy adapter prints
+        -- 'Invalid PassWord' (express.e:30036), then writes the
+        -- caller-log entry produced above. On the final failure the
+        -- legacy code also runs `runSysCommand('NUPFAIL', '')`
+        -- (express.e:30040) — sites that want a notification hook can
+        -- wire that as an out-of-domain side effect; the spec only
+        -- enforces the disconnect.
 }
 
 -- A password attempt for an existing user.
@@ -330,6 +445,15 @@ rule RejectLockedOrInsufficientAccess {
         text: "Logon rejected: account locked or below access threshold",
         is_password_failure: false
     )
+
+    @guidance
+        -- Adapters render SCREEN_LOCKOUT0 when `access_level = 0`
+        -- (no access at all) and SCREEN_LOCKOUT1 for `access_level = 1`
+        -- (nearly locked). When neither screen is on disk the adapter
+        -- emits the built-in 'Logon rejected. Goodbye.' line. Sites
+        -- that want the legacy "leave a comment for the sysop"
+        -- consolation flow can chain into PostCommentToSysop
+        -- (Slice 44) before finalising; the spec does not mandate it.
 }
 
 -- Force a password reset when the configured expiry has elapsed since the
@@ -374,10 +498,12 @@ rule CompletePasswordReset {
 
 -- A new user completes registration. Triggered by the registration flow
 -- collecting handle, location, phone, email, password, line-length and
--- computer type.
+-- computer type. The new-user password gate
+-- (`VerifyNewUserPassword`) must have completed first.
 rule CompleteNewUserRegistration {
     when: NewUserRegistered(session, profile)
     requires: session.state = new_user_registering
+    requires: session.new_user_password_verified
 
     let new_hash = compute_password_hash(profile.password, core/config.password_hash_kind)
 
@@ -422,6 +548,26 @@ rule CompleteNewUserRegistration {
     )
     ensures: session.state = onboarded
     ensures: session.authenticated_at = now
+
+    @guidance
+        -- Adapter sequence around this rule (mirrors the legacy
+        -- `newUserAccount()` proc, express.e:30003-30125):
+        --
+        --   1. After the gate (or immediately if no gate), display
+        --      SCREEN_GUESTLOGON (express.e:30049) with `doPause`.
+        --   2. Collect the registration form (handle, location, phone,
+        --      email, password, line-length, ANSI flag). The exact
+        --      prompt wording is reproduced verbatim in the adapter and
+        --      catalogued in SCREENS.md under the "registration form"
+        --      section.
+        --   3. Display SCREEN_JOIN (express.e:30057) with `doPause`
+        --      before the per-conference join sub-flow.
+        --   4. After this rule fires (account created, session is
+        --      onboarded), display SCREEN_JOINED (express.e:30125) as
+        --      the final new-user welcome.
+        --
+        -- All four screens are presentation-only and are silently
+        -- skipped when the corresponding asset is missing on disk.
 }
 
 -- The user has finished any on-logon screens and reaches the menu.
@@ -438,6 +584,19 @@ rule EnterMenu {
         text: format_logon_line(session),
         is_password_failure: false
     )
+
+    @guidance
+        -- The legacy adapter sequence on every authenticated logon
+        -- (express.e:29854 onwards) is: SCREEN_LOGON (welcome banner,
+        -- doPause if rendered), then time-budget rejection screens
+        -- (SCREEN_LOGON24 if no time left, SCREEN_NOT_TIME if outside
+        -- the configured baud-time window), then SCREEN_BULL,
+        -- SCREEN_NODE_BULL, SCREEN_CONF_BULL bulletins, then
+        -- SCREEN_MAILSCAN's optional new-mail prompt, and finally
+        -- SCREEN_MENU itself before this rule fires. All except
+        -- SCREEN_MENU are silently skipped when the asset is missing
+        -- — see SCREENS.md for the catalogue and any built-in
+        -- fall-back text.
 }
 
 -- Periodic time-decrement: every minute the session has been active counts
@@ -533,6 +692,12 @@ rule FinaliseLogoff {
     )
     ensures: session.state = ended
     ensures: session.logoff_at = now
+
+    @guidance
+        -- Adapters render SCREEN_LOGOFF (express.e:8187) before the
+        -- transport closes for normal_logoff exits; for the carrier-
+        -- loss / kicked / out-of-time exits the adapter writes the
+        -- relevant built-in goodbye line in lieu of the screen.
 }
 
 -- Logoff for sessions that never authenticated (typed-name failure, etc.).
@@ -564,6 +729,12 @@ rule ReleaseNode {
 -- Sysop direct logon at the BBS console: bypasses the password prompt,
 -- reuses the sysop User (slot_number = 1). The legacy code uses F1 (sysop
 -- logon) and F2 (local logon) at the await screen.
+--
+-- The legacy adapter renders SCREEN_AWAIT while waiting for the
+-- console key, and SCREEN_PRIVATE before the still-required system
+-- password prompt that follows F1 (express.e:29336). The sysop
+-- system-password prompt is *not* modelled here — it is a deployment
+-- secret guard and lives outside the per-user authentication flow.
 rule SysopDirectLogon {
     when: SysopLogonRequested(node)
     requires: node.status in {idle, reserved}
@@ -654,7 +825,10 @@ invariant LockedAccountsCannotEnterMenu {
 
 invariant SessionRetriesBounded {
     for s in Sessions:
-        s.name_retry_count <= 5 and s.password_retry_count <= core/config.max_password_failures
+        s.name_retry_count <= 5
+        and s.password_retry_count <= core/config.max_password_failures
+        and (s.state != new_user_registering
+            or s.new_user_password_attempts <= core/config.max_new_user_password_attempts)
 }
 
 ------------------------------------------------------------
@@ -685,6 +859,12 @@ invariant SessionRetriesBounded {
 
 -- True when a candidate password meets length and category requirements.
 -- meets_password_strength(candidate)
+
+-- True when `candidate` matches `core/config.new_user_password` under
+-- case-insensitive equality. The legacy AmiExpress code uses `StriCmp`
+-- (express.e:30027); we extract the comparison so the spec does not
+-- pin down whether the secret is stored plaintext or hashed at rest.
+-- matches_new_user_password(candidate)
 
 ------------------------------------------------------------
 -- Open questions
