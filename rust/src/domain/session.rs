@@ -536,11 +536,9 @@ impl Session {
     /// Applies the matching branch of `session.allium:VerifyPassword`.
     ///
     /// Clears `user.invalid_attempts`, sets `authenticated_at`, and
-    /// transitions to [`SessionState::Onboarded`]. Fires every rule
-    /// whose `when` clause is the transition into `onboarded`: today
-    /// only `session.allium:InitialiseDailyBudget` (Slice 14); future
-    /// slices will add `ForcePasswordReset` (Slice 15) and
-    /// `RejectLockedOrInsufficientAccess` (Slice 16) here.
+    /// transitions to [`SessionState::Onboarded`], then fires the
+    /// `state becomes onboarded` rule cluster via
+    /// [`Session::on_enter_onboarded`].
     ///
     /// # Errors
     /// Returns [`VerifyPasswordError::WrongState`] if the session is
@@ -559,11 +557,42 @@ impl Session {
         self.authenticated_at = Some(now);
         self.transition_to(SessionState::Onboarded)
             .expect("authenticating -> onboarded is permitted");
-        // Post-transition rules. The guards (state == Onboarded, user
-        // bound) hold trivially because we just established them.
+        self.on_enter_onboarded(policy, now);
+        Ok(VerifyPasswordOutcome::Authenticated)
+    }
+
+    /// Fires every spec rule whose `when` clause is the transition
+    /// into [`SessionState::Onboarded`].
+    ///
+    /// Called by every code path that drives a session into
+    /// `Onboarded`: [`Session::apply_password_match`] today; later,
+    /// new-user registration (Slice 20), sysop direct logon (Slice 22)
+    /// and local logon (Slice 23). The cluster currently contains:
+    ///
+    /// - `session.allium:InitialiseDailyBudget` (Slice 14).
+    ///
+    /// Slice 15 adds `ForcePasswordReset` here; Slice 16 adds
+    /// `RejectLockedOrInsufficientAccess`, which can short-circuit
+    /// the session into [`SessionState::LoggingOff`] before the
+    /// remaining rules run.
+    ///
+    /// # Panics
+    /// Panics if called outside [`SessionState::Onboarded`] or with no
+    /// user bound — both invariants the caller is required to have
+    /// just established by the transition. The guard violations are
+    /// programmer errors, not runtime failures.
+    fn on_enter_onboarded(&mut self, policy: SessionPolicy, now: SystemTime) {
+        assert_eq!(
+            self.state,
+            SessionState::Onboarded,
+            "on_enter_onboarded called outside Onboarded state"
+        );
+        assert!(
+            self.user.is_some(),
+            "on_enter_onboarded called without a bound user"
+        );
         self.initialise_daily_budget(now, policy.daily_reset_offset())
             .expect("guards hold immediately after transition to Onboarded");
-        Ok(VerifyPasswordOutcome::Authenticated)
     }
 
     /// Applies the non-matching branch of `session.allium:VerifyPassword`.
