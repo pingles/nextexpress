@@ -121,7 +121,7 @@ where
     match repo.find_by_handle(typed) {
         NameLookupResult::Found(user) => session.record_identified_user(typed, user),
         NameLookupResult::NotFound => session.record_unknown_name(now),
-        NameLookupResult::UserTypedNew => session.reject_new_user_request(),
+        NameLookupResult::UserTypedNew => session.record_new_user_request(),
     }
 }
 

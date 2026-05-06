@@ -66,10 +66,11 @@ const NAME_PROMPT: &[u8] = b"\r\nEnter your Name: ";
 /// Sent after a not-found name lookup to invite a retry.
 const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
 
-/// Sent when the user types `NEW`. Slice 19 wires this up to the
-/// registration flow; until then we explain why and re-prompt.
-const NEW_NOT_SUPPORTED_LINE: &[u8] =
-    b"New users are not yet supported. Please use an existing handle.\r\n";
+/// Placeholder line written after the NEWUSERPW screen until the
+/// Slice 20 registration form lands. The session ends gracefully so the
+/// node is released and the caller log records a clean logoff.
+const REGISTRATION_NOT_IMPLEMENTED_LINE: &[u8] =
+    b"New user registration is not yet implemented. Goodbye.\r\n";
 
 /// Sent when the user has burned through all five name retries.
 const TOO_MANY_RETRIES_LINE: &[u8] = b"Too many failed login attempts. Goodbye.\r\n";
@@ -379,8 +380,18 @@ async fn run_session(
             NameTypedOutcome::NotFound => {
                 stream.write_all(UNKNOWN_USER_LINE).await?;
             }
-            NameTypedOutcome::NewUserRejected => {
-                stream.write_all(NEW_NOT_SUPPORTED_LINE).await?;
+            NameTypedOutcome::NewUserRegistering => {
+                let screen = screens.new_user_password().await;
+                stream.write_all(&screen).await?;
+                stream.write_all(REGISTRATION_NOT_IMPLEMENTED_LINE).await?;
+                stream.flush().await?;
+                // Slice 19 only displays the screen; the registration
+                // form lands in Slice 20. End the session via
+                // CarrierLost (the closest spec rule for "we're
+                // bowing out without further input"); FinaliseLogoff
+                // releases the node and writes the logoff entry.
+                handle_carrier_loss(&mut session, user_repo, caller_log);
+                return Ok(());
             }
             NameTypedOutcome::SessionEnded => {
                 stream.write_all(TOO_MANY_RETRIES_LINE).await?;
@@ -1236,21 +1247,78 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn new_keyword_is_rejected_and_re_prompts() {
-        let addr = spawn_listener_with(repo_with_alice()).await;
+    async fn new_keyword_displays_fallback_newuserpw_screen_and_disconnects() {
+        // Slice 19: typing NEW transitions the session to
+        // new_user_registering and the listener writes the NEWUSERPW
+        // screen (built-in fallback when no asset is on disk) before
+        // closing. The Slice 20 registration form lands later.
+        let log = Arc::new(InMemoryCallerLog::new());
+        let addr = spawn_listener_with_log(repo_with_alice(), test_config(1), log.clone()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"NEW\r\n").await.unwrap();
-        // Read until we see BOTH the rejection and a fresh prompt.
-        // (TCP may merge them into one read or split across reads.)
-        let buf = drain_until_both(&mut stream, b"not yet supported", b"Enter your Name: ").await;
+        let buf = drain_until(&mut stream, b"not yet implemented").await;
         assert!(
-            contains(&buf, b"not yet supported"),
-            "expected NEW rejection: {buf:?}"
+            contains(&buf, b"New user registration."),
+            "expected NEWUSERPW fallback: {buf:?}"
         );
         assert!(
-            contains(&buf, b"Enter your Name: "),
-            "expected re-prompt: {buf:?}"
+            contains(&buf, b"not yet implemented"),
+            "expected slice-20 placeholder: {buf:?}"
+        );
+
+        // Session ends via CarrierLost handler so a logoff entry is
+        // recorded and the node returns to idle.
+        let mut entries = vec![];
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            entries = log.entries();
+            if entries.iter().any(|e| e.text.contains("Logoff:")) {
+                break;
+            }
+        }
+        assert!(
+            entries.iter().any(|e| e.text.contains("Logoff:")),
+            "expected logoff entry after registration screen: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_keyword_displays_disk_newuserpw_screen_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("NEWUSERPW.txt"),
+            b"WELCOME NEW USER\x08\n",
+        )
+        .unwrap();
+        let config = Config {
+            max_nodes: 1,
+            bbs_path: dir.path().to_path_buf(),
+            max_password_failures: 3,
+            ..Config::default()
+        };
+        let listener = Arc::new(
+            TelnetListener::bind(
+                "127.0.0.1:0",
+                config,
+                repo_with_alice(),
+                test_hasher(),
+                test_caller_log(),
+            )
+            .await
+            .unwrap(),
+        );
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { listener.run().await });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"WELCOME NEW USER").await;
+        assert!(
+            contains(&buf, b"WELCOME NEW USER\r\n"),
+            "expected disk NEWUSERPW asset: {buf:?}"
         );
     }
 
@@ -1378,23 +1446,5 @@ mod tests {
             contains(&buf, b"MENU CONTENT\r\n"),
             "expected CRLF after translation: {buf:?}"
         );
-    }
-
-    /// Reads from `stream` until both `a` and `b` have appeared in the
-    /// accumulated buffer (or EOF).
-    async fn drain_until_both(stream: &mut TcpStream, a: &[u8], b: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut chunk = [0u8; 256];
-        for _ in 0..200 {
-            let n = stream.read(&mut chunk).await.unwrap_or(0);
-            if n == 0 {
-                break;
-            }
-            out.extend_from_slice(&chunk[..n]);
-            if contains(&out, a) && contains(&out, b) {
-                break;
-            }
-        }
-        out
     }
 }

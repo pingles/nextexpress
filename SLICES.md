@@ -233,7 +233,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 16 | Account-locked / insufficient-access rejection | Done |
 | 17 | Idle timeout | Done |
 | 18 | Carrier loss | Done |
-| 19 | `user_typed_NEW` branch | Todo |
+| 19 | `user_typed_NEW` branch | Done |
 | 20 | `CompleteNewUserRegistration` | Todo |
 | 21 | Pending-validation gate | Todo |
 | 22 | Sysop direct logon | Todo |

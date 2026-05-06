@@ -1,9 +1,8 @@
 //! [`Session`] entity (spec: `session.allium:Session`).
 //!
 //! Phase 1 holds only the fields the sign-in / log-off loop reads.
-//! Presentation booleans, time accounting, temp access, reserved-for
-//! and the `new_user_registering` branch arrive in their owning
-//! slices.
+//! Presentation booleans, time accounting, temp access and reserved-for
+//! arrive in their owning slices.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -244,8 +243,6 @@ impl Default for SessionPolicy {
 }
 
 /// Lifecycle state of a [`Session`] (spec: `session.allium:Session.state`).
-///
-/// Phase 1 omits `new_user_registering`; that branch lands in Slice 19.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionState {
     /// Connection accepted, banner not yet displayed.
@@ -254,6 +251,9 @@ pub enum SessionState {
     Identifying,
     /// Verifying a typed password.
     Authenticating,
+    /// User typed `NEW`; the registration sub-flow is in progress
+    /// (spec: `session.allium:Session.state` `new_user_registering`).
+    NewUserRegistering,
     /// Authenticated; on-logon screens running.
     Onboarded,
     /// At the conference menu.
@@ -530,20 +530,22 @@ impl Session {
         }
     }
 
-    /// Applies the Phase 1 `NEW` branch of `session.allium:NameTyped`.
-    ///
-    /// Slice 19 wires this up to the registration flow. Until then, the
-    /// session stays in [`SessionState::Identifying`] and the caller can
-    /// present a rejection/retry prompt.
+    /// Applies the `user_typed_NEW` branch of
+    /// `session.allium:NameTyped`. Transitions the session to
+    /// [`SessionState::NewUserRegistering`] so the caller can drive the
+    /// registration sub-flow (Slice 19; the form itself lands in
+    /// Slice 20).
     ///
     /// # Errors
     /// Returns [`NameTypedError::WrongState`] if the session is not in
     /// [`SessionState::Identifying`].
-    pub fn reject_new_user_request(&self) -> Result<NameTypedOutcome, NameTypedError> {
+    pub fn record_new_user_request(&mut self) -> Result<NameTypedOutcome, NameTypedError> {
         if self.state != SessionState::Identifying {
             return Err(NameTypedError::WrongState(self.state));
         }
-        Ok(NameTypedOutcome::NewUserRejected)
+        self.transition_to(SessionState::NewUserRegistering)
+            .expect("identifying -> new_user_registering is permitted");
+        Ok(NameTypedOutcome::NewUserRegistering)
     }
 
     /// Updates [`Self::last_input_at`] to `at`.
@@ -564,8 +566,8 @@ impl Session {
     /// this when the underlying connection has gone away (clean
     /// EOF, RST, modem CD drop, etc.). The rule is allowed from
     /// every pre-terminal state the spec lists for `CarrierLost`:
-    /// `connecting`, `identifying`, `authenticating`, `onboarded`,
-    /// `menu`. (`new_user_registering` lands with Slice 19.)
+    /// `connecting`, `identifying`, `authenticating`,
+    /// `new_user_registering`, `onboarded`, `menu`.
     ///
     /// # Errors
     /// Returns [`CarrierLostError::WrongState`] when the session is
@@ -577,6 +579,7 @@ impl Session {
             SessionState::Connecting
                 | SessionState::Identifying
                 | SessionState::Authenticating
+                | SessionState::NewUserRegistering
                 | SessionState::Onboarded
                 | SessionState::Menu
         ) {
@@ -600,13 +603,14 @@ impl Session {
     /// # Errors
     /// Returns [`IdleTimeoutError::WrongState`] when the session is
     /// not in one of the spec-permitted states (`identifying`,
-    /// `authenticating`, `onboarded`, or `menu`;
-    /// `new_user_registering` lands in Slice 19).
+    /// `authenticating`, `new_user_registering`, `onboarded`, or
+    /// `menu`).
     pub fn apply_idle_timeout(&mut self, treat_as_logoff: bool) -> Result<(), IdleTimeoutError> {
         if !matches!(
             self.state,
             SessionState::Identifying
                 | SessionState::Authenticating
+                | SessionState::NewUserRegistering
                 | SessionState::Onboarded
                 | SessionState::Menu
         ) {
@@ -1082,9 +1086,10 @@ pub enum NameTypedOutcome {
     /// Five not-found strikes in a row. The session has ended with
     /// [`LogoffReason::NewUserRejected`].
     SessionEnded,
-    /// The literal `NEW` was typed. Slice 9 does not implement the
-    /// registration branch; Slice 19 wires it up.
-    NewUserRejected,
+    /// The literal `NEW` was typed. The session has moved to
+    /// [`SessionState::NewUserRegistering`]; the listener now drives
+    /// the registration sub-flow.
+    NewUserRegistering,
 }
 
 /// Errors returned by [`Session::name_typed`].
@@ -1402,9 +1407,7 @@ impl std::fmt::Display for SessionTransitionError {
 
 impl std::error::Error for SessionTransitionError {}
 
-/// Returns whether the spec's Phase 1 transition table permits
-/// `from -> to`. The `new_user_registering` branch is omitted (Slice 19
-/// adds it).
+/// Returns whether the spec's transition table permits `from -> to`.
 ///
 /// Some transitions land in the table because a rule's body requires
 /// them even though the explicit transition list in
@@ -1418,6 +1421,9 @@ impl std::error::Error for SessionTransitionError {}
 ///   unauthenticated session via the
 ///   `FinaliseUnauthenticatedLogoff` rule, which is itself only
 ///   reachable through `LoggingOff`.
+/// - `NewUserRegistering -> LoggingOff` lets the same idle / carrier
+///   rules end an in-progress registration (Slice 19 brings the
+///   state in; both rules' `requires:` lists already name it).
 fn is_session_transition_allowed(from: SessionState, to: SessionState) -> bool {
     use SessionState::*;
     matches!(
@@ -1426,11 +1432,15 @@ fn is_session_transition_allowed(from: SessionState, to: SessionState) -> bool {
             | (Connecting, LoggingOff)
             | (Connecting, Ended)
             | (Identifying, Authenticating)
+            | (Identifying, NewUserRegistering)
             | (Identifying, LoggingOff)
             | (Identifying, Ended)
             | (Authenticating, Onboarded)
             | (Authenticating, Ended)
             | (Authenticating, LoggingOff)
+            | (NewUserRegistering, Onboarded)
+            | (NewUserRegistering, LoggingOff)
+            | (NewUserRegistering, Ended)
             | (Onboarded, Menu)
             | (Onboarded, LoggingOff)
             | (Menu, LoggingOff)
@@ -1680,14 +1690,43 @@ mod tests {
     }
 
     #[test]
-    fn name_typed_new_keyword_returns_new_user_rejected() {
+    fn name_typed_new_keyword_transitions_to_new_user_registering() {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        let outcome = s.reject_new_user_request().unwrap();
-        assert_eq!(outcome, NameTypedOutcome::NewUserRejected);
-        // No state change, no retry bump.
-        assert_eq!(s.state(), SessionState::Identifying);
+        let outcome = s.record_new_user_request().unwrap();
+        assert_eq!(outcome, NameTypedOutcome::NewUserRegistering);
+        assert_eq!(s.state(), SessionState::NewUserRegistering);
+        // Retry counter is unrelated to the new-user branch.
         assert_eq!(s.name_retry_count(), 0);
+    }
+
+    #[test]
+    fn record_new_user_request_outside_identifying_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .record_new_user_request()
+            .expect_err("must be in identifying");
+        assert!(matches!(err, NameTypedError::WrongState(_)));
+    }
+
+    #[test]
+    fn carrier_loss_from_new_user_registering_logs_off() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request().unwrap();
+        s.apply_carrier_loss().expect("permitted");
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
+    }
+
+    #[test]
+    fn idle_timeout_from_new_user_registering_logs_off() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request().unwrap();
+        s.apply_idle_timeout(true).expect("permitted");
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::InputTimeout));
     }
 
     fn authenticated_session() -> Session {

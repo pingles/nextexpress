@@ -15,12 +15,19 @@ const FALLBACK_BANNER: &[u8] = b"NextExpress\r\n";
 /// file is missing.
 const FALLBACK_MENU: &[u8] = b"[ Default menu - type G to log off ]\r\n";
 
+/// Built-in fallback NEWUSERPW screen used when the configured
+/// `Screens/NEWUSERPW.txt` file is missing. Mirrors the spirit of the
+/// legacy AmiExpress prompt (`amiexpress/express.e:30014`): a short
+/// announcement that the user is now in the registration sub-flow.
+const FALLBACK_NEW_USER_PW: &[u8] = b"\r\nNew user registration.\r\n";
+
 /// File-backed screen repository rooted at a BBS installation path.
 #[derive(Debug)]
 pub struct FileScreenRepository {
     bbs_path: PathBuf,
     banner: Mutex<Option<Vec<u8>>>,
     default_menu: Mutex<Option<Vec<u8>>>,
+    new_user_password: Mutex<Option<Vec<u8>>>,
 }
 
 impl FileScreenRepository {
@@ -30,6 +37,7 @@ impl FileScreenRepository {
             bbs_path,
             banner: Mutex::new(None),
             default_menu: Mutex::new(None),
+            new_user_password: Mutex::new(None),
         }
     }
 
@@ -66,6 +74,12 @@ impl FileScreenRepository {
         self.cached_file(&self.default_menu, &path, FALLBACK_MENU)
             .await
     }
+
+    async fn new_user_password_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("NEWUSERPW.txt");
+        self.cached_file(&self.new_user_password, &path, FALLBACK_NEW_USER_PW)
+            .await
+    }
 }
 
 impl ScreenRepository for FileScreenRepository {
@@ -75,6 +89,10 @@ impl ScreenRepository for FileScreenRepository {
 
     fn default_menu(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.default_menu_bytes().await })
+    }
+
+    fn new_user_password(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.new_user_password_bytes().await })
     }
 }
 
@@ -163,5 +181,25 @@ mod tests {
         assert_eq!(repo.banner().await, b"FIRST\r\n");
         std::fs::write(&path, b"SECOND\x08\n").unwrap();
         assert_eq!(repo.banner().await, b"FIRST\r\n");
+    }
+
+    #[tokio::test]
+    async fn new_user_password_returns_fallback_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.new_user_password().await, FALLBACK_NEW_USER_PW);
+    }
+
+    #[tokio::test]
+    async fn new_user_password_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("NEWUSERPW.txt"),
+            b"WELCOME NEW USER\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.new_user_password().await, b"WELCOME NEW USER\r\n");
     }
 }
