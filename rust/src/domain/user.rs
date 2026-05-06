@@ -42,16 +42,80 @@ pub enum UserFlag {
     BackgroundFileCheck,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccountLockState {
+    Unlocked,
+    Locked,
+}
+
+impl AccountLockState {
+    fn is_locked(self) -> bool {
+        matches!(self, Self::Locked)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasswordResetRequirement {
+    NotRequired,
+    Required,
+}
+
+impl PasswordResetRequirement {
+    fn is_required(self) -> bool {
+        matches!(self, Self::Required)
+    }
+}
+
+impl From<bool> for PasswordResetRequirement {
+    fn from(value: bool) -> Self {
+        if value {
+            Self::Required
+        } else {
+            Self::NotRequired
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccountValidationStatus {
+    Existing,
+    AwaitingSysopValidation,
+}
+
+impl AccountValidationStatus {
+    fn is_new_user(self) -> bool {
+        matches!(self, Self::AwaitingSysopValidation)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnsiColourPreference {
+    Disabled,
+    Enabled,
+}
+
+impl AnsiColourPreference {
+    fn enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+impl From<bool> for AnsiColourPreference {
+    fn from(value: bool) -> Self {
+        if value {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
 /// A registered BBS user.
 ///
 /// Construct via [`User::new`], which enforces the
 /// `SaltMatchesAlgorithm` invariant from the spec. The lockout state
 /// (`invalid_attempts`, `account_locked`) starts cleared and is mutated
 /// by the `VerifyPassword` rule.
-//
-// `dead_code` is allowed at the struct level: every field except those
-// exposed via accessors is stored for use by later slices.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct User {
     slot_number: u32,
@@ -62,20 +126,20 @@ pub struct User {
     password_last_updated: SystemTime,
     access_level: u8,
     invalid_attempts: u32,
-    account_locked: bool,
+    account_lock: AccountLockState,
     times_called: u32,
     last_call: Option<SystemTime>,
     time_limit_per_call: Duration,
     time_limit_per_day: Duration,
     time_used_today: Duration,
     times_called_today: u32,
-    force_password_reset: bool,
-    is_new_user: bool,
+    password_reset: PasswordResetRequirement,
+    validation_status: AccountValidationStatus,
     location: Option<String>,
     phone_number: Option<String>,
     email: Option<String>,
     line_length: u32,
-    ansi_colour: bool,
+    ansi_colour: AnsiColourPreference,
     account_created: SystemTime,
     flags: BTreeSet<UserFlag>,
     ratio_mode: RatioMode,
@@ -119,20 +183,20 @@ impl User {
             password_last_updated,
             access_level,
             invalid_attempts: 0,
-            account_locked: false,
+            account_lock: AccountLockState::Unlocked,
             times_called: 0,
             last_call: None,
             time_limit_per_call: Duration::ZERO,
             time_limit_per_day: Duration::ZERO,
             time_used_today: Duration::ZERO,
             times_called_today: 0,
-            force_password_reset: false,
-            is_new_user: false,
+            password_reset: PasswordResetRequirement::NotRequired,
+            validation_status: AccountValidationStatus::Existing,
             location: None,
             phone_number: None,
             email: None,
             line_length: 0,
-            ansi_colour: false,
+            ansi_colour: AnsiColourPreference::Disabled,
             account_created: password_last_updated,
             flags: BTreeSet::new(),
             ratio_mode: RatioMode::Disabled,
@@ -186,20 +250,20 @@ impl User {
             password_last_updated: now,
             access_level: 2,
             invalid_attempts: 0,
-            account_locked: false,
+            account_lock: AccountLockState::Unlocked,
             times_called: 0,
             last_call: Some(now),
             time_limit_per_call: Duration::from_secs(30 * 60),
             time_limit_per_day: Duration::from_secs(60 * 60),
             time_used_today: Duration::ZERO,
             times_called_today: 0,
-            force_password_reset: false,
-            is_new_user: true,
+            password_reset: PasswordResetRequirement::NotRequired,
+            validation_status: AccountValidationStatus::AwaitingSysopValidation,
             location,
             phone_number,
             email,
             line_length,
-            ansi_colour,
+            ansi_colour: AnsiColourPreference::from(ansi_colour),
             account_created: now,
             flags,
             ratio_mode,
@@ -255,7 +319,7 @@ impl User {
     /// Returns whether the account is currently locked out.
     #[must_use]
     pub fn is_account_locked(&self) -> bool {
-        self.account_locked
+        self.account_lock.is_locked()
     }
 
     /// Returns the user's access tier (`0..=255`).
@@ -273,7 +337,7 @@ impl User {
     /// independently set `account_locked` flag, qualifies.
     #[must_use]
     pub fn is_locked_out(&self) -> bool {
-        self.access_level <= 1 || self.account_locked
+        self.access_level <= 1 || self.is_account_locked()
     }
 
     /// Increments [`Self::invalid_attempts`] by one. Used by
@@ -291,7 +355,7 @@ impl User {
     /// Marks the account as locked and resets `invalid_attempts` to
     /// preserve the spec's `LockoutClearsAttempts` invariant.
     pub fn lock_account(&mut self) {
-        self.account_locked = true;
+        self.account_lock = AccountLockState::Locked;
         self.invalid_attempts = 0;
     }
 
@@ -396,14 +460,14 @@ impl User {
     /// `CompletePasswordReset`.
     #[must_use]
     pub fn force_password_reset(&self) -> bool {
-        self.force_password_reset
+        self.password_reset.is_required()
     }
 
     /// Sets [`Self::force_password_reset`]. Used by
     /// `session.allium:ForcePasswordReset` (Slice 15) and by sysop
     /// admin tooling.
     pub fn set_force_password_reset(&mut self, value: bool) {
-        self.force_password_reset = value;
+        self.password_reset = PasswordResetRequirement::from(value);
     }
 
     /// Returns whether this account is awaiting sysop validation
@@ -413,7 +477,7 @@ impl User {
     /// Phase 6.
     #[must_use]
     pub fn is_new_user(&self) -> bool {
-        self.is_new_user
+        self.validation_status.is_new_user()
     }
 
     /// Returns the user's free-text "City, State" location, if any.
@@ -443,7 +507,7 @@ impl User {
     /// Returns whether the user wants ANSI colour output.
     #[must_use]
     pub fn ansi_colour(&self) -> bool {
-        self.ansi_colour
+        self.ansi_colour.enabled()
     }
 
     /// Returns the timestamp the account was first created.
@@ -500,7 +564,7 @@ impl User {
         self.password_salt = salt;
         self.password_hash_kind = kind;
         self.password_last_updated = at;
-        self.force_password_reset = false;
+        self.password_reset = PasswordResetRequirement::NotRequired;
     }
 }
 
