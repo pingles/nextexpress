@@ -280,7 +280,6 @@ pub enum SessionState {
 
 /// A single in-progress or completed visit to the BBS.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Session {
     node_number: u32,
     channel: LogonChannel,
@@ -492,6 +491,14 @@ impl Session {
         Ok(())
     }
 
+    fn transition_after_guard(&mut self, target: SessionState) {
+        debug_assert!(
+            is_session_transition_allowed(self.state, target),
+            "guarded transition should be permitted"
+        );
+        self.state = target;
+    }
+
     /// `session.allium:AcceptConnection` rule.
     ///
     /// Creates a fresh [`Session`] for `node_number`. Rejects when
@@ -553,8 +560,7 @@ impl Session {
         }
         self.typed_name = Some(typed.to_string());
         self.user = Some(user);
-        self.transition_to(SessionState::Authenticating)
-            .expect("identifying -> authenticating is permitted");
+        self.transition_after_guard(SessionState::Authenticating);
         Ok(NameTypedOutcome::Authenticated)
     }
 
@@ -575,8 +581,7 @@ impl Session {
         }
         self.name_retry_count += 1;
         if self.name_retry_count >= MAX_NAME_RETRIES {
-            self.transition_to(SessionState::Ended)
-                .expect("identifying -> ended is permitted");
+            self.transition_after_guard(SessionState::Ended);
             self.logoff_reason = Some(LogoffReason::NewUserRejected);
             self.logoff_at = Some(now);
             Ok(NameTypedOutcome::SessionEnded)
@@ -615,12 +620,10 @@ impl Session {
         if self.state != SessionState::Identifying {
             return Err(NameTypedError::WrongState(self.state));
         }
-        self.transition_to(SessionState::NewUserRegistering)
-            .expect("identifying -> new_user_registering is permitted");
+        self.transition_after_guard(SessionState::NewUserRegistering);
         if !allow_new_users {
             // RejectDisallowedRegistration.
-            self.transition_to(SessionState::LoggingOff)
-                .expect("new_user_registering -> logging_off is permitted");
+            self.transition_after_guard(SessionState::LoggingOff);
             self.logoff_reason = Some(LogoffReason::NewUserRejected);
             return Ok(NewUserRequestOutcome::Rejected);
         }
@@ -673,8 +676,7 @@ impl Session {
             is_password_failure: true,
         };
         if self.new_user_password_attempts >= max_attempts {
-            self.transition_to(SessionState::LoggingOff)
-                .expect("new_user_registering -> logging_off is permitted");
+            self.transition_after_guard(SessionState::LoggingOff);
             self.logoff_reason = Some(LogoffReason::NewUserRejected);
             Ok((NewUserPasswordOutcome::TooManyFailures, Some(entry)))
         } else {
@@ -719,8 +721,7 @@ impl Session {
         ) {
             return Err(CarrierLostError::WrongState(self.state));
         }
-        self.transition_to(SessionState::LoggingOff)
-            .expect("carrier-permitted state -> logging_off is permitted");
+        self.transition_after_guard(SessionState::LoggingOff);
         self.logoff_reason = Some(LogoffReason::CarrierLoss);
         Ok(())
     }
@@ -750,8 +751,7 @@ impl Session {
         ) {
             return Err(IdleTimeoutError::WrongState(self.state));
         }
-        self.transition_to(SessionState::LoggingOff)
-            .expect("idle-permitted state -> logging_off is permitted");
+        self.transition_after_guard(SessionState::LoggingOff);
         self.logoff_reason = Some(if treat_as_logoff {
             LogoffReason::InputTimeout
         } else {
@@ -814,8 +814,7 @@ impl Session {
             text: line,
             is_password_failure: false,
         };
-        self.transition_to(SessionState::Ended)
-            .expect("logging_off -> ended is permitted");
+        self.transition_after_guard(SessionState::Ended);
         self.logoff_at = Some(now);
         Ok(entry)
     }
@@ -841,8 +840,7 @@ impl Session {
             return Err(EnterMenuError::PasswordResetPending);
         }
         user.bump_times_called();
-        self.transition_to(SessionState::Menu)
-            .expect("onboarded -> menu is permitted");
+        self.transition_after_guard(SessionState::Menu);
         let line = format_logon_line(self);
         Ok(CallerLog {
             session_node: self.node_number,
@@ -892,8 +890,7 @@ impl Session {
         }
         self.user = Some(user);
         self.authenticated_at = Some(now);
-        self.transition_to(SessionState::Onboarded)
-            .expect("new_user_registering -> onboarded is permitted");
+        self.transition_after_guard(SessionState::Onboarded);
         Ok(self.on_enter_onboarded(policy, now))
     }
 
@@ -928,8 +925,7 @@ impl Session {
         let user_mut = self.user.as_mut().ok_or(VerifyPasswordError::UserMissing)?;
         user_mut.clear_invalid_attempts();
         self.authenticated_at = Some(now);
-        self.transition_to(SessionState::Onboarded)
-            .expect("authenticating -> onboarded is permitted");
+        self.transition_after_guard(SessionState::Onboarded);
         let rejection = self.on_enter_onboarded(policy, now);
         let outcome = if rejection.is_some() {
             VerifyPasswordOutcome::LogonRejected
@@ -1142,15 +1138,16 @@ impl Session {
 
         let outcome = match policy.password_failure_decision(self) {
             PasswordFailureDecision::LockAccount => {
-                self.user.as_mut().expect("user present").lock_account();
-                self.transition_to(SessionState::LoggingOff)
-                    .expect("authenticating -> logging_off is permitted");
+                self.user
+                    .as_mut()
+                    .ok_or(VerifyPasswordError::UserMissing)?
+                    .lock_account();
+                self.transition_after_guard(SessionState::LoggingOff);
                 self.logoff_reason = Some(LogoffReason::LockedAccount);
                 VerifyPasswordOutcome::AccountLocked
             }
             PasswordFailureDecision::EndSession => {
-                self.transition_to(SessionState::LoggingOff)
-                    .expect("authenticating -> logging_off is permitted");
+                self.transition_after_guard(SessionState::LoggingOff);
                 self.logoff_reason = Some(LogoffReason::ExcessivePasswordFails);
                 VerifyPasswordOutcome::TooManyFailures
             }
@@ -1224,8 +1221,7 @@ impl Session {
         user.add_time_used_today(Duration::from_secs(60));
         self.time_remaining = self.time_remaining.saturating_sub(Duration::from_secs(60));
         if self.time_remaining.is_zero() {
-            self.transition_to(SessionState::LoggingOff)
-                .expect("onboarded/menu -> logging_off is permitted");
+            self.transition_after_guard(SessionState::LoggingOff);
             self.logoff_reason = Some(LogoffReason::OutOfTime);
             Ok(TickMinuteOutcome::TimeExpired)
         } else {
@@ -1616,11 +1612,15 @@ impl std::error::Error for TickMinuteError {}
 /// `Div(currTime - 21600, 86400)` (six-hour offset) — see
 /// `amiexpress/express.e:529`.
 fn floor_to_day(at: SystemTime, offset: Duration) -> i64 {
+    fn saturating_i64(secs: u64) -> i64 {
+        i64::try_from(secs).unwrap_or(i64::MAX)
+    }
+
     let secs = match at.duration_since(UNIX_EPOCH) {
-        Ok(d) => d.as_secs() as i64,
-        Err(e) => -(e.duration().as_secs() as i64),
+        Ok(d) => saturating_i64(d.as_secs()),
+        Err(e) => -saturating_i64(e.duration().as_secs()),
     };
-    let offset_secs = offset.as_secs() as i64;
+    let offset_secs = saturating_i64(offset.as_secs());
     (secs - offset_secs).div_euclid(86_400)
 }
 

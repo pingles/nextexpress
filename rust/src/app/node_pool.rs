@@ -30,8 +30,7 @@ impl NodePool {
     pub async fn allocate(&self) -> Option<u32> {
         let mut nodes = self.nodes.lock().await;
         let node = nodes.iter_mut().find(|n| n.status() == NodeStatus::Idle)?;
-        node.transition_to(NodeStatus::Connecting)
-            .expect("idle -> connecting is permitted by the spec");
+        node.transition_to(NodeStatus::Connecting).ok()?;
         Some(node.number())
     }
 
