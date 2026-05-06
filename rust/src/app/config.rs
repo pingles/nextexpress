@@ -28,6 +28,10 @@ const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
 /// `amiexpress/express.e:529`.
 const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
 
+/// Default per-input idle timeout
+/// (`core.allium:config.input_timeout`, Slice 17). Five minutes.
+const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 /// Runtime configuration of the BBS.
 ///
 /// Every field corresponds to one of the documented `core.allium:config`
@@ -78,6 +82,20 @@ pub struct Config {
     /// `4`. Mirrors the legacy `MIN_PASSWORD_STRENGTH` tooltype at
     /// `amiexpress/express.e:915`.
     pub min_password_categories: u32,
+    /// How long a session may go without typing before the
+    /// `IdleTimeout` rule fires
+    /// (spec: `core.allium:config.input_timeout`, default `5m`).
+    /// Parsed in the same human-readable string format as
+    /// [`Self::daily_reset_offset`].
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub input_timeout: Duration,
+    /// When `true`, an idle timeout is reported as
+    /// [`crate::domain::session::LogoffReason::InputTimeout`];
+    /// otherwise it is reported as
+    /// [`crate::domain::session::LogoffReason::CarrierLoss`]
+    /// (spec: `core.allium:config.treat_timeout_as_logoff`,
+    /// default `false`).
+    pub treat_timeout_as_logoff: bool,
 }
 
 impl Default for Config {
@@ -91,6 +109,8 @@ impl Default for Config {
             password_expiry_days: 0,
             min_password_length: 0,
             min_password_categories: 0,
+            input_timeout: DEFAULT_INPUT_TIMEOUT,
+            treat_timeout_as_logoff: false,
         }
     }
 }
@@ -187,6 +207,8 @@ impl Config {
             .with_password_expiry_days(self.password_expiry_days)
             .with_min_password_length(self.min_password_length)
             .with_min_password_categories(self.min_password_categories)
+            .with_input_timeout(self.input_timeout)
+            .with_treat_timeout_as_logoff(self.treat_timeout_as_logoff)
     }
 }
 
@@ -306,6 +328,8 @@ mod tests {
             password_expiry_days = 90
             min_password_length = 8
             min_password_categories = 3
+            input_timeout = "2m"
+            treat_timeout_as_logoff = true
         "#;
         let config = Config::from_toml_str(toml).expect("parse");
         assert_eq!(config.port, 9999);
@@ -316,6 +340,8 @@ mod tests {
         assert_eq!(config.password_expiry_days, 90);
         assert_eq!(config.min_password_length, 8);
         assert_eq!(config.min_password_categories, 3);
+        assert_eq!(config.input_timeout, Duration::from_secs(120));
+        assert!(config.treat_timeout_as_logoff);
     }
 
     #[test]
@@ -340,6 +366,33 @@ mod tests {
             config.min_password_categories,
             defaults.min_password_categories
         );
+        assert_eq!(config.input_timeout, defaults.input_timeout);
+        assert_eq!(
+            config.treat_timeout_as_logoff,
+            defaults.treat_timeout_as_logoff
+        );
+    }
+
+    #[test]
+    fn default_input_timeout_is_five_minutes() {
+        assert_eq!(Config::default().input_timeout, Duration::from_secs(5 * 60));
+    }
+
+    #[test]
+    fn default_treat_timeout_as_logoff_is_false() {
+        assert!(!Config::default().treat_timeout_as_logoff);
+    }
+
+    #[test]
+    fn session_policy_threads_idle_timeout_knobs() {
+        let config = Config {
+            input_timeout: Duration::from_secs(30),
+            treat_timeout_as_logoff: true,
+            ..Config::default()
+        };
+        let policy = config.session_policy();
+        assert_eq!(policy.input_timeout(), Duration::from_secs(30));
+        assert!(policy.treat_timeout_as_logoff());
     }
 
     #[test]

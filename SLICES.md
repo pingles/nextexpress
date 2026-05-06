@@ -231,7 +231,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 14 | Daily time budget initialisation + decrement | Done |
 | 15 | Forced password reset | Done |
 | 16 | Account-locked / insufficient-access rejection | Done |
-| 17 | Idle timeout | Todo |
+| 17 | Idle timeout | Done |
 | 18 | Carrier loss | Todo |
 | 19 | `user_typed_NEW` branch | Todo |
 | 20 | `CompleteNewUserRegistration` | Todo |

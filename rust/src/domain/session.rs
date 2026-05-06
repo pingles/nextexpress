@@ -24,6 +24,10 @@ const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
 /// `amiexpress/express.e:529`.
 const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
 
+/// Default per-input idle timeout used by [`SessionPolicy::new`]
+/// (`core.allium:config.input_timeout`, Slice 17). Five minutes.
+const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 /// How the user reached the BBS (spec: `session.allium:LogonChannel`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogonChannel {
@@ -60,6 +64,16 @@ pub enum LogoffReason {
     /// `onboarded` or `menu`. Set by
     /// `session.allium:TimeExpired` (Slice 14).
     OutOfTime,
+    /// The session received no input for longer than
+    /// `core/config.input_timeout` and
+    /// `treat_timeout_as_logoff` is `true`
+    /// (`session.allium:IdleTimeout`, Slice 17).
+    InputTimeout,
+    /// Either the transport reported the connection had gone away
+    /// (`session.allium:CarrierLost`, Slice 18), or the idle
+    /// timeout fired with `treat_timeout_as_logoff = false`
+    /// (Slice 17).
+    CarrierLoss,
 }
 
 /// Policy decision after a password failure has been recorded on a
@@ -84,12 +98,15 @@ pub struct SessionPolicy {
     password_expiry_days: u32,
     min_password_length: u32,
     min_password_categories: u32,
+    input_timeout: Duration,
+    treat_timeout_as_logoff: bool,
 }
 
 impl SessionPolicy {
-    /// Constructs a session policy with the spec-default
-    /// [`Self::daily_reset_offset`] of six hours, expiry disabled and
-    /// no password-strength enforcement.
+    /// Constructs a session policy with spec defaults: six-hour
+    /// daily reset, expiry disabled, no password-strength
+    /// enforcement, five-minute idle timeout, and the timeout
+    /// reported as `carrier_loss`.
     ///
     /// # Parameters
     /// - `max_password_failures`: the number of consecutive bad
@@ -97,9 +114,7 @@ impl SessionPolicy {
     ///
     /// # Returns
     /// A [`SessionPolicy`] carrying the supplied password-failure
-    /// limit, a six-hour daily reset offset, and zeros for the
-    /// password-expiry / strength knobs (Slice 15 disables them by
-    /// default).
+    /// limit and the listed defaults.
     pub fn new(max_password_failures: u32) -> Self {
         Self {
             max_password_failures,
@@ -107,6 +122,8 @@ impl SessionPolicy {
             password_expiry_days: 0,
             min_password_length: 0,
             min_password_categories: 0,
+            input_timeout: DEFAULT_INPUT_TIMEOUT,
+            treat_timeout_as_logoff: false,
         }
     }
 
@@ -160,6 +177,35 @@ impl SessionPolicy {
     /// `0` disables the category check.
     pub fn min_password_categories(&self) -> u32 {
         self.min_password_categories
+    }
+
+    /// Returns a copy of `self` with [`Self::input_timeout`] replaced
+    /// by `timeout`. Slice 17.
+    pub fn with_input_timeout(mut self, timeout: Duration) -> Self {
+        self.input_timeout = timeout;
+        self
+    }
+
+    /// Returns the configured per-input idle timeout (Slice 17).
+    /// Mirrors `core/config.input_timeout`; the default is five
+    /// minutes.
+    pub fn input_timeout(&self) -> Duration {
+        self.input_timeout
+    }
+
+    /// Returns a copy of `self` with
+    /// [`Self::treat_timeout_as_logoff`] replaced by `value`.
+    pub fn with_treat_timeout_as_logoff(mut self, value: bool) -> Self {
+        self.treat_timeout_as_logoff = value;
+        self
+    }
+
+    /// Returns whether an idle timeout is reported as
+    /// [`LogoffReason::InputTimeout`] (`true`) or
+    /// [`LogoffReason::CarrierLoss`] (`false`). Mirrors
+    /// `core/config.treat_timeout_as_logoff`. Slice 17.
+    pub fn treat_timeout_as_logoff(&self) -> bool {
+        self.treat_timeout_as_logoff
     }
 
     /// Decides what should happen after a password failure has been
@@ -500,6 +546,51 @@ impl Session {
         Ok(NameTypedOutcome::NewUserRejected)
     }
 
+    /// Updates [`Self::last_input_at`] to `at`.
+    ///
+    /// The telnet adapter (and any other user-facing transport
+    /// adapter) calls this on every input chunk so the
+    /// `session.allium:IdleTimeout` rule (Slice 17) and the
+    /// per-minute `UpdateTimeUsed` rule (Slice 14) have an
+    /// up-to-date last-activity timestamp.
+    pub fn record_input(&mut self, at: SystemTime) {
+        self.last_input_at = at;
+    }
+
+    /// `session.allium:IdleTimeout` rule (Slice 17).
+    ///
+    /// Transitions the session to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::InputTimeout`] (when `treat_as_logoff` is
+    /// `true`) or [`LogoffReason::CarrierLoss`] (otherwise). The
+    /// caller — typically the telnet adapter, which owns the read
+    /// timer — is responsible for deciding the timeout has elapsed
+    /// and invoking this method.
+    ///
+    /// # Errors
+    /// Returns [`IdleTimeoutError::WrongState`] when the session is
+    /// not in one of the spec-permitted states (`identifying`,
+    /// `authenticating`, `onboarded`, or `menu`;
+    /// `new_user_registering` lands in Slice 19).
+    pub fn apply_idle_timeout(&mut self, treat_as_logoff: bool) -> Result<(), IdleTimeoutError> {
+        if !matches!(
+            self.state,
+            SessionState::Identifying
+                | SessionState::Authenticating
+                | SessionState::Onboarded
+                | SessionState::Menu
+        ) {
+            return Err(IdleTimeoutError::WrongState(self.state));
+        }
+        self.transition_to(SessionState::LoggingOff)
+            .expect("idle-permitted state -> logging_off is permitted");
+        self.logoff_reason = Some(if treat_as_logoff {
+            LogoffReason::InputTimeout
+        } else {
+            LogoffReason::CarrierLoss
+        });
+        Ok(())
+    }
+
     /// `session.allium:UserRequestsLogoff` rule.
     ///
     /// Transitions [`SessionState::Onboarded`] or
@@ -508,8 +599,18 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`SessionTransitionError`] if the session is not in
-    /// `onboarded` or `menu`.
+    /// `onboarded` or `menu` — the spec's `requires` for this rule.
+    /// The state guard is explicit (rather than relying on the
+    /// transition table alone) because the table allows other
+    /// states to reach `logging_off` for unrelated reasons
+    /// (idle / carrier loss in Slices 17/18).
     pub fn user_requests_logoff(&mut self) -> Result<(), SessionTransitionError> {
+        if !matches!(self.state, SessionState::Onboarded | SessionState::Menu) {
+            return Err(SessionTransitionError {
+                from: self.state,
+                to: SessionState::LoggingOff,
+            });
+        }
         self.transition_to(SessionState::LoggingOff)?;
         self.logoff_reason = Some(LogoffReason::NormalLogoff);
         Ok(())
@@ -1124,6 +1225,25 @@ impl std::fmt::Display for CompletePasswordResetError {
 
 impl std::error::Error for CompletePasswordResetError {}
 
+/// Errors returned by [`Session::apply_idle_timeout`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdleTimeoutError {
+    /// The session is not in one of the spec-permitted states for
+    /// [`Session::apply_idle_timeout`] (`identifying`,
+    /// `authenticating`, `onboarded`, `menu`).
+    WrongState(SessionState),
+}
+
+impl std::fmt::Display for IdleTimeoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => write!(f, "apply_idle_timeout in unexpected state: {s:?}"),
+        }
+    }
+}
+
+impl std::error::Error for IdleTimeoutError {}
+
 /// Outcome of [`Session::tick_minute`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickMinuteOutcome {
@@ -1201,6 +1321,8 @@ fn format_logoff_line(session: &Session) -> String {
         Some(LogoffReason::ExcessivePasswordFails) => "excessive_password_fails",
         Some(LogoffReason::LockedAccount) => "locked_account",
         Some(LogoffReason::OutOfTime) => "out_of_time",
+        Some(LogoffReason::InputTimeout) => "input_timeout",
+        Some(LogoffReason::CarrierLoss) => "carrier_loss",
         None => "unknown",
     };
     format!(
@@ -1235,18 +1357,27 @@ impl std::error::Error for SessionTransitionError {}
 /// `from -> to`. The `new_user_registering` branch is omitted (Slice 19
 /// adds it).
 ///
-/// `Authenticating -> LoggingOff` is included to let
-/// `session.allium:VerifyPassword` end the session via its
-/// FinaliseLogoff hand-off. The Allium transition list omits this
-/// transition explicitly, but the rule's body implies it; the Rust
-/// port follows the rule.
+/// Some transitions land in the table because a rule's body requires
+/// them even though the explicit transition list in
+/// `session.allium:Session` doesn't enumerate them:
+/// - `Authenticating -> LoggingOff` lets
+///   `session.allium:VerifyPassword` end the session via its
+///   `FinaliseLogoff` hand-off (Slice 11).
+/// - `Identifying -> LoggingOff` and `Connecting -> LoggingOff` let
+///   `session.allium:IdleTimeout` (Slice 17) and
+///   `session.allium:CarrierLost` (Slice 18) end an
+///   unauthenticated session via the
+///   `FinaliseUnauthenticatedLogoff` rule, which is itself only
+///   reachable through `LoggingOff`.
 fn is_session_transition_allowed(from: SessionState, to: SessionState) -> bool {
     use SessionState::*;
     matches!(
         (from, to),
         (Connecting, Identifying)
+            | (Connecting, LoggingOff)
             | (Connecting, Ended)
             | (Identifying, Authenticating)
+            | (Identifying, LoggingOff)
             | (Identifying, Ended)
             | (Authenticating, Onboarded)
             | (Authenticating, Ended)
@@ -2212,6 +2343,102 @@ mod tests {
             .enter_menu(SystemTime::UNIX_EPOCH)
             .expect_err("LoggingOff cannot enter Menu");
         assert!(matches!(err, EnterMenuError::WrongState(_)));
+    }
+
+    #[test]
+    fn record_input_updates_last_input_at() {
+        let mut s = new_session(LogonChannel::Remote);
+        let later = SystemTime::UNIX_EPOCH + Duration::from_secs(60);
+        s.record_input(later);
+        assert_eq!(s.last_input_at(), later);
+    }
+
+    #[test]
+    fn idle_timeout_from_identifying_uses_carrier_loss_by_default() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.apply_idle_timeout(false).unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
+    }
+
+    #[test]
+    fn idle_timeout_treat_as_logoff_uses_input_timeout_reason() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.apply_idle_timeout(true).unwrap();
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::InputTimeout));
+    }
+
+    #[test]
+    fn idle_timeout_from_authenticating_allowed() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", alice()).unwrap();
+        s.apply_idle_timeout(true).unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+    }
+
+    #[test]
+    fn idle_timeout_from_onboarded_allowed() {
+        let mut s = session_at_onboarded_with(alice());
+        s.apply_idle_timeout(false).unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+    }
+
+    #[test]
+    fn idle_timeout_from_menu_allowed() {
+        let mut s = session_at_onboarded_with(alice());
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        s.apply_idle_timeout(false).unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+    }
+
+    #[test]
+    fn idle_timeout_from_connecting_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .apply_idle_timeout(false)
+            .expect_err("connecting not allowed");
+        assert!(matches!(
+            err,
+            IdleTimeoutError::WrongState(SessionState::Connecting)
+        ));
+    }
+
+    #[test]
+    fn idle_timeout_from_logging_off_errors() {
+        let mut s = session_at_onboarded_with(alice());
+        s.user_requests_logoff().unwrap();
+        let err = s
+            .apply_idle_timeout(false)
+            .expect_err("logging_off not allowed");
+        assert!(matches!(
+            err,
+            IdleTimeoutError::WrongState(SessionState::LoggingOff)
+        ));
+    }
+
+    #[test]
+    fn finalise_logoff_after_idle_timeout_writes_reason_to_log_line() {
+        let mut s = session_at_onboarded_with(alice());
+        s.apply_idle_timeout(true).unwrap();
+        let entry = s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert!(
+            entry.text.contains("input_timeout"),
+            "expected input_timeout in goodbye line, got {entry:?}"
+        );
+    }
+
+    #[test]
+    fn finalise_logoff_after_carrier_loss_treatment_writes_reason_to_log_line() {
+        let mut s = session_at_onboarded_with(alice());
+        s.apply_idle_timeout(false).unwrap();
+        let entry = s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert!(
+            entry.text.contains("carrier_loss"),
+            "expected carrier_loss in goodbye line, got {entry:?}"
+        );
     }
 
     #[test]

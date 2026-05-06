@@ -9,7 +9,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -231,6 +231,69 @@ async fn handle_connection(
     result
 }
 
+/// Outcome of a bounded read in a per-session loop.
+enum ReadOutcome {
+    /// A line was received from the client.
+    Line(String),
+    /// The peer closed the connection cleanly without sending a line.
+    Eof,
+    /// `core/config.input_timeout` elapsed without input
+    /// (`session.allium:IdleTimeout`, Slice 17).
+    IdleTimedOut,
+}
+
+/// Reads a single line from `stream`, bounded by `timeout`. On a
+/// successful read updates `session.last_input_at` to satisfy the
+/// "Telnet adapter resets last_input_at on every input chunk" wire
+/// obligation (Slice 17, see `SLICES.md` adapter checklist).
+async fn read_line_with_idle_timeout(
+    stream: &mut TcpStream,
+    pushback: &mut Option<u8>,
+    echo: EchoMode,
+    timeout: Duration,
+    session: &mut Session,
+) -> io::Result<ReadOutcome> {
+    match tokio::time::timeout(timeout, read_telnet_line(stream, pushback, echo)).await {
+        Ok(result) => match result? {
+            Some(line) => {
+                session.record_input(SystemTime::now());
+                Ok(ReadOutcome::Line(line))
+            }
+            None => Ok(ReadOutcome::Eof),
+        },
+        Err(_elapsed) => Ok(ReadOutcome::IdleTimedOut),
+    }
+}
+
+/// Sent immediately before the connection closes on idle timeout.
+const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
+
+/// Applies `session.allium:IdleTimeout` (Slice 17), finalises the
+/// session, writes the goodbye line, and flushes the socket. The
+/// per-session loop then returns. The rule's `treat_timeout_as_logoff`
+/// branch is selected by the configured [`SessionPolicy`].
+async fn handle_idle_timeout(
+    stream: &mut TcpStream,
+    session: &mut Session,
+    user_repo: &(dyn UserRepository + Send + Sync),
+    caller_log: &(dyn CallerLogAppender + Send + Sync),
+    session_policy: SessionPolicy,
+) -> io::Result<()> {
+    session
+        .apply_idle_timeout(session_policy.treat_timeout_as_logoff())
+        .expect("idle-permitted state when read times out");
+    // FinaliseLogoff handles unauthenticated sessions too — it
+    // skips the user mutation and emits a "?" handle in the log
+    // line, which is what the spec's
+    // `FinaliseUnauthenticatedLogoff` rule prescribes for the
+    // bare-state case.
+    session_flow::finalise_logoff(session, user_repo, caller_log, SystemTime::now())
+        .expect("logging_off can finalise");
+    stream.write_all(IDLE_TIMEOUT_LINE).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
 /// Inner per-session loop. Drives the session from the IAC handshake
 /// through banner, name prompt, password and (in later slices) menu.
 #[allow(clippy::too_many_arguments)]
@@ -272,8 +335,22 @@ async fn run_session(
     loop {
         stream.write_all(NAME_PROMPT).await?;
         stream.flush().await?;
-        let Some(typed) = read_telnet_line(stream, &mut pushback, EchoMode::Visible).await? else {
-            return Ok(()); // EOF before name typed
+        let typed = match read_line_with_idle_timeout(
+            stream,
+            &mut pushback,
+            EchoMode::Visible,
+            session_policy.input_timeout(),
+            &mut session,
+        )
+        .await?
+        {
+            ReadOutcome::Line(line) => line,
+            ReadOutcome::Eof => return Ok(()), // EOF before name typed
+            ReadOutcome::IdleTimedOut => {
+                handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
+                    .await?;
+                return Ok(());
+            }
         };
 
         let outcome =
@@ -300,9 +377,22 @@ async fn run_session(
     loop {
         stream.write_all(PASSWORD_PROMPT).await?;
         stream.flush().await?;
-        let Some(password) = read_telnet_line(stream, &mut pushback, EchoMode::Masked).await?
-        else {
-            return Ok(()); // EOF before password typed
+        let password = match read_line_with_idle_timeout(
+            stream,
+            &mut pushback,
+            EchoMode::Masked,
+            session_policy.input_timeout(),
+            &mut session,
+        )
+        .await?
+        {
+            ReadOutcome::Line(line) => line,
+            ReadOutcome::Eof => return Ok(()), // EOF before password typed
+            ReadOutcome::IdleTimedOut => {
+                handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
+                    .await?;
+                return Ok(());
+            }
         };
 
         let outcome = session_flow::verify_password(
@@ -362,8 +452,22 @@ async fn run_session(
         stream.write_all(&menu).await?;
         stream.write_all(MENU_PROMPT).await?;
         stream.flush().await?;
-        let Some(line) = read_telnet_line(stream, &mut pushback, EchoMode::Visible).await? else {
-            return Ok(());
+        let line = match read_line_with_idle_timeout(
+            stream,
+            &mut pushback,
+            EchoMode::Visible,
+            session_policy.input_timeout(),
+            &mut session,
+        )
+        .await?
+        {
+            ReadOutcome::Line(line) => line,
+            ReadOutcome::Eof => return Ok(()),
+            ReadOutcome::IdleTimedOut => {
+                handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
+                    .await?;
+                return Ok(());
+            }
         };
         let cmd = line.trim().to_ascii_uppercase();
         if cmd == "G" {
@@ -381,7 +485,6 @@ async fn run_session(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::time::Duration;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -654,10 +757,15 @@ mod tests {
     /// Spawns a listener bound to ephemeral port with `repo` and the
     /// fallback banner, returns the address it's listening on.
     async fn spawn_listener_with(repo: SharedUserRepo) -> SocketAddr {
+        spawn_listener_with_config(repo, test_config(1)).await
+    }
+
+    /// Variant that lets a test pin a specific [`Config`].
+    async fn spawn_listener_with_config(repo: SharedUserRepo, config: Config) -> SocketAddr {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                test_config(1),
+                config,
                 repo,
                 test_hasher(),
                 test_caller_log(),
@@ -931,6 +1039,69 @@ mod tests {
         assert!(
             contains(&buf, b"Authenticated"),
             "expected Authenticated line: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_at_name_prompt_disconnects_with_goodbye() {
+        // Slice 17: the listener applies the IdleTimeout rule when
+        // it doesn't see input within `input_timeout`. With a 100ms
+        // budget and no client typing, the listener should write
+        // the goodbye line and close.
+        let config = Config {
+            input_timeout: std::time::Duration::from_millis(100),
+            ..test_config(1)
+        };
+        let addr = spawn_listener_with_config(repo_with_alice(), config).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        // Don't type anything; the listener will time out.
+        let buf = drain_until(&mut stream, b"Idle timeout").await;
+        assert!(
+            contains(&buf, b"Idle timeout"),
+            "expected idle goodbye: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_at_password_prompt_disconnects_with_goodbye() {
+        let config = Config {
+            input_timeout: std::time::Duration::from_millis(100),
+            ..test_config(1)
+        };
+        let addr =
+            spawn_listener_with_config(repo_with(alice_with_password("secret")), config).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
+        // Don't send a password.
+        let buf = drain_until(&mut stream, b"Idle timeout").await;
+        assert!(
+            contains(&buf, b"Idle timeout"),
+            "expected idle goodbye at password prompt: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_in_menu_disconnects_with_goodbye() {
+        let config = Config {
+            input_timeout: std::time::Duration::from_millis(100),
+            ..test_config(1)
+        };
+        let addr =
+            spawn_listener_with_config(repo_with(alice_with_password("secret")), config).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
+        stream.write_all(b"secret\r\n").await.unwrap();
+        // Wait for the menu, then idle.
+        let _ = drain_until(&mut stream, MENU_PROMPT).await;
+        let buf = drain_until(&mut stream, b"Idle timeout").await;
+        assert!(
+            contains(&buf, b"Idle timeout"),
+            "expected idle goodbye in menu: {buf:?}"
         );
     }
 
