@@ -228,7 +228,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 12 | `EnterMenu` + display the conference menu | Done |
 | 13 | `UserRequestsLogoff` + `FinaliseLogoff` + `ReleaseNode` | Done |
 | 13a | Phase 1 wire-and-smoke (composition root + sysop seed) | Done |
-| 14 | Daily time budget initialisation + decrement | Todo |
+| 14 | Daily time budget initialisation + decrement | Done |
 | 15 | Forced password reset | Todo |
 | 16 | Account-locked / insufficient-access rejection | Todo |
 | 17 | Idle timeout | Todo |

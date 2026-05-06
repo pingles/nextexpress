@@ -165,7 +165,7 @@ where
 
     if matches {
         let outcome = session
-            .apply_password_match(now)
+            .apply_password_match(policy, now)
             .map_err(VerifyPasswordFlowError::Session)?;
         save_bound_user(session, user_repo).map_err(VerifyPasswordFlowError::Save)?;
         Ok(outcome)
@@ -243,6 +243,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+    use std::time::Duration;
 
     use crate::domain::caller_log::CallerLog;
     use crate::domain::password::{ComputedHash, PasswordError, PasswordHashKind};
@@ -423,6 +424,36 @@ mod tests {
         assert_eq!(session.state(), SessionState::Menu);
         assert!(log.entries().iter().any(|e| e.text.contains("Logon:")));
         assert_eq!(repo.find_saved("alice").times_called(), 1);
+    }
+
+    #[test]
+    fn verify_password_success_initialises_daily_budget() {
+        let mut alice_with_limits = alice();
+        alice_with_limits
+            .set_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        let repo = TestRepo::new(vec![alice_with_limits.clone()]);
+        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
+        session.prompt_for_name().unwrap();
+        session
+            .record_identified_user("alice", alice_with_limits)
+            .unwrap();
+        let log = TestLog::default();
+
+        verify_password(
+            &mut session,
+            "secret",
+            &repo,
+            &good_hasher(),
+            &log,
+            SessionPolicy::new(3),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+
+        assert_eq!(session.time_remaining(), Duration::from_secs(30 * 60));
+        // First-call-after-epoch: new-day branch zeroes today counters.
+        assert_eq!(session.user().unwrap().times_called_today(), 0);
+        assert_eq!(repo.find_saved("alice").times_called_today(), 0);
     }
 
     #[test]

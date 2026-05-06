@@ -5,7 +5,7 @@
 //! and the `new_user_registering` branch arrive in their owning
 //! slices.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::domain::caller_log::CallerLog;
 use crate::domain::password::PasswordError;
@@ -17,6 +17,12 @@ const MAX_NAME_RETRIES: u32 = 5;
 /// Default consecutive bad-password attempts before a session ends or
 /// account lockout applies.
 const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
+
+/// Default offset past midnight UTC used by
+/// [`SessionPolicy::new`] when no explicit value is supplied. Mirrors
+/// the legacy AmiExpress constant `21600` seconds (six hours) at
+/// `amiexpress/express.e:529`.
+const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
 
 /// How the user reached the BBS (spec: `session.allium:LogonChannel`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,6 +56,10 @@ pub enum LogoffReason {
     LockedAccount,
     /// User typed `G` (or the configured logoff command).
     NormalLogoff,
+    /// The session burned through `time_remaining` while in
+    /// `onboarded` or `menu`. Set by
+    /// `session.allium:TimeExpired` (Slice 14).
+    OutOfTime,
 }
 
 /// Policy decision after a password failure has been recorded on a
@@ -70,10 +80,12 @@ pub enum PasswordFailureDecision {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionPolicy {
     max_password_failures: u32,
+    daily_reset_offset: Duration,
 }
 
 impl SessionPolicy {
-    /// Constructs a session policy.
+    /// Constructs a session policy with the spec-default
+    /// [`Self::daily_reset_offset`] of six hours.
     ///
     /// # Parameters
     /// - `max_password_failures`: the number of consecutive bad
@@ -81,11 +93,24 @@ impl SessionPolicy {
     ///
     /// # Returns
     /// A [`SessionPolicy`] carrying the supplied password-failure
-    /// limit.
+    /// limit and a six-hour daily reset offset.
     pub fn new(max_password_failures: u32) -> Self {
         Self {
             max_password_failures,
+            daily_reset_offset: DEFAULT_DAILY_RESET_OFFSET,
         }
+    }
+
+    /// Returns a copy of `self` with [`Self::daily_reset_offset`]
+    /// replaced by `offset`.
+    pub fn with_daily_reset_offset(mut self, offset: Duration) -> Self {
+        self.daily_reset_offset = offset;
+        self
+    }
+
+    /// Returns the configured daily reset offset (Slice 14).
+    pub fn daily_reset_offset(&self) -> Duration {
+        self.daily_reset_offset
     }
 
     /// Decides what should happen after a password failure has been
@@ -161,6 +186,7 @@ pub struct Session {
     authenticated_at: Option<SystemTime>,
     logoff_at: Option<SystemTime>,
     logoff_reason: Option<LogoffReason>,
+    time_remaining: Duration,
 }
 
 impl Session {
@@ -193,6 +219,7 @@ impl Session {
             authenticated_at: None,
             logoff_at: None,
             logoff_reason: None,
+            time_remaining: Duration::ZERO,
         }
     }
 
@@ -262,6 +289,15 @@ impl Session {
     /// Returns the reason recorded for the session ending, if any.
     pub fn logoff_reason(&self) -> Option<LogoffReason> {
         self.logoff_reason
+    }
+
+    /// Returns how much per-call time the session has left.
+    ///
+    /// Set on the `authenticating -> onboarded` transition by
+    /// [`Session::initialise_daily_budget`] and decremented each minute
+    /// by [`Session::tick_minute`]. Slice 14.
+    pub fn time_remaining(&self) -> Duration {
+        self.time_remaining
     }
 
     /// Spec-derived predicate: `channel in {remote, ftp}`.
@@ -500,7 +536,11 @@ impl Session {
     /// Applies the matching branch of `session.allium:VerifyPassword`.
     ///
     /// Clears `user.invalid_attempts`, sets `authenticated_at`, and
-    /// transitions to [`SessionState::Onboarded`].
+    /// transitions to [`SessionState::Onboarded`]. Fires every rule
+    /// whose `when` clause is the transition into `onboarded`: today
+    /// only `session.allium:InitialiseDailyBudget` (Slice 14); future
+    /// slices will add `ForcePasswordReset` (Slice 15) and
+    /// `RejectLockedOrInsufficientAccess` (Slice 16) here.
     ///
     /// # Errors
     /// Returns [`VerifyPasswordError::WrongState`] if the session is
@@ -508,6 +548,7 @@ impl Session {
     /// [`VerifyPasswordError::UserMissing`] if no user is bound.
     pub fn apply_password_match(
         &mut self,
+        policy: SessionPolicy,
         now: SystemTime,
     ) -> Result<VerifyPasswordOutcome, VerifyPasswordError> {
         if self.state != SessionState::Authenticating {
@@ -518,6 +559,10 @@ impl Session {
         self.authenticated_at = Some(now);
         self.transition_to(SessionState::Onboarded)
             .expect("authenticating -> onboarded is permitted");
+        // Post-transition rules. The guards (state == Onboarded, user
+        // bound) hold trivially because we just established them.
+        self.initialise_daily_budget(now, policy.daily_reset_offset())
+            .expect("guards hold immediately after transition to Onboarded");
         Ok(VerifyPasswordOutcome::Authenticated)
     }
 
@@ -568,6 +613,80 @@ impl Session {
             PasswordFailureDecision::Continue => VerifyPasswordOutcome::NotMatching,
         };
         Ok((outcome, entry))
+    }
+
+    /// `session.allium:InitialiseDailyBudget` rule (Slice 14).
+    ///
+    /// Fires once the session has reached
+    /// [`SessionState::Onboarded`]. If `now` falls in a different
+    /// accounting day from the user's previous `last_call`, the daily
+    /// counters reset; otherwise `times_called_today` increments.
+    /// `time_remaining` is then set to `user.time_limit_per_call`.
+    ///
+    /// The accounting day boundary is `daily_reset_offset` past
+    /// midnight UTC (the legacy AmiExpress default is six hours, so
+    /// the day rolls over at 06:00 UTC).
+    ///
+    /// # Errors
+    /// Returns [`InitialiseDailyBudgetError::WrongState`] when the
+    /// session is not in [`SessionState::Onboarded`], or
+    /// [`InitialiseDailyBudgetError::UserMissing`] when no user is
+    /// bound.
+    pub fn initialise_daily_budget(
+        &mut self,
+        now: SystemTime,
+        daily_reset_offset: Duration,
+    ) -> Result<(), InitialiseDailyBudgetError> {
+        if self.state != SessionState::Onboarded {
+            return Err(InitialiseDailyBudgetError::WrongState(self.state));
+        }
+        let user = self
+            .user
+            .as_mut()
+            .ok_or(InitialiseDailyBudgetError::UserMissing)?;
+
+        let today = floor_to_day(now, daily_reset_offset);
+        let last_call_day = user
+            .last_call()
+            .map(|t| floor_to_day(t, daily_reset_offset));
+        let is_new_day = last_call_day.is_none_or(|d| d != today);
+
+        if is_new_day {
+            user.reset_daily_counters();
+        } else {
+            user.bump_times_called_today();
+        }
+        self.time_remaining = user.time_limit_per_call();
+        Ok(())
+    }
+
+    /// `session.allium:UpdateTimeUsed` + `TimeExpired` rules (Slice 14).
+    ///
+    /// Decrements [`Self::time_remaining`] by one minute (saturating at
+    /// zero) and accumulates the same minute against
+    /// `user.time_used_today`. If `time_remaining` reaches zero the
+    /// session transitions to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::OutOfTime`].
+    ///
+    /// # Errors
+    /// Returns [`TickMinuteError::WrongState`] when the session is not
+    /// in [`SessionState::Onboarded`] or [`SessionState::Menu`], or
+    /// [`TickMinuteError::UserMissing`] when no user is bound.
+    pub fn tick_minute(&mut self) -> Result<TickMinuteOutcome, TickMinuteError> {
+        if !matches!(self.state, SessionState::Onboarded | SessionState::Menu) {
+            return Err(TickMinuteError::WrongState(self.state));
+        }
+        let user = self.user.as_mut().ok_or(TickMinuteError::UserMissing)?;
+        user.add_time_used_today(Duration::from_secs(60));
+        self.time_remaining = self.time_remaining.saturating_sub(Duration::from_secs(60));
+        if self.time_remaining.is_zero() {
+            self.transition_to(SessionState::LoggingOff)
+                .expect("onboarded/menu -> logging_off is permitted");
+            self.logoff_reason = Some(LogoffReason::OutOfTime);
+            Ok(TickMinuteOutcome::TimeExpired)
+        } else {
+            Ok(TickMinuteOutcome::Continued)
+        }
     }
 }
 
@@ -689,6 +808,72 @@ impl std::fmt::Display for EnterMenuError {
 
 impl std::error::Error for EnterMenuError {}
 
+/// Errors returned by [`Session::initialise_daily_budget`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InitialiseDailyBudgetError {
+    /// The session is not in [`SessionState::Onboarded`].
+    WrongState(SessionState),
+    /// No user is bound to the session.
+    UserMissing,
+}
+
+impl std::fmt::Display for InitialiseDailyBudgetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => write!(f, "initialise_daily_budget in unexpected state: {s:?}"),
+            Self::UserMissing => write!(f, "initialise_daily_budget called without a bound user"),
+        }
+    }
+}
+
+impl std::error::Error for InitialiseDailyBudgetError {}
+
+/// Outcome of [`Session::tick_minute`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickMinuteOutcome {
+    /// The session has time left and remains in `onboarded` or `menu`.
+    Continued,
+    /// `time_remaining` has reached zero. The session has moved to
+    /// [`SessionState::LoggingOff`] with [`LogoffReason::OutOfTime`].
+    TimeExpired,
+}
+
+/// Errors returned by [`Session::tick_minute`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickMinuteError {
+    /// The session is not in [`SessionState::Onboarded`] or
+    /// [`SessionState::Menu`].
+    WrongState(SessionState),
+    /// No user is bound to the session.
+    UserMissing,
+}
+
+impl std::fmt::Display for TickMinuteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => write!(f, "tick_minute in unexpected state: {s:?}"),
+            Self::UserMissing => write!(f, "tick_minute called without a bound user"),
+        }
+    }
+}
+
+impl std::error::Error for TickMinuteError {}
+
+/// `session.allium:floor_to_day` black-box helper.
+///
+/// Buckets `at` into a day index where the boundary sits
+/// `offset` past midnight UTC. The legacy AmiExpress equivalent is
+/// `Div(currTime - 21600, 86400)` (six-hour offset) — see
+/// `amiexpress/express.e:529`.
+fn floor_to_day(at: SystemTime, offset: Duration) -> i64 {
+    let secs = match at.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(e) => -(e.duration().as_secs() as i64),
+    };
+    let offset_secs = offset.as_secs() as i64;
+    (secs - offset_secs).div_euclid(86_400)
+}
+
 /// `session.allium:format_logon_line` black-box helper.
 ///
 /// Produces the line written to the caller log when a session reaches
@@ -719,6 +904,7 @@ fn format_logoff_line(session: &Session) -> String {
         Some(LogoffReason::NewUserRejected) => "new_user_rejected",
         Some(LogoffReason::ExcessivePasswordFails) => "excessive_password_fails",
         Some(LogoffReason::LockedAccount) => "locked_account",
+        Some(LogoffReason::OutOfTime) => "out_of_time",
         None => "unknown",
     };
     format!(
@@ -889,7 +1075,7 @@ mod tests {
         session.prompt_for_name().unwrap();
         session.record_identified_user("alice", alice()).unwrap();
         session
-            .apply_password_match(SystemTime::UNIX_EPOCH)
+            .apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
             .unwrap();
         assert!(session.is_authenticated());
     }
@@ -1039,7 +1225,9 @@ mod tests {
     fn verify_password_match_advances_to_onboarded() {
         let mut s = authenticated_session();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(60);
-        let outcome = s.apply_password_match(now).unwrap();
+        let outcome = s
+            .apply_password_match(SessionPolicy::default(), now)
+            .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::Authenticated);
         assert_eq!(s.state(), SessionState::Onboarded);
         assert_eq!(s.authenticated_at(), Some(now));
@@ -1052,8 +1240,22 @@ mod tests {
         // Pre-existing attempts on the user (e.g. from a prior failed
         // session) should be cleared on success.
         s.user.as_mut().unwrap().bump_invalid_attempts();
-        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
         assert_eq!(s.user().unwrap().invalid_attempts(), 0);
+    }
+
+    #[test]
+    fn verify_password_match_fires_initialise_daily_budget() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        let mut user = alice();
+        user.set_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        s.record_identified_user("alice", user).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
+        // InitialiseDailyBudget consequent of the transition.
+        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
     }
 
     #[test]
@@ -1151,7 +1353,8 @@ mod tests {
     fn enter_menu_advances_state_and_logs() {
         let mut s = authenticated_session();
         // Get to onboarded via successful verify.
-        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(120);
         let entry = s.enter_menu(now).unwrap();
         assert_eq!(s.state(), SessionState::Menu);
@@ -1176,7 +1379,8 @@ mod tests {
     /// Drives a session from connecting to menu via the rule chain.
     fn session_at_menu() -> Session {
         let mut s = authenticated_session();
-        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
         s
     }
@@ -1192,7 +1396,8 @@ mod tests {
     #[test]
     fn user_requests_logoff_from_onboarded_is_allowed() {
         let mut s = authenticated_session();
-        s.apply_password_match(SystemTime::UNIX_EPOCH).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
         s.user_requests_logoff().unwrap();
         assert_eq!(s.state(), SessionState::LoggingOff);
     }
@@ -1234,7 +1439,7 @@ mod tests {
     fn verify_password_outside_authenticating_errors() {
         let mut s = new_session(LogonChannel::Remote);
         let err = s
-            .apply_password_match(SystemTime::UNIX_EPOCH)
+            .apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
             .expect_err("must be authenticating");
         assert!(matches!(err, VerifyPasswordError::WrongState(_)));
     }
@@ -1246,5 +1451,209 @@ mod tests {
             .record_identified_user("alice", alice())
             .expect_err("must be in identifying");
         assert!(matches!(err, NameTypedError::WrongState(_)));
+    }
+
+    const DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
+
+    fn user_with_time_limits(per_call: Duration, per_day: Duration) -> User {
+        let mut u = alice();
+        u.set_time_limits(per_call, per_day);
+        u
+    }
+
+    /// Drives a session into [`SessionState::Onboarded`] via raw state
+    /// transitions, deliberately bypassing the rules
+    /// [`Session::apply_password_match`] fires on entry. The Slice 14
+    /// rule tests use this so they can drive
+    /// [`Session::initialise_daily_budget`] under controlled inputs.
+    fn session_at_onboarded_with(user: User) -> Session {
+        let mut s = new_session(LogonChannel::Remote);
+        s.transition_to(SessionState::Identifying).unwrap();
+        s.user = Some(user);
+        s.transition_to(SessionState::Authenticating).unwrap();
+        s.transition_to(SessionState::Onboarded).unwrap();
+        s
+    }
+
+    #[test]
+    fn floor_to_day_buckets_into_24h_groups_offset_by_six_hours() {
+        // Six hours past UNIX_EPOCH is the start of "day 0".
+        let day_zero = UNIX_EPOCH + Duration::from_secs(6 * 3_600);
+        assert_eq!(floor_to_day(day_zero, DAILY_RESET_OFFSET), 0);
+        let just_before = day_zero - Duration::from_secs(1);
+        assert_eq!(floor_to_day(just_before, DAILY_RESET_OFFSET), -1);
+        let later_same_day = day_zero + Duration::from_secs(20 * 3_600);
+        assert_eq!(floor_to_day(later_same_day, DAILY_RESET_OFFSET), 0);
+        let next_day = day_zero + Duration::from_secs(24 * 3_600);
+        assert_eq!(floor_to_day(next_day, DAILY_RESET_OFFSET), 1);
+    }
+
+    #[test]
+    fn initialise_daily_budget_first_call_treats_as_new_day() {
+        let mut s = session_at_onboarded_with(user_with_time_limits(
+            Duration::from_secs(30 * 60),
+            Duration::from_secs(60 * 60),
+        ));
+        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .unwrap();
+        // Spec: new-day branch sets times_called_today = 0.
+        assert_eq!(s.user().unwrap().times_called_today(), 0);
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
+        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+    }
+
+    #[test]
+    fn initialise_daily_budget_same_day_bumps_times_called_today() {
+        let mut user =
+            user_with_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        // Pretend the user logged on earlier today.
+        let earlier_today = UNIX_EPOCH + Duration::from_secs(7 * 3_600);
+        user.record_last_call(earlier_today);
+        user.add_time_used_today(Duration::from_secs(120));
+        user.bump_times_called_today();
+        let mut s = session_at_onboarded_with(user);
+
+        let later_today = UNIX_EPOCH + Duration::from_secs(20 * 3_600);
+        s.initialise_daily_budget(later_today, DAILY_RESET_OFFSET)
+            .unwrap();
+        // Same-day branch: times_called_today increments, time_used preserved.
+        assert_eq!(s.user().unwrap().times_called_today(), 2);
+        assert_eq!(
+            s.user().unwrap().time_used_today(),
+            Duration::from_secs(120)
+        );
+        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+    }
+
+    #[test]
+    fn initialise_daily_budget_new_day_after_previous_day_resets() {
+        let mut user =
+            user_with_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        // Yesterday: 06:00 UTC of day 0 (the "start of day 0" in our offset).
+        let yesterday = UNIX_EPOCH + Duration::from_secs(10 * 3_600);
+        user.record_last_call(yesterday);
+        user.add_time_used_today(Duration::from_secs(900));
+        user.bump_times_called_today();
+        user.bump_times_called_today();
+        let mut s = session_at_onboarded_with(user);
+
+        let today = UNIX_EPOCH + Duration::from_secs(36 * 3_600);
+        s.initialise_daily_budget(today, DAILY_RESET_OFFSET)
+            .unwrap();
+        assert_eq!(s.user().unwrap().times_called_today(), 0);
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
+        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+    }
+
+    #[test]
+    fn initialise_daily_budget_outside_onboarded_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .expect_err("must be onboarded");
+        assert!(matches!(err, InitialiseDailyBudgetError::WrongState(_)));
+    }
+
+    #[test]
+    fn initialise_daily_budget_without_user_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.transition_to(SessionState::Identifying).unwrap();
+        s.transition_to(SessionState::Authenticating).unwrap();
+        s.transition_to(SessionState::Onboarded).unwrap();
+        let err = s
+            .initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .expect_err("user missing");
+        assert!(matches!(err, InitialiseDailyBudgetError::UserMissing));
+    }
+
+    #[test]
+    fn tick_minute_decrements_remaining_and_accumulates_used() {
+        let mut s = session_at_onboarded_with(user_with_time_limits(
+            Duration::from_secs(5 * 60),
+            Duration::from_secs(60 * 60),
+        ));
+        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .unwrap();
+        let outcome = s.tick_minute().unwrap();
+        assert_eq!(outcome, TickMinuteOutcome::Continued);
+        assert_eq!(s.time_remaining(), Duration::from_secs(4 * 60));
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn tick_minute_in_menu_state_works_too() {
+        let mut s = session_at_onboarded_with(user_with_time_limits(
+            Duration::from_secs(5 * 60),
+            Duration::from_secs(60 * 60),
+        ));
+        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        let outcome = s.tick_minute().unwrap();
+        assert_eq!(outcome, TickMinuteOutcome::Continued);
+        assert_eq!(s.state(), SessionState::Menu);
+    }
+
+    #[test]
+    fn tick_minute_at_zero_logs_off_with_out_of_time() {
+        let mut s = session_at_onboarded_with(user_with_time_limits(
+            Duration::from_secs(60),
+            Duration::from_secs(60 * 60),
+        ));
+        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .unwrap();
+        let outcome = s.tick_minute().unwrap();
+        assert_eq!(outcome, TickMinuteOutcome::TimeExpired);
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::OutOfTime));
+        assert_eq!(s.time_remaining(), Duration::ZERO);
+    }
+
+    #[test]
+    fn tick_minute_outside_onboarded_or_menu_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s.tick_minute().expect_err("must be onboarded/menu");
+        assert!(matches!(err, TickMinuteError::WrongState(_)));
+    }
+
+    #[test]
+    fn tick_minute_without_user_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.transition_to(SessionState::Identifying).unwrap();
+        s.transition_to(SessionState::Authenticating).unwrap();
+        s.transition_to(SessionState::Onboarded).unwrap();
+        let err = s.tick_minute().expect_err("user missing");
+        assert!(matches!(err, TickMinuteError::UserMissing));
+    }
+
+    #[test]
+    fn tick_minute_saturates_does_not_underflow() {
+        // A user with zero per-call limit immediately expires on the
+        // first tick.
+        let mut s = session_at_onboarded_with(user_with_time_limits(
+            Duration::ZERO,
+            Duration::from_secs(60 * 60),
+        ));
+        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .unwrap();
+        let outcome = s.tick_minute().unwrap();
+        assert_eq!(outcome, TickMinuteOutcome::TimeExpired);
+        assert_eq!(s.time_remaining(), Duration::ZERO);
+    }
+
+    #[test]
+    fn finalise_logoff_after_out_of_time_logs_reason() {
+        let mut s = session_at_onboarded_with(user_with_time_limits(
+            Duration::from_secs(60),
+            Duration::from_secs(60 * 60),
+        ));
+        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+            .unwrap();
+        s.tick_minute().unwrap();
+        let entry = s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert!(
+            entry.text.contains("out_of_time"),
+            "expected out_of_time in logoff line, got {entry:?}"
+        );
     }
 }

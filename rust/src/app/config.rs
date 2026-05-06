@@ -6,8 +6,9 @@
 //! schema parsed by [`Config::from_toml_str`].
 
 use std::path::PathBuf;
+use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 use crate::domain::session::SessionPolicy;
 
@@ -20,6 +21,12 @@ const DEFAULT_MAX_NODES: u32 = 32;
 /// Default consecutive bad-password attempts before lockout
 /// (`core.allium:config.max_password_failures`).
 const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
+
+/// Default offset past midnight UTC at which the daily counters roll
+/// over (`core.allium:config.daily_reset_offset`). Mirrors the legacy
+/// AmiExpress constant `21600` seconds (six hours) at
+/// `amiexpress/express.e:529`.
+const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
 
 /// Runtime configuration of the BBS.
 ///
@@ -44,6 +51,15 @@ pub struct Config {
     /// ends and the account is locked
     /// (spec: `core.allium:config.max_password_failures`, default `3`).
     pub max_password_failures: u32,
+    /// Offset past midnight UTC at which the per-day counters roll
+    /// over (spec: `core.allium:config.daily_reset_offset`, default
+    /// `6h`).
+    ///
+    /// Parsed from a human-readable duration string in TOML, e.g.
+    /// `daily_reset_offset = "6h"` or `"30m"`. Suffixes accepted:
+    /// `s`, `m`, `h`, `d`.
+    #[serde(deserialize_with = "deserialize_duration")]
+    pub daily_reset_offset: Duration,
 }
 
 impl Default for Config {
@@ -53,8 +69,50 @@ impl Default for Config {
             max_nodes: DEFAULT_MAX_NODES,
             bbs_path: PathBuf::from("."),
             max_password_failures: DEFAULT_MAX_PASSWORD_FAILURES,
+            daily_reset_offset: DEFAULT_DAILY_RESET_OFFSET,
         }
     }
+}
+
+/// Parses a TOML string like `"6h"` / `"30m"` / `"45s"` / `"2d"` into
+/// a [`Duration`].
+fn deserialize_duration<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    parse_duration_string(&raw).map_err(serde::de::Error::custom)
+}
+
+/// Parses an integer-prefixed duration suffixed with `s`, `m`, `h`, or
+/// `d`. Whitespace is trimmed; an empty input is rejected.
+fn parse_duration_string(input: &str) -> Result<Duration, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("empty duration".to_string());
+    }
+    let (digits, suffix) = trimmed.split_at(
+        trimmed
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(trimmed.len()),
+    );
+    if digits.is_empty() {
+        return Err(format!("missing magnitude in '{trimmed}'"));
+    }
+    let value: u64 = digits
+        .parse()
+        .map_err(|e| format!("couldn't parse magnitude in '{trimmed}': {e}"))?;
+    let multiplier = match suffix {
+        "s" | "" => 1,
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        other => return Err(format!("unknown duration suffix '{other}'")),
+    };
+    let secs = value
+        .checked_mul(multiplier)
+        .ok_or_else(|| format!("duration overflow in '{trimmed}'"))?;
+    Ok(Duration::from_secs(secs))
 }
 
 /// Errors returned by [`Config::from_toml_str`].
@@ -99,9 +157,10 @@ impl Config {
     ///
     /// # Returns
     /// A [`SessionPolicy`] containing the configured
-    /// `max_password_failures` limit.
+    /// `max_password_failures` limit and `daily_reset_offset`.
     pub fn session_policy(&self) -> SessionPolicy {
         SessionPolicy::new(self.max_password_failures)
+            .with_daily_reset_offset(self.daily_reset_offset)
     }
 }
 
@@ -125,6 +184,71 @@ mod tests {
     }
 
     #[test]
+    fn default_daily_reset_offset_is_six_hours() {
+        assert_eq!(
+            Config::default().daily_reset_offset,
+            Duration::from_secs(6 * 3_600)
+        );
+    }
+
+    #[test]
+    fn parse_duration_seconds() {
+        assert_eq!(
+            parse_duration_string("90s").unwrap(),
+            Duration::from_secs(90)
+        );
+        assert_eq!(parse_duration_string("0s").unwrap(), Duration::ZERO);
+    }
+
+    #[test]
+    fn parse_duration_minutes() {
+        assert_eq!(
+            parse_duration_string("5m").unwrap(),
+            Duration::from_secs(300)
+        );
+    }
+
+    #[test]
+    fn parse_duration_hours() {
+        assert_eq!(
+            parse_duration_string("6h").unwrap(),
+            Duration::from_secs(6 * 3_600)
+        );
+    }
+
+    #[test]
+    fn parse_duration_days() {
+        assert_eq!(
+            parse_duration_string("2d").unwrap(),
+            Duration::from_secs(2 * 86_400)
+        );
+    }
+
+    #[test]
+    fn parse_duration_no_suffix_treated_as_seconds() {
+        assert_eq!(
+            parse_duration_string("42").unwrap(),
+            Duration::from_secs(42)
+        );
+    }
+
+    #[test]
+    fn parse_duration_rejects_unknown_suffix() {
+        assert!(parse_duration_string("5y").is_err());
+    }
+
+    #[test]
+    fn parse_duration_rejects_empty() {
+        assert!(parse_duration_string("").is_err());
+        assert!(parse_duration_string("   ").is_err());
+    }
+
+    #[test]
+    fn parse_duration_rejects_missing_magnitude() {
+        assert!(parse_duration_string("h").is_err());
+    }
+
+    #[test]
     fn session_policy_uses_configured_password_failure_limit() {
         let config = Config {
             max_password_failures: 5,
@@ -134,18 +258,38 @@ mod tests {
     }
 
     #[test]
+    fn session_policy_threads_configured_daily_reset_offset() {
+        let config = Config {
+            daily_reset_offset: Duration::from_secs(7_200),
+            ..Config::default()
+        };
+        assert_eq!(
+            config.session_policy().daily_reset_offset(),
+            Duration::from_secs(7_200)
+        );
+    }
+
+    #[test]
     fn from_toml_str_parses_all_fields() {
         let toml = r#"
             port = 9999
             max_nodes = 8
             bbs_path = "/srv/bbs"
             max_password_failures = 5
+            daily_reset_offset = "3h"
         "#;
         let config = Config::from_toml_str(toml).expect("parse");
         assert_eq!(config.port, 9999);
         assert_eq!(config.max_nodes, 8);
         assert_eq!(config.bbs_path, PathBuf::from("/srv/bbs"));
         assert_eq!(config.max_password_failures, 5);
+        assert_eq!(config.daily_reset_offset, Duration::from_secs(3 * 3_600));
+    }
+
+    #[test]
+    fn from_toml_str_rejects_invalid_duration() {
+        let toml = "daily_reset_offset = \"xyz\"";
+        assert!(Config::from_toml_str(toml).is_err());
     }
 
     #[test]
@@ -157,6 +301,7 @@ mod tests {
         assert_eq!(config.max_nodes, defaults.max_nodes);
         assert_eq!(config.bbs_path, defaults.bbs_path);
         assert_eq!(config.max_password_failures, defaults.max_password_failures);
+        assert_eq!(config.daily_reset_offset, defaults.daily_reset_offset);
     }
 
     #[test]

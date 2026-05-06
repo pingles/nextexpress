@@ -4,7 +4,7 @@
 //! reads. Lockout, time accounting, ratios and conference state arrive
 //! in later slices that introduce the rules reading them.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::domain::password::PasswordHashKind;
 
@@ -31,6 +31,10 @@ pub struct User {
     account_locked: bool,
     times_called: u32,
     last_call: Option<SystemTime>,
+    time_limit_per_call: Duration,
+    time_limit_per_day: Duration,
+    time_used_today: Duration,
+    times_called_today: u32,
 }
 
 impl User {
@@ -73,6 +77,10 @@ impl User {
             account_locked: false,
             times_called: 0,
             last_call: None,
+            time_limit_per_call: Duration::ZERO,
+            time_limit_per_day: Duration::ZERO,
+            time_used_today: Duration::ZERO,
+            times_called_today: 0,
         })
     }
 
@@ -153,6 +161,64 @@ impl User {
     /// `session.allium:FinaliseLogoff` (Slice 13).
     pub fn record_last_call(&mut self, at: SystemTime) {
         self.last_call = Some(at);
+    }
+
+    /// Returns the per-call time allowance configured for this user.
+    pub fn time_limit_per_call(&self) -> Duration {
+        self.time_limit_per_call
+    }
+
+    /// Returns the per-day combined time allowance configured for this
+    /// user.
+    pub fn time_limit_per_day(&self) -> Duration {
+        self.time_limit_per_day
+    }
+
+    /// Returns how much wall-clock time the user has burned through
+    /// today, accumulated across calls in the current accounting day.
+    pub fn time_used_today(&self) -> Duration {
+        self.time_used_today
+    }
+
+    /// Returns the number of completed logons recorded for this user
+    /// in the current accounting day.
+    pub fn times_called_today(&self) -> u32 {
+        self.times_called_today
+    }
+
+    /// Sets the per-call and per-day time allowances. Used by the
+    /// new-user registration flow and admin tooling.
+    ///
+    /// # Parameters
+    /// - `per_call`: how much time a single visit may consume.
+    /// - `per_day`: combined allowance across all visits in one
+    ///   accounting day.
+    pub fn set_time_limits(&mut self, per_call: Duration, per_day: Duration) {
+        self.time_limit_per_call = per_call;
+        self.time_limit_per_day = per_day;
+    }
+
+    /// Resets the daily counters at the start of a new accounting day.
+    ///
+    /// Mirrors the new-day branch of `session.allium:InitialiseDailyBudget`
+    /// (Slice 14): `times_called_today` and `time_used_today` are
+    /// cleared. Daily byte counters and chat-minute accounting land
+    /// with the slices that introduce them.
+    pub fn reset_daily_counters(&mut self) {
+        self.times_called_today = 0;
+        self.time_used_today = Duration::ZERO;
+    }
+
+    /// Increments [`Self::times_called_today`] by one. Used by the
+    /// same-day branch of `session.allium:InitialiseDailyBudget`.
+    pub fn bump_times_called_today(&mut self) {
+        self.times_called_today = self.times_called_today.saturating_add(1);
+    }
+
+    /// Adds `elapsed` to [`Self::time_used_today`]. Used by
+    /// `session.allium:UpdateTimeUsed` (Slice 14).
+    pub fn add_time_used_today(&mut self, elapsed: Duration) {
+        self.time_used_today = self.time_used_today.saturating_add(elapsed);
     }
 }
 
@@ -253,5 +319,48 @@ mod tests {
         assert!(user.is_account_locked());
         // LockoutClearsAttempts invariant.
         assert_eq!(user.invalid_attempts(), 0);
+    }
+
+    #[test]
+    fn new_user_has_zero_time_accounting() {
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert_eq!(user.time_limit_per_call(), Duration::ZERO);
+        assert_eq!(user.time_limit_per_day(), Duration::ZERO);
+        assert_eq!(user.time_used_today(), Duration::ZERO);
+        assert_eq!(user.times_called_today(), 0);
+    }
+
+    #[test]
+    fn set_time_limits_updates_both_caps() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.set_time_limits(Duration::from_secs(60), Duration::from_secs(3_600));
+        assert_eq!(user.time_limit_per_call(), Duration::from_secs(60));
+        assert_eq!(user.time_limit_per_day(), Duration::from_secs(3_600));
+    }
+
+    #[test]
+    fn reset_daily_counters_clears_today_counters() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.bump_times_called_today();
+        user.add_time_used_today(Duration::from_secs(120));
+        user.reset_daily_counters();
+        assert_eq!(user.times_called_today(), 0);
+        assert_eq!(user.time_used_today(), Duration::ZERO);
+    }
+
+    #[test]
+    fn bump_times_called_today_increments() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.bump_times_called_today();
+        user.bump_times_called_today();
+        assert_eq!(user.times_called_today(), 2);
+    }
+
+    #[test]
+    fn add_time_used_today_accumulates() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.add_time_used_today(Duration::from_secs(30));
+        user.add_time_used_today(Duration::from_secs(45));
+        assert_eq!(user.time_used_today(), Duration::from_secs(75));
     }
 }
