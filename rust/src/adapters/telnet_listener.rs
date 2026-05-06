@@ -338,6 +338,15 @@ async fn run_session(
                 stream.flush().await?;
                 return Ok(());
             }
+            VerifyPasswordOutcome::LogonRejected => {
+                // RejectLockedOrInsufficientAccess (Slice 16): the
+                // session has already moved to LoggingOff with the
+                // appropriate reason; the caller log carries the
+                // spec's rejection entry. Greet the user and leave.
+                stream.write_all(b"Logon rejected. Goodbye.\r\n").await?;
+                stream.flush().await?;
+                return Ok(());
+            }
         }
     }
 
@@ -922,6 +931,26 @@ mod tests {
         assert!(
             contains(&buf, b"Authenticated"),
             "expected Authenticated line: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn locked_user_authenticating_sees_logon_rejected() {
+        // Slice 16: a user whose account_locked is true authenticates
+        // with the right password but RejectLockedOrInsufficientAccess
+        // bounces them. Listener writes "Logon rejected. Goodbye."
+        let mut user = alice_with_password("secret");
+        user.lock_account();
+        let addr = spawn_listener_with(repo_with(user)).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
+        stream.write_all(b"secret\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"Logon rejected").await;
+        assert!(
+            contains(&buf, b"Logon rejected"),
+            "expected rejection goodbye: {buf:?}"
         );
     }
 

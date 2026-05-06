@@ -165,10 +165,13 @@ where
     })?;
 
     if matches {
-        let outcome = session
+        let (outcome, rejection) = session
             .apply_password_match(policy, now)
             .map_err(VerifyPasswordFlowError::Session)?;
         save_bound_user(session, user_repo).map_err(VerifyPasswordFlowError::Save)?;
+        if let Some(entry) = rejection {
+            caller_log.append(entry);
+        }
         Ok(outcome)
     } else {
         let (outcome, entry) = session
@@ -543,6 +546,50 @@ mod tests {
         assert_eq!(session.state(), SessionState::Menu);
         assert!(log.entries().iter().any(|e| e.text.contains("Logon:")));
         assert_eq!(repo.find_saved("alice").times_called(), 1);
+    }
+
+    #[test]
+    fn verify_password_against_locked_user_appends_rejection_log_and_short_circuits() {
+        let kind = PasswordHashKind::Pbkdf210000;
+        let computed = good_hasher().compute_password_hash("secret", kind).unwrap();
+        let mut user = User::new(
+            2,
+            "alice".to_string(),
+            kind,
+            computed.hash,
+            computed.salt,
+            SystemTime::UNIX_EPOCH,
+            100,
+        )
+        .unwrap();
+        user.lock_account();
+        let repo = TestRepo::new(vec![user]);
+        // Bind the locked alice to the session.
+        let saved = repo.find_saved("alice");
+        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
+        session.prompt_for_name().unwrap();
+        session.record_identified_user("alice", saved).unwrap();
+        let log = TestLog::default();
+
+        let outcome = verify_password(
+            &mut session,
+            "secret",
+            &repo,
+            &good_hasher(),
+            &log,
+            SessionPolicy::new(3),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, VerifyPasswordOutcome::LogonRejected);
+        assert_eq!(session.state(), SessionState::LoggingOff);
+        let entries = log.entries();
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].text.contains("Logon rejected"),
+            "expected rejection entry, got {entries:?}"
+        );
     }
 
     #[test]

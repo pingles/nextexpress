@@ -123,6 +123,22 @@ impl User {
         self.account_locked
     }
 
+    /// Returns the user's access tier (`0..=255`).
+    pub fn access_level(&self) -> u8 {
+        self.access_level
+    }
+
+    /// Spec-derived predicate (`core.allium:User.is_locked_out`,
+    /// Slice 16): `access_level <= 1 or account_locked`.
+    ///
+    /// `access_level == 0` is the explicit lockout tier; `1` is
+    /// reserved as "below the minimum non-locked tier" per the spec
+    /// (new users start at `2`). Either lower bound, or an
+    /// independently set `account_locked` flag, qualifies.
+    pub fn is_locked_out(&self) -> bool {
+        self.access_level <= 1 || self.account_locked
+    }
+
     /// Increments [`Self::invalid_attempts`] by one. Used by
     /// `session.allium:VerifyPassword` (Slice 11) when a candidate
     /// fails to match.
@@ -431,6 +447,58 @@ mod tests {
         assert!(user.force_password_reset());
         user.set_force_password_reset(false);
         assert!(!user.force_password_reset());
+    }
+
+    #[test]
+    fn access_level_returned_via_accessor() {
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert_eq!(user.access_level(), 100);
+    }
+
+    #[test]
+    fn is_locked_out_when_access_level_at_or_below_one() {
+        let user_zero = User::new(
+            2,
+            "lo0".to_string(),
+            PasswordHashKind::Pbkdf210000,
+            "h".to_string(),
+            Some("s".to_string()),
+            SystemTime::UNIX_EPOCH,
+            0,
+        )
+        .unwrap();
+        let user_one = User::new(
+            3,
+            "lo1".to_string(),
+            PasswordHashKind::Pbkdf210000,
+            "h".to_string(),
+            Some("s".to_string()),
+            SystemTime::UNIX_EPOCH,
+            1,
+        )
+        .unwrap();
+        let user_two = User::new(
+            4,
+            "ok".to_string(),
+            PasswordHashKind::Pbkdf210000,
+            "h".to_string(),
+            Some("s".to_string()),
+            SystemTime::UNIX_EPOCH,
+            2,
+        )
+        .unwrap();
+        assert!(user_zero.is_locked_out());
+        assert!(user_one.is_locked_out());
+        assert!(!user_two.is_locked_out());
+    }
+
+    #[test]
+    fn is_locked_out_when_account_locked_regardless_of_access_level() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        // Default access level is 100 — well clear of the threshold.
+        assert!(!user.is_locked_out());
+        user.lock_account();
+        assert!(user.is_locked_out());
     }
 
     #[test]

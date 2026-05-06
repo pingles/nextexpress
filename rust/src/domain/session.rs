@@ -589,6 +589,15 @@ impl Session {
     /// `state becomes onboarded` rule cluster via
     /// [`Session::on_enter_onboarded`].
     ///
+    /// # Returns
+    /// A tuple of:
+    /// - the [`VerifyPasswordOutcome`] — `Authenticated` on the normal
+    ///   path, or `LogonRejected` when
+    ///   `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
+    ///   short-circuited the post-auth cluster;
+    /// - an optional [`CallerLog`] entry the rejection rule emits.
+    ///   The caller is responsible for appending this to the log.
+    ///
     /// # Errors
     /// Returns [`VerifyPasswordError::WrongState`] if the session is
     /// not in [`SessionState::Authenticating`], or
@@ -597,7 +606,7 @@ impl Session {
         &mut self,
         policy: SessionPolicy,
         now: SystemTime,
-    ) -> Result<VerifyPasswordOutcome, VerifyPasswordError> {
+    ) -> Result<(VerifyPasswordOutcome, Option<CallerLog>), VerifyPasswordError> {
         if self.state != SessionState::Authenticating {
             return Err(VerifyPasswordError::WrongState(self.state));
         }
@@ -606,8 +615,13 @@ impl Session {
         self.authenticated_at = Some(now);
         self.transition_to(SessionState::Onboarded)
             .expect("authenticating -> onboarded is permitted");
-        self.on_enter_onboarded(policy, now);
-        Ok(VerifyPasswordOutcome::Authenticated)
+        let rejection = self.on_enter_onboarded(policy, now);
+        let outcome = if rejection.is_some() {
+            VerifyPasswordOutcome::LogonRejected
+        } else {
+            VerifyPasswordOutcome::Authenticated
+        };
+        Ok((outcome, rejection))
     }
 
     /// Fires every spec rule whose `when` clause is the transition
@@ -616,21 +630,27 @@ impl Session {
     /// Called by every code path that drives a session into
     /// `Onboarded`: [`Session::apply_password_match`] today; later,
     /// new-user registration (Slice 20), sysop direct logon (Slice 22)
-    /// and local logon (Slice 23). The cluster currently contains:
+    /// and local logon (Slice 23). Rules fire in spec order:
     ///
-    /// - `session.allium:InitialiseDailyBudget` (Slice 14),
-    /// - `session.allium:ForcePasswordReset` (Slice 15).
+    /// 1. `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
+    ///    — short-circuits the cluster by transitioning the session
+    ///    to [`SessionState::LoggingOff`] when the bound user is
+    ///    locked or below the minimum access tier. Returns the
+    ///    rejection caller-log entry so the caller can append it.
+    /// 2. `session.allium:InitialiseDailyBudget` (Slice 14).
+    /// 3. `session.allium:ForcePasswordReset` (Slice 15).
     ///
-    /// Slice 16 adds `RejectLockedOrInsufficientAccess`, which can
-    /// short-circuit the session into [`SessionState::LoggingOff`]
-    /// before the remaining rules run.
+    /// # Returns
+    /// `Some(entry)` when rule 1 fired, otherwise `None`. The caller
+    /// uses the presence of an entry as the signal to append it to
+    /// the caller log.
     ///
     /// # Panics
     /// Panics if called outside [`SessionState::Onboarded`] or with no
     /// user bound — both invariants the caller is required to have
     /// just established by the transition. The guard violations are
     /// programmer errors, not runtime failures.
-    fn on_enter_onboarded(&mut self, policy: SessionPolicy, now: SystemTime) {
+    fn on_enter_onboarded(&mut self, policy: SessionPolicy, now: SystemTime) -> Option<CallerLog> {
         assert_eq!(
             self.state,
             SessionState::Onboarded,
@@ -640,10 +660,61 @@ impl Session {
             self.user.is_some(),
             "on_enter_onboarded called without a bound user"
         );
+        if let Some(entry) = self.reject_locked_or_insufficient_access(now) {
+            return Some(entry);
+        }
         self.initialise_daily_budget(now, policy.daily_reset_offset())
             .expect("guards hold immediately after transition to Onboarded");
         self.force_password_reset_if_due(policy.password_expiry_days(), now)
             .expect("guards hold immediately after transition to Onboarded");
+        None
+    }
+
+    /// `session.allium:RejectLockedOrInsufficientAccess` rule
+    /// (Slice 16).
+    ///
+    /// When the bound user is locked out (account_locked or
+    /// access_level <= 1), transitions the session to
+    /// [`SessionState::LoggingOff`] with the appropriate
+    /// [`LogoffReason`] and returns the spec's rejection caller-log
+    /// entry. Otherwise returns `None`.
+    ///
+    /// # Returns
+    /// `Some(CallerLog)` when the rule fires (the caller is
+    /// responsible for appending the entry); `None` when the user is
+    /// allowed through.
+    ///
+    /// # Panics
+    /// Panics if the session is not in [`SessionState::Onboarded`] or
+    /// no user is bound — `on_enter_onboarded` is the canonical
+    /// caller and establishes both invariants before invocation.
+    fn reject_locked_or_insufficient_access(&mut self, now: SystemTime) -> Option<CallerLog> {
+        assert_eq!(
+            self.state,
+            SessionState::Onboarded,
+            "reject_locked_or_insufficient_access called outside Onboarded"
+        );
+        let user = self
+            .user
+            .as_ref()
+            .expect("reject_locked_or_insufficient_access without bound user");
+        if !user.is_locked_out() {
+            return None;
+        }
+        let reason = if user.is_account_locked() {
+            LogoffReason::LockedAccount
+        } else {
+            LogoffReason::NewUserRejected
+        };
+        self.transition_to(SessionState::LoggingOff)
+            .expect("onboarded -> logging_off is permitted");
+        self.logoff_reason = Some(reason);
+        Some(CallerLog {
+            session_node: self.node_number,
+            at: now,
+            text: "Logon rejected: account locked or below access threshold".to_string(),
+            is_password_failure: false,
+        })
     }
 
     /// `session.allium:ForcePasswordReset` rule (Slice 15).
@@ -921,6 +992,14 @@ pub enum VerifyPasswordOutcome {
     /// [`SessionState::LoggingOff`] with
     /// [`LogoffReason::ExcessivePasswordFails`].
     TooManyFailures,
+    /// Credentials matched, but
+    /// `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
+    /// short-circuited the post-auth rule cluster: the user's
+    /// account was already locked or below the minimum access tier.
+    /// The session has moved to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::LockedAccount`] or
+    /// [`LogoffReason::NewUserRejected`].
+    LogonRejected,
 }
 
 /// Errors returned by [`Session::verify_password`].
@@ -1442,10 +1521,11 @@ mod tests {
     fn verify_password_match_advances_to_onboarded() {
         let mut s = authenticated_session();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(60);
-        let outcome = s
+        let (outcome, rejection) = s
             .apply_password_match(SessionPolicy::default(), now)
             .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::Authenticated);
+        assert!(rejection.is_none());
         assert_eq!(s.state(), SessionState::Onboarded);
         assert_eq!(s.authenticated_at(), Some(now));
         assert!(s.is_authenticated());
@@ -2017,6 +2097,121 @@ mod tests {
             )
             .expect_err("flag not set");
         assert!(matches!(err, CompletePasswordResetError::ResetNotPending));
+    }
+
+    fn user_with_access_level(level: u8) -> User {
+        User::new(
+            2,
+            "alice".to_string(),
+            crate::domain::password::PasswordHashKind::Pbkdf210000,
+            "hash".to_string(),
+            Some("salt".to_string()),
+            SystemTime::UNIX_EPOCH,
+            level,
+        )
+        .expect("valid user")
+    }
+
+    #[test]
+    fn reject_locked_account_transitions_to_logging_off() {
+        let mut user = alice();
+        user.lock_account();
+        let mut s = session_at_onboarded_with(user);
+        let outcome = s
+            .reject_locked_or_insufficient_access(SystemTime::UNIX_EPOCH)
+            .expect("locked user should be rejected");
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::LockedAccount));
+        assert_eq!(
+            outcome.text,
+            "Logon rejected: account locked or below access threshold"
+        );
+        assert!(!outcome.is_password_failure);
+    }
+
+    #[test]
+    fn reject_low_access_uses_new_user_rejected_reason() {
+        // access_level <= 1 with account_locked == false.
+        let mut s = session_at_onboarded_with(user_with_access_level(1));
+        let outcome = s
+            .reject_locked_or_insufficient_access(SystemTime::UNIX_EPOCH)
+            .expect("low-access user should be rejected");
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::NewUserRejected));
+        assert!(outcome.text.contains("Logon rejected"));
+    }
+
+    #[test]
+    fn reject_account_locked_with_low_access_still_uses_locked_account() {
+        // Both branches of `is_locked_out`. Spec: account_locked
+        // takes precedence in the logoff_reason selector.
+        let mut user = user_with_access_level(0);
+        user.lock_account();
+        let mut s = session_at_onboarded_with(user);
+        s.reject_locked_or_insufficient_access(SystemTime::UNIX_EPOCH)
+            .expect("locked user should be rejected");
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::LockedAccount));
+    }
+
+    #[test]
+    fn reject_no_op_for_normal_user() {
+        let mut s = session_at_onboarded_with(alice()); // access 100, not locked.
+        let outcome = s.reject_locked_or_insufficient_access(SystemTime::UNIX_EPOCH);
+        assert!(outcome.is_none());
+        assert_eq!(s.state(), SessionState::Onboarded);
+        assert!(s.logoff_reason().is_none());
+    }
+
+    #[test]
+    fn apply_password_match_returns_logon_rejected_for_locked_user() {
+        let mut user = alice();
+        user.lock_account();
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", user).unwrap();
+        let (outcome, rejection) = s
+            .apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(outcome, VerifyPasswordOutcome::LogonRejected);
+        assert!(rejection.is_some());
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::LockedAccount));
+    }
+
+    #[test]
+    fn apply_password_match_short_circuits_other_rules_when_rejected() {
+        // ForcePasswordReset should not run after a rejection: if it
+        // did, the locked user would arrive at finalise with a
+        // residual time_remaining set. Confirm time_remaining is
+        // still zero (InitialiseDailyBudget didn't run).
+        let mut user = alice();
+        user.set_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        user.lock_account();
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", user).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(s.time_remaining(), Duration::ZERO);
+    }
+
+    #[test]
+    fn locked_user_cannot_reach_menu() {
+        // LockedAccountsCannotEnterMenu invariant. A locked user
+        // who authenticates is bounced into LoggingOff before
+        // enter_menu can fire.
+        let mut user = alice();
+        user.lock_account();
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", user).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_ne!(s.state(), SessionState::Menu);
+        let err = s
+            .enter_menu(SystemTime::UNIX_EPOCH)
+            .expect_err("LoggingOff cannot enter Menu");
+        assert!(matches!(err, EnterMenuError::WrongState(_)));
     }
 
     #[test]
