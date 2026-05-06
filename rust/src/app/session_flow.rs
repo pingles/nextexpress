@@ -363,8 +363,8 @@ where
 
 /// Profile collected from a user during the new-user registration
 /// sub-flow (Slice 20). The hash is computed by
-/// [`complete_new_user_registration`] from `password`; the slot number
-/// is allocated from the user repository.
+/// [`NewUserRegistrationFlow::complete`] from `password`; the slot
+/// number is allocated from the user repository.
 #[derive(Debug, Clone)]
 pub struct NewUserProfile {
     /// Handle the user typed at the registration prompt.
@@ -385,7 +385,7 @@ pub struct NewUserProfile {
     pub flags: BTreeSet<UserFlag>,
 }
 
-/// Errors returned by [`complete_new_user_registration`].
+/// Errors returned by [`NewUserRegistrationFlow::complete`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompleteNewUserRegistrationFlowError {
     /// The session is not in
@@ -437,75 +437,119 @@ pub struct DefaultRatio {
     pub value: u32,
 }
 
-/// Handles `session.allium:CompleteNewUserRegistration` (Slice 20).
+/// App-layer use case for `session.allium:CompleteNewUserRegistration`
+/// (Slice 20).
 ///
-/// Allocates a slot from the user repository, hashes the supplied
-/// password under the spec's default
-/// [`PasswordHashKind`], constructs a [`User`] via
-/// [`User::register_new`], persists it, and applies the corresponding
-/// session transition through
-/// [`Session::complete_new_user_registration`]. The resulting
-/// `RejectLockedOrInsufficientAccess` caller-log entry (if any) is
-/// appended to `caller_log` so the post-onboarded cluster matches the
-/// password-match path's behaviour.
-///
-/// # Errors
-/// Returns [`CompleteNewUserRegistrationFlowError`] when the session
-/// is in the wrong state, the hasher errors, the chosen handle
-/// collides with an existing user, or the constructed record fails
-/// [`User::register_new`]'s invariants.
-#[allow(clippy::too_many_arguments)]
-pub fn complete_new_user_registration<R, H, L>(
-    session: &mut Session,
-    profile: NewUserProfile,
-    user_repo: &R,
-    hasher: &H,
-    caller_log: &L,
-    default_ratio: DefaultRatio,
-    policy: SessionPolicy,
-    now: SystemTime,
-) -> Result<(), CompleteNewUserRegistrationFlowError>
+/// The flow holds the driven ports and configuration so driving
+/// adapters do not pass a long parameter list at every call site.
+pub struct NewUserRegistrationFlow<'a, R, H, L>
 where
     R: UserRepository + ?Sized,
     H: PasswordHasher + ?Sized,
     L: CallerLogAppender + ?Sized,
 {
-    if session.state() != SessionState::NewUserRegistering {
-        return Err(CompleteNewUserRegistrationFlowError::Session(
-            CompleteNewUserRegistrationError::WrongState(session.state()),
-        ));
+    user_repo: &'a R,
+    hasher: &'a H,
+    caller_log: &'a L,
+    default_ratio: DefaultRatio,
+    policy: SessionPolicy,
+}
+
+impl<'a, R, H, L> NewUserRegistrationFlow<'a, R, H, L>
+where
+    R: UserRepository + ?Sized,
+    H: PasswordHasher + ?Sized,
+    L: CallerLogAppender + ?Sized,
+{
+    /// Constructs a new registration-completion flow.
+    ///
+    /// # Parameters
+    /// - `user_repo`: repository used to allocate and persist the new
+    ///   account.
+    /// - `hasher`: password hasher used for the supplied plaintext
+    ///   registration password.
+    /// - `caller_log`: log sink for any post-onboarded rejection entry.
+    /// - `default_ratio`: ratio policy applied to the new account.
+    /// - `policy`: session policy used by the post-onboarded rule
+    ///   cluster.
+    #[must_use]
+    pub fn new(
+        user_repo: &'a R,
+        hasher: &'a H,
+        caller_log: &'a L,
+        default_ratio: DefaultRatio,
+        policy: SessionPolicy,
+    ) -> Self {
+        Self {
+            user_repo,
+            hasher,
+            caller_log,
+            default_ratio,
+            policy,
+        }
     }
-    let kind = PasswordHashKind::Pbkdf210000;
-    let computed = hasher
-        .compute_password_hash(&profile.password, kind)
-        .map_err(CompleteNewUserRegistrationFlowError::Hash)?;
-    let user = User::register_new(NewUserRegistration {
-        slot_number: user_repo.next_free_slot(),
-        handle: profile.handle,
-        location: profile.location,
-        phone_number: profile.phone_number,
-        email: profile.email,
-        password_hash: computed.hash,
-        password_salt: computed.salt,
-        password_hash_kind: kind,
-        line_length: profile.line_length,
-        ansi_colour: profile.ansi_colour,
-        flags: profile.flags,
-        ratio_mode: default_ratio.mode,
-        ratio_value: default_ratio.value,
-        now,
-    })
-    .map_err(CompleteNewUserRegistrationFlowError::User)?;
-    user_repo
-        .create(user.clone())
-        .map_err(CompleteNewUserRegistrationFlowError::Save)?;
-    let rejection = session
-        .complete_new_user_registration(user, policy, now)
-        .map_err(CompleteNewUserRegistrationFlowError::Session)?;
-    if let Some(entry) = rejection {
-        caller_log.append(entry);
+
+    /// Handles `session.allium:CompleteNewUserRegistration` (Slice 20).
+    ///
+    /// Allocates a slot from the user repository, hashes the supplied
+    /// password under the spec's default
+    /// [`PasswordHashKind`], constructs a [`User`] via
+    /// [`User::register_new`], persists it, and applies the corresponding
+    /// session transition through
+    /// [`Session::complete_new_user_registration`]. The resulting
+    /// `RejectLockedOrInsufficientAccess` caller-log entry (if any) is
+    /// appended to the configured caller log so the post-onboarded
+    /// cluster matches the password-match path's behaviour.
+    ///
+    /// # Errors
+    /// Returns [`CompleteNewUserRegistrationFlowError`] when the session
+    /// is in the wrong state, the hasher errors, the chosen handle
+    /// collides with an existing user, or the constructed record fails
+    /// [`User::register_new`]'s invariants.
+    pub fn complete(
+        &self,
+        session: &mut Session,
+        profile: NewUserProfile,
+        now: SystemTime,
+    ) -> Result<(), CompleteNewUserRegistrationFlowError> {
+        if session.state() != SessionState::NewUserRegistering {
+            return Err(CompleteNewUserRegistrationFlowError::Session(
+                CompleteNewUserRegistrationError::WrongState(session.state()),
+            ));
+        }
+        let kind = PasswordHashKind::Pbkdf210000;
+        let computed = self
+            .hasher
+            .compute_password_hash(&profile.password, kind)
+            .map_err(CompleteNewUserRegistrationFlowError::Hash)?;
+        let user = User::register_new(NewUserRegistration {
+            slot_number: self.user_repo.next_free_slot(),
+            handle: profile.handle,
+            location: profile.location,
+            phone_number: profile.phone_number,
+            email: profile.email,
+            password_hash: computed.hash,
+            password_salt: computed.salt,
+            password_hash_kind: kind,
+            line_length: profile.line_length,
+            ansi_colour: profile.ansi_colour,
+            flags: profile.flags,
+            ratio_mode: self.default_ratio.mode,
+            ratio_value: self.default_ratio.value,
+            now,
+        })
+        .map_err(CompleteNewUserRegistrationFlowError::User)?;
+        self.user_repo
+            .create(user.clone())
+            .map_err(CompleteNewUserRegistrationFlowError::Save)?;
+        let rejection = session
+            .complete_new_user_registration(user, self.policy, now)
+            .map_err(CompleteNewUserRegistrationFlowError::Session)?;
+        if let Some(entry) = rejection {
+            self.caller_log.append(entry);
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Errors returned by [`complete_password_reset`].
@@ -1242,23 +1286,24 @@ mod tests {
         s
     }
 
+    fn registration_flow<'a>(
+        repo: &'a TestRepo,
+        hasher: &'a TestHasher,
+        log: &'a TestLog,
+    ) -> NewUserRegistrationFlow<'a, TestRepo, TestHasher, TestLog> {
+        NewUserRegistrationFlow::new(repo, hasher, log, default_ratio(), SessionPolicy::default())
+    }
+
     #[test]
     fn complete_new_user_registration_creates_user_and_onboards() {
         let repo = TestRepo::new(vec![]);
         let log = TestLog::default();
+        let hasher = good_hasher();
+        let flow = registration_flow(&repo, &hasher, &log);
         let mut session = session_at_new_user_registering();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        complete_new_user_registration(
-            &mut session,
-            registration_profile(),
-            &repo,
-            &good_hasher(),
-            &log,
-            default_ratio(),
-            SessionPolicy::default(),
-            now,
-        )
-        .expect("registration");
+        flow.complete(&mut session, registration_profile(), now)
+            .expect("registration");
 
         assert_eq!(session.state(), SessionState::Onboarded);
         assert_eq!(
@@ -1288,18 +1333,11 @@ mod tests {
     fn complete_new_user_registration_allocates_next_slot_above_existing_max() {
         let repo = TestRepo::new(vec![alice()]); // alice is slot 2
         let log = TestLog::default();
+        let hasher = good_hasher();
+        let flow = registration_flow(&repo, &hasher, &log);
         let mut session = session_at_new_user_registering();
-        complete_new_user_registration(
-            &mut session,
-            registration_profile(),
-            &repo,
-            &good_hasher(),
-            &log,
-            default_ratio(),
-            SessionPolicy::default(),
-            SystemTime::UNIX_EPOCH,
-        )
-        .expect("registration");
+        flow.complete(&mut session, registration_profile(), SystemTime::UNIX_EPOCH)
+            .expect("registration");
         assert_eq!(session.user().unwrap().slot_number(), 3);
     }
 
@@ -1307,20 +1345,14 @@ mod tests {
     fn complete_new_user_registration_rejects_duplicate_handle() {
         let repo = TestRepo::new(vec![alice()]);
         let log = TestLog::default();
+        let hasher = good_hasher();
+        let flow = registration_flow(&repo, &hasher, &log);
         let mut session = session_at_new_user_registering();
         let mut profile = registration_profile();
         profile.handle = "alice".to_string();
-        let err = complete_new_user_registration(
-            &mut session,
-            profile,
-            &repo,
-            &good_hasher(),
-            &log,
-            default_ratio(),
-            SessionPolicy::default(),
-            SystemTime::UNIX_EPOCH,
-        )
-        .expect_err("duplicate handle should error");
+        let err = flow
+            .complete(&mut session, profile, SystemTime::UNIX_EPOCH)
+            .expect_err("duplicate handle should error");
         assert!(matches!(
             err,
             CompleteNewUserRegistrationFlowError::Save(UserRepositoryError::DuplicateUser { .. })
@@ -1333,18 +1365,12 @@ mod tests {
     fn complete_new_user_registration_outside_new_user_registering_errors() {
         let repo = TestRepo::new(vec![]);
         let log = TestLog::default();
+        let hasher = good_hasher();
+        let flow = registration_flow(&repo, &hasher, &log);
         let mut session = session_identifying();
-        let err = complete_new_user_registration(
-            &mut session,
-            registration_profile(),
-            &repo,
-            &good_hasher(),
-            &log,
-            default_ratio(),
-            SessionPolicy::default(),
-            SystemTime::UNIX_EPOCH,
-        )
-        .expect_err("must be in new_user_registering");
+        let err = flow
+            .complete(&mut session, registration_profile(), SystemTime::UNIX_EPOCH)
+            .expect_err("must be in new_user_registering");
         assert!(matches!(
             err,
             CompleteNewUserRegistrationFlowError::Session(

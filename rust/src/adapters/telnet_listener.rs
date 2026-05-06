@@ -19,7 +19,9 @@ use std::collections::BTreeSet;
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::screens::ScreenRepository;
-use crate::app::session_flow::{self, DefaultRatio, NewUserGateConfig, NewUserProfile};
+use crate::app::session_flow::{
+    self, DefaultRatio, NewUserGateConfig, NewUserProfile, NewUserRegistrationFlow,
+};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::{
@@ -789,17 +791,16 @@ impl<'a> TelnetSession<'a> {
         &mut self,
         profile: NewUserProfile,
     ) -> io::Result<bool> {
-        if session_flow::complete_new_user_registration(
-            &mut self.session,
-            profile,
+        let flow = NewUserRegistrationFlow::new(
             self.context.user_repo,
             self.context.hasher,
             self.context.caller_log,
             self.context.default_ratio,
             self.context.session_policy,
-            SystemTime::now(),
-        )
-        .is_err()
+        );
+        if flow
+            .complete(&mut self.session, profile, SystemTime::now())
+            .is_err()
         {
             self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
                 .await?;
