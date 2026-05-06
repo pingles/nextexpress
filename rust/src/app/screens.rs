@@ -25,4 +25,12 @@ pub trait ScreenRepository {
     /// fallback so the registration sub-flow always has something to
     /// show.
     fn new_user_password(&self) -> ScreenFuture<'_>;
+
+    /// Returns the registration-blocked screen
+    /// (`SCREEN_NONEWUSERS`, `amiexpress/express.e:30008`). Rendered
+    /// when `core/config.allow_new_users = false` causes
+    /// `session.allium:RejectDisallowedRegistration` to fire
+    /// (Slice 20a). When the asset is missing the adapter returns a
+    /// built-in "registration not available" line.
+    fn no_new_users(&self) -> ScreenFuture<'_>;
 }

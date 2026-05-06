@@ -447,9 +447,9 @@ reflects the spec.
 | PRIVATE | not yet | `SysopDirectLogon` | 22 |
 | LOCKOUT0 / LOCKOUT1 | adapter has fall-back line | `RejectLockedOrInsufficientAccess` | 16 |
 | LOGON | adapter has fall-back line | `EnterMenu` (presentation) | 12 |
-| NONEWUSERS | not yet | `RejectDisallowedRegistration` | Phase-3 follow-up |
-| NONEWATBAUD | not yet | `RejectDisallowedRegistration` | Phase-3 follow-up |
-| NEWUSERPW | screen rendered with fall-back; gate not yet | `InitialiseNewUserGate` + `VerifyNewUserPassword` | Phase-3 follow-up |
+| NONEWUSERS | implemented (with fall-back) | `RejectDisallowedRegistration` | 20a |
+| NONEWATBAUD | not yet (baud-vestigial) | `RejectDisallowedRegistration` | — |
+| NEWUSERPW | implemented (screen + gate + retry loop) | `InitialiseNewUserGate` + `VerifyNewUserPassword` | 20a |
 | GUESTLOGON | not yet | (CompleteNewUserRegistration adapter sequence) | 20 follow-up |
 | JOIN | not yet | (CompleteNewUserRegistration adapter sequence) | 20 follow-up |
 | JOINED | adapter has fall-back line ("Welcome aboard!") | (CompleteNewUserRegistration adapter sequence) | 20 |

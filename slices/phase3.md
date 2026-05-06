@@ -25,6 +25,19 @@ table and asset inventory.
 - **Out of Scope**
   - `is_new_user` "awaits sysop validation" gating of access — Slice 21.
 
+## Slice 20a — New-user password gate
+- **In Scope**
+  - `core/config.allow_new_users` (default `true`), `new_user_password` (default `null`), `max_new_user_password_attempts` (default `3`).
+  - `Session.new_user_password_verified`, `Session.new_user_password_attempts`.
+  - `session.allium:RejectDisallowedRegistration` — when `allow_new_users = false`, NEW typed bounces straight to `logging_off` with `new_user_rejected`.
+  - `session.allium:InitialiseNewUserGate` — sets `verified = (new_user_password = null)` and zeros `attempts` on entering `new_user_registering`.
+  - `session.allium:VerifyNewUserPassword` — case-insensitive equality against `new_user_password`, retry budget `max_new_user_password_attempts`, caller-log entry on each failure.
+  - `CompleteNewUserRegistration` precondition tightens to require `new_user_password_verified`.
+  - Telnet listener: render NEWUSERPW screen (already present) plus the prompt loop with the verbatim AmiExpress text (`Enter New User Password: ` / `Invalid PassWord` / `Excessive Password Failure`); render NONEWUSERS screen on `RejectDisallowedRegistration` with built-in fall-back line.
+- **Out of Scope**
+  - The per-baud `NONEWATBAUD` variant — modern transports are baud-vestigial.
+  - Asset-presence-as-gate convention (legacy AmiExpress took the SCREEN_NONEWUSERS file's existence as the gate; modern config is the source of truth and a later slice can layer the legacy alias on top).
+
 ## Slice 21 — Pending-validation gate
 - **In Scope**
   - When `User.is_new_user`, restrict `access_level` interpretation to a "newuser" tier (no posting, no downloads).

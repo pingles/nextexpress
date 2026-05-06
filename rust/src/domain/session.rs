@@ -282,6 +282,8 @@ pub struct Session {
     logoff_at: Option<SystemTime>,
     logoff_reason: Option<LogoffReason>,
     time_remaining: Duration,
+    new_user_password_verified: bool,
+    new_user_password_attempts: u32,
 }
 
 impl Session {
@@ -315,6 +317,8 @@ impl Session {
             logoff_at: None,
             logoff_reason: None,
             time_remaining: Duration::ZERO,
+            new_user_password_verified: false,
+            new_user_password_attempts: 0,
         }
     }
 
@@ -393,6 +397,23 @@ impl Session {
     /// by [`Session::tick_minute`]. Slice 14.
     pub fn time_remaining(&self) -> Duration {
         self.time_remaining
+    }
+
+    /// Whether the new-user password gate
+    /// (`session.allium:VerifyNewUserPassword`, Slice 20a) has been
+    /// satisfied for this session. Always `true` when no gate is
+    /// configured. Read by `CompleteNewUserRegistration` as a
+    /// precondition.
+    pub fn new_user_password_verified(&self) -> bool {
+        self.new_user_password_verified
+    }
+
+    /// Number of incorrect new-user password attempts recorded against
+    /// this session. Bounded by
+    /// `core/config.max_new_user_password_attempts` per the
+    /// `SessionRetriesBounded` invariant.
+    pub fn new_user_password_attempts(&self) -> u32 {
+        self.new_user_password_attempts
     }
 
     /// Spec-derived predicate: `channel in {remote, ftp}`.
@@ -531,21 +552,100 @@ impl Session {
     }
 
     /// Applies the `user_typed_NEW` branch of
-    /// `session.allium:NameTyped`. Transitions the session to
-    /// [`SessionState::NewUserRegistering`] so the caller can drive the
-    /// registration sub-flow (Slice 19; the form itself lands in
-    /// Slice 20).
+    /// `session.allium:NameTyped`, plus the on-enter rules for the
+    /// new state: `RejectDisallowedRegistration` (Slice 20a) and
+    /// `InitialiseNewUserGate` (Slice 20a).
+    ///
+    /// # Parameters
+    /// - `allow_new_users`: mirrors `core/config.allow_new_users`.
+    ///   When `false`, the session moves on through
+    ///   [`SessionState::NewUserRegistering`] and immediately into
+    ///   [`SessionState::LoggingOff`] with
+    ///   [`LogoffReason::NewUserRejected`].
+    /// - `password_required`: mirrors `core/config.new_user_password
+    ///   != null`. When `true`, the gate is armed and
+    ///   [`Self::new_user_password_verified`] starts `false`; when
+    ///   `false`, no gate runs and the flag starts `true`.
+    /// - `now`: timestamp of the rule firing — used to record any
+    ///   logoff timestamp set as a side effect.
     ///
     /// # Errors
     /// Returns [`NameTypedError::WrongState`] if the session is not in
     /// [`SessionState::Identifying`].
-    pub fn record_new_user_request(&mut self) -> Result<NameTypedOutcome, NameTypedError> {
+    pub fn record_new_user_request(
+        &mut self,
+        allow_new_users: bool,
+        password_required: bool,
+        _now: SystemTime,
+    ) -> Result<NewUserRequestOutcome, NameTypedError> {
         if self.state != SessionState::Identifying {
             return Err(NameTypedError::WrongState(self.state));
         }
         self.transition_to(SessionState::NewUserRegistering)
             .expect("identifying -> new_user_registering is permitted");
-        Ok(NameTypedOutcome::NewUserRegistering)
+        if !allow_new_users {
+            // RejectDisallowedRegistration.
+            self.transition_to(SessionState::LoggingOff)
+                .expect("new_user_registering -> logging_off is permitted");
+            self.logoff_reason = Some(LogoffReason::NewUserRejected);
+            return Ok(NewUserRequestOutcome::Rejected);
+        }
+        // InitialiseNewUserGate.
+        self.new_user_password_attempts = 0;
+        self.new_user_password_verified = !password_required;
+        Ok(NewUserRequestOutcome::Initialised { password_required })
+    }
+
+    /// Applies `session.allium:VerifyNewUserPassword` (Slice 20a).
+    ///
+    /// `matches` is the result of comparing the user's typed candidate
+    /// against `core/config.new_user_password`. The application layer
+    /// owns that comparison so this method stays free of any
+    /// presentation- or hash-storage decisions.
+    ///
+    /// On a match the session is marked verified. On a mismatch the
+    /// attempt counter climbs and a "New-user password failure" caller
+    /// log entry is emitted; once the counter reaches
+    /// `max_attempts`, the session moves to
+    /// [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::NewUserRejected`].
+    ///
+    /// # Errors
+    /// Returns [`VerifyNewUserPasswordError::WrongState`] when the
+    /// session is not in [`SessionState::NewUserRegistering`], or
+    /// [`VerifyNewUserPasswordError::AlreadyVerified`] when the gate
+    /// has already passed (the caller should stop prompting).
+    pub fn apply_new_user_password_attempt(
+        &mut self,
+        matches: bool,
+        max_attempts: u32,
+        now: SystemTime,
+    ) -> Result<(NewUserPasswordOutcome, Option<CallerLog>), VerifyNewUserPasswordError> {
+        if self.state != SessionState::NewUserRegistering {
+            return Err(VerifyNewUserPasswordError::WrongState(self.state));
+        }
+        if self.new_user_password_verified {
+            return Err(VerifyNewUserPasswordError::AlreadyVerified);
+        }
+        if matches {
+            self.new_user_password_verified = true;
+            return Ok((NewUserPasswordOutcome::Verified, None));
+        }
+        self.new_user_password_attempts = self.new_user_password_attempts.saturating_add(1);
+        let entry = CallerLog {
+            session_node: self.node_number,
+            at: now,
+            text: "New-user password failure".to_string(),
+            is_password_failure: true,
+        };
+        if self.new_user_password_attempts >= max_attempts {
+            self.transition_to(SessionState::LoggingOff)
+                .expect("new_user_registering -> logging_off is permitted");
+            self.logoff_reason = Some(LogoffReason::NewUserRejected);
+            Ok((NewUserPasswordOutcome::TooManyFailures, Some(entry)))
+        } else {
+            Ok((NewUserPasswordOutcome::Mismatch, Some(entry)))
+        }
     }
 
     /// Updates [`Self::last_input_at`] to `at`.
@@ -739,7 +839,11 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`CompleteNewUserRegistrationError::WrongState`] when
-    /// the session is not in [`SessionState::NewUserRegistering`].
+    /// the session is not in [`SessionState::NewUserRegistering`], or
+    /// [`CompleteNewUserRegistrationError::GateNotVerified`] when the
+    /// new-user password gate (Slice 20a) has not yet passed — the
+    /// spec rule's `requires:
+    /// session.new_user_password_verified` precondition.
     pub fn complete_new_user_registration(
         &mut self,
         user: User,
@@ -748,6 +852,9 @@ impl Session {
     ) -> Result<Option<CallerLog>, CompleteNewUserRegistrationError> {
         if self.state != SessionState::NewUserRegistering {
             return Err(CompleteNewUserRegistrationError::WrongState(self.state));
+        }
+        if !self.new_user_password_verified {
+            return Err(CompleteNewUserRegistrationError::GateNotVerified);
         }
         self.user = Some(user);
         self.authenticated_at = Some(now);
@@ -1124,11 +1231,83 @@ pub enum NameTypedOutcome {
     /// Five not-found strikes in a row. The session has ended with
     /// [`LogoffReason::NewUserRejected`].
     SessionEnded,
-    /// The literal `NEW` was typed. The session has moved to
-    /// [`SessionState::NewUserRegistering`]; the listener now drives
-    /// the registration sub-flow.
-    NewUserRegistering,
+    /// The literal `NEW` was typed and registration is permitted. The
+    /// session is in [`SessionState::NewUserRegistering`]; the listener
+    /// now drives the registration sub-flow. `password_required` is
+    /// `true` when the new-user password gate (Slice 20a) is armed
+    /// and must pass before [`Session::complete_new_user_registration`]
+    /// will accept the form.
+    NewUserRegistering { password_required: bool },
+    /// The literal `NEW` was typed but registration is disabled
+    /// (`core/config.allow_new_users = false`). The session has
+    /// already moved to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::NewUserRejected`] via
+    /// `RejectDisallowedRegistration`; the caller should run
+    /// `FinaliseLogoff`.
+    NewUserRegistrationDisallowed,
 }
+
+/// Outcome of [`Session::record_new_user_request`]. Mirrors the spec's
+/// `becomes new_user_registering` cluster: the transition either
+/// initialises the gate (Initialised) or is short-circuited by
+/// `RejectDisallowedRegistration` (Rejected).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewUserRequestOutcome {
+    /// `core/config.allow_new_users = true`. The session is in
+    /// [`SessionState::NewUserRegistering`] with gate state
+    /// initialised. `password_required` is `true` when the
+    /// `new_user_password` gate must pass before completion.
+    Initialised {
+        /// Mirrors `core/config.new_user_password != null`.
+        password_required: bool,
+    },
+    /// `core/config.allow_new_users = false`. The session has
+    /// transitioned to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::NewUserRejected`].
+    Rejected,
+}
+
+/// Outcome of [`Session::apply_new_user_password_attempt`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewUserPasswordOutcome {
+    /// The candidate matched. The gate is now verified and
+    /// [`Session::complete_new_user_registration`] may proceed once
+    /// the registration form is collected.
+    Verified,
+    /// The candidate did not match. The attempt counter has been
+    /// incremented and a caller-log entry returned. The listener
+    /// should re-prompt.
+    Mismatch,
+    /// The attempt counter has reached
+    /// `core/config.max_new_user_password_attempts`. The session has
+    /// moved to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::NewUserRejected`].
+    TooManyFailures,
+}
+
+/// Errors returned by [`Session::apply_new_user_password_attempt`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyNewUserPasswordError {
+    /// The session is not in [`SessionState::NewUserRegistering`].
+    WrongState(SessionState),
+    /// The gate has already passed for this session; the caller
+    /// should stop prompting.
+    AlreadyVerified,
+}
+
+impl std::fmt::Display for VerifyNewUserPasswordError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => write!(
+                f,
+                "apply_new_user_password_attempt in unexpected state: {s:?}"
+            ),
+            Self::AlreadyVerified => write!(f, "new-user password gate already verified"),
+        }
+    }
+}
+
+impl std::error::Error for VerifyNewUserPasswordError {}
 
 /// Errors returned by [`Session::name_typed`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1233,6 +1412,11 @@ impl std::error::Error for EnterMenuError {}
 pub enum CompleteNewUserRegistrationError {
     /// The session is not in [`SessionState::NewUserRegistering`].
     WrongState(SessionState),
+    /// The new-user password gate (Slice 20a) has not yet passed.
+    /// The spec rule's `requires:
+    /// session.new_user_password_verified` precondition is not
+    /// satisfied — the listener should run the gate first.
+    GateNotVerified,
 }
 
 impl std::fmt::Display for CompleteNewUserRegistrationError {
@@ -1241,6 +1425,10 @@ impl std::fmt::Display for CompleteNewUserRegistrationError {
             Self::WrongState(s) => write!(
                 f,
                 "complete_new_user_registration in unexpected state: {s:?}"
+            ),
+            Self::GateNotVerified => write!(
+                f,
+                "complete_new_user_registration blocked: new-user password gate not verified"
             ),
         }
     }
@@ -1751,18 +1939,59 @@ mod tests {
     fn name_typed_new_keyword_transitions_to_new_user_registering() {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        let outcome = s.record_new_user_request().unwrap();
-        assert_eq!(outcome, NameTypedOutcome::NewUserRegistering);
+        let outcome = s
+            .record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(
+            outcome,
+            NewUserRequestOutcome::Initialised {
+                password_required: false
+            }
+        );
         assert_eq!(s.state(), SessionState::NewUserRegistering);
+        assert!(
+            s.new_user_password_verified(),
+            "no gate required => verified"
+        );
+        assert_eq!(s.new_user_password_attempts(), 0);
         // Retry counter is unrelated to the new-user branch.
         assert_eq!(s.name_retry_count(), 0);
+    }
+
+    #[test]
+    fn record_new_user_request_with_gate_arms_unverified() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        let outcome = s
+            .record_new_user_request(true, true, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(
+            outcome,
+            NewUserRequestOutcome::Initialised {
+                password_required: true
+            }
+        );
+        assert!(!s.new_user_password_verified());
+        assert_eq!(s.new_user_password_attempts(), 0);
+    }
+
+    #[test]
+    fn record_new_user_request_with_disallowed_registration_logs_off() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        let outcome = s
+            .record_new_user_request(false, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(outcome, NewUserRequestOutcome::Rejected);
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::NewUserRejected));
     }
 
     #[test]
     fn record_new_user_request_outside_identifying_errors() {
         let mut s = new_session(LogonChannel::Remote);
         let err = s
-            .record_new_user_request()
+            .record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
             .expect_err("must be in identifying");
         assert!(matches!(err, NameTypedError::WrongState(_)));
     }
@@ -1771,7 +2000,8 @@ mod tests {
     fn carrier_loss_from_new_user_registering_logs_off() {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        s.record_new_user_request().unwrap();
+        s.record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
         s.apply_carrier_loss().expect("permitted");
         assert_eq!(s.state(), SessionState::LoggingOff);
         assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
@@ -1781,10 +2011,86 @@ mod tests {
     fn idle_timeout_from_new_user_registering_logs_off() {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        s.record_new_user_request().unwrap();
+        s.record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
         s.apply_idle_timeout(true).expect("permitted");
         assert_eq!(s.state(), SessionState::LoggingOff);
         assert_eq!(s.logoff_reason(), Some(LogoffReason::InputTimeout));
+    }
+
+    #[test]
+    fn apply_new_user_password_attempt_match_marks_verified() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, true, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let (outcome, entry) = s
+            .apply_new_user_password_attempt(true, 3, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(outcome, NewUserPasswordOutcome::Verified);
+        assert!(entry.is_none());
+        assert!(s.new_user_password_verified());
+    }
+
+    #[test]
+    fn apply_new_user_password_attempt_mismatch_increments_and_logs() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, true, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let (outcome, entry) = s
+            .apply_new_user_password_attempt(false, 3, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(outcome, NewUserPasswordOutcome::Mismatch);
+        let entry = entry.expect("caller-log entry");
+        assert!(entry.text.contains("New-user password failure"));
+        assert!(entry.is_password_failure);
+        assert_eq!(s.new_user_password_attempts(), 1);
+        assert!(!s.new_user_password_verified());
+        assert_eq!(s.state(), SessionState::NewUserRegistering);
+    }
+
+    #[test]
+    fn apply_new_user_password_attempt_max_failures_logs_off() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, true, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        for _ in 0..2 {
+            let (outcome, _) = s
+                .apply_new_user_password_attempt(false, 3, SystemTime::UNIX_EPOCH)
+                .unwrap();
+            assert_eq!(outcome, NewUserPasswordOutcome::Mismatch);
+        }
+        let (outcome, entry) = s
+            .apply_new_user_password_attempt(false, 3, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        assert_eq!(outcome, NewUserPasswordOutcome::TooManyFailures);
+        assert!(entry.is_some());
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::NewUserRejected));
+    }
+
+    #[test]
+    fn apply_new_user_password_attempt_already_verified_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        // No gate required => already verified.
+        let err = s
+            .apply_new_user_password_attempt(true, 3, SystemTime::UNIX_EPOCH)
+            .expect_err("already verified should error");
+        assert_eq!(err, VerifyNewUserPasswordError::AlreadyVerified);
+    }
+
+    #[test]
+    fn apply_new_user_password_attempt_outside_new_user_registering_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .apply_new_user_password_attempt(true, 3, SystemTime::UNIX_EPOCH)
+            .expect_err("must be in new_user_registering");
+        assert!(matches!(err, VerifyNewUserPasswordError::WrongState(_)));
     }
 
     fn fresh_new_user(now: SystemTime) -> User {
@@ -1811,7 +2117,9 @@ mod tests {
     fn complete_new_user_registration_binds_user_and_onboards() {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
-        s.record_new_user_request().unwrap();
+        // No gate configured; verified is set to true on entry.
+        s.record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let rejection = s
             .complete_new_user_registration(fresh_new_user(now), SessionPolicy::default(), now)
@@ -1822,6 +2130,39 @@ mod tests {
         assert_eq!(s.user().map(|u| u.handle()), Some("newbie"));
         // InitialiseDailyBudget consequent ran via on_enter_onboarded.
         assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+    }
+
+    #[test]
+    fn complete_new_user_registration_blocked_by_unverified_gate() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        // Gate armed but not yet satisfied.
+        s.record_new_user_request(true, true, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let err = s
+            .complete_new_user_registration(
+                fresh_new_user(SystemTime::UNIX_EPOCH),
+                SessionPolicy::default(),
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect_err("gate not verified should error");
+        assert_eq!(err, CompleteNewUserRegistrationError::GateNotVerified);
+        assert_eq!(s.state(), SessionState::NewUserRegistering);
+    }
+
+    #[test]
+    fn complete_new_user_registration_succeeds_after_gate_passes() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, true, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        // Gate-pass step.
+        s.apply_new_user_password_attempt(true, 3, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        s.complete_new_user_registration(fresh_new_user(now), SessionPolicy::default(), now)
+            .expect("valid after gate passes");
+        assert_eq!(s.state(), SessionState::Onboarded);
     }
 
     #[test]

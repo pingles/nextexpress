@@ -19,11 +19,12 @@ use std::collections::BTreeSet;
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::screens::ScreenRepository;
-use crate::app::session_flow::{self, DefaultRatio, NewUserProfile};
+use crate::app::session_flow::{self, DefaultRatio, NewUserGateConfig, NewUserProfile};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::{
-    LogonChannel, NameTypedOutcome, Session, SessionPolicy, SessionState, VerifyPasswordOutcome,
+    LogonChannel, NameTypedOutcome, NewUserPasswordOutcome, Session, SessionPolicy, SessionState,
+    VerifyPasswordOutcome,
 };
 use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
@@ -124,6 +125,22 @@ const ANSI_PROMPT: &[u8] = b"Use ANSI graphics? (Y/n) ";
 /// menu sequence inherited by every authenticated session.
 const REGISTRATION_COMPLETE_LINE: &[u8] = b"\r\nWelcome aboard!\r\n";
 
+/// Prompt for the sysop-set new-user password gate. Verbatim from
+/// `amiexpress/express.e:30018`.
+const NEW_USER_PASSWORD_PROMPT: &[u8] = b"Enter New User Password: ";
+
+/// Sent after each failed new-user password attempt. Verbatim from
+/// `amiexpress/express.e:30036`.
+const NEW_USER_INVALID_PASSWORD_LINE: &[u8] = b"Invalid PassWord\r\n";
+
+/// Sent when the gate's retry budget is exhausted. Verbatim from
+/// `amiexpress/express.e:30039`. Followed by a goodbye line.
+const NEW_USER_EXCESSIVE_FAILURES_LINE: &[u8] = b"\r\nExcessive Password Failure\r\nGoodbye.\r\n";
+
+/// Sent on a successful gate match. Verbatim from
+/// `amiexpress/express.e:30046`.
+const NEW_USER_PASSWORD_OK_LINE: &[u8] = b"Correct\r\n";
+
 /// Sent when the user has burned through all five name retries.
 const TOO_MANY_RETRIES_LINE: &[u8] = b"Too many failed login attempts. Goodbye.\r\n";
 
@@ -165,6 +182,7 @@ pub struct TelnetListener {
     pool: Arc<NodePool>,
     session_policy: SessionPolicy,
     default_ratio: DefaultRatio,
+    new_user_gate: NewUserGateConfig,
     user_repo: SharedUserRepo,
     hasher: SharedHasher,
     caller_log: SharedCallerLog,
@@ -206,11 +224,17 @@ impl TelnetListener {
             mode: config.default_ratio_mode,
             value: config.default_ratio_value,
         };
+        let new_user_gate = NewUserGateConfig {
+            allow_new_users: config.allow_new_users,
+            new_user_password: config.new_user_password.clone(),
+            max_new_user_password_attempts: config.max_new_user_password_attempts,
+        };
         Ok(Self {
             listener,
             pool,
             session_policy: config.session_policy(),
             default_ratio,
+            new_user_gate,
             user_repo,
             hasher,
             caller_log,
@@ -248,6 +272,7 @@ impl TelnetListener {
             let screens = self.screens.clone();
             let session_policy = self.session_policy;
             let default_ratio = self.default_ratio;
+            let new_user_gate = self.new_user_gate.clone();
             tokio::spawn(async move {
                 let _ = handle_connection(
                     stream,
@@ -258,6 +283,7 @@ impl TelnetListener {
                     screens,
                     session_policy,
                     default_ratio,
+                    new_user_gate,
                 )
                 .await;
             });
@@ -280,6 +306,7 @@ async fn handle_connection(
     screens: SharedScreens,
     session_policy: SessionPolicy,
     default_ratio: DefaultRatio,
+    new_user_gate: NewUserGateConfig,
 ) -> io::Result<()> {
     let Some(node_number) = pool.allocate().await else {
         stream.write_all(BUSY_LINE).await?;
@@ -296,6 +323,7 @@ async fn handle_connection(
         screens.as_ref(),
         session_policy,
         default_ratio,
+        &new_user_gate,
     )
     .await;
     let _ = pool.release(node_number).await;
@@ -426,13 +454,15 @@ async fn prompt_for_line(
 /// Drives the new-user registration sub-flow
 /// (`session.allium:CompleteNewUserRegistration`, Slice 20).
 ///
-/// Displays the NEWUSERPW screen, then collects handle, location,
+/// Displays the NEWUSERPW screen, runs the new-user password gate
+/// (`session.allium:VerifyNewUserPassword`, Slice 20a) when
+/// `password_required` is `true`, then collects handle, location,
 /// phone, email, password (with confirmation), line length and ANSI
 /// preference. On success the session has reached
 /// [`SessionState::Onboarded`] and the function returns `Ok(true)` so
 /// the caller falls through into the menu loop. On failure
-/// (idle / carrier / repeated handle collisions) the function ends
-/// the session inline and returns `Ok(false)`.
+/// (idle / carrier / repeated handle collisions / gate exhausted)
+/// the function ends the session inline and returns `Ok(false)`.
 #[allow(clippy::too_many_arguments)]
 async fn run_new_user_registration(
     stream: &mut TcpStream,
@@ -444,9 +474,26 @@ async fn run_new_user_registration(
     screens: &(dyn ScreenRepository + Send + Sync),
     session_policy: SessionPolicy,
     default_ratio: DefaultRatio,
+    new_user_gate: &NewUserGateConfig,
+    password_required: bool,
 ) -> io::Result<bool> {
     let screen = screens.new_user_password().await;
     stream.write_all(&screen).await?;
+
+    if password_required
+        && !run_new_user_password_gate(
+            stream,
+            pushback,
+            session,
+            user_repo,
+            caller_log,
+            session_policy,
+            new_user_gate,
+        )
+        .await?
+    {
+        return Ok(false);
+    }
 
     let mut attempts: u32 = 0;
     let handle = loop {
@@ -655,6 +702,66 @@ async fn run_new_user_registration(
     Ok(true)
 }
 
+/// Drives the new-user password gate
+/// (`session.allium:VerifyNewUserPassword`). Returns `Ok(true)` when
+/// the gate has passed and the registration form should be offered,
+/// `Ok(false)` when the session has been ended (idle, carrier,
+/// retry budget exhausted) and the caller should bow out.
+#[allow(clippy::too_many_arguments)]
+async fn run_new_user_password_gate(
+    stream: &mut TcpStream,
+    pushback: &mut Option<u8>,
+    session: &mut Session,
+    user_repo: &(dyn UserRepository + Send + Sync),
+    caller_log: &(dyn CallerLogAppender + Send + Sync),
+    session_policy: SessionPolicy,
+    new_user_gate: &NewUserGateConfig,
+) -> io::Result<bool> {
+    loop {
+        let Some(typed) = prompt_for_line(
+            stream,
+            pushback,
+            NEW_USER_PASSWORD_PROMPT,
+            EchoMode::Masked,
+            session,
+            user_repo,
+            caller_log,
+            session_policy,
+        )
+        .await?
+        else {
+            return Ok(false);
+        };
+        let outcome = session_flow::verify_new_user_password(
+            session,
+            typed.trim(),
+            new_user_gate,
+            caller_log,
+            SystemTime::now(),
+        )
+        .expect("session is in new_user_registering and gate is configured");
+        match outcome {
+            NewUserPasswordOutcome::Verified => {
+                stream.write_all(NEW_USER_PASSWORD_OK_LINE).await?;
+                stream.flush().await?;
+                return Ok(true);
+            }
+            NewUserPasswordOutcome::Mismatch => {
+                stream.write_all(NEW_USER_INVALID_PASSWORD_LINE).await?;
+                stream.flush().await?;
+            }
+            NewUserPasswordOutcome::TooManyFailures => {
+                stream.write_all(NEW_USER_EXCESSIVE_FAILURES_LINE).await?;
+                stream.flush().await?;
+                // Session already in LoggingOff via the rule. Finalise.
+                session_flow::finalise_logoff(session, user_repo, caller_log, SystemTime::now())
+                    .expect("session is in logging_off");
+                return Ok(false);
+            }
+        }
+    }
+}
+
 /// Reads one optional registration field (location, phone, email).
 /// Returns `Some(None)` for an empty input, `Some(Some(value))` for a
 /// non-empty input, and `None` when the session has been ended by an
@@ -703,6 +810,7 @@ async fn run_session(
     screens: &(dyn ScreenRepository + Send + Sync),
     session_policy: SessionPolicy,
     default_ratio: DefaultRatio,
+    new_user_gate: &NewUserGateConfig,
 ) -> io::Result<()> {
     stream.write_all(IAC_INIT).await?;
 
@@ -754,15 +862,20 @@ async fn run_session(
             }
         };
 
-        let outcome =
-            session_flow::name_typed(&mut session, typed.trim(), user_repo, SystemTime::now())
-                .expect("session is in identifying");
+        let outcome = session_flow::name_typed(
+            &mut session,
+            typed.trim(),
+            user_repo,
+            new_user_gate,
+            SystemTime::now(),
+        )
+        .expect("session is in identifying");
         match outcome {
             NameTypedOutcome::Authenticated => break,
             NameTypedOutcome::NotFound => {
                 stream.write_all(UNKNOWN_USER_LINE).await?;
             }
-            NameTypedOutcome::NewUserRegistering => {
+            NameTypedOutcome::NewUserRegistering { password_required } => {
                 if !run_new_user_registration(
                     stream,
                     &mut pushback,
@@ -773,12 +886,30 @@ async fn run_session(
                     screens,
                     session_policy,
                     default_ratio,
+                    new_user_gate,
+                    password_required,
                 )
                 .await?
                 {
                     return Ok(());
                 }
                 break;
+            }
+            NameTypedOutcome::NewUserRegistrationDisallowed => {
+                // Session has already moved to LoggingOff via
+                // RejectDisallowedRegistration. Render the NONEWUSERS
+                // screen (or built-in fall-back), finalise, exit.
+                let screen = screens.no_new_users().await;
+                stream.write_all(&screen).await?;
+                stream.flush().await?;
+                session_flow::finalise_logoff(
+                    &mut session,
+                    user_repo,
+                    caller_log,
+                    SystemTime::now(),
+                )
+                .expect("session is in logging_off");
+                return Ok(());
             }
             NameTypedOutcome::SessionEnded => {
                 stream.write_all(TOO_MANY_RETRIES_LINE).await?;
@@ -1989,5 +2120,198 @@ mod tests {
             contains(&buf, b"That name is taken"),
             "expected handle-taken rejection: {buf:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn typing_new_when_registration_disallowed_writes_screen_and_disconnects() {
+        // Slice 20a: with allow_new_users = false, typing NEW should
+        // render the NONEWUSERS screen (built-in fall-back here) and
+        // close the session via RejectDisallowedRegistration.
+        let log = Arc::new(InMemoryCallerLog::new());
+        let config = Config {
+            allow_new_users: false,
+            ..test_config(1)
+        };
+        let addr = spawn_listener_with_log(repo_with_alice(), config, log.clone()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"not available").await;
+        assert!(
+            contains(&buf, b"New user registration is not available"),
+            "expected NONEWUSERS fall-back: {buf:?}"
+        );
+
+        // FinaliseLogoff must run; caller log should carry a logoff line.
+        let mut entries = vec![];
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            entries = log.entries();
+            if entries.iter().any(|e| e.text.contains("Logoff:")) {
+                break;
+            }
+        }
+        assert!(
+            entries.iter().any(|e| e.text.contains("Logoff:")),
+            "expected logoff entry after RejectDisallowedRegistration: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_user_password_gate_accepts_correct_password() {
+        let log = Arc::new(InMemoryCallerLog::new());
+        let repo: SharedUserRepo = Arc::new(InMemoryUserRepository::default());
+        let config = Config {
+            new_user_password: Some("letmein".to_string()),
+            ..test_config(1)
+        };
+        let listener = Arc::new(
+            TelnetListener::bind(
+                "127.0.0.1:0",
+                config,
+                repo.clone(),
+                test_hasher(),
+                log.clone() as SharedCallerLog,
+            )
+            .await
+            .unwrap(),
+        );
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { listener.run().await });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        // Gate prompt must appear before the registration handle prompt.
+        let buf = drain_until(&mut stream, NEW_USER_PASSWORD_PROMPT).await;
+        assert!(
+            contains(&buf, NEW_USER_PASSWORD_PROMPT),
+            "expected new-user password prompt: {buf:?}"
+        );
+        // Case-insensitive match (parity with StriCmp).
+        stream.write_all(b"LETMEIN\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
+        assert!(
+            contains(&buf, b"Correct"),
+            "expected gate-passed acknowledgement: {buf:?}"
+        );
+        assert!(
+            contains(&buf, REGISTRATION_HANDLE_PROMPT),
+            "expected registration form to follow: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_user_password_gate_three_failures_disconnects() {
+        let log = Arc::new(InMemoryCallerLog::new());
+        let config = Config {
+            new_user_password: Some("letmein".to_string()),
+            ..test_config(1)
+        };
+        let addr = spawn_listener_with_log(
+            Arc::new(InMemoryUserRepository::default()),
+            config,
+            log.clone(),
+        )
+        .await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        for _ in 0..3 {
+            let _ = drain_until(&mut stream, NEW_USER_PASSWORD_PROMPT).await;
+            stream.write_all(b"wrong\r\n").await.unwrap();
+        }
+        let buf = drain_until(&mut stream, b"Excessive Password Failure").await;
+        assert!(
+            contains(&buf, b"Excessive Password Failure"),
+            "expected excessive-failures line: {buf:?}"
+        );
+
+        // Three failure entries plus the logoff line.
+        let mut entries = vec![];
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            entries = log.entries();
+            if entries.iter().filter(|e| e.is_password_failure).count() >= 3 {
+                break;
+            }
+        }
+        let failures = entries
+            .iter()
+            .filter(|e| e.text.contains("New-user password failure"))
+            .count();
+        assert_eq!(
+            failures, 3,
+            "expected three new-user-password failure entries: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_user_password_gate_blocks_registration_until_passed() {
+        // With the gate armed, completing the registration form
+        // should be blocked until the gate passes. Verify by entering
+        // a wrong password, then a right one — the registration
+        // proceeds only after the gate is satisfied.
+        let repo: SharedUserRepo = Arc::new(InMemoryUserRepository::default());
+        let config = Config {
+            new_user_password: Some("opensesame".to_string()),
+            ..test_config(1)
+        };
+        let listener = Arc::new(
+            TelnetListener::bind(
+                "127.0.0.1:0",
+                config,
+                repo.clone(),
+                test_hasher(),
+                test_caller_log(),
+            )
+            .await
+            .unwrap(),
+        );
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { listener.run().await });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        // First: wrong password → re-prompt.
+        let _ = drain_until(&mut stream, NEW_USER_PASSWORD_PROMPT).await;
+        stream.write_all(b"nope\r\n").await.unwrap();
+        let buf =
+            drain_until_both(&mut stream, b"Invalid PassWord", NEW_USER_PASSWORD_PROMPT).await;
+        assert!(
+            contains(&buf, b"Invalid PassWord"),
+            "expected invalid-password line: {buf:?}"
+        );
+        // Right password → registration form starts.
+        stream.write_all(b"opensesame\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
+        stream.write_all(b"newbie\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, LOCATION_PROMPT).await;
+        stream.write_all(b"Town\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PHONE_PROMPT).await;
+        stream.write_all(b"555\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, EMAIL_PROMPT).await;
+        stream.write_all(b"n@example.com\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_PASSWORD_PROMPT).await;
+        stream.write_all(b"hunter2\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_PASSWORD_CONFIRM_PROMPT).await;
+        stream.write_all(b"hunter2\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, LINE_LENGTH_PROMPT).await;
+        stream.write_all(b"80\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, ANSI_PROMPT).await;
+        stream.write_all(b"Y\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"Welcome aboard").await;
+        assert!(
+            contains(&buf, b"Welcome aboard"),
+            "expected gated-registration to complete: {buf:?}"
+        );
+
+        match repo.find_by_handle("newbie") {
+            NameLookupResult::Found(user) => {
+                assert!(user.is_new_user());
+            }
+            other => panic!("expected newbie to be created, got {other:?}"),
+        }
     }
 }

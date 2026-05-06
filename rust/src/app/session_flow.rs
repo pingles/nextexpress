@@ -14,8 +14,9 @@ use crate::domain::password::{
 };
 use crate::domain::session::{
     CompleteNewUserRegistrationError, CompletePasswordResetError, EnterMenuError, NameTypedError,
-    NameTypedOutcome, Session, SessionPolicy, SessionState, SessionTransitionError,
-    VerifyPasswordError, VerifyPasswordOutcome,
+    NameTypedOutcome, NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPolicy,
+    SessionState, SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError,
+    VerifyPasswordOutcome,
 };
 use crate::domain::user::{NewUserRegistration, RatioMode, User, UserError, UserFlag};
 use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
@@ -104,7 +105,10 @@ impl std::error::Error for FinaliseLogoffFlowError {
 /// Handles `session.allium:NameTyped`.
 ///
 /// Looks up `typed` through `repo`, then applies the matching
-/// [`Session`] transition.
+/// [`Session`] transition. The `user_typed_NEW` branch additionally
+/// fires the on-enter cluster for `new_user_registering`
+/// (`RejectDisallowedRegistration` and `InitialiseNewUserGate`,
+/// Slice 20a) using `gate`.
 ///
 /// # Errors
 /// Returns [`NameTypedError::WrongState`] when `session` is not in
@@ -113,6 +117,7 @@ pub fn name_typed<R>(
     session: &mut Session,
     typed: &str,
     repo: &R,
+    gate: &NewUserGateConfig,
     now: SystemTime,
 ) -> Result<NameTypedOutcome, NameTypedError>
 where
@@ -125,8 +130,116 @@ where
     match repo.find_by_handle(typed) {
         NameLookupResult::Found(user) => session.record_identified_user(typed, *user),
         NameLookupResult::NotFound => session.record_unknown_name(now),
-        NameLookupResult::UserTypedNew => session.record_new_user_request(),
+        NameLookupResult::UserTypedNew => {
+            let outcome = session.record_new_user_request(
+                gate.allow_new_users,
+                gate.new_user_password.is_some(),
+                now,
+            )?;
+            Ok(match outcome {
+                NewUserRequestOutcome::Initialised { password_required } => {
+                    NameTypedOutcome::NewUserRegistering { password_required }
+                }
+                NewUserRequestOutcome::Rejected => NameTypedOutcome::NewUserRegistrationDisallowed,
+            })
+        }
     }
+}
+
+/// Configuration for the new-user registration gate, threaded through
+/// [`name_typed`] and [`verify_new_user_password`]. Mirrors the
+/// `core/config.{allow_new_users, new_user_password,
+/// max_new_user_password_attempts}` triple.
+#[derive(Debug, Clone)]
+pub struct NewUserGateConfig {
+    /// Whether the BBS accepts new-user registrations at all
+    /// (`core/config.allow_new_users`).
+    pub allow_new_users: bool,
+    /// Optional sysop-set password gating registration
+    /// (`core/config.new_user_password`). `None` disables the gate.
+    pub new_user_password: Option<String>,
+    /// Retry budget for the gate
+    /// (`core/config.max_new_user_password_attempts`).
+    pub max_new_user_password_attempts: u32,
+}
+
+/// Errors returned by [`verify_new_user_password`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyNewUserPasswordFlowError {
+    /// The underlying session rule failed.
+    Session(VerifyNewUserPasswordError),
+    /// The gate configuration is missing — the caller invoked the
+    /// gate flow even though `core/config.new_user_password` is
+    /// `None`. The listener should never reach here in production;
+    /// returning the error rather than silently passing protects
+    /// against logic bugs.
+    GateNotConfigured,
+}
+
+impl std::fmt::Display for VerifyNewUserPasswordFlowError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(error) => write!(f, "{error}"),
+            Self::GateNotConfigured => {
+                write!(f, "verify_new_user_password called with no gate configured")
+            }
+        }
+    }
+}
+
+impl std::error::Error for VerifyNewUserPasswordFlowError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Session(error) => Some(error),
+            Self::GateNotConfigured => None,
+        }
+    }
+}
+
+/// Handles `session.allium:VerifyNewUserPassword` (Slice 20a).
+///
+/// Compares `candidate` against `gate.new_user_password` under the
+/// case-insensitive equality the legacy AmiExpress source uses
+/// (`StriCmp` at `amiexpress/express.e:30027`), then applies the
+/// resulting [`Session`] transition. On a mismatch the caller-log
+/// "New-user password failure" entry is appended to `caller_log`; the
+/// session may move to [`SessionState::LoggingOff`] when the attempt
+/// counter reaches `gate.max_new_user_password_attempts`.
+///
+/// # Errors
+/// Returns [`VerifyNewUserPasswordFlowError::Session`] when the
+/// underlying session rule fails (wrong state, already verified) or
+/// [`VerifyNewUserPasswordFlowError::GateNotConfigured`] when the
+/// caller invoked the gate flow without a configured password.
+pub fn verify_new_user_password<L>(
+    session: &mut Session,
+    candidate: &str,
+    gate: &NewUserGateConfig,
+    caller_log: &L,
+    now: SystemTime,
+) -> Result<NewUserPasswordOutcome, VerifyNewUserPasswordFlowError>
+where
+    L: CallerLogAppender + ?Sized,
+{
+    let secret = gate
+        .new_user_password
+        .as_deref()
+        .ok_or(VerifyNewUserPasswordFlowError::GateNotConfigured)?;
+    let matches = matches_new_user_password(candidate, secret);
+    let (outcome, entry) = session
+        .apply_new_user_password_attempt(matches, gate.max_new_user_password_attempts, now)
+        .map_err(VerifyNewUserPasswordFlowError::Session)?;
+    if let Some(entry) = entry {
+        caller_log.append(entry);
+    }
+    Ok(outcome)
+}
+
+/// `session.allium:matches_new_user_password` black-box function.
+/// Case-insensitive equality, mirroring the legacy `StriCmp` at
+/// `amiexpress/express.e:30027`.
+fn matches_new_user_password(candidate: &str, secret: &str) -> bool {
+    candidate.eq_ignore_ascii_case(secret)
 }
 
 /// Handles `session.allium:VerifyPassword`.
@@ -656,15 +769,181 @@ mod tests {
         }
     }
 
+    fn open_gate() -> NewUserGateConfig {
+        NewUserGateConfig {
+            allow_new_users: true,
+            new_user_password: None,
+            max_new_user_password_attempts: 3,
+        }
+    }
+
+    fn locked_gate() -> NewUserGateConfig {
+        NewUserGateConfig {
+            allow_new_users: false,
+            new_user_password: None,
+            max_new_user_password_attempts: 3,
+        }
+    }
+
+    fn password_gate(secret: &str) -> NewUserGateConfig {
+        NewUserGateConfig {
+            allow_new_users: true,
+            new_user_password: Some(secret.to_string()),
+            max_new_user_password_attempts: 3,
+        }
+    }
+
     #[test]
     fn name_typed_found_binds_user() {
         let repo = TestRepo::new(vec![alice()]);
         let mut session = session_identifying();
-        let outcome = name_typed(&mut session, "alice", &repo, SystemTime::UNIX_EPOCH).unwrap();
+        let outcome = name_typed(
+            &mut session,
+            "alice",
+            &repo,
+            &open_gate(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
 
         assert_eq!(outcome, NameTypedOutcome::Authenticated);
         assert_eq!(session.state(), SessionState::Authenticating);
         assert_eq!(session.user().map(|u| u.handle()), Some("alice"));
+    }
+
+    #[test]
+    fn name_typed_new_with_open_gate_returns_initialised_no_password() {
+        let repo = TestRepo::new(vec![alice()]);
+        let mut session = session_identifying();
+        let outcome = name_typed(
+            &mut session,
+            "NEW",
+            &repo,
+            &open_gate(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            NameTypedOutcome::NewUserRegistering {
+                password_required: false
+            }
+        );
+        assert!(session.new_user_password_verified());
+    }
+
+    #[test]
+    fn name_typed_new_with_locked_gate_returns_disallowed() {
+        let repo = TestRepo::new(vec![alice()]);
+        let mut session = session_identifying();
+        let outcome = name_typed(
+            &mut session,
+            "NEW",
+            &repo,
+            &locked_gate(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        assert_eq!(outcome, NameTypedOutcome::NewUserRegistrationDisallowed);
+        assert_eq!(session.state(), SessionState::LoggingOff);
+    }
+
+    #[test]
+    fn name_typed_new_with_password_gate_returns_initialised_required() {
+        let repo = TestRepo::new(vec![alice()]);
+        let mut session = session_identifying();
+        let outcome = name_typed(
+            &mut session,
+            "NEW",
+            &repo,
+            &password_gate("letmein"),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            NameTypedOutcome::NewUserRegistering {
+                password_required: true
+            }
+        );
+        assert!(!session.new_user_password_verified());
+    }
+
+    #[test]
+    fn verify_new_user_password_match_marks_verified() {
+        let mut session = session_identifying();
+        name_typed(
+            &mut session,
+            "NEW",
+            &TestRepo::new(vec![]),
+            &password_gate("letmein"),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        let log = TestLog::default();
+        let outcome = verify_new_user_password(
+            &mut session,
+            "LETMEIN", // case-insensitive parity with StriCmp
+            &password_gate("letmein"),
+            &log,
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        assert_eq!(outcome, NewUserPasswordOutcome::Verified);
+        assert!(log.entries().is_empty());
+    }
+
+    #[test]
+    fn verify_new_user_password_mismatch_logs_and_re_prompts() {
+        let mut session = session_identifying();
+        name_typed(
+            &mut session,
+            "NEW",
+            &TestRepo::new(vec![]),
+            &password_gate("letmein"),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        let log = TestLog::default();
+        let outcome = verify_new_user_password(
+            &mut session,
+            "wrong",
+            &password_gate("letmein"),
+            &log,
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        assert_eq!(outcome, NewUserPasswordOutcome::Mismatch);
+        let entries = log.entries();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].text.contains("New-user password failure"));
+        assert!(entries[0].is_password_failure);
+    }
+
+    #[test]
+    fn verify_new_user_password_three_failures_logs_off() {
+        let mut session = session_identifying();
+        name_typed(
+            &mut session,
+            "NEW",
+            &TestRepo::new(vec![]),
+            &password_gate("letmein"),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        let log = TestLog::default();
+        for _ in 0..3 {
+            verify_new_user_password(
+                &mut session,
+                "wrong",
+                &password_gate("letmein"),
+                &log,
+                SystemTime::UNIX_EPOCH,
+            )
+            .unwrap();
+        }
+        assert_eq!(session.state(), SessionState::LoggingOff);
+        assert_eq!(log.entries().len(), 3);
     }
 
     #[test]
@@ -954,7 +1233,9 @@ mod tests {
 
     fn session_at_new_user_registering() -> Session {
         let mut s = session_identifying();
-        s.record_new_user_request().unwrap();
+        // Open gate (no password required) — verified set true on entry.
+        s.record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
         s
     }
 

@@ -107,6 +107,24 @@ pub struct Config {
     /// new-user registration flow
     /// (spec: `core.allium:config.default_ratio_value`, default `3`).
     pub default_ratio_value: u32,
+    /// Whether the BBS accepts new-user registrations at all
+    /// (spec: `core.allium:config.allow_new_users`, default `true`).
+    /// `false` causes `session.allium:RejectDisallowedRegistration`
+    /// to bounce any session that types `NEW` at the handle prompt.
+    pub allow_new_users: bool,
+    /// Optional sysop-set password gating new-user registration
+    /// (spec: `core.allium:config.new_user_password`, default null).
+    /// When `Some`, every new user must pass the
+    /// `VerifyNewUserPassword` gate before the registration form is
+    /// offered. Comparison is case-insensitive (parity with the
+    /// legacy `StriCmp` at `amiexpress/express.e:30027`).
+    pub new_user_password: Option<String>,
+    /// Maximum incorrect attempts at `new_user_password` before the
+    /// session is dropped
+    /// (spec: `core.allium:config.max_new_user_password_attempts`,
+    /// default `3` — matches the legacy hard-coded budget at
+    /// `amiexpress/express.e:30037-30042`).
+    pub max_new_user_password_attempts: u32,
 }
 
 impl Default for Config {
@@ -124,6 +142,9 @@ impl Default for Config {
             treat_timeout_as_logoff: false,
             default_ratio_mode: RatioMode::ByFiles,
             default_ratio_value: 3,
+            allow_new_users: true,
+            new_user_password: None,
+            max_new_user_password_attempts: 3,
         }
     }
 }
@@ -362,6 +383,9 @@ mod tests {
             treat_timeout_as_logoff = true
             default_ratio_mode = "by_bytes"
             default_ratio_value = 5
+            allow_new_users = false
+            new_user_password = "letmein"
+            max_new_user_password_attempts = 5
         "#;
         let config = Config::from_toml_str(toml).expect("parse");
         assert_eq!(config.port, 9999);
@@ -376,6 +400,17 @@ mod tests {
         assert!(config.treat_timeout_as_logoff);
         assert_eq!(config.default_ratio_mode, RatioMode::ByBytes);
         assert_eq!(config.default_ratio_value, 5);
+        assert!(!config.allow_new_users);
+        assert_eq!(config.new_user_password.as_deref(), Some("letmein"));
+        assert_eq!(config.max_new_user_password_attempts, 5);
+    }
+
+    #[test]
+    fn default_new_user_gate_is_open_with_no_password() {
+        let defaults = Config::default();
+        assert!(defaults.allow_new_users);
+        assert!(defaults.new_user_password.is_none());
+        assert_eq!(defaults.max_new_user_password_attempts, 3);
     }
 
     #[test]
@@ -420,6 +455,12 @@ mod tests {
         );
         assert_eq!(config.default_ratio_mode, defaults.default_ratio_mode);
         assert_eq!(config.default_ratio_value, defaults.default_ratio_value);
+        assert_eq!(config.allow_new_users, defaults.allow_new_users);
+        assert_eq!(config.new_user_password, defaults.new_user_password);
+        assert_eq!(
+            config.max_new_user_password_attempts,
+            defaults.max_new_user_password_attempts
+        );
     }
 
     #[test]

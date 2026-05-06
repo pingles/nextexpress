@@ -21,6 +21,13 @@ const FALLBACK_MENU: &[u8] = b"[ Default menu - type G to log off ]\r\n";
 /// announcement that the user is now in the registration sub-flow.
 const FALLBACK_NEW_USER_PW: &[u8] = b"\r\nNew user registration.\r\n";
 
+/// Built-in fallback NONEWUSERS screen used when the configured
+/// `Screens/NONEWUSERS.txt` file is missing. Rendered when
+/// `core/config.allow_new_users = false`
+/// (`amiexpress/express.e:30008`). One short line so the user knows
+/// why the connection is closing.
+const FALLBACK_NO_NEW_USERS: &[u8] = b"\r\nNew user registration is not available.\r\n";
+
 /// File-backed screen repository rooted at a BBS installation path.
 #[derive(Debug)]
 pub struct FileScreenRepository {
@@ -28,6 +35,7 @@ pub struct FileScreenRepository {
     banner: Mutex<Option<Vec<u8>>>,
     default_menu: Mutex<Option<Vec<u8>>>,
     new_user_password: Mutex<Option<Vec<u8>>>,
+    no_new_users: Mutex<Option<Vec<u8>>>,
 }
 
 impl FileScreenRepository {
@@ -38,6 +46,7 @@ impl FileScreenRepository {
             banner: Mutex::new(None),
             default_menu: Mutex::new(None),
             new_user_password: Mutex::new(None),
+            no_new_users: Mutex::new(None),
         }
     }
 
@@ -80,6 +89,12 @@ impl FileScreenRepository {
         self.cached_file(&self.new_user_password, &path, FALLBACK_NEW_USER_PW)
             .await
     }
+
+    async fn no_new_users_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("NONEWUSERS.txt");
+        self.cached_file(&self.no_new_users, &path, FALLBACK_NO_NEW_USERS)
+            .await
+    }
 }
 
 impl ScreenRepository for FileScreenRepository {
@@ -93,6 +108,10 @@ impl ScreenRepository for FileScreenRepository {
 
     fn new_user_password(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.new_user_password_bytes().await })
+    }
+
+    fn no_new_users(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.no_new_users_bytes().await })
     }
 }
 
@@ -201,5 +220,25 @@ mod tests {
         .unwrap();
         let repo = FileScreenRepository::new(dir.path().to_path_buf());
         assert_eq!(repo.new_user_password().await, b"WELCOME NEW USER\r\n");
+    }
+
+    #[tokio::test]
+    async fn no_new_users_returns_fallback_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.no_new_users().await, FALLBACK_NO_NEW_USERS);
+    }
+
+    #[tokio::test]
+    async fn no_new_users_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("NONEWUSERS.txt"),
+            b"ACCESS DENIED\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.no_new_users().await, b"ACCESS DENIED\r\n");
     }
 }
