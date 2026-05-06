@@ -44,7 +44,7 @@ impl FileScreenRepository {
         }
 
         let loaded = match tokio::fs::read(path).await {
-            Ok(bytes) => translate_amiga_line_endings(&bytes),
+            Ok(bytes) => normalise_to_crlf(&bytes),
             Err(_) => fallback.to_vec(),
         };
 
@@ -78,19 +78,33 @@ impl ScreenRepository for FileScreenRepository {
     }
 }
 
-/// Replaces the Amiga `\b\n` (BS+LF) sequence with the telnet `\r\n`
-/// (CR+LF). Other bytes, including ANSI escapes, pass through.
-fn translate_amiga_line_endings(input: &[u8]) -> Vec<u8> {
+/// Normalises every line-ending convention found in disk-loaded screen
+/// files to telnet `\r\n`, satisfying the wire-quality CRLF discipline
+/// (`SLICES.md` adapter checklist item 3): Amiga `\b\n`, Unix `\n`,
+/// classic-Mac `\r`, and existing `\r\n` all emit a single `\r\n`.
+/// Other bytes, including mid-line `\b` (ANSI BS) and ANSI escapes,
+/// pass through unchanged.
+fn normalise_to_crlf(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(input.len());
     let mut i = 0;
     while i < input.len() {
-        if i + 1 < input.len() && input[i] == 0x08 && input[i + 1] == b'\n' {
-            out.push(b'\r');
-            out.push(b'\n');
-            i += 2;
-        } else {
-            out.push(input[i]);
-            i += 1;
+        match input[i] {
+            0x08 if i + 1 < input.len() && input[i + 1] == b'\n' => {
+                out.extend_from_slice(b"\r\n");
+                i += 2;
+            }
+            b'\r' if i + 1 < input.len() && input[i + 1] == b'\n' => {
+                out.extend_from_slice(b"\r\n");
+                i += 2;
+            }
+            b'\r' | b'\n' => {
+                out.extend_from_slice(b"\r\n");
+                i += 1;
+            }
+            other => {
+                out.push(other);
+                i += 1;
+            }
         }
     }
     out
@@ -101,23 +115,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn translate_amiga_line_endings_replaces_bs_lf() {
-        assert_eq!(translate_amiga_line_endings(b"foo\x08\nbar"), b"foo\r\nbar");
+    fn normalise_to_crlf_replaces_bs_lf() {
+        assert_eq!(normalise_to_crlf(b"foo\x08\nbar"), b"foo\r\nbar");
     }
 
     #[test]
-    fn translate_amiga_line_endings_preserves_ansi_escapes() {
+    fn normalise_to_crlf_preserves_ansi_escapes() {
         let ansi = b"\x1b[31mRED\x1b[0m\x08\n";
-        assert_eq!(
-            translate_amiga_line_endings(ansi),
-            b"\x1b[31mRED\x1b[0m\r\n"
-        );
+        assert_eq!(normalise_to_crlf(ansi), b"\x1b[31mRED\x1b[0m\r\n");
     }
 
     #[test]
-    fn translate_amiga_line_endings_leaves_other_bytes_alone() {
-        assert_eq!(translate_amiga_line_endings(b"hello"), b"hello");
-        assert_eq!(translate_amiga_line_endings(b"a\x08b"), b"a\x08b");
+    fn normalise_to_crlf_leaves_other_bytes_alone() {
+        assert_eq!(normalise_to_crlf(b"hello"), b"hello");
+        assert_eq!(normalise_to_crlf(b"a\x08b"), b"a\x08b");
+    }
+
+    #[test]
+    fn normalise_to_crlf_promotes_bare_lf_to_crlf() {
+        assert_eq!(normalise_to_crlf(b"foo\nbar"), b"foo\r\nbar");
+    }
+
+    #[test]
+    fn normalise_to_crlf_leaves_existing_crlf_unchanged() {
+        assert_eq!(normalise_to_crlf(b"foo\r\nbar"), b"foo\r\nbar");
+    }
+
+    #[test]
+    fn normalise_to_crlf_promotes_bare_cr_to_crlf() {
+        assert_eq!(normalise_to_crlf(b"foo\rbar"), b"foo\r\nbar");
+    }
+
+    #[test]
+    fn normalise_to_crlf_normalises_mixed_input() {
+        let mixed = b"a\nb\r\nc\x08\nd\re";
+        assert_eq!(normalise_to_crlf(mixed), b"a\r\nb\r\nc\r\nd\r\ne");
     }
 
     #[tokio::test]
