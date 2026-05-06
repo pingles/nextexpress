@@ -294,6 +294,21 @@ async fn handle_idle_timeout(
     Ok(())
 }
 
+/// Applies `session.allium:CarrierLost` (Slice 18) when the peer has
+/// closed the TCP connection mid-prompt, then finalises the session.
+/// No goodbye line is written — the connection is already gone.
+fn handle_carrier_loss(
+    session: &mut Session,
+    user_repo: &(dyn UserRepository + Send + Sync),
+    caller_log: &(dyn CallerLogAppender + Send + Sync),
+) {
+    session
+        .apply_carrier_loss()
+        .expect("carrier-permitted state when peer closes");
+    session_flow::finalise_logoff(session, user_repo, caller_log, SystemTime::now())
+        .expect("logging_off can finalise");
+}
+
 /// Inner per-session loop. Drives the session from the IAC handshake
 /// through banner, name prompt, password and (in later slices) menu.
 #[allow(clippy::too_many_arguments)]
@@ -345,7 +360,10 @@ async fn run_session(
         .await?
         {
             ReadOutcome::Line(line) => line,
-            ReadOutcome::Eof => return Ok(()), // EOF before name typed
+            ReadOutcome::Eof => {
+                handle_carrier_loss(&mut session, user_repo, caller_log);
+                return Ok(()); // EOF before name typed
+            }
             ReadOutcome::IdleTimedOut => {
                 handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
                     .await?;
@@ -387,7 +405,10 @@ async fn run_session(
         .await?
         {
             ReadOutcome::Line(line) => line,
-            ReadOutcome::Eof => return Ok(()), // EOF before password typed
+            ReadOutcome::Eof => {
+                handle_carrier_loss(&mut session, user_repo, caller_log);
+                return Ok(()); // EOF before password typed
+            }
             ReadOutcome::IdleTimedOut => {
                 handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
                     .await?;
@@ -462,7 +483,10 @@ async fn run_session(
         .await?
         {
             ReadOutcome::Line(line) => line,
-            ReadOutcome::Eof => return Ok(()),
+            ReadOutcome::Eof => {
+                handle_carrier_loss(&mut session, user_repo, caller_log);
+                return Ok(());
+            }
             ReadOutcome::IdleTimedOut => {
                 handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
                     .await?;
@@ -778,6 +802,24 @@ mod tests {
         addr
     }
 
+    /// Variant that returns the concrete caller log so the test can
+    /// inspect entries afterwards.
+    async fn spawn_listener_with_log(
+        repo: SharedUserRepo,
+        config: Config,
+        log: Arc<InMemoryCallerLog>,
+    ) -> SocketAddr {
+        let shared_log: SharedCallerLog = log;
+        let listener = Arc::new(
+            TelnetListener::bind("127.0.0.1:0", config, repo, test_hasher(), shared_log)
+                .await
+                .unwrap(),
+        );
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { listener.run().await });
+        addr
+    }
+
     /// Reads bytes from `stream` until `needle` appears, EOF arrives,
     /// or 2s elapse with no further data. The timeout matters: under
     /// the default kernel buffering, a broken server will simply leave
@@ -1039,6 +1081,59 @@ mod tests {
         assert!(
             contains(&buf, b"Authenticated"),
             "expected Authenticated line: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_socket_at_name_prompt_appends_carrier_loss_entry() {
+        // Slice 18: closing the TCP socket mid-prompt fires the
+        // CarrierLost rule. The caller log gets a finalise entry
+        // tagged with carrier_loss.
+        let log = Arc::new(InMemoryCallerLog::new());
+        let addr = spawn_listener_with_log(repo_with_alice(), test_config(1), log.clone()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        drop(stream);
+        // Wait for the listener task to observe EOF and finalise.
+        let mut entries = vec![];
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            entries = log.entries();
+            if entries.iter().any(|e| e.text.contains("carrier_loss")) {
+                break;
+            }
+        }
+        assert!(
+            entries.iter().any(|e| e.text.contains("carrier_loss")),
+            "expected carrier_loss in log: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_socket_at_password_prompt_appends_carrier_loss_entry() {
+        let log = Arc::new(InMemoryCallerLog::new());
+        let addr = spawn_listener_with_log(
+            repo_with(alice_with_password("secret")),
+            test_config(1),
+            log.clone(),
+        )
+        .await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
+        drop(stream);
+        let mut entries = vec![];
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            entries = log.entries();
+            if entries.iter().any(|e| e.text.contains("carrier_loss")) {
+                break;
+            }
+        }
+        assert!(
+            entries.iter().any(|e| e.text.contains("carrier_loss")),
+            "expected carrier_loss in log: {entries:?}"
         );
     }
 

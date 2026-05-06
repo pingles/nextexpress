@@ -557,6 +557,37 @@ impl Session {
         self.last_input_at = at;
     }
 
+    /// `session.allium:CarrierLost` rule (Slice 18).
+    ///
+    /// Transitions the session to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::CarrierLoss`]. The transport adapter calls
+    /// this when the underlying connection has gone away (clean
+    /// EOF, RST, modem CD drop, etc.). The rule is allowed from
+    /// every pre-terminal state the spec lists for `CarrierLost`:
+    /// `connecting`, `identifying`, `authenticating`, `onboarded`,
+    /// `menu`. (`new_user_registering` lands with Slice 19.)
+    ///
+    /// # Errors
+    /// Returns [`CarrierLostError::WrongState`] when the session is
+    /// already [`SessionState::LoggingOff`] or
+    /// [`SessionState::Ended`].
+    pub fn apply_carrier_loss(&mut self) -> Result<(), CarrierLostError> {
+        if !matches!(
+            self.state,
+            SessionState::Connecting
+                | SessionState::Identifying
+                | SessionState::Authenticating
+                | SessionState::Onboarded
+                | SessionState::Menu
+        ) {
+            return Err(CarrierLostError::WrongState(self.state));
+        }
+        self.transition_to(SessionState::LoggingOff)
+            .expect("carrier-permitted state -> logging_off is permitted");
+        self.logoff_reason = Some(LogoffReason::CarrierLoss);
+        Ok(())
+    }
+
     /// `session.allium:IdleTimeout` rule (Slice 17).
     ///
     /// Transitions the session to [`SessionState::LoggingOff`] with
@@ -1243,6 +1274,24 @@ impl std::fmt::Display for IdleTimeoutError {
 }
 
 impl std::error::Error for IdleTimeoutError {}
+
+/// Errors returned by [`Session::apply_carrier_loss`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarrierLostError {
+    /// The session is already in [`SessionState::LoggingOff`] or
+    /// [`SessionState::Ended`], so `CarrierLost` is a no-op.
+    WrongState(SessionState),
+}
+
+impl std::fmt::Display for CarrierLostError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => write!(f, "apply_carrier_loss in unexpected state: {s:?}"),
+        }
+    }
+}
+
+impl std::error::Error for CarrierLostError {}
 
 /// Outcome of [`Session::tick_minute`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2427,6 +2476,88 @@ mod tests {
         assert!(
             entry.text.contains("input_timeout"),
             "expected input_timeout in goodbye line, got {entry:?}"
+        );
+    }
+
+    #[test]
+    fn carrier_loss_from_connecting_transitions_to_logging_off() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.apply_carrier_loss().unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
+    }
+
+    #[test]
+    fn carrier_loss_from_identifying_transitions_to_logging_off() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.apply_carrier_loss().unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
+    }
+
+    #[test]
+    fn carrier_loss_from_authenticating_transitions_to_logging_off() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", alice()).unwrap();
+        s.apply_carrier_loss().unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
+    }
+
+    #[test]
+    fn carrier_loss_from_onboarded_transitions_to_logging_off() {
+        let mut s = session_at_onboarded_with(alice());
+        s.apply_carrier_loss().unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
+    }
+
+    #[test]
+    fn carrier_loss_from_menu_transitions_to_logging_off() {
+        let mut s = session_at_onboarded_with(alice());
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        s.apply_carrier_loss().unwrap();
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::CarrierLoss));
+    }
+
+    #[test]
+    fn carrier_loss_from_logging_off_errors() {
+        let mut s = session_at_onboarded_with(alice());
+        s.user_requests_logoff().unwrap();
+        let err = s
+            .apply_carrier_loss()
+            .expect_err("logging_off cannot fire CarrierLost again");
+        assert!(matches!(
+            err,
+            CarrierLostError::WrongState(SessionState::LoggingOff)
+        ));
+    }
+
+    #[test]
+    fn carrier_loss_from_ended_errors() {
+        let mut s = session_at_onboarded_with(alice());
+        s.user_requests_logoff().unwrap();
+        s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        let err = s
+            .apply_carrier_loss()
+            .expect_err("ended cannot fire CarrierLost");
+        assert!(matches!(
+            err,
+            CarrierLostError::WrongState(SessionState::Ended)
+        ));
+    }
+
+    #[test]
+    fn finalise_logoff_after_carrier_loss_writes_reason() {
+        let mut s = session_at_onboarded_with(alice());
+        s.apply_carrier_loss().unwrap();
+        let entry = s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert!(
+            entry.text.contains("carrier_loss"),
+            "expected carrier_loss in goodbye line, got {entry:?}"
         );
     }
 

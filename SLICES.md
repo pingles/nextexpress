@@ -23,7 +23,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | --- | --- | --- | --- | :---: |
 | 0 | [slices/phase0.md](slices/phase0.md) | 1 | Project foundations | Done |
 | 1 | [slices/phase1.md](slices/phase1.md) | 2–13, 8a, 13a | Sign in, see the menu, log off | Done |
-| 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow | Todo |
+| 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow | Done |
 | 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding | Todo |
 | 4 | [slices/phase4.md](slices/phase4.md) | 22–26 | Sysop console & node controls | Todo |
 | 5 | [slices/phase5.md](slices/phase5.md) | 27–34 | Conferences (read) | Todo |
@@ -232,7 +232,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 15 | Forced password reset | Done |
 | 16 | Account-locked / insufficient-access rejection | Done |
 | 17 | Idle timeout | Done |
-| 18 | Carrier loss | Todo |
+| 18 | Carrier loss | Done |
 | 19 | `user_typed_NEW` branch | Todo |
 | 20 | `CompleteNewUserRegistration` | Todo |
 | 21 | Pending-validation gate | Todo |
