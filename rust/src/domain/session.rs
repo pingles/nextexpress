@@ -718,6 +718,44 @@ impl Session {
         })
     }
 
+    /// Applies `session.allium:CompleteNewUserRegistration`
+    /// (Slice 20).
+    ///
+    /// Binds the freshly built `user`, sets `authenticated_at`,
+    /// transitions [`SessionState::NewUserRegistering`] to
+    /// [`SessionState::Onboarded`], then fires the
+    /// `state becomes onboarded` rule cluster via
+    /// [`Session::on_enter_onboarded`].
+    ///
+    /// # Returns
+    /// An optional [`CallerLog`] entry produced by
+    /// `RejectLockedOrInsufficientAccess` when it short-circuits the
+    /// post-onboarded cluster. Practically this never fires for a
+    /// freshly registered new user (`access_level = 2`,
+    /// `account_locked = false`); the result type carries it for
+    /// consistency with [`Session::apply_password_match`] and so
+    /// future access-level configuration changes don't surprise the
+    /// caller.
+    ///
+    /// # Errors
+    /// Returns [`CompleteNewUserRegistrationError::WrongState`] when
+    /// the session is not in [`SessionState::NewUserRegistering`].
+    pub fn complete_new_user_registration(
+        &mut self,
+        user: User,
+        policy: SessionPolicy,
+        now: SystemTime,
+    ) -> Result<Option<CallerLog>, CompleteNewUserRegistrationError> {
+        if self.state != SessionState::NewUserRegistering {
+            return Err(CompleteNewUserRegistrationError::WrongState(self.state));
+        }
+        self.user = Some(user);
+        self.authenticated_at = Some(now);
+        self.transition_to(SessionState::Onboarded)
+            .expect("new_user_registering -> onboarded is permitted");
+        Ok(self.on_enter_onboarded(policy, now))
+    }
+
     /// Applies the matching branch of `session.allium:VerifyPassword`.
     ///
     /// Clears `user.invalid_attempts`, sets `authenticated_at`, and
@@ -1189,6 +1227,26 @@ impl std::fmt::Display for EnterMenuError {
 }
 
 impl std::error::Error for EnterMenuError {}
+
+/// Errors returned by [`Session::complete_new_user_registration`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompleteNewUserRegistrationError {
+    /// The session is not in [`SessionState::NewUserRegistering`].
+    WrongState(SessionState),
+}
+
+impl std::fmt::Display for CompleteNewUserRegistrationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => write!(
+                f,
+                "complete_new_user_registration in unexpected state: {s:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CompleteNewUserRegistrationError {}
 
 /// Errors returned by [`Session::initialise_daily_budget`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1727,6 +1785,59 @@ mod tests {
         s.apply_idle_timeout(true).expect("permitted");
         assert_eq!(s.state(), SessionState::LoggingOff);
         assert_eq!(s.logoff_reason(), Some(LogoffReason::InputTimeout));
+    }
+
+    fn fresh_new_user(now: SystemTime) -> User {
+        User::register_new(crate::domain::user::NewUserRegistration {
+            slot_number: 7,
+            handle: "newbie".to_string(),
+            location: Some("Townsville".to_string()),
+            phone_number: Some("555".to_string()),
+            email: Some("n@example.com".to_string()),
+            password_hash: "hash".to_string(),
+            password_salt: Some("salt".to_string()),
+            password_hash_kind: crate::domain::password::PasswordHashKind::Pbkdf210000,
+            line_length: 80,
+            ansi_colour: true,
+            flags: std::collections::BTreeSet::new(),
+            ratio_mode: crate::domain::user::RatioMode::ByFiles,
+            ratio_value: 3,
+            now,
+        })
+        .expect("valid registration")
+    }
+
+    #[test]
+    fn complete_new_user_registration_binds_user_and_onboards() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request().unwrap();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let rejection = s
+            .complete_new_user_registration(fresh_new_user(now), SessionPolicy::default(), now)
+            .expect("valid");
+        assert!(rejection.is_none(), "fresh new user should not be rejected");
+        assert_eq!(s.state(), SessionState::Onboarded);
+        assert_eq!(s.authenticated_at(), Some(now));
+        assert_eq!(s.user().map(|u| u.handle()), Some("newbie"));
+        // InitialiseDailyBudget consequent ran via on_enter_onboarded.
+        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+    }
+
+    #[test]
+    fn complete_new_user_registration_outside_new_user_registering_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .complete_new_user_registration(
+                fresh_new_user(SystemTime::UNIX_EPOCH),
+                SessionPolicy::default(),
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect_err("must be in new_user_registering");
+        assert!(matches!(
+            err,
+            CompleteNewUserRegistrationError::WrongState(_)
+        ));
     }
 
     fn authenticated_session() -> Session {

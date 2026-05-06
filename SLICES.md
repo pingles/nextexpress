@@ -234,7 +234,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 17 | Idle timeout | Done |
 | 18 | Carrier loss | Done |
 | 19 | `user_typed_NEW` branch | Done |
-| 20 | `CompleteNewUserRegistration` | Todo |
+| 20 | `CompleteNewUserRegistration` | Done |
 | 21 | Pending-validation gate | Todo |
 | 22 | Sysop direct logon | Todo |
 | 23 | Local logon + relogon | Todo |

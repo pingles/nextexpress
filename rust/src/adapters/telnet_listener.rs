@@ -14,16 +14,18 @@ use std::time::{Duration, SystemTime};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
+use std::collections::BTreeSet;
+
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::screens::ScreenRepository;
-use crate::app::session_flow;
+use crate::app::session_flow::{self, DefaultRatio, NewUserProfile};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::{
-    LogonChannel, NameTypedOutcome, Session, SessionPolicy, VerifyPasswordOutcome,
+    LogonChannel, NameTypedOutcome, Session, SessionPolicy, SessionState, VerifyPasswordOutcome,
 };
-use crate::domain::user_repository::UserRepository;
+use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
 use super::file_screen_repository::FileScreenRepository;
 use super::telnet_line::{read_telnet_line, EchoMode};
@@ -66,11 +68,61 @@ const NAME_PROMPT: &[u8] = b"\r\nEnter your Name: ";
 /// Sent after a not-found name lookup to invite a retry.
 const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
 
-/// Placeholder line written after the NEWUSERPW screen until the
-/// Slice 20 registration form lands. The session ends gracefully so the
-/// node is released and the caller log records a clean logoff.
-const REGISTRATION_NOT_IMPLEMENTED_LINE: &[u8] =
-    b"New user registration is not yet implemented. Goodbye.\r\n";
+/// Prompt asking a registering user for the handle they want.
+/// Mirrors the wire format of [`NAME_PROMPT`] (CRLF prefix, trailing
+/// space) — `amiexpress/express.e:30141`.
+const REGISTRATION_HANDLE_PROMPT: &[u8] = b"\r\nEnter your Name: ";
+
+/// Sent when the typed handle is `NEW` (reserved) or already taken
+/// during registration. Followed by a fresh handle prompt.
+const HANDLE_TAKEN_LINE: &[u8] = b"That name is taken. Try another.\r\n";
+
+/// Sent when the user has burned through five handle retries during
+/// registration.
+const REGISTRATION_RETRIES_EXHAUSTED_LINE: &[u8] =
+    b"Too many failed registration attempts. Goodbye.\r\n";
+
+/// Prompt for the user's location during registration. Verbatim from
+/// `amiexpress/express.e:30194`.
+const LOCATION_PROMPT: &[u8] = b"City, State: ";
+
+/// Prompt for the user's phone number during registration. Verbatim
+/// from `amiexpress/express.e:30204`.
+const PHONE_PROMPT: &[u8] = b"Phone Number: ";
+
+/// Prompt for the user's email address during registration. Verbatim
+/// from `amiexpress/express.e:30215`.
+const EMAIL_PROMPT: &[u8] = b"E-Mail Address: ";
+
+/// First password prompt during registration. Verbatim from
+/// `amiexpress/express.e:30227`.
+const REGISTRATION_PASSWORD_PROMPT: &[u8] = b"Enter a PassWord: ";
+
+/// Confirmation password prompt during registration. Verbatim from
+/// `amiexpress/express.e:30233`.
+const REGISTRATION_PASSWORD_CONFIRM_PROMPT: &[u8] = b"Reenter the PassWord: ";
+
+/// Sent when the two registration passwords don't match. Verbatim from
+/// `amiexpress/express.e:30237`.
+const PASSWORDS_DO_NOT_MATCH_LINE: &[u8] = b"\r\nPasswords do not match, try again..\r\n";
+
+/// Prompt asking the user for their preferred line length. Simplified
+/// from `amiexpress/express.e:11307` (which streams a 70..2 ladder
+/// before asking).
+const LINE_LENGTH_PROMPT: &[u8] = b"Enter line length (or 0 for Auto): ";
+
+/// Sent when the line-length input doesn't parse as a number in
+/// `0..=255`.
+const INVALID_LINE_LENGTH_LINE: &[u8] = b"Invalid line length.\r\n";
+
+/// Prompt asking whether the user wants ANSI graphics. Simplified from
+/// `amiexpress/express.e:29528`'s `ANSI, RIP or No graphics (A/r/n)?`
+/// — RIP rendering lands in a future toggles slice.
+const ANSI_PROMPT: &[u8] = b"Use ANSI graphics? (Y/n) ";
+
+/// Sent after the registration succeeds; immediately followed by the
+/// menu sequence inherited by every authenticated session.
+const REGISTRATION_COMPLETE_LINE: &[u8] = b"\r\nWelcome aboard!\r\n";
 
 /// Sent when the user has burned through all five name retries.
 const TOO_MANY_RETRIES_LINE: &[u8] = b"Too many failed login attempts. Goodbye.\r\n";
@@ -112,6 +164,7 @@ pub struct TelnetListener {
     listener: TcpListener,
     pool: Arc<NodePool>,
     session_policy: SessionPolicy,
+    default_ratio: DefaultRatio,
     user_repo: SharedUserRepo,
     hasher: SharedHasher,
     caller_log: SharedCallerLog,
@@ -149,10 +202,15 @@ impl TelnetListener {
     ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let pool = Arc::new(NodePool::new(config.max_nodes));
+        let default_ratio = DefaultRatio {
+            mode: config.default_ratio_mode,
+            value: config.default_ratio_value,
+        };
         Ok(Self {
             listener,
             pool,
             session_policy: config.session_policy(),
+            default_ratio,
             user_repo,
             hasher,
             caller_log,
@@ -189,9 +247,19 @@ impl TelnetListener {
             let log = self.caller_log.clone();
             let screens = self.screens.clone();
             let session_policy = self.session_policy;
+            let default_ratio = self.default_ratio;
             tokio::spawn(async move {
-                let _ = handle_connection(stream, pool, repo, hasher, log, screens, session_policy)
-                    .await;
+                let _ = handle_connection(
+                    stream,
+                    pool,
+                    repo,
+                    hasher,
+                    log,
+                    screens,
+                    session_policy,
+                    default_ratio,
+                )
+                .await;
             });
         }
     }
@@ -211,6 +279,7 @@ async fn handle_connection(
     caller_log: SharedCallerLog,
     screens: SharedScreens,
     session_policy: SessionPolicy,
+    default_ratio: DefaultRatio,
 ) -> io::Result<()> {
     let Some(node_number) = pool.allocate().await else {
         stream.write_all(BUSY_LINE).await?;
@@ -226,6 +295,7 @@ async fn handle_connection(
         caller_log.as_ref(),
         screens.as_ref(),
         session_policy,
+        default_ratio,
     )
     .await;
     let _ = pool.release(node_number).await;
@@ -310,6 +380,317 @@ fn handle_carrier_loss(
         .expect("logging_off can finalise");
 }
 
+/// Maximum handle attempts during registration before the session
+/// bails. Mirrors the original AmiExpress `doNewUser` retry budget at
+/// `amiexpress/express.e:30150`.
+const MAX_REGISTRATION_HANDLE_ATTEMPTS: u32 = 5;
+
+/// Writes `prompt`, reads one line, and either returns `Some(line)` or
+/// finalises the session (idle / carrier loss) and returns `None`. The
+/// helper keeps the registration sub-flow readable: every prompt has
+/// the same idle-timeout and EOF semantics as the rest of the listener.
+#[allow(clippy::too_many_arguments)]
+async fn prompt_for_line(
+    stream: &mut TcpStream,
+    pushback: &mut Option<u8>,
+    prompt: &[u8],
+    echo: EchoMode,
+    session: &mut Session,
+    user_repo: &(dyn UserRepository + Send + Sync),
+    caller_log: &(dyn CallerLogAppender + Send + Sync),
+    session_policy: SessionPolicy,
+) -> io::Result<Option<String>> {
+    stream.write_all(prompt).await?;
+    stream.flush().await?;
+    match read_line_with_idle_timeout(
+        stream,
+        pushback,
+        echo,
+        session_policy.input_timeout(),
+        session,
+    )
+    .await?
+    {
+        ReadOutcome::Line(line) => Ok(Some(line)),
+        ReadOutcome::Eof => {
+            handle_carrier_loss(session, user_repo, caller_log);
+            Ok(None)
+        }
+        ReadOutcome::IdleTimedOut => {
+            handle_idle_timeout(stream, session, user_repo, caller_log, session_policy).await?;
+            Ok(None)
+        }
+    }
+}
+
+/// Drives the new-user registration sub-flow
+/// (`session.allium:CompleteNewUserRegistration`, Slice 20).
+///
+/// Displays the NEWUSERPW screen, then collects handle, location,
+/// phone, email, password (with confirmation), line length and ANSI
+/// preference. On success the session has reached
+/// [`SessionState::Onboarded`] and the function returns `Ok(true)` so
+/// the caller falls through into the menu loop. On failure
+/// (idle / carrier / repeated handle collisions) the function ends
+/// the session inline and returns `Ok(false)`.
+#[allow(clippy::too_many_arguments)]
+async fn run_new_user_registration(
+    stream: &mut TcpStream,
+    pushback: &mut Option<u8>,
+    session: &mut Session,
+    user_repo: &(dyn UserRepository + Send + Sync),
+    hasher: &(dyn PasswordHasher + Send + Sync),
+    caller_log: &(dyn CallerLogAppender + Send + Sync),
+    screens: &(dyn ScreenRepository + Send + Sync),
+    session_policy: SessionPolicy,
+    default_ratio: DefaultRatio,
+) -> io::Result<bool> {
+    let screen = screens.new_user_password().await;
+    stream.write_all(&screen).await?;
+
+    let mut attempts: u32 = 0;
+    let handle = loop {
+        if attempts >= MAX_REGISTRATION_HANDLE_ATTEMPTS {
+            stream
+                .write_all(REGISTRATION_RETRIES_EXHAUSTED_LINE)
+                .await?;
+            stream.flush().await?;
+            handle_carrier_loss(session, user_repo, caller_log);
+            return Ok(false);
+        }
+        let Some(typed) = prompt_for_line(
+            stream,
+            pushback,
+            REGISTRATION_HANDLE_PROMPT,
+            EchoMode::Visible,
+            session,
+            user_repo,
+            caller_log,
+            session_policy,
+        )
+        .await?
+        else {
+            return Ok(false);
+        };
+        let trimmed = typed.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("NEW") {
+            stream.write_all(HANDLE_TAKEN_LINE).await?;
+            attempts += 1;
+            continue;
+        }
+        match user_repo.find_by_handle(trimmed) {
+            NameLookupResult::Found(_) | NameLookupResult::UserTypedNew => {
+                stream.write_all(HANDLE_TAKEN_LINE).await?;
+                attempts += 1;
+                continue;
+            }
+            NameLookupResult::NotFound => break trimmed.to_string(),
+        }
+    };
+
+    let location = read_optional_field(
+        stream,
+        pushback,
+        LOCATION_PROMPT,
+        session,
+        user_repo,
+        caller_log,
+        session_policy,
+    )
+    .await?;
+    let location = match location {
+        Some(value) => value,
+        None => return Ok(false),
+    };
+
+    let phone_number = read_optional_field(
+        stream,
+        pushback,
+        PHONE_PROMPT,
+        session,
+        user_repo,
+        caller_log,
+        session_policy,
+    )
+    .await?;
+    let phone_number = match phone_number {
+        Some(value) => value,
+        None => return Ok(false),
+    };
+
+    let email = read_optional_field(
+        stream,
+        pushback,
+        EMAIL_PROMPT,
+        session,
+        user_repo,
+        caller_log,
+        session_policy,
+    )
+    .await?;
+    let email = match email {
+        Some(value) => value,
+        None => return Ok(false),
+    };
+
+    let password = loop {
+        let Some(p1) = prompt_for_line(
+            stream,
+            pushback,
+            REGISTRATION_PASSWORD_PROMPT,
+            EchoMode::Masked,
+            session,
+            user_repo,
+            caller_log,
+            session_policy,
+        )
+        .await?
+        else {
+            return Ok(false);
+        };
+        if p1.trim().is_empty() {
+            // Empty password loops back without bothering with the
+            // confirmation step. Mirrors the legacy `JUMP jLoop4`
+            // behaviour at `amiexpress/express.e:30230`.
+            continue;
+        }
+        let Some(p2) = prompt_for_line(
+            stream,
+            pushback,
+            REGISTRATION_PASSWORD_CONFIRM_PROMPT,
+            EchoMode::Masked,
+            session,
+            user_repo,
+            caller_log,
+            session_policy,
+        )
+        .await?
+        else {
+            return Ok(false);
+        };
+        if p1 == p2 {
+            break p1;
+        }
+        stream.write_all(PASSWORDS_DO_NOT_MATCH_LINE).await?;
+    };
+
+    let line_length = loop {
+        let Some(typed) = prompt_for_line(
+            stream,
+            pushback,
+            LINE_LENGTH_PROMPT,
+            EchoMode::Visible,
+            session,
+            user_repo,
+            caller_log,
+            session_policy,
+        )
+        .await?
+        else {
+            return Ok(false);
+        };
+        let trimmed = typed.trim();
+        if trimmed.is_empty() {
+            break 0;
+        }
+        match trimmed.parse::<u32>() {
+            Ok(value) if value <= 255 => break value,
+            _ => {
+                stream.write_all(INVALID_LINE_LENGTH_LINE).await?;
+            }
+        }
+    };
+
+    let Some(ansi_typed) = prompt_for_line(
+        stream,
+        pushback,
+        ANSI_PROMPT,
+        EchoMode::Visible,
+        session,
+        user_repo,
+        caller_log,
+        session_policy,
+    )
+    .await?
+    else {
+        return Ok(false);
+    };
+    // Default ANSI on unless the user explicitly says No (mirrors
+    // `amiexpress/express.e:29528`'s default to ANSI on).
+    let ansi_colour = !ansi_typed.trim().eq_ignore_ascii_case("N");
+
+    let profile = NewUserProfile {
+        handle,
+        location,
+        phone_number,
+        email,
+        password,
+        line_length,
+        ansi_colour,
+        flags: BTreeSet::new(),
+    };
+    if session_flow::complete_new_user_registration(
+        session,
+        profile,
+        user_repo,
+        hasher,
+        caller_log,
+        default_ratio,
+        session_policy,
+        SystemTime::now(),
+    )
+    .is_err()
+    {
+        // The handle-collision path is filtered above; any remaining
+        // failure (hasher fault, repository fault) bails the session.
+        stream
+            .write_all(REGISTRATION_RETRIES_EXHAUSTED_LINE)
+            .await?;
+        stream.flush().await?;
+        handle_carrier_loss(session, user_repo, caller_log);
+        return Ok(false);
+    }
+    stream.write_all(REGISTRATION_COMPLETE_LINE).await?;
+    stream.flush().await?;
+    Ok(true)
+}
+
+/// Reads one optional registration field (location, phone, email).
+/// Returns `Some(None)` for an empty input, `Some(Some(value))` for a
+/// non-empty input, and `None` when the session has been ended by an
+/// idle timeout or carrier loss.
+#[allow(clippy::too_many_arguments)]
+async fn read_optional_field(
+    stream: &mut TcpStream,
+    pushback: &mut Option<u8>,
+    prompt: &[u8],
+    session: &mut Session,
+    user_repo: &(dyn UserRepository + Send + Sync),
+    caller_log: &(dyn CallerLogAppender + Send + Sync),
+    session_policy: SessionPolicy,
+) -> io::Result<Option<Option<String>>> {
+    let Some(typed) = prompt_for_line(
+        stream,
+        pushback,
+        prompt,
+        EchoMode::Visible,
+        session,
+        user_repo,
+        caller_log,
+        session_policy,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let trimmed = typed.trim();
+    Ok(Some(if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }))
+}
+
 /// Inner per-session loop. Drives the session from the IAC handshake
 /// through banner, name prompt, password and (in later slices) menu.
 #[allow(clippy::too_many_arguments)]
@@ -321,6 +702,7 @@ async fn run_session(
     caller_log: &(dyn CallerLogAppender + Send + Sync),
     screens: &(dyn ScreenRepository + Send + Sync),
     session_policy: SessionPolicy,
+    default_ratio: DefaultRatio,
 ) -> io::Result<()> {
     stream.write_all(IAC_INIT).await?;
 
@@ -381,17 +763,22 @@ async fn run_session(
                 stream.write_all(UNKNOWN_USER_LINE).await?;
             }
             NameTypedOutcome::NewUserRegistering => {
-                let screen = screens.new_user_password().await;
-                stream.write_all(&screen).await?;
-                stream.write_all(REGISTRATION_NOT_IMPLEMENTED_LINE).await?;
-                stream.flush().await?;
-                // Slice 19 only displays the screen; the registration
-                // form lands in Slice 20. End the session via
-                // CarrierLost (the closest spec rule for "we're
-                // bowing out without further input"); FinaliseLogoff
-                // releases the node and writes the logoff entry.
-                handle_carrier_loss(&mut session, user_repo, caller_log);
-                return Ok(());
+                if !run_new_user_registration(
+                    stream,
+                    &mut pushback,
+                    &mut session,
+                    user_repo,
+                    hasher,
+                    caller_log,
+                    screens,
+                    session_policy,
+                    default_ratio,
+                )
+                .await?
+                {
+                    return Ok(());
+                }
+                break;
             }
             NameTypedOutcome::SessionEnded => {
                 stream.write_all(TOO_MANY_RETRIES_LINE).await?;
@@ -401,73 +788,84 @@ async fn run_session(
         }
     }
 
-    // Password verification with retry, lockout and caller-log
-    // (Slices 10 and 11).
-    loop {
-        stream.write_all(PASSWORD_PROMPT).await?;
-        stream.flush().await?;
-        let password = match read_line_with_idle_timeout(
-            stream,
-            &mut pushback,
-            EchoMode::Masked,
-            session_policy.input_timeout(),
-            &mut session,
-        )
-        .await?
-        {
-            ReadOutcome::Line(line) => line,
-            ReadOutcome::Eof => {
-                handle_carrier_loss(&mut session, user_repo, caller_log);
-                return Ok(()); // EOF before password typed
-            }
-            ReadOutcome::IdleTimedOut => {
-                handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
+    // Skip the password prompt for sessions that arrived via the
+    // new-user registration sub-flow (already in Onboarded by the
+    // time we get here).
+    if session.state() == SessionState::Authenticating {
+        // Password verification with retry, lockout and caller-log
+        // (Slices 10 and 11).
+        loop {
+            stream.write_all(PASSWORD_PROMPT).await?;
+            stream.flush().await?;
+            let password = match read_line_with_idle_timeout(
+                stream,
+                &mut pushback,
+                EchoMode::Masked,
+                session_policy.input_timeout(),
+                &mut session,
+            )
+            .await?
+            {
+                ReadOutcome::Line(line) => line,
+                ReadOutcome::Eof => {
+                    handle_carrier_loss(&mut session, user_repo, caller_log);
+                    return Ok(()); // EOF before password typed
+                }
+                ReadOutcome::IdleTimedOut => {
+                    handle_idle_timeout(
+                        stream,
+                        &mut session,
+                        user_repo,
+                        caller_log,
+                        session_policy,
+                    )
                     .await?;
-                return Ok(());
-            }
-        };
+                    return Ok(());
+                }
+            };
 
-        let outcome = session_flow::verify_password(
-            &mut session,
-            password.trim(),
-            user_repo,
-            hasher,
-            caller_log,
-            session_policy,
-            SystemTime::now(),
-        )
-        .expect("session is in authenticating with a user");
-        match outcome {
-            VerifyPasswordOutcome::Authenticated => {
-                stream.write_all(AUTHENTICATED_LINE).await?;
-                stream.flush().await?;
-                break;
-            }
-            VerifyPasswordOutcome::NotMatching => {
-                stream.write_all(WRONG_PASSWORD_LINE).await?;
-                stream.flush().await?;
-                continue;
-            }
-            VerifyPasswordOutcome::AccountLocked => {
-                stream.write_all(b"Account locked. Goodbye.\r\n").await?;
-                stream.flush().await?;
-                return Ok(());
-            }
-            VerifyPasswordOutcome::TooManyFailures => {
-                stream
-                    .write_all(b"Too many password failures. Goodbye.\r\n")
-                    .await?;
-                stream.flush().await?;
-                return Ok(());
-            }
-            VerifyPasswordOutcome::LogonRejected => {
-                // RejectLockedOrInsufficientAccess (Slice 16): the
-                // session has already moved to LoggingOff with the
-                // appropriate reason; the caller log carries the
-                // spec's rejection entry. Greet the user and leave.
-                stream.write_all(b"Logon rejected. Goodbye.\r\n").await?;
-                stream.flush().await?;
-                return Ok(());
+            let outcome = session_flow::verify_password(
+                &mut session,
+                password.trim(),
+                user_repo,
+                hasher,
+                caller_log,
+                session_policy,
+                SystemTime::now(),
+            )
+            .expect("session is in authenticating with a user");
+            match outcome {
+                VerifyPasswordOutcome::Authenticated => {
+                    stream.write_all(AUTHENTICATED_LINE).await?;
+                    stream.flush().await?;
+                    break;
+                }
+                VerifyPasswordOutcome::NotMatching => {
+                    stream.write_all(WRONG_PASSWORD_LINE).await?;
+                    stream.flush().await?;
+                    continue;
+                }
+                VerifyPasswordOutcome::AccountLocked => {
+                    stream.write_all(b"Account locked. Goodbye.\r\n").await?;
+                    stream.flush().await?;
+                    return Ok(());
+                }
+                VerifyPasswordOutcome::TooManyFailures => {
+                    stream
+                        .write_all(b"Too many password failures. Goodbye.\r\n")
+                        .await?;
+                    stream.flush().await?;
+                    return Ok(());
+                }
+                VerifyPasswordOutcome::LogonRejected => {
+                    // RejectLockedOrInsufficientAccess (Slice 16): the
+                    // session has already moved to LoggingOff with the
+                    // appropriate reason; the caller log carries the
+                    // spec's rejection entry. Greet the user and leave.
+                    stream.write_all(b"Logon rejected. Goodbye.\r\n").await?;
+                    stream.flush().await?;
+                    return Ok(());
+                }
             }
         }
     }
@@ -1247,39 +1645,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn new_keyword_displays_fallback_newuserpw_screen_and_disconnects() {
-        // Slice 19: typing NEW transitions the session to
-        // new_user_registering and the listener writes the NEWUSERPW
-        // screen (built-in fallback when no asset is on disk) before
-        // closing. The Slice 20 registration form lands later.
-        let log = Arc::new(InMemoryCallerLog::new());
-        let addr = spawn_listener_with_log(repo_with_alice(), test_config(1), log.clone()).await;
+    async fn new_keyword_displays_fallback_newuserpw_screen_then_prompts_for_handle() {
+        // Slice 19 / Slice 20: typing NEW transitions the session to
+        // new_user_registering, the listener writes the NEWUSERPW
+        // screen (built-in fallback when no asset is on disk), and
+        // then re-prompts for the handle the user wants to register
+        // with.
+        let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"NEW\r\n").await.unwrap();
-        let buf = drain_until(&mut stream, b"not yet implemented").await;
+        let buf =
+            drain_until_both(&mut stream, b"New user registration.", b"Enter your Name: ").await;
         assert!(
             contains(&buf, b"New user registration."),
             "expected NEWUSERPW fallback: {buf:?}"
         );
         assert!(
-            contains(&buf, b"not yet implemented"),
-            "expected slice-20 placeholder: {buf:?}"
-        );
-
-        // Session ends via CarrierLost handler so a logoff entry is
-        // recorded and the node returns to idle.
-        let mut entries = vec![];
-        for _ in 0..50 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-            entries = log.entries();
-            if entries.iter().any(|e| e.text.contains("Logoff:")) {
-                break;
-            }
-        }
-        assert!(
-            entries.iter().any(|e| e.text.contains("Logoff:")),
-            "expected logoff entry after registration screen: {entries:?}"
+            contains(&buf, b"Enter your Name: "),
+            "expected re-prompt for handle: {buf:?}"
         );
     }
 
@@ -1445,6 +1829,165 @@ mod tests {
         assert!(
             contains(&buf, b"MENU CONTENT\r\n"),
             "expected CRLF after translation: {buf:?}"
+        );
+    }
+
+    /// Reads from `stream` until both `a` and `b` have appeared in the
+    /// accumulated buffer (or EOF / 2s of silence).
+    async fn drain_until_both(stream: &mut TcpStream, a: &[u8], b: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut chunk = [0u8; 256];
+        for _ in 0..200 {
+            let read =
+                tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut chunk))
+                    .await;
+            let n = match read {
+                Ok(Ok(n)) => n,
+                _ => 0,
+            };
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&chunk[..n]);
+            if contains(&out, a) && contains(&out, b) {
+                break;
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn full_new_user_registration_lands_in_menu() {
+        // Slice 20: typing NEW, completing every prompt, lands the
+        // session in the menu loop with the freshly created account.
+        let log = Arc::new(InMemoryCallerLog::new());
+        let repo: SharedUserRepo = Arc::new(InMemoryUserRepository::default());
+        let listener = Arc::new(
+            TelnetListener::bind(
+                "127.0.0.1:0",
+                test_config(1),
+                repo.clone(),
+                test_hasher(),
+                log.clone() as SharedCallerLog,
+            )
+            .await
+            .unwrap(),
+        );
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { listener.run().await });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
+        stream.write_all(b"newbie\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, LOCATION_PROMPT).await;
+        stream.write_all(b"Townsville\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PHONE_PROMPT).await;
+        stream.write_all(b"555-0123\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, EMAIL_PROMPT).await;
+        stream.write_all(b"newbie@example.com\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_PASSWORD_PROMPT).await;
+        stream.write_all(b"hunter2\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_PASSWORD_CONFIRM_PROMPT).await;
+        stream.write_all(b"hunter2\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, LINE_LENGTH_PROMPT).await;
+        stream.write_all(b"80\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, ANSI_PROMPT).await;
+        stream.write_all(b"Y\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"Command: ").await;
+        assert!(
+            contains(&buf, b"Welcome aboard"),
+            "expected registration-complete line: {buf:?}"
+        );
+        assert!(
+            contains(&buf, b"Command: "),
+            "expected to reach menu prompt: {buf:?}"
+        );
+
+        // Account persisted with spec defaults.
+        match repo.find_by_handle("newbie") {
+            NameLookupResult::Found(user) => {
+                assert!(user.is_new_user());
+                assert_eq!(user.location(), Some("Townsville"));
+                assert_eq!(user.phone_number(), Some("555-0123"));
+                assert_eq!(user.email(), Some("newbie@example.com"));
+                assert_eq!(user.line_length(), 80);
+                assert!(user.ansi_colour());
+                assert_eq!(user.access_level(), 2);
+            }
+            other => panic!("expected newbie to be created, got {other:?}"),
+        }
+
+        // Logon caller-log entry recorded for the new user.
+        let entries = log.entries();
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.text.contains("Logon:") && e.text.contains("newbie")),
+            "expected logon entry for new user: {entries:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn registration_with_mismatched_passwords_re_prompts() {
+        let repo: SharedUserRepo = Arc::new(InMemoryUserRepository::default());
+        let listener = Arc::new(
+            TelnetListener::bind(
+                "127.0.0.1:0",
+                test_config(1),
+                repo,
+                test_hasher(),
+                test_caller_log(),
+            )
+            .await
+            .unwrap(),
+        );
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { listener.run().await });
+
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
+        stream.write_all(b"newbie\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, LOCATION_PROMPT).await;
+        stream.write_all(b"Townsville\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PHONE_PROMPT).await;
+        stream.write_all(b"555\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, EMAIL_PROMPT).await;
+        stream.write_all(b"n@example.com\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_PASSWORD_PROMPT).await;
+        stream.write_all(b"hunter2\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_PASSWORD_CONFIRM_PROMPT).await;
+        stream.write_all(b"different\r\n").await.unwrap();
+        // The mismatch line and the re-prompt arrive in either one or
+        // two reads; drain until both have been seen.
+        let buf =
+            drain_until_both(&mut stream, b"do not match", REGISTRATION_PASSWORD_PROMPT).await;
+        assert!(
+            contains(&buf, b"Passwords do not match"),
+            "expected mismatch line: {buf:?}"
+        );
+        assert!(
+            contains(&buf, REGISTRATION_PASSWORD_PROMPT),
+            "expected re-prompt after mismatch: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn registration_rejects_existing_handle_and_reprompts() {
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"NEW\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
+        // alice is already registered.
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let buf = drain_until_both(&mut stream, b"is taken", REGISTRATION_HANDLE_PROMPT).await;
+        assert!(
+            contains(&buf, b"That name is taken"),
+            "expected handle-taken rejection: {buf:?}"
         );
     }
 }

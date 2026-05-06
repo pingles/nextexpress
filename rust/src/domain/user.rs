@@ -4,9 +4,43 @@
 //! reads. Lockout, time accounting, ratios and conference state arrive
 //! in later slices that introduce the rules reading them.
 
+use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use crate::domain::password::PasswordHashKind;
+
+/// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RatioMode {
+    /// Ratio enforcement is off.
+    Disabled,
+    /// Enforce uploads:downloads file count.
+    ByFiles,
+    /// Enforce uploads:downloads byte count.
+    ByBytes,
+}
+
+/// Bit-flag preferences persisted on a user record
+/// (spec: `core.allium:UserFlag`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum UserFlag {
+    /// Show the "new user" greeting once.
+    ShowNewUserMessage,
+    /// Auto-join the first conference on logon.
+    AutoJoinFirstConf,
+    /// Show one-time messages.
+    ShowOneTimeMessages,
+    /// Clear the screen after each message.
+    ScreenClearAfterMessage,
+    /// User has paid; affects screens, not access.
+    IsDonor,
+    /// Use the full-screen editor.
+    EditorFullScreen,
+    /// Show editor prompts.
+    EditorPrompts,
+    /// Check uploads asynchronously in the background.
+    BackgroundFileCheck,
+}
 
 /// A registered BBS user.
 ///
@@ -36,6 +70,16 @@ pub struct User {
     time_used_today: Duration,
     times_called_today: u32,
     force_password_reset: bool,
+    is_new_user: bool,
+    location: Option<String>,
+    phone_number: Option<String>,
+    email: Option<String>,
+    line_length: u32,
+    ansi_colour: bool,
+    account_created: SystemTime,
+    flags: BTreeSet<UserFlag>,
+    ratio_mode: RatioMode,
+    ratio_value: u32,
 }
 
 impl User {
@@ -83,12 +127,95 @@ impl User {
             time_used_today: Duration::ZERO,
             times_called_today: 0,
             force_password_reset: false,
+            is_new_user: false,
+            location: None,
+            phone_number: None,
+            email: None,
+            line_length: 0,
+            ansi_colour: false,
+            account_created: password_last_updated,
+            flags: BTreeSet::new(),
+            ratio_mode: RatioMode::Disabled,
+            ratio_value: 0,
+        })
+    }
+
+    /// Builds a freshly-registered new user from a completed
+    /// registration profile.
+    ///
+    /// Mirrors the `User.created(...)` consequent of
+    /// `session.allium:CompleteNewUserRegistration` (Slice 20). All
+    /// non-profile fields are set to the spec's exact defaults: access
+    /// level `2`, `is_new_user = true`, `force_password_reset = false`,
+    /// thirty-minute per-call / one-hour per-day allowances, zeroed
+    /// counters, ZMODEM as the preferred protocol (held implicitly
+    /// until Slice 53 introduces the field), and `account_created` /
+    /// `last_call` / `password_last_updated` all set to `now`.
+    ///
+    /// # Errors
+    /// Returns [`UserError::SaltRequired`] when
+    /// `profile.password_hash_kind` is a PBKDF2 variant and
+    /// `profile.password_salt` is `None`. This enforces the spec's
+    /// `SaltMatchesAlgorithm` invariant.
+    pub fn register_new(profile: NewUserRegistration) -> Result<Self, UserError> {
+        let NewUserRegistration {
+            slot_number,
+            handle,
+            location,
+            phone_number,
+            email,
+            password_hash,
+            password_salt,
+            password_hash_kind,
+            line_length,
+            ansi_colour,
+            flags,
+            ratio_mode,
+            ratio_value,
+            now,
+        } = profile;
+        if requires_salt(password_hash_kind) && password_salt.is_none() {
+            return Err(UserError::SaltRequired);
+        }
+        Ok(Self {
+            slot_number,
+            handle,
+            password_hash_kind,
+            password_hash,
+            password_salt,
+            password_last_updated: now,
+            access_level: 2,
+            invalid_attempts: 0,
+            account_locked: false,
+            times_called: 0,
+            last_call: Some(now),
+            time_limit_per_call: Duration::from_secs(30 * 60),
+            time_limit_per_day: Duration::from_secs(60 * 60),
+            time_used_today: Duration::ZERO,
+            times_called_today: 0,
+            force_password_reset: false,
+            is_new_user: true,
+            location,
+            phone_number,
+            email,
+            line_length,
+            ansi_colour,
+            account_created: now,
+            flags,
+            ratio_mode,
+            ratio_value,
         })
     }
 
     /// Returns `true` when this user is the sysop (slot `1`).
     pub fn is_sysop(&self) -> bool {
         self.slot_number == 1
+    }
+
+    /// Returns this user's stable slot number
+    /// (`core.allium:User.slot_number`).
+    pub fn slot_number(&self) -> u32 {
+        self.slot_number
     }
 
     /// Returns the user's handle (login name).
@@ -261,6 +388,63 @@ impl User {
         self.force_password_reset = value;
     }
 
+    /// Returns whether this account is awaiting sysop validation
+    /// (`core.allium:User.is_new_user`). Set by
+    /// `session.allium:CompleteNewUserRegistration` (Slice 20);
+    /// cleared by the sysop validate-user workflow that lands in
+    /// Phase 6.
+    pub fn is_new_user(&self) -> bool {
+        self.is_new_user
+    }
+
+    /// Returns the user's free-text "City, State" location, if any.
+    pub fn location(&self) -> Option<&str> {
+        self.location.as_deref()
+    }
+
+    /// Returns the user's phone number on file, if any.
+    pub fn phone_number(&self) -> Option<&str> {
+        self.phone_number.as_deref()
+    }
+
+    /// Returns the user's email address on file, if any.
+    pub fn email(&self) -> Option<&str> {
+        self.email.as_deref()
+    }
+
+    /// Returns the user's preferred terminal width (`0` = auto).
+    pub fn line_length(&self) -> u32 {
+        self.line_length
+    }
+
+    /// Returns whether the user wants ANSI colour output.
+    pub fn ansi_colour(&self) -> bool {
+        self.ansi_colour
+    }
+
+    /// Returns the timestamp the account was first created.
+    pub fn account_created(&self) -> SystemTime {
+        self.account_created
+    }
+
+    /// Returns the user's preference flags
+    /// (`core.allium:User.flags`).
+    pub fn flags(&self) -> &BTreeSet<UserFlag> {
+        &self.flags
+    }
+
+    /// Returns the ratio enforcement mode in effect for this user.
+    pub fn ratio_mode(&self) -> RatioMode {
+        self.ratio_mode
+    }
+
+    /// Returns the configured ratio threshold (e.g. `3` = three
+    /// downloads per upload). `0` with a non-disabled mode means
+    /// infinite.
+    pub fn ratio_value(&self) -> u32 {
+        self.ratio_value
+    }
+
     /// Atomically replaces the user's stored credentials and clears
     /// [`Self::force_password_reset`].
     ///
@@ -290,6 +474,51 @@ impl User {
         self.password_last_updated = at;
         self.force_password_reset = false;
     }
+}
+
+/// Bundle of fields collected during the new-user registration
+/// sub-flow, plus the freshly computed password hash, that
+/// [`User::register_new`] consumes.
+///
+/// Mirrors the `profile` argument of
+/// `session.allium:CompleteNewUserRegistration`. The slot number and
+/// ratio defaults come from outside the profile (the user
+/// repository's [`crate::domain::user_repository::UserRepository::next_free_slot`]
+/// and `core/config.default_ratio_*`); they are bundled here so
+/// `register_new` has every piece of data the spec rule names without
+/// reaching into other ports.
+#[derive(Debug, Clone)]
+pub struct NewUserRegistration {
+    /// Slot allocated by the user repository.
+    pub slot_number: u32,
+    /// Handle the user typed at the registration prompt.
+    pub handle: String,
+    /// Free-text "City, State" location.
+    pub location: Option<String>,
+    /// Phone number.
+    pub phone_number: Option<String>,
+    /// Email address.
+    pub email: Option<String>,
+    /// Pre-computed password hash bytes.
+    pub password_hash: String,
+    /// Salt the hash was bound to (`None` for hash kinds that don't
+    /// take one).
+    pub password_salt: Option<String>,
+    /// Algorithm used for `password_hash`.
+    pub password_hash_kind: PasswordHashKind,
+    /// Preferred terminal width (`0` = auto).
+    pub line_length: u32,
+    /// Whether the user wants ANSI colour output.
+    pub ansi_colour: bool,
+    /// Initial preference flags.
+    pub flags: BTreeSet<UserFlag>,
+    /// Ratio enforcement mode (`core/config.default_ratio_mode`).
+    pub ratio_mode: RatioMode,
+    /// Ratio threshold (`core/config.default_ratio_value`).
+    pub ratio_value: u32,
+    /// Timestamp recorded as `account_created`, `last_call`, and
+    /// `password_last_updated`.
+    pub now: SystemTime,
 }
 
 /// Errors returned by [`User::new`].
@@ -499,6 +728,92 @@ mod tests {
         assert!(!user.is_locked_out());
         user.lock_account();
         assert!(user.is_locked_out());
+    }
+
+    fn registration() -> NewUserRegistration {
+        NewUserRegistration {
+            slot_number: 7,
+            handle: "newbie".to_string(),
+            location: Some("Townsville".to_string()),
+            phone_number: Some("555-0123".to_string()),
+            email: Some("newbie@example.com".to_string()),
+            password_hash: "hash".to_string(),
+            password_salt: Some("salt".to_string()),
+            password_hash_kind: PasswordHashKind::Pbkdf210000,
+            line_length: 80,
+            ansi_colour: true,
+            flags: BTreeSet::new(),
+            ratio_mode: RatioMode::ByFiles,
+            ratio_value: 3,
+            now: SystemTime::UNIX_EPOCH + Duration::from_secs(1_000),
+        }
+    }
+
+    #[test]
+    fn register_new_applies_spec_defaults_for_a_fresh_account() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let user = User::register_new(registration()).expect("valid");
+        // Identity carried from profile.
+        assert_eq!(user.slot_number, 7);
+        assert_eq!(user.handle(), "newbie");
+        assert_eq!(user.location(), Some("Townsville"));
+        assert_eq!(user.phone_number(), Some("555-0123"));
+        assert_eq!(user.email(), Some("newbie@example.com"));
+        assert_eq!(user.line_length(), 80);
+        assert!(user.ansi_colour());
+        // Spec defaults.
+        assert_eq!(user.access_level(), 2);
+        assert!(user.is_new_user());
+        assert!(!user.is_account_locked());
+        assert!(!user.force_password_reset());
+        assert_eq!(user.invalid_attempts(), 0);
+        assert_eq!(user.times_called(), 0);
+        assert_eq!(user.times_called_today(), 0);
+        assert_eq!(user.time_used_today(), Duration::ZERO);
+        assert_eq!(user.time_limit_per_call(), Duration::from_secs(30 * 60));
+        assert_eq!(user.time_limit_per_day(), Duration::from_secs(60 * 60));
+        assert_eq!(user.last_call(), Some(now));
+        assert_eq!(user.account_created(), now);
+        assert_eq!(user.password_last_updated(), now);
+        assert_eq!(user.ratio_mode(), RatioMode::ByFiles);
+        assert_eq!(user.ratio_value(), 3);
+        assert!(user.flags().is_empty());
+    }
+
+    #[test]
+    fn register_new_pbkdf2_without_salt_is_rejected() {
+        let mut profile = registration();
+        profile.password_salt = None;
+        let err = User::register_new(profile).expect_err("missing salt should error");
+        assert_eq!(err, UserError::SaltRequired);
+    }
+
+    #[test]
+    fn register_new_user_is_below_lockout_threshold_via_access_level_one() {
+        // The spec sets access_level = 2 for new users; downgrading
+        // exposes the `is_locked_out` predicate boundary.
+        let user = User::register_new(registration()).expect("valid");
+        assert!(!user.is_locked_out(), "level 2 should be allowed through");
+    }
+
+    #[test]
+    fn user_new_defaults_extended_fields_for_existing_accounts() {
+        // Pre-Slice-20 callers (tests, seed sysop) treat the new
+        // fields as off-by-default: not a new user, no contact info,
+        // no flags, ratio disabled.
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(!user.is_new_user());
+        assert!(user.location().is_none());
+        assert!(user.phone_number().is_none());
+        assert!(user.email().is_none());
+        assert_eq!(user.line_length(), 0);
+        assert!(!user.ansi_colour());
+        assert!(user.flags().is_empty());
+        assert_eq!(user.ratio_mode(), RatioMode::Disabled);
+        assert_eq!(user.ratio_value(), 0);
+        // account_created mirrors password_last_updated for legacy
+        // construction; the registration constructor sets `now`.
+        assert_eq!(user.account_created(), user.password_last_updated());
     }
 
     #[test]

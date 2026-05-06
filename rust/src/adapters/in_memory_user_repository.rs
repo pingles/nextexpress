@@ -31,7 +31,7 @@ impl UserRepository for InMemoryUserRepository {
         }
         let users = self.users.lock().expect("user repository mutex");
         if let Some(user) = users.iter().find(|u| u.handle() == typed) {
-            NameLookupResult::Found(user.clone())
+            NameLookupResult::Found(Box::new(user.clone()))
         } else {
             NameLookupResult::NotFound
         }
@@ -45,6 +45,22 @@ impl UserRepository for InMemoryUserRepository {
             });
         };
         *existing = user;
+        Ok(())
+    }
+
+    fn next_free_slot(&self) -> u32 {
+        let users = self.users.lock().expect("user repository mutex");
+        users.iter().map(User::slot_number).max().unwrap_or(0) + 1
+    }
+
+    fn create(&self, user: User) -> Result<(), UserRepositoryError> {
+        let mut users = self.users.lock().expect("user repository mutex");
+        if users.iter().any(|u| u.handle() == user.handle()) {
+            return Err(UserRepositoryError::DuplicateUser {
+                handle: user.handle().to_string(),
+            });
+        }
+        users.push(user);
         Ok(())
     }
 }
@@ -128,6 +144,47 @@ mod tests {
             error,
             UserRepositoryError::UserNotFound {
                 handle: "bob".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn next_free_slot_starts_at_one_when_empty() {
+        let repo = InMemoryUserRepository::default();
+        assert_eq!(repo.next_free_slot(), 1);
+    }
+
+    #[test]
+    fn next_free_slot_returns_one_above_max_used() {
+        let repo = InMemoryUserRepository::new(vec![
+            user_with_handle(1, "sysop"),
+            user_with_handle(7, "alice"),
+            user_with_handle(3, "bob"),
+        ]);
+        assert_eq!(repo.next_free_slot(), 8);
+    }
+
+    #[test]
+    fn create_adds_user_when_handle_is_unique() {
+        let repo = InMemoryUserRepository::new(vec![user_with_handle(1, "sysop")]);
+        repo.create(user_with_handle(2, "alice")).expect("create");
+        assert!(matches!(
+            repo.find_by_handle("alice"),
+            NameLookupResult::Found(_)
+        ));
+        assert_eq!(repo.next_free_slot(), 3);
+    }
+
+    #[test]
+    fn create_rejects_duplicate_handle() {
+        let repo = InMemoryUserRepository::new(vec![user_with_handle(1, "alice")]);
+        let err = repo
+            .create(user_with_handle(2, "alice"))
+            .expect_err("duplicate should error");
+        assert_eq!(
+            err,
+            UserRepositoryError::DuplicateUser {
+                handle: "alice".to_string()
             }
         );
     }

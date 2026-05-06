@@ -11,6 +11,7 @@ use std::time::Duration;
 use serde::{Deserialize, Deserializer};
 
 use crate::domain::session::SessionPolicy;
+use crate::domain::user::RatioMode;
 
 /// Default TCP port the telnet listener binds on (`core.allium:config.port`).
 const DEFAULT_PORT: u16 = 2323;
@@ -96,6 +97,16 @@ pub struct Config {
     /// (spec: `core.allium:config.treat_timeout_as_logoff`,
     /// default `false`).
     pub treat_timeout_as_logoff: bool,
+    /// Default ratio enforcement mode applied to accounts created via
+    /// the new-user registration flow
+    /// (spec: `core.allium:config.default_ratio_mode`,
+    /// default `by_files`).
+    #[serde(deserialize_with = "deserialize_ratio_mode")]
+    pub default_ratio_mode: RatioMode,
+    /// Default ratio threshold applied to accounts created via the
+    /// new-user registration flow
+    /// (spec: `core.allium:config.default_ratio_value`, default `3`).
+    pub default_ratio_value: u32,
 }
 
 impl Default for Config {
@@ -111,6 +122,8 @@ impl Default for Config {
             min_password_categories: 0,
             input_timeout: DEFAULT_INPUT_TIMEOUT,
             treat_timeout_as_logoff: false,
+            default_ratio_mode: RatioMode::ByFiles,
+            default_ratio_value: 3,
         }
     }
 }
@@ -123,6 +136,23 @@ where
 {
     let raw = String::deserialize(deserializer)?;
     parse_duration_string(&raw).map_err(serde::de::Error::custom)
+}
+
+/// Parses a [`RatioMode`] from one of the spec's enum names: `disabled`,
+/// `by_files`, or `by_bytes`.
+fn deserialize_ratio_mode<'de, D>(deserializer: D) -> Result<RatioMode, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = String::deserialize(deserializer)?;
+    match raw.as_str() {
+        "disabled" => Ok(RatioMode::Disabled),
+        "by_files" => Ok(RatioMode::ByFiles),
+        "by_bytes" => Ok(RatioMode::ByBytes),
+        other => Err(serde::de::Error::custom(format!(
+            "unknown ratio_mode '{other}': expected disabled, by_files, or by_bytes"
+        ))),
+    }
 }
 
 /// Parses an integer-prefixed duration suffixed with `s`, `m`, `h`, or
@@ -330,6 +360,8 @@ mod tests {
             min_password_categories = 3
             input_timeout = "2m"
             treat_timeout_as_logoff = true
+            default_ratio_mode = "by_bytes"
+            default_ratio_value = 5
         "#;
         let config = Config::from_toml_str(toml).expect("parse");
         assert_eq!(config.port, 9999);
@@ -342,6 +374,21 @@ mod tests {
         assert_eq!(config.min_password_categories, 3);
         assert_eq!(config.input_timeout, Duration::from_secs(120));
         assert!(config.treat_timeout_as_logoff);
+        assert_eq!(config.default_ratio_mode, RatioMode::ByBytes);
+        assert_eq!(config.default_ratio_value, 5);
+    }
+
+    #[test]
+    fn default_ratio_mode_is_by_files_with_threshold_three() {
+        let defaults = Config::default();
+        assert_eq!(defaults.default_ratio_mode, RatioMode::ByFiles);
+        assert_eq!(defaults.default_ratio_value, 3);
+    }
+
+    #[test]
+    fn from_toml_str_rejects_unknown_ratio_mode() {
+        let toml = r#"default_ratio_mode = "bogus""#;
+        assert!(Config::from_toml_str(toml).is_err());
     }
 
     #[test]
@@ -371,6 +418,8 @@ mod tests {
             config.treat_timeout_as_logoff,
             defaults.treat_timeout_as_logoff
         );
+        assert_eq!(config.default_ratio_mode, defaults.default_ratio_mode);
+        assert_eq!(config.default_ratio_value, defaults.default_ratio_value);
     }
 
     #[test]
