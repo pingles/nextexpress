@@ -35,6 +35,7 @@ pub struct User {
     time_limit_per_day: Duration,
     time_used_today: Duration,
     times_called_today: u32,
+    force_password_reset: bool,
 }
 
 impl User {
@@ -81,6 +82,7 @@ impl User {
             time_limit_per_day: Duration::ZERO,
             time_used_today: Duration::ZERO,
             times_called_today: 0,
+            force_password_reset: false,
         })
     }
 
@@ -219,6 +221,58 @@ impl User {
     /// `session.allium:UpdateTimeUsed` (Slice 14).
     pub fn add_time_used_today(&mut self, elapsed: Duration) {
         self.time_used_today = self.time_used_today.saturating_add(elapsed);
+    }
+
+    /// Returns the timestamp the user's password hash was last
+    /// rotated. Used by `session.allium:ForcePasswordReset` to detect
+    /// expiry against `core/config.password_expiry_days` (Slice 15).
+    pub fn password_last_updated(&self) -> SystemTime {
+        self.password_last_updated
+    }
+
+    /// Returns whether the next logon must force the user through the
+    /// password-change sub-flow (`session.allium:Session.user.force_password_reset`,
+    /// Slice 15). Set by `ForcePasswordReset`, cleared by
+    /// `CompletePasswordReset`.
+    pub fn force_password_reset(&self) -> bool {
+        self.force_password_reset
+    }
+
+    /// Sets [`Self::force_password_reset`]. Used by
+    /// `session.allium:ForcePasswordReset` (Slice 15) and by sysop
+    /// admin tooling.
+    pub fn set_force_password_reset(&mut self, value: bool) {
+        self.force_password_reset = value;
+    }
+
+    /// Atomically replaces the user's stored credentials and clears
+    /// [`Self::force_password_reset`].
+    ///
+    /// Mirrors the `ensures` block of
+    /// `session.allium:CompletePasswordReset` (Slice 15): updates
+    /// `password_hash`, `password_salt`, `password_hash_kind`,
+    /// `password_last_updated`, and resets `force_password_reset`.
+    ///
+    /// # Parameters
+    /// - `hash`: opaque output of [`PasswordHasher::compute_password_hash`].
+    /// - `salt`: salt the hash was bound to (`None` for hash kinds
+    ///   that don't take a salt).
+    /// - `kind`: algorithm used for `hash`.
+    /// - `at`: timestamp the change happened.
+    ///
+    /// [`PasswordHasher::compute_password_hash`]: crate::domain::password::PasswordHasher::compute_password_hash
+    pub fn record_password_change(
+        &mut self,
+        hash: String,
+        salt: Option<String>,
+        kind: PasswordHashKind,
+        at: SystemTime,
+    ) {
+        self.password_hash = hash;
+        self.password_salt = salt;
+        self.password_hash_kind = kind;
+        self.password_last_updated = at;
+        self.force_password_reset = false;
     }
 }
 
@@ -362,5 +416,38 @@ mod tests {
         user.add_time_used_today(Duration::from_secs(30));
         user.add_time_used_today(Duration::from_secs(45));
         assert_eq!(user.time_used_today(), Duration::from_secs(75));
+    }
+
+    #[test]
+    fn new_user_does_not_force_password_reset() {
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(!user.force_password_reset());
+    }
+
+    #[test]
+    fn set_force_password_reset_round_trips() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.set_force_password_reset(true);
+        assert!(user.force_password_reset());
+        user.set_force_password_reset(false);
+        assert!(!user.force_password_reset());
+    }
+
+    #[test]
+    fn record_password_change_updates_credentials_and_clears_flag() {
+        let mut user = make_user(2, Some("old_salt".to_string())).unwrap();
+        user.set_force_password_reset(true);
+        let later = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        user.record_password_change(
+            "new_hash".to_string(),
+            Some("new_salt".to_string()),
+            PasswordHashKind::Pbkdf210000,
+            later,
+        );
+        assert_eq!(user.password_hash(), "new_hash");
+        assert_eq!(user.password_salt(), Some("new_salt"));
+        assert_eq!(user.password_hash_kind(), PasswordHashKind::Pbkdf210000);
+        assert_eq!(user.password_last_updated(), later);
+        assert!(!user.force_password_reset());
     }
 }

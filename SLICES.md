@@ -229,7 +229,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 13 | `UserRequestsLogoff` + `FinaliseLogoff` + `ReleaseNode` | Done |
 | 13a | Phase 1 wire-and-smoke (composition root + sysop seed) | Done |
 | 14 | Daily time budget initialisation + decrement | Done |
-| 15 | Forced password reset | Todo |
+| 15 | Forced password reset | Done |
 | 16 | Account-locked / insufficient-access rejection | Todo |
 | 17 | Idle timeout | Todo |
 | 18 | Carrier loss | Todo |

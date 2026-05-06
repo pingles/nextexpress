@@ -8,7 +8,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::domain::caller_log::CallerLog;
-use crate::domain::password::PasswordError;
+use crate::domain::password::{PasswordError, PasswordHashKind};
 use crate::domain::user::User;
 
 /// Maximum number of unknown handle entries before a session is ended.
@@ -81,11 +81,15 @@ pub enum PasswordFailureDecision {
 pub struct SessionPolicy {
     max_password_failures: u32,
     daily_reset_offset: Duration,
+    password_expiry_days: u32,
+    min_password_length: u32,
+    min_password_categories: u32,
 }
 
 impl SessionPolicy {
     /// Constructs a session policy with the spec-default
-    /// [`Self::daily_reset_offset`] of six hours.
+    /// [`Self::daily_reset_offset`] of six hours, expiry disabled and
+    /// no password-strength enforcement.
     ///
     /// # Parameters
     /// - `max_password_failures`: the number of consecutive bad
@@ -93,11 +97,16 @@ impl SessionPolicy {
     ///
     /// # Returns
     /// A [`SessionPolicy`] carrying the supplied password-failure
-    /// limit and a six-hour daily reset offset.
+    /// limit, a six-hour daily reset offset, and zeros for the
+    /// password-expiry / strength knobs (Slice 15 disables them by
+    /// default).
     pub fn new(max_password_failures: u32) -> Self {
         Self {
             max_password_failures,
             daily_reset_offset: DEFAULT_DAILY_RESET_OFFSET,
+            password_expiry_days: 0,
+            min_password_length: 0,
+            min_password_categories: 0,
         }
     }
 
@@ -111,6 +120,46 @@ impl SessionPolicy {
     /// Returns the configured daily reset offset (Slice 14).
     pub fn daily_reset_offset(&self) -> Duration {
         self.daily_reset_offset
+    }
+
+    /// Returns a copy of `self` with [`Self::password_expiry_days`]
+    /// replaced by `days`. `0` disables expiry.
+    pub fn with_password_expiry_days(mut self, days: u32) -> Self {
+        self.password_expiry_days = days;
+        self
+    }
+
+    /// Returns the configured password expiry, in days (Slice 15).
+    /// `0` disables expiry.
+    pub fn password_expiry_days(&self) -> u32 {
+        self.password_expiry_days
+    }
+
+    /// Returns a copy of `self` with [`Self::min_password_length`]
+    /// replaced by `length`. `0` disables the length check.
+    pub fn with_min_password_length(mut self, length: u32) -> Self {
+        self.min_password_length = length;
+        self
+    }
+
+    /// Returns the configured minimum password length (Slice 15).
+    /// `0` disables the length check.
+    pub fn min_password_length(&self) -> u32 {
+        self.min_password_length
+    }
+
+    /// Returns a copy of `self` with [`Self::min_password_categories`]
+    /// replaced by `categories`. `0` disables the category check;
+    /// values above `4` are treated as `4`.
+    pub fn with_min_password_categories(mut self, categories: u32) -> Self {
+        self.min_password_categories = categories;
+        self
+    }
+
+    /// Returns the configured minimum password categories (Slice 15).
+    /// `0` disables the category check.
+    pub fn min_password_categories(&self) -> u32 {
+        self.min_password_categories
     }
 
     /// Decides what should happen after a password failure has been
@@ -509,19 +558,19 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`EnterMenuError::WrongState`] when not in
-    /// [`SessionState::Onboarded`] or
-    /// [`EnterMenuError::UserMissing`] when no user is bound.
+    /// [`SessionState::Onboarded`],
+    /// [`EnterMenuError::UserMissing`] when no user is bound, or
+    /// [`EnterMenuError::PasswordResetPending`] when the bound
+    /// user has `force_password_reset` set (Slice 15).
     pub fn enter_menu(&mut self, now: SystemTime) -> Result<CallerLog, EnterMenuError> {
         if self.state != SessionState::Onboarded {
             return Err(EnterMenuError::WrongState(self.state));
         }
-        if self.user.is_none() {
-            return Err(EnterMenuError::UserMissing);
+        let user = self.user.as_mut().ok_or(EnterMenuError::UserMissing)?;
+        if user.force_password_reset() {
+            return Err(EnterMenuError::PasswordResetPending);
         }
-        self.user
-            .as_mut()
-            .expect("user present")
-            .bump_times_called();
+        user.bump_times_called();
         self.transition_to(SessionState::Menu)
             .expect("onboarded -> menu is permitted");
         let line = format_logon_line(self);
@@ -569,12 +618,12 @@ impl Session {
     /// new-user registration (Slice 20), sysop direct logon (Slice 22)
     /// and local logon (Slice 23). The cluster currently contains:
     ///
-    /// - `session.allium:InitialiseDailyBudget` (Slice 14).
+    /// - `session.allium:InitialiseDailyBudget` (Slice 14),
+    /// - `session.allium:ForcePasswordReset` (Slice 15).
     ///
-    /// Slice 15 adds `ForcePasswordReset` here; Slice 16 adds
-    /// `RejectLockedOrInsufficientAccess`, which can short-circuit
-    /// the session into [`SessionState::LoggingOff`] before the
-    /// remaining rules run.
+    /// Slice 16 adds `RejectLockedOrInsufficientAccess`, which can
+    /// short-circuit the session into [`SessionState::LoggingOff`]
+    /// before the remaining rules run.
     ///
     /// # Panics
     /// Panics if called outside [`SessionState::Onboarded`] or with no
@@ -593,6 +642,86 @@ impl Session {
         );
         self.initialise_daily_budget(now, policy.daily_reset_offset())
             .expect("guards hold immediately after transition to Onboarded");
+        self.force_password_reset_if_due(policy.password_expiry_days(), now)
+            .expect("guards hold immediately after transition to Onboarded");
+    }
+
+    /// `session.allium:ForcePasswordReset` rule (Slice 15).
+    ///
+    /// Sets `user.force_password_reset` when `password_expiry_days >
+    /// 0` and the elapsed time since `password_last_updated` exceeds
+    /// that many days, **or** when the sysop has already set the flag
+    /// on the user. The rule is a no-op for locked accounts (per the
+    /// spec's `requires: not user.account_locked`).
+    ///
+    /// # Errors
+    /// Returns [`ForcePasswordResetError::WrongState`] when the
+    /// session is not in [`SessionState::Onboarded`], or
+    /// [`ForcePasswordResetError::UserMissing`] when no user is
+    /// bound.
+    pub fn force_password_reset_if_due(
+        &mut self,
+        password_expiry_days: u32,
+        now: SystemTime,
+    ) -> Result<(), ForcePasswordResetError> {
+        if self.state != SessionState::Onboarded {
+            return Err(ForcePasswordResetError::WrongState(self.state));
+        }
+        let user = self
+            .user
+            .as_mut()
+            .ok_or(ForcePasswordResetError::UserMissing)?;
+        if user.is_account_locked() {
+            return Ok(());
+        }
+        let already_flagged = user.force_password_reset();
+        let expired = password_expiry_days > 0
+            && now
+                .duration_since(user.password_last_updated())
+                .map(|d| d > Duration::from_secs(u64::from(password_expiry_days) * 86_400))
+                .unwrap_or(false);
+        if expired || already_flagged {
+            user.set_force_password_reset(true);
+        }
+        Ok(())
+    }
+
+    /// Applies `session.allium:CompletePasswordReset` to the bound
+    /// user (Slice 15).
+    ///
+    /// Replaces the user's stored credentials with the freshly
+    /// computed `(hash, salt, kind)` triple, sets
+    /// `password_last_updated = now`, and clears
+    /// `force_password_reset`. The strength check and
+    /// "differs-from-old" check are the caller's responsibility (see
+    /// `app::session_flow::complete_password_reset`).
+    ///
+    /// # Errors
+    /// Returns [`CompletePasswordResetError::WrongState`] when the
+    /// session is not in [`SessionState::Onboarded`],
+    /// [`CompletePasswordResetError::UserMissing`] when no user is
+    /// bound, or [`CompletePasswordResetError::ResetNotPending`]
+    /// when the bound user does not have `force_password_reset`
+    /// set.
+    pub fn apply_password_change(
+        &mut self,
+        hash: String,
+        salt: Option<String>,
+        kind: PasswordHashKind,
+        now: SystemTime,
+    ) -> Result<(), CompletePasswordResetError> {
+        if self.state != SessionState::Onboarded {
+            return Err(CompletePasswordResetError::WrongState(self.state));
+        }
+        let user = self
+            .user
+            .as_mut()
+            .ok_or(CompletePasswordResetError::UserMissing)?;
+        if !user.force_password_reset() {
+            return Err(CompletePasswordResetError::ResetNotPending);
+        }
+        user.record_password_change(hash, salt, kind, now);
+        Ok(())
     }
 
     /// Applies the non-matching branch of `session.allium:VerifyPassword`.
@@ -824,6 +953,10 @@ pub enum EnterMenuError {
     WrongState(SessionState),
     /// No user is bound to the session.
     UserMissing,
+    /// The bound user has `force_password_reset` set; the listener
+    /// must run the password-change sub-flow before retrying
+    /// (`session.allium:CompletePasswordReset`, Slice 15).
+    PasswordResetPending,
 }
 
 impl std::fmt::Display for EnterMenuError {
@@ -831,6 +964,10 @@ impl std::fmt::Display for EnterMenuError {
         match self {
             Self::WrongState(s) => write!(f, "enter_menu in unexpected state: {s:?}"),
             Self::UserMissing => write!(f, "enter_menu called without a bound user"),
+            Self::PasswordResetPending => write!(
+                f,
+                "enter_menu blocked: user must complete a forced password reset"
+            ),
         }
     }
 }
@@ -856,6 +993,57 @@ impl std::fmt::Display for InitialiseDailyBudgetError {
 }
 
 impl std::error::Error for InitialiseDailyBudgetError {}
+
+/// Errors returned by [`Session::force_password_reset_if_due`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForcePasswordResetError {
+    /// The session is not in [`SessionState::Onboarded`].
+    WrongState(SessionState),
+    /// No user is bound to the session.
+    UserMissing,
+}
+
+impl std::fmt::Display for ForcePasswordResetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => {
+                write!(f, "force_password_reset_if_due in unexpected state: {s:?}")
+            }
+            Self::UserMissing => {
+                write!(f, "force_password_reset_if_due called without a bound user")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ForcePasswordResetError {}
+
+/// Errors returned by [`Session::apply_password_change`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletePasswordResetError {
+    /// The session is not in [`SessionState::Onboarded`].
+    WrongState(SessionState),
+    /// No user is bound to the session.
+    UserMissing,
+    /// The bound user does not have `force_password_reset` set, so
+    /// `CompletePasswordReset` doesn't apply.
+    ResetNotPending,
+}
+
+impl std::fmt::Display for CompletePasswordResetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongState(s) => write!(f, "apply_password_change in unexpected state: {s:?}"),
+            Self::UserMissing => write!(f, "apply_password_change called without a bound user"),
+            Self::ResetNotPending => write!(
+                f,
+                "apply_password_change called when force_password_reset is not set"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CompletePasswordResetError {}
 
 /// Outcome of [`Session::tick_minute`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1668,6 +1856,167 @@ mod tests {
         let outcome = s.tick_minute().unwrap();
         assert_eq!(outcome, TickMinuteOutcome::TimeExpired);
         assert_eq!(s.time_remaining(), Duration::ZERO);
+    }
+
+    #[test]
+    fn force_password_reset_sets_flag_when_expiry_elapsed() {
+        let user = alice();
+        // alice's password_last_updated is UNIX_EPOCH.
+        let mut s = session_at_onboarded_with(user.clone());
+        let now = UNIX_EPOCH + Duration::from_secs(10 * 86_400);
+        s.force_password_reset_if_due(7, now).unwrap();
+        assert!(s.user().unwrap().force_password_reset());
+        // The bound clone of alice that we still hold isn't mutated.
+        assert!(!user.force_password_reset());
+    }
+
+    #[test]
+    fn force_password_reset_keeps_flag_when_expiry_not_elapsed() {
+        let mut s = session_at_onboarded_with(alice());
+        let now = UNIX_EPOCH + Duration::from_secs(3 * 86_400);
+        s.force_password_reset_if_due(7, now).unwrap();
+        assert!(!s.user().unwrap().force_password_reset());
+    }
+
+    #[test]
+    fn force_password_reset_disabled_at_zero_days() {
+        let mut s = session_at_onboarded_with(alice());
+        // Even far in the future, expiry=0 means "disabled".
+        let now = UNIX_EPOCH + Duration::from_secs(1_000 * 86_400);
+        s.force_password_reset_if_due(0, now).unwrap();
+        assert!(!s.user().unwrap().force_password_reset());
+    }
+
+    #[test]
+    fn force_password_reset_preserves_flag_already_set_by_sysop() {
+        let mut user = alice();
+        user.set_force_password_reset(true);
+        let mut s = session_at_onboarded_with(user);
+        // Even with expiry disabled, a pre-set flag survives.
+        s.force_password_reset_if_due(0, UNIX_EPOCH).unwrap();
+        assert!(s.user().unwrap().force_password_reset());
+    }
+
+    #[test]
+    fn force_password_reset_no_op_for_locked_account() {
+        let mut user = alice();
+        user.lock_account();
+        let mut s = session_at_onboarded_with(user);
+        let now = UNIX_EPOCH + Duration::from_secs(1_000 * 86_400);
+        s.force_password_reset_if_due(7, now).unwrap();
+        // Spec: requires not user.account_locked.
+        assert!(!s.user().unwrap().force_password_reset());
+    }
+
+    #[test]
+    fn force_password_reset_outside_onboarded_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .force_password_reset_if_due(7, SystemTime::UNIX_EPOCH)
+            .expect_err("must be onboarded");
+        assert!(matches!(err, ForcePasswordResetError::WrongState(_)));
+    }
+
+    #[test]
+    fn force_password_reset_without_user_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.transition_to(SessionState::Identifying).unwrap();
+        s.transition_to(SessionState::Authenticating).unwrap();
+        s.transition_to(SessionState::Onboarded).unwrap();
+        let err = s
+            .force_password_reset_if_due(7, SystemTime::UNIX_EPOCH)
+            .expect_err("user missing");
+        assert!(matches!(err, ForcePasswordResetError::UserMissing));
+    }
+
+    #[test]
+    fn apply_password_match_fires_force_password_reset_when_expired() {
+        let mut user = alice();
+        user.set_time_limits(Duration::from_secs(60), Duration::from_secs(60));
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", user).unwrap();
+        let policy = SessionPolicy::default().with_password_expiry_days(1);
+        let now = UNIX_EPOCH + Duration::from_secs(7 * 86_400);
+        s.apply_password_match(policy, now).unwrap();
+        assert!(s.user().unwrap().force_password_reset());
+    }
+
+    #[test]
+    fn enter_menu_blocked_when_force_password_reset_set() {
+        let mut user = alice();
+        user.set_force_password_reset(true);
+        let mut s = session_at_onboarded_with(user);
+        let err = s
+            .enter_menu(SystemTime::UNIX_EPOCH)
+            .expect_err("flag should block enter_menu");
+        assert!(matches!(err, EnterMenuError::PasswordResetPending));
+        assert_eq!(s.state(), SessionState::Onboarded);
+        assert_eq!(s.user().unwrap().times_called(), 0);
+    }
+
+    #[test]
+    fn apply_password_change_replaces_credentials_and_clears_flag() {
+        let mut user = alice();
+        user.set_force_password_reset(true);
+        let mut s = session_at_onboarded_with(user);
+        let later = UNIX_EPOCH + Duration::from_secs(5_000);
+        s.apply_password_change(
+            "fresh".to_string(),
+            Some("freshsalt".to_string()),
+            PasswordHashKind::Pbkdf210000,
+            later,
+        )
+        .unwrap();
+        let saved = s.user().unwrap();
+        assert_eq!(saved.password_hash(), "fresh");
+        assert_eq!(saved.password_salt(), Some("freshsalt"));
+        assert_eq!(saved.password_last_updated(), later);
+        assert!(!saved.force_password_reset());
+    }
+
+    #[test]
+    fn apply_password_change_unblocks_enter_menu() {
+        let mut user = alice();
+        user.set_force_password_reset(true);
+        let mut s = session_at_onboarded_with(user);
+        s.apply_password_change(
+            "fresh".to_string(),
+            Some("freshsalt".to_string()),
+            PasswordHashKind::Pbkdf210000,
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(s.state(), SessionState::Menu);
+    }
+
+    #[test]
+    fn apply_password_change_outside_onboarded_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .apply_password_change(
+                "fresh".to_string(),
+                None,
+                PasswordHashKind::Pbkdf210000,
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect_err("must be onboarded");
+        assert!(matches!(err, CompletePasswordResetError::WrongState(_)));
+    }
+
+    #[test]
+    fn apply_password_change_without_pending_reset_errors() {
+        let mut s = session_at_onboarded_with(alice()); // flag NOT set.
+        let err = s
+            .apply_password_change(
+                "fresh".to_string(),
+                None,
+                PasswordHashKind::Pbkdf210000,
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect_err("flag not set");
+        assert!(matches!(err, CompletePasswordResetError::ResetNotPending));
     }
 
     #[test]

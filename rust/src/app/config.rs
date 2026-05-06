@@ -60,6 +60,24 @@ pub struct Config {
     /// `s`, `m`, `h`, `d`.
     #[serde(deserialize_with = "deserialize_duration")]
     pub daily_reset_offset: Duration,
+    /// Number of days after which a password is considered expired
+    /// and `force_password_reset` is set on the user
+    /// (spec: `core.allium:config.password_expiry_days`, default `0`
+    /// = disabled).
+    pub password_expiry_days: u32,
+    /// Minimum length of a new password when the strength check
+    /// runs (spec: `core.allium:config.min_password_length`,
+    /// default `0` = disabled). Mirrors the legacy
+    /// `MIN_PASSWORD_LENGTH` tooltype at `amiexpress/express.e:910`.
+    pub min_password_length: u32,
+    /// Minimum number of distinct character categories — lowercase
+    /// letters, uppercase letters, digits, symbols — a new
+    /// password must include
+    /// (spec: `core.allium:config.min_password_categories`,
+    /// default `0` = disabled). Values above `4` are clamped to
+    /// `4`. Mirrors the legacy `MIN_PASSWORD_STRENGTH` tooltype at
+    /// `amiexpress/express.e:915`.
+    pub min_password_categories: u32,
 }
 
 impl Default for Config {
@@ -70,6 +88,9 @@ impl Default for Config {
             bbs_path: PathBuf::from("."),
             max_password_failures: DEFAULT_MAX_PASSWORD_FAILURES,
             daily_reset_offset: DEFAULT_DAILY_RESET_OFFSET,
+            password_expiry_days: 0,
+            min_password_length: 0,
+            min_password_categories: 0,
         }
     }
 }
@@ -156,11 +177,16 @@ impl Config {
     /// Converts runtime config into session-domain policy.
     ///
     /// # Returns
-    /// A [`SessionPolicy`] containing the configured
-    /// `max_password_failures` limit and `daily_reset_offset`.
+    /// A [`SessionPolicy`] threading every session-time policy value
+    /// the config exposes: `max_password_failures`,
+    /// `daily_reset_offset`, `password_expiry_days`,
+    /// `min_password_length` and `min_password_categories`.
     pub fn session_policy(&self) -> SessionPolicy {
         SessionPolicy::new(self.max_password_failures)
             .with_daily_reset_offset(self.daily_reset_offset)
+            .with_password_expiry_days(self.password_expiry_days)
+            .with_min_password_length(self.min_password_length)
+            .with_min_password_categories(self.min_password_categories)
     }
 }
 
@@ -277,6 +303,9 @@ mod tests {
             bbs_path = "/srv/bbs"
             max_password_failures = 5
             daily_reset_offset = "3h"
+            password_expiry_days = 90
+            min_password_length = 8
+            min_password_categories = 3
         "#;
         let config = Config::from_toml_str(toml).expect("parse");
         assert_eq!(config.port, 9999);
@@ -284,6 +313,9 @@ mod tests {
         assert_eq!(config.bbs_path, PathBuf::from("/srv/bbs"));
         assert_eq!(config.max_password_failures, 5);
         assert_eq!(config.daily_reset_offset, Duration::from_secs(3 * 3_600));
+        assert_eq!(config.password_expiry_days, 90);
+        assert_eq!(config.min_password_length, 8);
+        assert_eq!(config.min_password_categories, 3);
     }
 
     #[test]
@@ -302,6 +334,34 @@ mod tests {
         assert_eq!(config.bbs_path, defaults.bbs_path);
         assert_eq!(config.max_password_failures, defaults.max_password_failures);
         assert_eq!(config.daily_reset_offset, defaults.daily_reset_offset);
+        assert_eq!(config.password_expiry_days, defaults.password_expiry_days);
+        assert_eq!(config.min_password_length, defaults.min_password_length);
+        assert_eq!(
+            config.min_password_categories,
+            defaults.min_password_categories
+        );
+    }
+
+    #[test]
+    fn default_password_policy_is_disabled() {
+        let defaults = Config::default();
+        assert_eq!(defaults.password_expiry_days, 0);
+        assert_eq!(defaults.min_password_length, 0);
+        assert_eq!(defaults.min_password_categories, 0);
+    }
+
+    #[test]
+    fn session_policy_threads_password_expiry_and_strength() {
+        let config = Config {
+            password_expiry_days: 30,
+            min_password_length: 6,
+            min_password_categories: 3,
+            ..Config::default()
+        };
+        let policy = config.session_policy();
+        assert_eq!(policy.password_expiry_days(), 30);
+        assert_eq!(policy.min_password_length(), 6);
+        assert_eq!(policy.min_password_categories(), 3);
     }
 
     #[test]
