@@ -176,6 +176,43 @@ type SharedCallerLog = Arc<dyn CallerLogAppender + Send + Sync + 'static>;
 /// Type alias for the screen repository the listener reads from.
 type SharedScreens = Arc<dyn ScreenRepository + Send + Sync + 'static>;
 
+#[derive(Clone)]
+struct ListenerRuntime {
+    pool: Arc<NodePool>,
+    user_repo: SharedUserRepo,
+    hasher: SharedHasher,
+    caller_log: SharedCallerLog,
+    screens: SharedScreens,
+    session_policy: SessionPolicy,
+    default_ratio: DefaultRatio,
+    new_user_gate: NewUserGateConfig,
+}
+
+impl ListenerRuntime {
+    fn session_context(&self) -> TelnetSessionContext<'_> {
+        TelnetSessionContext {
+            user_repo: self.user_repo.as_ref(),
+            hasher: self.hasher.as_ref(),
+            caller_log: self.caller_log.as_ref(),
+            screens: self.screens.as_ref(),
+            session_policy: self.session_policy,
+            default_ratio: self.default_ratio,
+            new_user_gate: &self.new_user_gate,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TelnetSessionContext<'a> {
+    user_repo: &'a (dyn UserRepository + Send + Sync),
+    hasher: &'a (dyn PasswordHasher + Send + Sync),
+    caller_log: &'a (dyn CallerLogAppender + Send + Sync),
+    screens: &'a (dyn ScreenRepository + Send + Sync),
+    session_policy: SessionPolicy,
+    default_ratio: DefaultRatio,
+    new_user_gate: &'a NewUserGateConfig,
+}
+
 /// Telnet listener and the application state it drives.
 pub struct TelnetListener {
     listener: TcpListener,
@@ -257,6 +294,19 @@ impl TelnetListener {
         self.pool.clone()
     }
 
+    fn runtime(&self) -> ListenerRuntime {
+        ListenerRuntime {
+            pool: self.pool.clone(),
+            user_repo: self.user_repo.clone(),
+            hasher: self.hasher.clone(),
+            caller_log: self.caller_log.clone(),
+            screens: self.screens.clone(),
+            session_policy: self.session_policy,
+            default_ratio: self.default_ratio,
+            new_user_gate: self.new_user_gate.clone(),
+        }
+    }
+
     /// Accepts connections forever, spawning a per-session task for
     /// each one. Returns only on a listener error.
     ///
@@ -265,27 +315,9 @@ impl TelnetListener {
     pub async fn run(&self) -> io::Result<()> {
         loop {
             let (stream, _peer) = self.listener.accept().await?;
-            let pool = self.pool.clone();
-            let repo = self.user_repo.clone();
-            let hasher = self.hasher.clone();
-            let log = self.caller_log.clone();
-            let screens = self.screens.clone();
-            let session_policy = self.session_policy;
-            let default_ratio = self.default_ratio;
-            let new_user_gate = self.new_user_gate.clone();
+            let runtime = self.runtime();
             tokio::spawn(async move {
-                let _ = handle_connection(
-                    stream,
-                    pool,
-                    repo,
-                    hasher,
-                    log,
-                    screens,
-                    session_policy,
-                    default_ratio,
-                    new_user_gate,
-                )
-                .await;
+                let _ = handle_connection(stream, runtime).await;
             });
         }
     }
@@ -296,37 +328,20 @@ impl TelnetListener {
 /// Splits into "could allocate a node" and "couldn't"; on the happy
 /// path the task lives until the client closes the connection. On the
 /// busy path it writes the busy line and exits.
-#[allow(clippy::too_many_arguments)]
-async fn handle_connection(
-    mut stream: TcpStream,
-    pool: Arc<NodePool>,
-    user_repo: SharedUserRepo,
-    hasher: SharedHasher,
-    caller_log: SharedCallerLog,
-    screens: SharedScreens,
-    session_policy: SessionPolicy,
-    default_ratio: DefaultRatio,
-    new_user_gate: NewUserGateConfig,
-) -> io::Result<()> {
-    let Some(node_number) = pool.allocate().await else {
+async fn handle_connection(mut stream: TcpStream, runtime: ListenerRuntime) -> io::Result<()> {
+    let Some(node_number) = runtime.pool.allocate().await else {
         stream.write_all(BUSY_LINE).await?;
         stream.flush().await?;
         return Ok(());
     };
 
-    let result = run_session(
-        &mut stream,
-        node_number,
-        user_repo.as_ref(),
-        hasher.as_ref(),
-        caller_log.as_ref(),
-        screens.as_ref(),
-        session_policy,
-        default_ratio,
-        &new_user_gate,
-    )
-    .await;
-    let _ = pool.release(node_number).await;
+    let result = {
+        let context = runtime.session_context();
+        TelnetSession::new(&mut stream, node_number, context)
+            .run()
+            .await
+    };
+    let _ = runtime.pool.release(node_number).await;
     result
 }
 
@@ -367,682 +382,432 @@ async fn read_line_with_idle_timeout(
 /// Sent immediately before the connection closes on idle timeout.
 const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
 
-/// Applies `session.allium:IdleTimeout` (Slice 17), finalises the
-/// session, writes the goodbye line, and flushes the socket. The
-/// per-session loop then returns. The rule's `treat_timeout_as_logoff`
-/// branch is selected by the configured [`SessionPolicy`].
-async fn handle_idle_timeout(
-    stream: &mut TcpStream,
-    session: &mut Session,
-    user_repo: &(dyn UserRepository + Send + Sync),
-    caller_log: &(dyn CallerLogAppender + Send + Sync),
-    session_policy: SessionPolicy,
-) -> io::Result<()> {
-    session
-        .apply_idle_timeout(session_policy.treat_timeout_as_logoff())
-        .expect("idle-permitted state when read times out");
-    // FinaliseLogoff handles unauthenticated sessions too — it
-    // skips the user mutation and emits a "?" handle in the log
-    // line, which is what the spec's
-    // `FinaliseUnauthenticatedLogoff` rule prescribes for the
-    // bare-state case.
-    session_flow::finalise_logoff(session, user_repo, caller_log, SystemTime::now())
-        .expect("logging_off can finalise");
-    stream.write_all(IDLE_TIMEOUT_LINE).await?;
-    stream.flush().await?;
-    Ok(())
-}
-
-/// Applies `session.allium:CarrierLost` (Slice 18) when the peer has
-/// closed the TCP connection mid-prompt, then finalises the session.
-/// No goodbye line is written — the connection is already gone.
-fn handle_carrier_loss(
-    session: &mut Session,
-    user_repo: &(dyn UserRepository + Send + Sync),
-    caller_log: &(dyn CallerLogAppender + Send + Sync),
-) {
-    session
-        .apply_carrier_loss()
-        .expect("carrier-permitted state when peer closes");
-    session_flow::finalise_logoff(session, user_repo, caller_log, SystemTime::now())
-        .expect("logging_off can finalise");
-}
-
 /// Maximum handle attempts during registration before the session
 /// bails. Mirrors the original `AmiExpress` `doNewUser` retry budget at
 /// `amiexpress/express.e:30150`.
 const MAX_REGISTRATION_HANDLE_ATTEMPTS: u32 = 5;
 
-/// Writes `prompt`, reads one line, and either returns `Some(line)` or
-/// finalises the session (idle / carrier loss) and returns `None`. The
-/// helper keeps the registration sub-flow readable: every prompt has
-/// the same idle-timeout and EOF semantics as the rest of the listener.
-#[allow(clippy::too_many_arguments)]
-async fn prompt_for_line(
-    stream: &mut TcpStream,
-    pushback: &mut Option<u8>,
-    prompt: &[u8],
-    echo: EchoMode,
-    session: &mut Session,
-    user_repo: &(dyn UserRepository + Send + Sync),
-    caller_log: &(dyn CallerLogAppender + Send + Sync),
-    session_policy: SessionPolicy,
-) -> io::Result<Option<String>> {
-    stream.write_all(prompt).await?;
-    stream.flush().await?;
-    match read_line_with_idle_timeout(
-        stream,
-        pushback,
-        echo,
-        session_policy.input_timeout(),
-        session,
-    )
-    .await?
-    {
-        ReadOutcome::Line(line) => Ok(Some(line)),
-        ReadOutcome::Eof => {
-            handle_carrier_loss(session, user_repo, caller_log);
-            Ok(None)
-        }
-        ReadOutcome::IdleTimedOut => {
-            handle_idle_timeout(stream, session, user_repo, caller_log, session_policy).await?;
-            Ok(None)
-        }
-    }
+struct TelnetSession<'a> {
+    stream: &'a mut TcpStream,
+    pushback: Option<u8>,
+    session: Session,
+    context: TelnetSessionContext<'a>,
 }
 
-/// Drives the new-user registration sub-flow
-/// (`session.allium:CompleteNewUserRegistration`, Slice 20).
-///
-/// Displays the NEWUSERPW screen, runs the new-user password gate
-/// (`session.allium:VerifyNewUserPassword`, Slice 20a) when
-/// `password_required` is `true`, then collects handle, location,
-/// phone, email, password (with confirmation), line length and ANSI
-/// preference. On success the session has reached
-/// [`SessionState::Onboarded`] and the function returns `Ok(true)` so
-/// the caller falls through into the menu loop. On failure
-/// (idle / carrier / repeated handle collisions / gate exhausted)
-/// the function ends the session inline and returns `Ok(false)`.
-#[allow(clippy::too_many_arguments)]
-async fn run_new_user_registration(
-    stream: &mut TcpStream,
-    pushback: &mut Option<u8>,
-    session: &mut Session,
-    user_repo: &(dyn UserRepository + Send + Sync),
-    hasher: &(dyn PasswordHasher + Send + Sync),
-    caller_log: &(dyn CallerLogAppender + Send + Sync),
-    screens: &(dyn ScreenRepository + Send + Sync),
-    session_policy: SessionPolicy,
-    default_ratio: DefaultRatio,
-    new_user_gate: &NewUserGateConfig,
-    password_required: bool,
-) -> io::Result<bool> {
-    let screen = screens.new_user_password().await;
-    stream.write_all(&screen).await?;
-
-    if password_required
-        && !run_new_user_password_gate(
-            stream,
-            pushback,
-            session,
-            user_repo,
-            caller_log,
-            session_policy,
-            new_user_gate,
-        )
-        .await?
-    {
-        return Ok(false);
-    }
-
-    let mut attempts: u32 = 0;
-    let handle = loop {
-        if attempts >= MAX_REGISTRATION_HANDLE_ATTEMPTS {
-            stream
-                .write_all(REGISTRATION_RETRIES_EXHAUSTED_LINE)
-                .await?;
-            stream.flush().await?;
-            handle_carrier_loss(session, user_repo, caller_log);
-            return Ok(false);
-        }
-        let Some(typed) = prompt_for_line(
-            stream,
-            pushback,
-            REGISTRATION_HANDLE_PROMPT,
-            EchoMode::Visible,
-            session,
-            user_repo,
-            caller_log,
-            session_policy,
-        )
-        .await?
-        else {
-            return Ok(false);
-        };
-        let trimmed = typed.trim();
-        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("NEW") {
-            stream.write_all(HANDLE_TAKEN_LINE).await?;
-            attempts += 1;
-            continue;
-        }
-        match user_repo.find_by_handle(trimmed) {
-            NameLookupResult::Found(_) | NameLookupResult::UserTypedNew => {
-                stream.write_all(HANDLE_TAKEN_LINE).await?;
-                attempts += 1;
-                continue;
-            }
-            NameLookupResult::NotFound => break trimmed.to_string(),
-        }
-    };
-
-    let location = read_optional_field(
-        stream,
-        pushback,
-        LOCATION_PROMPT,
-        session,
-        user_repo,
-        caller_log,
-        session_policy,
-    )
-    .await?;
-    let location = match location {
-        Some(value) => value,
-        None => return Ok(false),
-    };
-
-    let phone_number = read_optional_field(
-        stream,
-        pushback,
-        PHONE_PROMPT,
-        session,
-        user_repo,
-        caller_log,
-        session_policy,
-    )
-    .await?;
-    let phone_number = match phone_number {
-        Some(value) => value,
-        None => return Ok(false),
-    };
-
-    let email = read_optional_field(
-        stream,
-        pushback,
-        EMAIL_PROMPT,
-        session,
-        user_repo,
-        caller_log,
-        session_policy,
-    )
-    .await?;
-    let email = match email {
-        Some(value) => value,
-        None => return Ok(false),
-    };
-
-    let password = loop {
-        let Some(p1) = prompt_for_line(
-            stream,
-            pushback,
-            REGISTRATION_PASSWORD_PROMPT,
-            EchoMode::Masked,
-            session,
-            user_repo,
-            caller_log,
-            session_policy,
-        )
-        .await?
-        else {
-            return Ok(false);
-        };
-        if p1.trim().is_empty() {
-            // Empty password loops back without bothering with the
-            // confirmation step. Mirrors the legacy `JUMP jLoop4`
-            // behaviour at `amiexpress/express.e:30230`.
-            continue;
-        }
-        let Some(p2) = prompt_for_line(
-            stream,
-            pushback,
-            REGISTRATION_PASSWORD_CONFIRM_PROMPT,
-            EchoMode::Masked,
-            session,
-            user_repo,
-            caller_log,
-            session_policy,
-        )
-        .await?
-        else {
-            return Ok(false);
-        };
-        if p1 == p2 {
-            break p1;
-        }
-        stream.write_all(PASSWORDS_DO_NOT_MATCH_LINE).await?;
-    };
-
-    let line_length = loop {
-        let Some(typed) = prompt_for_line(
-            stream,
-            pushback,
-            LINE_LENGTH_PROMPT,
-            EchoMode::Visible,
-            session,
-            user_repo,
-            caller_log,
-            session_policy,
-        )
-        .await?
-        else {
-            return Ok(false);
-        };
-        let trimmed = typed.trim();
-        if trimmed.is_empty() {
-            break 0;
-        }
-        match trimmed.parse::<u32>() {
-            Ok(value) if value <= 255 => break value,
-            _ => {
-                stream.write_all(INVALID_LINE_LENGTH_LINE).await?;
-            }
-        }
-    };
-
-    let Some(ansi_typed) = prompt_for_line(
-        stream,
-        pushback,
-        ANSI_PROMPT,
-        EchoMode::Visible,
-        session,
-        user_repo,
-        caller_log,
-        session_policy,
-    )
-    .await?
-    else {
-        return Ok(false);
-    };
-    // Default ANSI on unless the user explicitly says No (mirrors
-    // `amiexpress/express.e:29528`'s default to ANSI on).
-    let ansi_colour = !ansi_typed.trim().eq_ignore_ascii_case("N");
-
-    let profile = NewUserProfile {
-        handle,
-        location,
-        phone_number,
-        email,
-        password,
-        line_length,
-        ansi_colour,
-        flags: BTreeSet::new(),
-    };
-    if session_flow::complete_new_user_registration(
-        session,
-        profile,
-        user_repo,
-        hasher,
-        caller_log,
-        default_ratio,
-        session_policy,
-        SystemTime::now(),
-    )
-    .is_err()
-    {
-        // The handle-collision path is filtered above; any remaining
-        // failure (hasher fault, repository fault) bails the session.
-        stream
-            .write_all(REGISTRATION_RETRIES_EXHAUSTED_LINE)
-            .await?;
-        stream.flush().await?;
-        handle_carrier_loss(session, user_repo, caller_log);
-        return Ok(false);
-    }
-    stream.write_all(REGISTRATION_COMPLETE_LINE).await?;
-    stream.flush().await?;
-    Ok(true)
-}
-
-/// Drives the new-user password gate
-/// (`session.allium:VerifyNewUserPassword`). Returns `Ok(true)` when
-/// the gate has passed and the registration form should be offered,
-/// `Ok(false)` when the session has been ended (idle, carrier,
-/// retry budget exhausted) and the caller should bow out.
-#[allow(clippy::too_many_arguments)]
-async fn run_new_user_password_gate(
-    stream: &mut TcpStream,
-    pushback: &mut Option<u8>,
-    session: &mut Session,
-    user_repo: &(dyn UserRepository + Send + Sync),
-    caller_log: &(dyn CallerLogAppender + Send + Sync),
-    session_policy: SessionPolicy,
-    new_user_gate: &NewUserGateConfig,
-) -> io::Result<bool> {
-    loop {
-        let Some(typed) = prompt_for_line(
-            stream,
-            pushback,
-            NEW_USER_PASSWORD_PROMPT,
-            EchoMode::Masked,
-            session,
-            user_repo,
-            caller_log,
-            session_policy,
-        )
-        .await?
-        else {
-            return Ok(false);
-        };
-        let outcome = session_flow::verify_new_user_password(
-            session,
-            typed.trim(),
-            new_user_gate,
-            caller_log,
+impl<'a> TelnetSession<'a> {
+    fn new(stream: &'a mut TcpStream, node_number: u32, context: TelnetSessionContext<'a>) -> Self {
+        let session = Session::accept_connection(
+            node_number,
+            LogonChannel::Remote,
+            0,
             SystemTime::now(),
+            None,
         )
-        .expect("session is in new_user_registering and gate is configured");
-        match outcome {
-            NewUserPasswordOutcome::Verified => {
-                stream.write_all(NEW_USER_PASSWORD_OK_LINE).await?;
-                stream.flush().await?;
-                return Ok(true);
-            }
-            NewUserPasswordOutcome::Mismatch => {
-                stream.write_all(NEW_USER_INVALID_PASSWORD_LINE).await?;
-                stream.flush().await?;
-            }
-            NewUserPasswordOutcome::TooManyFailures => {
-                stream.write_all(NEW_USER_EXCESSIVE_FAILURES_LINE).await?;
-                stream.flush().await?;
-                // Session already in LoggingOff via the rule. Finalise.
-                session_flow::finalise_logoff(session, user_repo, caller_log, SystemTime::now())
-                    .expect("session is in logging_off");
-                return Ok(false);
-            }
-        }
-    }
-}
+        .expect("freshly allocated node has no existing session");
 
-/// Reads one optional registration field (location, phone, email).
-/// Returns `Some(None)` for an empty input, `Some(Some(value))` for a
-/// non-empty input, and `None` when the session has been ended by an
-/// idle timeout or carrier loss.
-#[allow(clippy::too_many_arguments)]
-async fn read_optional_field(
-    stream: &mut TcpStream,
-    pushback: &mut Option<u8>,
-    prompt: &[u8],
-    session: &mut Session,
-    user_repo: &(dyn UserRepository + Send + Sync),
-    caller_log: &(dyn CallerLogAppender + Send + Sync),
-    session_policy: SessionPolicy,
-) -> io::Result<Option<Option<String>>> {
-    let Some(typed) = prompt_for_line(
-        stream,
-        pushback,
-        prompt,
-        EchoMode::Visible,
-        session,
-        user_repo,
-        caller_log,
-        session_policy,
-    )
-    .await?
-    else {
-        return Ok(None);
-    };
-    let trimmed = typed.trim();
-    Ok(Some(if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }))
-}
-
-/// Inner per-session loop. Drives the session from the IAC handshake
-/// through banner, name prompt, password and (in later slices) menu.
-#[allow(clippy::too_many_arguments)]
-async fn run_session(
-    stream: &mut TcpStream,
-    node_number: u32,
-    user_repo: &(dyn UserRepository + Send + Sync),
-    hasher: &(dyn PasswordHasher + Send + Sync),
-    caller_log: &(dyn CallerLogAppender + Send + Sync),
-    screens: &(dyn ScreenRepository + Send + Sync),
-    session_policy: SessionPolicy,
-    default_ratio: DefaultRatio,
-    new_user_gate: &NewUserGateConfig,
-) -> io::Result<()> {
-    stream.write_all(IAC_INIT).await?;
-
-    // Single-byte pushback slot owned by this session. Lets
-    // `read_telnet_line` peek at the byte after a CR without
-    // consuming it if it isn't a trailer (see `try_consume_cr_trailer`).
-    let mut pushback: Option<u8> = None;
-
-    // Invoke AcceptConnection. The pool already moved the node to
-    // `Connecting` atomically, so no other session can be active here.
-    let mut session = Session::accept_connection(
-        node_number,
-        LogonChannel::Remote,
-        0,
-        SystemTime::now(),
-        None,
-    )
-    .expect("freshly allocated node has no existing session");
-
-    let banner = screens.banner().await;
-    stream.write_all(&banner).await?;
-    stream.write_all(COPYRIGHT_LINES).await?;
-
-    session
-        .prompt_for_name()
-        .expect("connecting -> identifying");
-
-    loop {
-        stream.write_all(NAME_PROMPT).await?;
-        stream.flush().await?;
-        let typed = match read_line_with_idle_timeout(
+        Self {
             stream,
-            &mut pushback,
-            EchoMode::Visible,
-            session_policy.input_timeout(),
-            &mut session,
-        )
-        .await?
-        {
-            ReadOutcome::Line(line) => line,
-            ReadOutcome::Eof => {
-                handle_carrier_loss(&mut session, user_repo, caller_log);
-                return Ok(()); // EOF before name typed
-            }
-            ReadOutcome::IdleTimedOut => {
-                handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
-                    .await?;
-                return Ok(());
-            }
-        };
-
-        let outcome = session_flow::name_typed(
-            &mut session,
-            typed.trim(),
-            user_repo,
-            new_user_gate,
-            SystemTime::now(),
-        )
-        .expect("session is in identifying");
-        match outcome {
-            NameTypedOutcome::Authenticated => break,
-            NameTypedOutcome::NotFound => {
-                stream.write_all(UNKNOWN_USER_LINE).await?;
-            }
-            NameTypedOutcome::NewUserRegistering { password_required } => {
-                if !run_new_user_registration(
-                    stream,
-                    &mut pushback,
-                    &mut session,
-                    user_repo,
-                    hasher,
-                    caller_log,
-                    screens,
-                    session_policy,
-                    default_ratio,
-                    new_user_gate,
-                    password_required,
-                )
-                .await?
-                {
-                    return Ok(());
-                }
-                break;
-            }
-            NameTypedOutcome::NewUserRegistrationDisallowed => {
-                // Session has already moved to LoggingOff via
-                // RejectDisallowedRegistration. Render the NONEWUSERS
-                // screen (or built-in fall-back), finalise, exit.
-                let screen = screens.no_new_users().await;
-                stream.write_all(&screen).await?;
-                stream.flush().await?;
-                session_flow::finalise_logoff(
-                    &mut session,
-                    user_repo,
-                    caller_log,
-                    SystemTime::now(),
-                )
-                .expect("session is in logging_off");
-                return Ok(());
-            }
-            NameTypedOutcome::SessionEnded => {
-                stream.write_all(TOO_MANY_RETRIES_LINE).await?;
-                stream.flush().await?;
-                return Ok(());
-            }
+            pushback: None,
+            session,
+            context,
         }
     }
 
-    // Skip the password prompt for sessions that arrived via the
-    // new-user registration sub-flow (already in Onboarded by the
-    // time we get here).
-    if session.state() == SessionState::Authenticating {
-        // Password verification with retry, lockout and caller-log
-        // (Slices 10 and 11).
+    async fn run(&mut self) -> io::Result<()> {
+        self.start().await?;
+        if !self.identify().await? {
+            return Ok(());
+        }
+        if self.session.state() == SessionState::Authenticating && !self.authenticate().await? {
+            return Ok(());
+        }
+        self.enter_menu();
+        self.run_menu().await
+    }
+
+    async fn start(&mut self) -> io::Result<()> {
+        self.stream.write_all(IAC_INIT).await?;
+        let banner = self.context.screens.banner().await;
+        self.stream.write_all(&banner).await?;
+        self.stream.write_all(COPYRIGHT_LINES).await?;
+        self.session
+            .prompt_for_name()
+            .expect("connecting -> identifying");
+        Ok(())
+    }
+
+    async fn identify(&mut self) -> io::Result<bool> {
         loop {
-            stream.write_all(PASSWORD_PROMPT).await?;
-            stream.flush().await?;
-            let password = match read_line_with_idle_timeout(
-                stream,
-                &mut pushback,
-                EchoMode::Masked,
-                session_policy.input_timeout(),
-                &mut session,
-            )
-            .await?
-            {
-                ReadOutcome::Line(line) => line,
-                ReadOutcome::Eof => {
-                    handle_carrier_loss(&mut session, user_repo, caller_log);
-                    return Ok(()); // EOF before password typed
-                }
-                ReadOutcome::IdleTimedOut => {
-                    handle_idle_timeout(
-                        stream,
-                        &mut session,
-                        user_repo,
-                        caller_log,
-                        session_policy,
-                    )
-                    .await?;
-                    return Ok(());
-                }
+            let Some(typed) = self.prompt_for_line(NAME_PROMPT, EchoMode::Visible).await? else {
+                return Ok(false);
             };
+            let outcome = session_flow::name_typed(
+                &mut self.session,
+                typed.trim(),
+                self.context.user_repo,
+                self.context.new_user_gate,
+                SystemTime::now(),
+            )
+            .expect("session is in identifying");
+            match outcome {
+                NameTypedOutcome::Authenticated => return Ok(true),
+                NameTypedOutcome::NotFound => {
+                    self.stream.write_all(UNKNOWN_USER_LINE).await?;
+                }
+                NameTypedOutcome::NewUserRegistering { password_required } => {
+                    return self.run_new_user_registration(password_required).await;
+                }
+                NameTypedOutcome::NewUserRegistrationDisallowed => {
+                    self.reject_disallowed_registration().await?;
+                    return Ok(false);
+                }
+                NameTypedOutcome::SessionEnded => {
+                    self.stream.write_all(TOO_MANY_RETRIES_LINE).await?;
+                    self.stream.flush().await?;
+                    return Ok(false);
+                }
+            }
+        }
+    }
 
+    async fn reject_disallowed_registration(&mut self) -> io::Result<()> {
+        let screen = self.context.screens.no_new_users().await;
+        self.stream.write_all(&screen).await?;
+        self.stream.flush().await?;
+        self.finalise_logoff();
+        Ok(())
+    }
+
+    async fn authenticate(&mut self) -> io::Result<bool> {
+        loop {
+            let Some(password) = self
+                .prompt_for_line(PASSWORD_PROMPT, EchoMode::Masked)
+                .await?
+            else {
+                return Ok(false);
+            };
             let outcome = session_flow::verify_password(
-                &mut session,
+                &mut self.session,
                 password.trim(),
-                user_repo,
-                hasher,
-                caller_log,
-                session_policy,
+                self.context.user_repo,
+                self.context.hasher,
+                self.context.caller_log,
+                self.context.session_policy,
                 SystemTime::now(),
             )
             .expect("session is in authenticating with a user");
             match outcome {
                 VerifyPasswordOutcome::Authenticated => {
-                    stream.write_all(AUTHENTICATED_LINE).await?;
-                    stream.flush().await?;
-                    break;
+                    self.stream.write_all(AUTHENTICATED_LINE).await?;
+                    self.stream.flush().await?;
+                    return Ok(true);
                 }
                 VerifyPasswordOutcome::NotMatching => {
-                    stream.write_all(WRONG_PASSWORD_LINE).await?;
-                    stream.flush().await?;
-                    continue;
+                    self.stream.write_all(WRONG_PASSWORD_LINE).await?;
+                    self.stream.flush().await?;
                 }
                 VerifyPasswordOutcome::AccountLocked => {
-                    stream.write_all(b"Account locked. Goodbye.\r\n").await?;
-                    stream.flush().await?;
-                    return Ok(());
+                    self.write_and_flush(b"Account locked. Goodbye.\r\n")
+                        .await?;
+                    return Ok(false);
                 }
                 VerifyPasswordOutcome::TooManyFailures => {
-                    stream
-                        .write_all(b"Too many password failures. Goodbye.\r\n")
+                    self.write_and_flush(b"Too many password failures. Goodbye.\r\n")
                         .await?;
-                    stream.flush().await?;
-                    return Ok(());
+                    return Ok(false);
                 }
                 VerifyPasswordOutcome::LogonRejected => {
-                    // RejectLockedOrInsufficientAccess (Slice 16): the
-                    // session has already moved to LoggingOff with the
-                    // appropriate reason; the caller log carries the
-                    // spec's rejection entry. Greet the user and leave.
-                    stream.write_all(b"Logon rejected. Goodbye.\r\n").await?;
-                    stream.flush().await?;
-                    return Ok(());
+                    self.write_and_flush(b"Logon rejected. Goodbye.\r\n")
+                        .await?;
+                    return Ok(false);
                 }
             }
         }
     }
 
-    // EnterMenu (Slice 12): increment user.times_called, transition
-    // to Menu, write the logon caller-log line and display the menu.
-    session_flow::enter_menu(&mut session, user_repo, caller_log, SystemTime::now())
-        .expect("session is in onboarded with a user");
-
-    // Menu loop (Slice 13). Phase 1 only implements `G` (goodbye).
-    // Future slices add the rest of the legacy AmiExpress menu.
-    loop {
-        let menu = screens.default_menu().await;
-        stream.write_all(&menu).await?;
-        stream.write_all(MENU_PROMPT).await?;
-        stream.flush().await?;
-        let line = match read_line_with_idle_timeout(
-            stream,
-            &mut pushback,
-            EchoMode::Visible,
-            session_policy.input_timeout(),
-            &mut session,
+    fn enter_menu(&mut self) {
+        session_flow::enter_menu(
+            &mut self.session,
+            self.context.user_repo,
+            self.context.caller_log,
+            SystemTime::now(),
         )
-        .await?
-        {
-            ReadOutcome::Line(line) => line,
-            ReadOutcome::Eof => {
-                handle_carrier_loss(&mut session, user_repo, caller_log);
+        .expect("session is in onboarded with a user");
+    }
+
+    async fn run_menu(&mut self) -> io::Result<()> {
+        loop {
+            let menu = self.context.screens.default_menu().await;
+            self.stream.write_all(&menu).await?;
+            let Some(line) = self.prompt_for_line(MENU_PROMPT, EchoMode::Visible).await? else {
                 return Ok(());
+            };
+            if line.trim().eq_ignore_ascii_case("G") {
+                self.session
+                    .user_requests_logoff()
+                    .expect("session is in menu");
+                self.finalise_logoff();
+                self.write_and_flush(GOODBYE_LINE).await?;
+                return Ok(());
+            }
+            self.stream.write_all(UNKNOWN_COMMAND_LINE).await?;
+        }
+    }
+
+    async fn prompt_for_line(
+        &mut self,
+        prompt: &[u8],
+        echo: EchoMode,
+    ) -> io::Result<Option<String>> {
+        self.stream.write_all(prompt).await?;
+        self.stream.flush().await?;
+        match self.read_line(echo).await? {
+            ReadOutcome::Line(line) => Ok(Some(line)),
+            ReadOutcome::Eof => {
+                self.handle_carrier_loss();
+                Ok(None)
             }
             ReadOutcome::IdleTimedOut => {
-                handle_idle_timeout(stream, &mut session, user_repo, caller_log, session_policy)
-                    .await?;
-                return Ok(());
+                self.handle_idle_timeout().await?;
+                Ok(None)
             }
-        };
-        let cmd = line.trim().to_ascii_uppercase();
-        if cmd == "G" {
-            session.user_requests_logoff().expect("session is in menu");
-            session_flow::finalise_logoff(&mut session, user_repo, caller_log, SystemTime::now())
-                .expect("session is in logging_off");
-            stream.write_all(GOODBYE_LINE).await?;
-            stream.flush().await?;
-            return Ok(());
         }
-        stream.write_all(UNKNOWN_COMMAND_LINE).await?;
+    }
+
+    async fn read_line(&mut self, echo: EchoMode) -> io::Result<ReadOutcome> {
+        let timeout = self.context.session_policy.input_timeout();
+        read_line_with_idle_timeout(
+            self.stream,
+            &mut self.pushback,
+            echo,
+            timeout,
+            &mut self.session,
+        )
+        .await
+    }
+
+    async fn handle_idle_timeout(&mut self) -> io::Result<()> {
+        self.session
+            .apply_idle_timeout(self.context.session_policy.treat_timeout_as_logoff())
+            .expect("idle-permitted state when read times out");
+        self.finalise_logoff();
+        self.write_and_flush(IDLE_TIMEOUT_LINE).await
+    }
+
+    fn handle_carrier_loss(&mut self) {
+        self.session
+            .apply_carrier_loss()
+            .expect("carrier-permitted state when peer closes");
+        self.finalise_logoff();
+    }
+
+    fn finalise_logoff(&mut self) {
+        session_flow::finalise_logoff(
+            &mut self.session,
+            self.context.user_repo,
+            self.context.caller_log,
+            SystemTime::now(),
+        )
+        .expect("logging_off can finalise");
+    }
+
+    async fn write_and_flush(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.stream.write_all(bytes).await?;
+        self.stream.flush().await
+    }
+
+    async fn run_new_user_registration(&mut self, password_required: bool) -> io::Result<bool> {
+        let screen = self.context.screens.new_user_password().await;
+        self.stream.write_all(&screen).await?;
+        if password_required && !self.run_new_user_password_gate().await? {
+            return Ok(false);
+        }
+
+        let Some(handle) = self.read_registration_handle().await? else {
+            return Ok(false);
+        };
+        let Some(location) = self.read_optional_field(LOCATION_PROMPT).await? else {
+            return Ok(false);
+        };
+        let Some(phone_number) = self.read_optional_field(PHONE_PROMPT).await? else {
+            return Ok(false);
+        };
+        let Some(email) = self.read_optional_field(EMAIL_PROMPT).await? else {
+            return Ok(false);
+        };
+        let Some(password) = self.read_registration_password().await? else {
+            return Ok(false);
+        };
+        let Some(line_length) = self.read_line_length().await? else {
+            return Ok(false);
+        };
+        let Some(ansi_colour) = self.read_ansi_colour().await? else {
+            return Ok(false);
+        };
+
+        let profile = NewUserProfile {
+            handle,
+            location,
+            phone_number,
+            email,
+            password,
+            line_length,
+            ansi_colour,
+            flags: BTreeSet::new(),
+        };
+        self.complete_new_user_registration(profile).await
+    }
+
+    async fn run_new_user_password_gate(&mut self) -> io::Result<bool> {
+        loop {
+            let Some(typed) = self
+                .prompt_for_line(NEW_USER_PASSWORD_PROMPT, EchoMode::Masked)
+                .await?
+            else {
+                return Ok(false);
+            };
+            let outcome = session_flow::verify_new_user_password(
+                &mut self.session,
+                typed.trim(),
+                self.context.new_user_gate,
+                self.context.caller_log,
+                SystemTime::now(),
+            )
+            .expect("session is in new_user_registering and gate is configured");
+            match outcome {
+                NewUserPasswordOutcome::Verified => {
+                    self.write_and_flush(NEW_USER_PASSWORD_OK_LINE).await?;
+                    return Ok(true);
+                }
+                NewUserPasswordOutcome::Mismatch => {
+                    self.write_and_flush(NEW_USER_INVALID_PASSWORD_LINE).await?;
+                }
+                NewUserPasswordOutcome::TooManyFailures => {
+                    self.write_and_flush(NEW_USER_EXCESSIVE_FAILURES_LINE)
+                        .await?;
+                    self.finalise_logoff();
+                    return Ok(false);
+                }
+            }
+        }
+    }
+
+    async fn read_registration_handle(&mut self) -> io::Result<Option<String>> {
+        let mut attempts: u32 = 0;
+        loop {
+            if attempts >= MAX_REGISTRATION_HANDLE_ATTEMPTS {
+                self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
+                    .await?;
+                self.handle_carrier_loss();
+                return Ok(None);
+            }
+            let Some(typed) = self
+                .prompt_for_line(REGISTRATION_HANDLE_PROMPT, EchoMode::Visible)
+                .await?
+            else {
+                return Ok(None);
+            };
+            let trimmed = typed.trim();
+            let available = !trimmed.is_empty()
+                && matches!(
+                    self.context.user_repo.find_by_handle(trimmed),
+                    NameLookupResult::NotFound
+                );
+            if available {
+                return Ok(Some(trimmed.to_string()));
+            }
+            self.stream.write_all(HANDLE_TAKEN_LINE).await?;
+            attempts += 1;
+        }
+    }
+
+    async fn read_optional_field(&mut self, prompt: &[u8]) -> io::Result<Option<Option<String>>> {
+        let Some(typed) = self.prompt_for_line(prompt, EchoMode::Visible).await? else {
+            return Ok(None);
+        };
+        let trimmed = typed.trim();
+        Ok(Some(if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }))
+    }
+
+    async fn read_registration_password(&mut self) -> io::Result<Option<String>> {
+        loop {
+            let Some(password) = self
+                .prompt_for_line(REGISTRATION_PASSWORD_PROMPT, EchoMode::Masked)
+                .await?
+            else {
+                return Ok(None);
+            };
+            if password.trim().is_empty() {
+                continue;
+            }
+            let Some(confirmed) = self
+                .prompt_for_line(REGISTRATION_PASSWORD_CONFIRM_PROMPT, EchoMode::Masked)
+                .await?
+            else {
+                return Ok(None);
+            };
+            if password == confirmed {
+                return Ok(Some(password));
+            }
+            self.stream.write_all(PASSWORDS_DO_NOT_MATCH_LINE).await?;
+        }
+    }
+
+    async fn read_line_length(&mut self) -> io::Result<Option<u32>> {
+        loop {
+            let Some(typed) = self
+                .prompt_for_line(LINE_LENGTH_PROMPT, EchoMode::Visible)
+                .await?
+            else {
+                return Ok(None);
+            };
+            let trimmed = typed.trim();
+            if trimmed.is_empty() {
+                return Ok(Some(0));
+            }
+            match trimmed.parse::<u32>() {
+                Ok(value) if value <= 255 => return Ok(Some(value)),
+                _ => {
+                    self.stream.write_all(INVALID_LINE_LENGTH_LINE).await?;
+                }
+            }
+        }
+    }
+
+    async fn read_ansi_colour(&mut self) -> io::Result<Option<bool>> {
+        let Some(ansi_typed) = self.prompt_for_line(ANSI_PROMPT, EchoMode::Visible).await? else {
+            return Ok(None);
+        };
+        Ok(Some(!ansi_typed.trim().eq_ignore_ascii_case("N")))
+    }
+
+    async fn complete_new_user_registration(
+        &mut self,
+        profile: NewUserProfile,
+    ) -> io::Result<bool> {
+        if session_flow::complete_new_user_registration(
+            &mut self.session,
+            profile,
+            self.context.user_repo,
+            self.context.hasher,
+            self.context.caller_log,
+            self.context.default_ratio,
+            self.context.session_policy,
+            SystemTime::now(),
+        )
+        .is_err()
+        {
+            self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
+                .await?;
+            self.handle_carrier_loss();
+            return Ok(false);
+        }
+        self.write_and_flush(REGISTRATION_COMPLETE_LINE).await?;
+        Ok(true)
     }
 }
 
