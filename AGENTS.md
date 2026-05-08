@@ -44,5 +44,8 @@ Lean towards hexagonal architecture: core domain components shouldn't depend on 
 
 1. Ensure all tests pass `cargo test`
 2. No compile warnings `cargo build`
-3. Code is formatted `cargo fmt --check`
-4. Clippy has no warnings `cargo clippy -- -D warnings`
+
+Formatting (`cargo fmt`) and clippy (`cargo clippy -- -D warnings`) run
+automatically via Claude Code hooks defined in `.claude/settings.json` — fmt
+runs after every Rust edit, clippy runs at session stop and blocks if there are
+warnings.
