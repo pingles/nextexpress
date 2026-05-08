@@ -42,10 +42,11 @@ table and asset inventory.
 ## Slice 31 — Conference / node bulletins + per-conference menu
 - **In Scope**
   - `conferences.allium:ShowConferenceBulletin` after a join, suppressed under `quick_logon` or during a multi-conf scan.
-  - Menu file resolution: prefer `Conf<n>/menu.txt`, fall back to a system-wide menu.
+  - Per-conference menu resolution: prefer `Conf<n>/menu.txt` over the hard-coded `Conf02/Menu.txt` used pre-Phase-5; fall back to a system-wide menu.
   - Use `defaultbbs/Conf01/menu.txt` as the low-access tier sample fixture.
 - **Out of Scope**
   - User-flag-driven bulletin suppression (`show_one_time_messages`, `screen_clear_after_message`).
+  - Access-level-aware `Menu<N>.txt` walk — already pulled forward to Slice 21 (`amiexpress/express.e:6246` findSecurityScreen).
 
 ## Slice 32 — Explicit `J` (join conference) command
 - **In Scope**

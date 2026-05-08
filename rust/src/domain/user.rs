@@ -20,6 +20,58 @@ pub enum RatioMode {
     ByBytes,
 }
 
+/// Access rights checked by the spec's `has_access(user, right)`
+/// black-box function (catalogued across `conferences.allium`,
+/// `messaging.allium`, and `files.allium`).
+///
+/// Each variant corresponds to a `has_access(_, <right>)` call in a
+/// rule's `requires` clause. The mapping from a [`User`]'s `access_level`
+/// (and other state) to the set of granted rights is the responsibility
+/// of [`User::has_access`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Right {
+    /// `messaging.allium:ReadMail` precondition.
+    ReadMessage,
+    /// `messaging.allium:PostMail` precondition.
+    EnterMessage,
+    /// `messaging.allium:PostCommentToSysop` precondition.
+    CommentToSysop,
+    /// `messaging.allium:EditMailHeader` precondition.
+    MessageEdit,
+    /// `messaging.allium:AttachFileToMail` precondition.
+    AttachFiles,
+    /// `files.allium:BeginDownload` precondition.
+    Download,
+    /// `files.allium:BeginUpload` precondition.
+    Upload,
+    /// `files.allium:CheckDownloadEligibility` time-limit override.
+    OverrideTimeLimit,
+    /// `files.allium:MoveFile` / `DeleteFile` precondition.
+    EditFiles,
+    /// `conferences.allium:CreateConference` precondition.
+    CreateConference,
+}
+
+impl Right {
+    /// Returns every variant in declaration order. Useful for tests
+    /// and any callers that need to iterate the full rights catalogue.
+    #[must_use]
+    pub fn all() -> [Self; 10] {
+        [
+            Self::ReadMessage,
+            Self::EnterMessage,
+            Self::CommentToSysop,
+            Self::MessageEdit,
+            Self::AttachFiles,
+            Self::Download,
+            Self::Upload,
+            Self::OverrideTimeLimit,
+            Self::EditFiles,
+            Self::CreateConference,
+        ]
+    }
+}
+
 /// Bit-flag preferences persisted on a user record
 /// (spec: `core.allium:UserFlag`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -480,6 +532,28 @@ impl User {
         self.validation_status.is_new_user()
     }
 
+    /// Returns whether this user has the given access [`Right`]
+    /// (`conferences.allium:has_access(user, right)`).
+    ///
+    /// While [`Self::is_new_user`] is true the account sits in the
+    /// pending-validation tier defined by Slice 21: only
+    /// [`Right::ReadMessage`] and [`Right::CommentToSysop`] are granted
+    /// — every other right is denied until a sysop validates the
+    /// account.
+    ///
+    /// For validated accounts the per-tier mapping from `access_level`
+    /// to specific rights is not yet modelled; later phases narrow
+    /// this down. Until then a validated user is treated as having
+    /// every right.
+    #[must_use]
+    pub fn has_access(&self, right: Right) -> bool {
+        if self.is_new_user() {
+            matches!(right, Right::ReadMessage | Right::CommentToSysop)
+        } else {
+            true
+        }
+    }
+
     /// Returns the user's free-text "City, State" location, if any.
     #[must_use]
     pub fn location(&self) -> Option<&str> {
@@ -906,6 +980,41 @@ mod tests {
         // account_created mirrors password_last_updated for legacy
         // construction; the registration constructor sets `now`.
         assert_eq!(user.account_created(), user.password_last_updated());
+    }
+
+    #[test]
+    fn new_user_has_only_read_message_and_comment_to_sysop_rights() {
+        // Slice 21: while `is_new_user` is true the account sits in a
+        // pending-validation tier. The black-box `has_access` from
+        // `conferences.allium` grants only the two non-destructive
+        // rights the spec calls out for that tier.
+        let user = User::register_new(registration()).expect("valid");
+        assert!(user.is_new_user());
+        assert!(user.has_access(Right::ReadMessage));
+        assert!(user.has_access(Right::CommentToSysop));
+        assert!(!user.has_access(Right::EnterMessage));
+        assert!(!user.has_access(Right::Download));
+        assert!(!user.has_access(Right::Upload));
+        assert!(!user.has_access(Right::MessageEdit));
+        assert!(!user.has_access(Right::CreateConference));
+        assert!(!user.has_access(Right::EditFiles));
+        assert!(!user.has_access(Right::AttachFiles));
+        assert!(!user.has_access(Right::OverrideTimeLimit));
+    }
+
+    #[test]
+    fn existing_user_has_every_right_until_per_tier_modelling_lands() {
+        // Slice 21 only models the new-user tier; for validated users
+        // every right is granted until later phases narrow the mapping
+        // from `access_level` to specific rights.
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(!user.is_new_user());
+        for right in Right::all() {
+            assert!(
+                user.has_access(right),
+                "existing user should have {right:?}"
+            );
+        }
     }
 
     #[test]

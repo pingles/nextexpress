@@ -539,7 +539,12 @@ impl<'a> TelnetSession<'a> {
 
     async fn run_menu(&mut self) -> io::Result<()> {
         loop {
-            let menu = self.context.screens.default_menu().await;
+            let access_level = self
+                .session
+                .user()
+                .expect("session is in menu with a user")
+                .access_level();
+            let menu = self.context.screens.default_menu(access_level).await;
             self.stream.write_all(&menu).await?;
             let Some(line) = self.prompt_for_line(MENU_PROMPT, EchoMode::Visible).await? else {
                 return Ok(());

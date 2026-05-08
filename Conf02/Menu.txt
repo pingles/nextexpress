@@ -1,0 +1,13 @@
+
+                       -- NEW USER MENU --
+
+  Your account is awaiting validation by the sysop. Until then
+  the following commands are available to you:
+
+    R   Read messages
+    C   Comment to sysop
+    G   Goodbye (log off)
+
+  A sysop will review your registration shortly. Thank you for
+  signing up.
+

@@ -1,0 +1,18 @@
+
+                          -- MAIN MENU --
+
+  MESSAGES                          FILES
+    R   Read messages                 F   File listings
+    M   Mail scan                     D   Download
+    N   New messages                  U   Upload
+    E   Enter message                 Z   Zippy file search
+    C   Comment to sysop              A   Edit flagged files
+
+  CONFERENCES                       SESSION
+    J   Join conference               S   User stats
+    CS  Conference scan               T   Time remaining
+    JM  Join message base             W   Edit user info
+                                      V   View text file
+                                      O   Page sysop
+                                      G   Goodbye (log off)
+

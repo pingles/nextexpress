@@ -14,8 +14,14 @@ pub trait ScreenRepository {
     /// Returns the banner shown immediately after telnet negotiation.
     fn banner(&self) -> ScreenFuture<'_>;
 
-    /// Returns the default conference menu.
-    fn default_menu(&self) -> ScreenFuture<'_>;
+    /// Returns the conference menu screen tailored to the supplied
+    /// `access_level`. Mirrors the legacy `findSecurityScreen` walk
+    /// (`amiexpress/express.e:6246`): the lookup floors `access_level`
+    /// to the nearest multiple of five and tries `Menu<N>.txt` for
+    /// each multiple from there down to `5`, falling back to the
+    /// plain `Menu.txt` and finally to a built-in stub when no asset
+    /// is on disk.
+    fn default_menu(&self, access_level: u8) -> ScreenFuture<'_>;
 
     /// Returns the new-user introduction screen
     /// (`SCREEN_NEWUSERPW`, `amiexpress/express.e:30014`). Rendered to

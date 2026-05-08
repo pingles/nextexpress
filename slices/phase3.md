@@ -41,6 +41,9 @@ table and asset inventory.
 ## Slice 21 — Pending-validation gate
 - **In Scope**
   - When `User.is_new_user`, restrict `access_level` interpretation to a "newuser" tier (no posting, no downloads).
-  - `has_access(user, right)` black-box function plumbed; `read_message` and `comment_to_sysop` granted, others denied.
+  - `has_access(user, right)` black-box function plumbed; `read_message` and `comment_to_sysop` granted, others denied. Validated users currently grant every right; later phases narrow per-tier.
+  - `Right` enum cataloguing every right referenced by `requires` clauses across `conferences.allium`, `messaging.allium`, and `files.allium`.
+  - Pulled forward from Slice 31: per-access-level menu lookup. `ScreenRepository::default_menu` takes the user's `access_level` and walks `Conf02/Menu<N>.txt` from `access_level / 5 * 5` down by 5 to `5`, falling back to `Menu.txt` and the built-in stub. Mirrors `findSecurityScreen` in `amiexpress/express.e:6246`.
 - **Out of Scope**
   - The sysop "validate user" command (lands with the rest of Phase 6 sysop-conference-admin work).
+  - `DEF_SCREENS` / `screenType` / `RIP` variants of the lookup — modern transports collapse these into the plain `.txt` path.
