@@ -26,8 +26,26 @@ Code is written test-first with test driven development:
 
 1. Write a failing test
 2. Write the minimum code to pass the test
-3. Mutate the code to verify tests catch real bugs
-4. Refactor to improve the design
+3. Run `cargo nextest run` to execute the test suite
+4. Run `cargo mutants` to verify tests catch real bugs
+5. Refactor to improve the design
+
+## Mutation Testing
+
+Use `cargo-mutants` to check for insufficient testing on every implementation
+turn. It is configured in `rust/.cargo/mutants.toml` to run tests through
+`cargo-nextest`. Run it from the Rust project directory:
+
+```sh
+cd rust
+cargo mutants
+```
+
+For narrow changes or when a full mutation run is too expensive, still run a
+focused cargo-mutants command such as `cargo mutants --in-diff main...HEAD` or
+`cargo mutants --file path/to/file.rs`. Treat surviving mutants as test gaps:
+add or strengthen tests before completing the turn, or explicitly report why a
+surviving mutant is equivalent or intentionally deferred.
 
 ## Style Guidelines
 
@@ -42,8 +60,10 @@ Lean towards hexagonal architecture: core domain components shouldn't depend on 
 
 ## Before Committing
 
-1. Ensure all tests pass `cargo test`
+1. Ensure all tests pass `cargo nextest run`
 2. No compile warnings `cargo build`
+3. Run doctests with `cargo test --doc`
+4. Check for insufficient tests with `cargo mutants`
 
 Formatting (`cargo fmt`) and clippy (`cargo clippy -- -D warnings`) run
 automatically via Claude Code hooks defined in `.claude/settings.json` — fmt

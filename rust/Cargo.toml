@@ -26,6 +26,10 @@ toml = { version = "0.8", default-features = false, features = ["parse"] }
 [dev-dependencies]
 tempfile = "3.10"
 
+[profile.mutants]
+inherits = "test"
+debug = "none"
+
 [lints.rust]
 unsafe_code = "forbid"
 

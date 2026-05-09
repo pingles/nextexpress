@@ -1,15 +1,14 @@
 # NextExpress build / test entry points.
 #
-# All cargo invocations operate on the rust/ workspace via
-# --manifest-path so the Makefile lives at the repo root regardless of
-# where you run `make` from.
+# Cargo invocations operate on the rust/ workspace so the Makefile lives at the
+# repo root regardless of where you run `make` from.
 
 MANIFEST    := --manifest-path rust/Cargo.toml
 BIN         := nextexpress
 RELEASE_BIN := rust/target/release/$(BIN)
 SOURCES     := $(shell find rust/src -name '*.rs') rust/Cargo.toml rust/Cargo.lock
 
-.PHONY: all build test check fmt clippy clean
+.PHONY: all build test doctest mutants check fmt clippy clean
 
 all: build
 
@@ -24,13 +23,21 @@ $(BIN): $(SOURCES)
 	cp $(RELEASE_BIN) $@
 
 test:
-	cargo test $(MANIFEST)
+	cargo nextest run $(MANIFEST)
+
+doctest:
+	cargo test $(MANIFEST) --doc
+
+mutants:
+	cd rust && cargo mutants
 
 # Mirrors the "Before Committing" checklist in AGENTS.md.
 check:
 	cargo fmt $(MANIFEST) --check
 	cargo clippy $(MANIFEST) --all-targets -- -D warnings
-	cargo test $(MANIFEST)
+	cargo nextest run $(MANIFEST)
+	cargo test $(MANIFEST) --doc
+	cd rust && cargo mutants
 
 fmt:
 	cargo fmt $(MANIFEST)
