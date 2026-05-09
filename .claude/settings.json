@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | grep -q '\\.rs$' && make fmt >/dev/null 2>&1 || true",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | grep -q '\\.rs$' && make -C \"$CLAUDE_PROJECT_DIR\" fmt >/dev/null 2>&1 || true",
             "statusMessage": "Running cargo fmt"
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "output=$(make clippy 2>&1) || echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Clippy failed - fix before stopping:\\n\" + .)}'",
+            "command": "output=$(make -C \"$CLAUDE_PROJECT_DIR\" clippy 2>&1) || echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Clippy failed - fix before stopping:\\n\" + .)}'",
             "statusMessage": "Running cargo clippy",
             "timeout": 300
           }
