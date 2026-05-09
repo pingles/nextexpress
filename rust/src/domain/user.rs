@@ -526,7 +526,7 @@ impl User {
     /// (`core.allium:User.is_new_user`). Set by
     /// `session.allium:CompleteNewUserRegistration` (Slice 20);
     /// cleared by the sysop validate-user workflow that lands in
-    /// Phase 6.
+    /// Phase 5.
     #[must_use]
     pub fn is_new_user(&self) -> bool {
         self.validation_status.is_new_user()
