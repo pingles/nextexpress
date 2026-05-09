@@ -281,22 +281,189 @@ pub enum SessionState {
 /// A single in-progress or completed visit to the BBS.
 #[derive(Debug, Clone)]
 pub struct Session {
+    shared: SessionShared,
+    phase: SessionPhase,
+}
+
+/// Session fields that are valid for every lifecycle phase.
+#[derive(Debug, Clone)]
+struct SessionShared {
     node_number: u32,
     channel: LogonChannel,
-    state: SessionState,
-    user: Option<User>,
-    typed_name: Option<String>,
-    name_retry_count: u32,
-    password_retry_count: u32,
     connected_at: SystemTime,
     last_input_at: SystemTime,
     online_baud: u32,
-    authenticated_at: Option<SystemTime>,
-    logoff_at: Option<SystemTime>,
-    logoff_reason: Option<LogoffReason>,
-    time_remaining: Duration,
-    new_user_password_verified: bool,
-    new_user_password_attempts: u32,
+}
+
+/// Lifecycle-specific session data.
+///
+/// This keeps state payloads next to the state that makes them valid:
+/// authenticated phases always carry a [`User`], password retry counts
+/// exist only while authenticating, and new-user gate counters exist
+/// only during registration.
+#[derive(Debug, Clone)]
+enum SessionPhase {
+    Connecting,
+    Identifying {
+        name_retry_count: u32,
+    },
+    Authenticating {
+        typed_name: String,
+        user: User,
+        password_retry_count: u32,
+    },
+    NewUserRegistering {
+        password_verified: bool,
+        password_attempts: u32,
+    },
+    Onboarded {
+        user: User,
+        authenticated_at: SystemTime,
+        time_remaining: Duration,
+    },
+    Menu {
+        user: User,
+        authenticated_at: SystemTime,
+        time_remaining: Duration,
+    },
+    LoggingOff {
+        user: Option<User>,
+        authenticated_at: Option<SystemTime>,
+        reason: Option<LogoffReason>,
+        time_remaining: Duration,
+    },
+    Ended {
+        user: Option<User>,
+        authenticated_at: Option<SystemTime>,
+        reason: Option<LogoffReason>,
+        logoff_at: Option<SystemTime>,
+        time_remaining: Duration,
+    },
+}
+
+impl SessionPhase {
+    fn state(&self) -> SessionState {
+        match self {
+            Self::Connecting => SessionState::Connecting,
+            Self::Identifying { .. } => SessionState::Identifying,
+            Self::Authenticating { .. } => SessionState::Authenticating,
+            Self::NewUserRegistering { .. } => SessionState::NewUserRegistering,
+            Self::Onboarded { .. } => SessionState::Onboarded,
+            Self::Menu { .. } => SessionState::Menu,
+            Self::LoggingOff { .. } => SessionState::LoggingOff,
+            Self::Ended { .. } => SessionState::Ended,
+        }
+    }
+
+    fn user(&self) -> Option<&User> {
+        match self {
+            Self::Authenticating { user, .. }
+            | Self::Onboarded { user, .. }
+            | Self::Menu { user, .. } => Some(user),
+            Self::LoggingOff { user, .. } | Self::Ended { user, .. } => user.as_ref(),
+            Self::Connecting | Self::Identifying { .. } | Self::NewUserRegistering { .. } => None,
+        }
+    }
+
+    fn user_mut(&mut self) -> Option<&mut User> {
+        match self {
+            Self::Authenticating { user, .. }
+            | Self::Onboarded { user, .. }
+            | Self::Menu { user, .. } => Some(user),
+            Self::LoggingOff { user, .. } | Self::Ended { user, .. } => user.as_mut(),
+            Self::Connecting | Self::Identifying { .. } | Self::NewUserRegistering { .. } => None,
+        }
+    }
+
+    fn typed_name(&self) -> Option<&str> {
+        match self {
+            Self::Authenticating { typed_name, .. } => Some(typed_name),
+            _ => None,
+        }
+    }
+
+    fn name_retry_count(&self) -> u32 {
+        match self {
+            Self::Identifying { name_retry_count } => *name_retry_count,
+            _ => 0,
+        }
+    }
+
+    fn password_retry_count(&self) -> u32 {
+        match self {
+            Self::Authenticating {
+                password_retry_count,
+                ..
+            } => *password_retry_count,
+            _ => 0,
+        }
+    }
+
+    fn authenticated_at(&self) -> Option<SystemTime> {
+        match self {
+            Self::Onboarded {
+                authenticated_at, ..
+            }
+            | Self::Menu {
+                authenticated_at, ..
+            } => Some(*authenticated_at),
+            Self::LoggingOff {
+                authenticated_at, ..
+            }
+            | Self::Ended {
+                authenticated_at, ..
+            } => *authenticated_at,
+            Self::Connecting
+            | Self::Identifying { .. }
+            | Self::Authenticating { .. }
+            | Self::NewUserRegistering { .. } => None,
+        }
+    }
+
+    fn logoff_at(&self) -> Option<SystemTime> {
+        match self {
+            Self::Ended { logoff_at, .. } => *logoff_at,
+            _ => None,
+        }
+    }
+
+    fn logoff_reason(&self) -> Option<LogoffReason> {
+        match self {
+            Self::LoggingOff { reason, .. } | Self::Ended { reason, .. } => *reason,
+            _ => None,
+        }
+    }
+
+    fn time_remaining(&self) -> Duration {
+        match self {
+            Self::Onboarded { time_remaining, .. }
+            | Self::Menu { time_remaining, .. }
+            | Self::LoggingOff { time_remaining, .. }
+            | Self::Ended { time_remaining, .. } => *time_remaining,
+            Self::Connecting
+            | Self::Identifying { .. }
+            | Self::Authenticating { .. }
+            | Self::NewUserRegistering { .. } => Duration::ZERO,
+        }
+    }
+
+    fn new_user_password_verified(&self) -> bool {
+        match self {
+            Self::NewUserRegistering {
+                password_verified, ..
+            } => *password_verified,
+            _ => false,
+        }
+    }
+
+    fn new_user_password_attempts(&self) -> u32 {
+        match self {
+            Self::NewUserRegistering {
+                password_attempts, ..
+            } => *password_attempts,
+            _ => 0,
+        }
+    }
 }
 
 impl Session {
@@ -317,104 +484,96 @@ impl Session {
         connected_at: SystemTime,
     ) -> Self {
         Self {
-            node_number,
-            channel,
-            state: SessionState::Connecting,
-            user: None,
-            typed_name: None,
-            name_retry_count: 0,
-            password_retry_count: 0,
-            connected_at,
-            last_input_at: connected_at,
-            online_baud,
-            authenticated_at: None,
-            logoff_at: None,
-            logoff_reason: None,
-            time_remaining: Duration::ZERO,
-            new_user_password_verified: false,
-            new_user_password_attempts: 0,
+            shared: SessionShared {
+                node_number,
+                channel,
+                connected_at,
+                last_input_at: connected_at,
+                online_baud,
+            },
+            phase: SessionPhase::Connecting,
         }
     }
 
     /// Returns this session's node number.
     #[must_use]
     pub fn node_number(&self) -> u32 {
-        self.node_number
+        self.shared.node_number
     }
 
     /// Returns the channel the session was opened on.
     #[must_use]
     pub fn channel(&self) -> LogonChannel {
-        self.channel
+        self.shared.channel
     }
 
     /// Returns the current lifecycle state.
     #[must_use]
     pub fn state(&self) -> SessionState {
-        self.state
+        self.phase.state()
     }
 
     /// Returns the user this session has identified as, if any.
     #[must_use]
     pub fn user(&self) -> Option<&User> {
-        self.user.as_ref()
+        self.phase.user()
     }
 
     /// Returns the handle the user typed at the identify prompt, if any.
     #[must_use]
     pub fn typed_name(&self) -> Option<&str> {
-        self.typed_name.as_deref()
+        self.phase.typed_name()
     }
 
     /// Returns the number of name-not-found strikes accumulated on this
     /// session.
     #[must_use]
     pub fn name_retry_count(&self) -> u32 {
-        self.name_retry_count
+        self.phase.name_retry_count()
     }
 
     /// Returns the number of bad-password strikes accumulated on this
     /// session.
     #[must_use]
     pub fn password_retry_count(&self) -> u32 {
-        self.password_retry_count
+        self.phase.password_retry_count()
     }
 
     /// Returns the timestamp the connection was accepted.
     #[must_use]
     pub fn connected_at(&self) -> SystemTime {
-        self.connected_at
+        self.shared.connected_at
     }
 
     /// Returns the timestamp of the last input received from the user.
     #[must_use]
     pub fn last_input_at(&self) -> SystemTime {
-        self.last_input_at
+        self.shared.last_input_at
     }
 
     /// Returns the connection baud rate (0 for local sessions).
     #[must_use]
     pub fn online_baud(&self) -> u32 {
-        self.online_baud
+        self.shared.online_baud
     }
 
     /// Returns the timestamp at which authentication completed, if it
     /// has.
     #[must_use]
     pub fn authenticated_at(&self) -> Option<SystemTime> {
-        self.authenticated_at
+        self.phase.authenticated_at()
     }
 
     /// Returns the timestamp the session ended, if it has.
     #[must_use]
     pub fn logoff_at(&self) -> Option<SystemTime> {
-        self.logoff_at
+        self.phase.logoff_at()
     }
 
     /// Returns the reason recorded for the session ending, if any.
     #[must_use]
     pub fn logoff_reason(&self) -> Option<LogoffReason> {
-        self.logoff_reason
+        self.phase.logoff_reason()
     }
 
     /// Returns how much per-call time the session has left.
@@ -424,7 +583,7 @@ impl Session {
     /// by [`Session::tick_minute`]. Slice 14.
     #[must_use]
     pub fn time_remaining(&self) -> Duration {
-        self.time_remaining
+        self.phase.time_remaining()
     }
 
     /// Whether the new-user password gate
@@ -434,7 +593,7 @@ impl Session {
     /// precondition.
     #[must_use]
     pub fn new_user_password_verified(&self) -> bool {
-        self.new_user_password_verified
+        self.phase.new_user_password_verified()
     }
 
     /// Number of incorrect new-user password attempts recorded against
@@ -443,22 +602,25 @@ impl Session {
     /// `SessionRetriesBounded` invariant.
     #[must_use]
     pub fn new_user_password_attempts(&self) -> u32 {
-        self.new_user_password_attempts
+        self.phase.new_user_password_attempts()
     }
 
     /// Spec-derived predicate: `channel in {remote, ftp}`.
     #[must_use]
     pub fn is_remote(&self) -> bool {
-        matches!(self.channel, LogonChannel::Remote | LogonChannel::Ftp)
+        matches!(
+            self.shared.channel,
+            LogonChannel::Remote | LogonChannel::Ftp
+        )
     }
 
     /// Spec-derived predicate:
     /// `state in {onboarded, menu, logging_off, ended} and user != null`.
     #[must_use]
     pub fn is_authenticated(&self) -> bool {
-        self.user.is_some()
+        self.user().is_some()
             && matches!(
-                self.state,
+                self.state(),
                 SessionState::Onboarded
                     | SessionState::Menu
                     | SessionState::LoggingOff
@@ -472,7 +634,7 @@ impl Session {
     /// one whose state is not the terminal `Ended`.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        self.state != SessionState::Ended
+        self.state() != SessionState::Ended
     }
 
     /// Attempts to transition the session to `target`.
@@ -481,22 +643,114 @@ impl Session {
     /// Returns [`SessionTransitionError`] if the spec does not permit
     /// the transition (Phase 1 subset of `session.allium:Session.state`).
     fn transition_to(&mut self, target: SessionState) -> Result<(), SessionTransitionError> {
-        if !is_session_transition_allowed(self.state, target) {
-            return Err(SessionTransitionError {
-                from: self.state,
-                to: target,
-            });
+        let from = self.state();
+        if !is_session_transition_allowed(from, target) {
+            return Err(SessionTransitionError { from, to: target });
         }
-        self.state = target;
+        self.transition_after_guard(target);
         Ok(())
     }
 
     fn transition_after_guard(&mut self, target: SessionState) {
+        let from = self.state();
         debug_assert!(
-            is_session_transition_allowed(self.state, target),
+            is_session_transition_allowed(from, target),
             "guarded transition should be permitted"
         );
-        self.state = target;
+        match target {
+            SessionState::Connecting => self.phase = SessionPhase::Connecting,
+            SessionState::Identifying => {
+                self.phase = SessionPhase::Identifying {
+                    name_retry_count: 0,
+                };
+            }
+            SessionState::LoggingOff => self.move_to_logging_off(None),
+            SessionState::Ended => self.move_to_ended(None),
+            SessionState::Authenticating
+            | SessionState::NewUserRegistering
+            | SessionState::Onboarded
+            | SessionState::Menu => {
+                panic!("transition to {target:?} requires phase-specific payload");
+            }
+        }
+    }
+
+    fn move_to_logging_off(&mut self, reason: Option<LogoffReason>) {
+        let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
+        let (user, authenticated_at, time_remaining) = match previous {
+            SessionPhase::Connecting
+            | SessionPhase::Identifying { .. }
+            | SessionPhase::NewUserRegistering { .. } => (None, None, Duration::ZERO),
+            SessionPhase::Authenticating { user, .. } => (Some(user), None, Duration::ZERO),
+            SessionPhase::Onboarded {
+                user,
+                authenticated_at,
+                time_remaining,
+            }
+            | SessionPhase::Menu {
+                user,
+                authenticated_at,
+                time_remaining,
+            } => (Some(user), Some(authenticated_at), time_remaining),
+            SessionPhase::LoggingOff {
+                user,
+                authenticated_at,
+                time_remaining,
+                ..
+            }
+            | SessionPhase::Ended {
+                user,
+                authenticated_at,
+                time_remaining,
+                ..
+            } => (user, authenticated_at, time_remaining),
+        };
+        self.phase = SessionPhase::LoggingOff {
+            user,
+            authenticated_at,
+            reason,
+            time_remaining,
+        };
+    }
+
+    fn move_to_ended(&mut self, logoff_at: Option<SystemTime>) {
+        let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
+        let (user, authenticated_at, reason, time_remaining) = match previous {
+            SessionPhase::Connecting
+            | SessionPhase::Identifying { .. }
+            | SessionPhase::NewUserRegistering { .. } => (None, None, None, Duration::ZERO),
+            SessionPhase::Authenticating { user, .. } => (Some(user), None, None, Duration::ZERO),
+            SessionPhase::Onboarded {
+                user,
+                authenticated_at,
+                time_remaining,
+            }
+            | SessionPhase::Menu {
+                user,
+                authenticated_at,
+                time_remaining,
+            } => (Some(user), Some(authenticated_at), None, time_remaining),
+            SessionPhase::LoggingOff {
+                user,
+                authenticated_at,
+                reason,
+                time_remaining,
+            }
+            | SessionPhase::Ended {
+                user,
+                authenticated_at,
+                reason,
+                time_remaining,
+                ..
+            } => (user, authenticated_at, reason, time_remaining),
+        };
+        self.phase = SessionPhase::Ended {
+            user,
+            authenticated_at,
+            reason,
+            logoff_at,
+            time_remaining,
+        };
     }
 
     /// `session.allium:AcceptConnection` rule.
@@ -555,12 +809,14 @@ impl Session {
         typed: &str,
         user: User,
     ) -> Result<NameTypedOutcome, NameTypedError> {
-        if self.state != SessionState::Identifying {
-            return Err(NameTypedError::WrongState(self.state));
+        if self.state() != SessionState::Identifying {
+            return Err(NameTypedError::WrongState(self.state()));
         }
-        self.typed_name = Some(typed.to_string());
-        self.user = Some(user);
-        self.transition_after_guard(SessionState::Authenticating);
+        self.phase = SessionPhase::Authenticating {
+            typed_name: typed.to_string(),
+            user,
+            password_retry_count: 0,
+        };
         Ok(NameTypedOutcome::Authenticated)
     }
 
@@ -576,14 +832,18 @@ impl Session {
         &mut self,
         now: SystemTime,
     ) -> Result<NameTypedOutcome, NameTypedError> {
-        if self.state != SessionState::Identifying {
-            return Err(NameTypedError::WrongState(self.state));
-        }
-        self.name_retry_count += 1;
-        if self.name_retry_count >= MAX_NAME_RETRIES {
-            self.transition_after_guard(SessionState::Ended);
-            self.logoff_reason = Some(LogoffReason::NewUserRejected);
-            self.logoff_at = Some(now);
+        let SessionPhase::Identifying { name_retry_count } = &mut self.phase else {
+            return Err(NameTypedError::WrongState(self.state()));
+        };
+        *name_retry_count += 1;
+        if *name_retry_count >= MAX_NAME_RETRIES {
+            self.phase = SessionPhase::Ended {
+                user: None,
+                authenticated_at: None,
+                reason: Some(LogoffReason::NewUserRejected),
+                logoff_at: Some(now),
+                time_remaining: Duration::ZERO,
+            };
             Ok(NameTypedOutcome::SessionEnded)
         } else {
             Ok(NameTypedOutcome::NotFound)
@@ -605,8 +865,9 @@ impl Session {
     ///   != null`. When `true`, the gate is armed and
     ///   [`Self::new_user_password_verified`] starts `false`; when
     ///   `false`, no gate runs and the flag starts `true`.
-    /// - `now`: timestamp of the rule firing — used to record any
-    ///   logoff timestamp set as a side effect.
+    /// - `_now`: timestamp of the rule firing. Retained for symmetry
+    ///   with the application flow; logoff timestamps are recorded by
+    ///   [`Session::finalise_logoff`].
     ///
     /// # Errors
     /// Returns [`NameTypedError::WrongState`] if the session is not in
@@ -617,19 +878,19 @@ impl Session {
         password_required: bool,
         _now: SystemTime,
     ) -> Result<NewUserRequestOutcome, NameTypedError> {
-        if self.state != SessionState::Identifying {
-            return Err(NameTypedError::WrongState(self.state));
+        if self.state() != SessionState::Identifying {
+            return Err(NameTypedError::WrongState(self.state()));
         }
-        self.transition_after_guard(SessionState::NewUserRegistering);
         if !allow_new_users {
             // RejectDisallowedRegistration.
-            self.transition_after_guard(SessionState::LoggingOff);
-            self.logoff_reason = Some(LogoffReason::NewUserRejected);
+            self.move_to_logging_off(Some(LogoffReason::NewUserRejected));
             return Ok(NewUserRequestOutcome::Rejected);
         }
         // InitialiseNewUserGate.
-        self.new_user_password_attempts = 0;
-        self.new_user_password_verified = !password_required;
+        self.phase = SessionPhase::NewUserRegistering {
+            password_verified: !password_required,
+            password_attempts: 0,
+        };
         Ok(NewUserRequestOutcome::Initialised { password_required })
     }
 
@@ -658,26 +919,29 @@ impl Session {
         max_attempts: u32,
         now: SystemTime,
     ) -> Result<(NewUserPasswordOutcome, Option<CallerLog>), VerifyNewUserPasswordError> {
-        if self.state != SessionState::NewUserRegistering {
-            return Err(VerifyNewUserPasswordError::WrongState(self.state));
-        }
-        if self.new_user_password_verified {
+        let SessionPhase::NewUserRegistering {
+            password_verified,
+            password_attempts,
+        } = &mut self.phase
+        else {
+            return Err(VerifyNewUserPasswordError::WrongState(self.state()));
+        };
+        if *password_verified {
             return Err(VerifyNewUserPasswordError::AlreadyVerified);
         }
         if matches {
-            self.new_user_password_verified = true;
+            *password_verified = true;
             return Ok((NewUserPasswordOutcome::Verified, None));
         }
-        self.new_user_password_attempts = self.new_user_password_attempts.saturating_add(1);
+        *password_attempts = (*password_attempts).saturating_add(1);
         let entry = CallerLog {
-            session_node: self.node_number,
+            session_node: self.shared.node_number,
             at: now,
             text: "New-user password failure".to_string(),
             is_password_failure: true,
         };
-        if self.new_user_password_attempts >= max_attempts {
-            self.transition_after_guard(SessionState::LoggingOff);
-            self.logoff_reason = Some(LogoffReason::NewUserRejected);
+        if *password_attempts >= max_attempts {
+            self.move_to_logging_off(Some(LogoffReason::NewUserRejected));
             Ok((NewUserPasswordOutcome::TooManyFailures, Some(entry)))
         } else {
             Ok((NewUserPasswordOutcome::Mismatch, Some(entry)))
@@ -692,7 +956,7 @@ impl Session {
     /// per-minute `UpdateTimeUsed` rule (Slice 14) have an
     /// up-to-date last-activity timestamp.
     pub fn record_input(&mut self, at: SystemTime) {
-        self.last_input_at = at;
+        self.shared.last_input_at = at;
     }
 
     /// `session.allium:CarrierLost` rule (Slice 18).
@@ -711,7 +975,7 @@ impl Session {
     /// [`SessionState::Ended`].
     pub fn apply_carrier_loss(&mut self) -> Result<(), CarrierLostError> {
         if !matches!(
-            self.state,
+            self.state(),
             SessionState::Connecting
                 | SessionState::Identifying
                 | SessionState::Authenticating
@@ -719,10 +983,9 @@ impl Session {
                 | SessionState::Onboarded
                 | SessionState::Menu
         ) {
-            return Err(CarrierLostError::WrongState(self.state));
+            return Err(CarrierLostError::WrongState(self.state()));
         }
-        self.transition_after_guard(SessionState::LoggingOff);
-        self.logoff_reason = Some(LogoffReason::CarrierLoss);
+        self.move_to_logging_off(Some(LogoffReason::CarrierLoss));
         Ok(())
     }
 
@@ -742,21 +1005,20 @@ impl Session {
     /// `menu`).
     pub fn apply_idle_timeout(&mut self, treat_as_logoff: bool) -> Result<(), IdleTimeoutError> {
         if !matches!(
-            self.state,
+            self.state(),
             SessionState::Identifying
                 | SessionState::Authenticating
                 | SessionState::NewUserRegistering
                 | SessionState::Onboarded
                 | SessionState::Menu
         ) {
-            return Err(IdleTimeoutError::WrongState(self.state));
+            return Err(IdleTimeoutError::WrongState(self.state()));
         }
-        self.transition_after_guard(SessionState::LoggingOff);
-        self.logoff_reason = Some(if treat_as_logoff {
+        self.move_to_logging_off(Some(if treat_as_logoff {
             LogoffReason::InputTimeout
         } else {
             LogoffReason::CarrierLoss
-        });
+        }));
         Ok(())
     }
 
@@ -774,14 +1036,13 @@ impl Session {
     /// states to reach `logging_off` for unrelated reasons
     /// (idle / carrier loss in Slices 17/18).
     pub fn user_requests_logoff(&mut self) -> Result<(), SessionTransitionError> {
-        if !matches!(self.state, SessionState::Onboarded | SessionState::Menu) {
+        if !matches!(self.state(), SessionState::Onboarded | SessionState::Menu) {
             return Err(SessionTransitionError {
-                from: self.state,
+                from: self.state(),
                 to: SessionState::LoggingOff,
             });
         }
-        self.transition_to(SessionState::LoggingOff)?;
-        self.logoff_reason = Some(LogoffReason::NormalLogoff);
+        self.move_to_logging_off(Some(LogoffReason::NormalLogoff));
         Ok(())
     }
 
@@ -798,24 +1059,23 @@ impl Session {
         &mut self,
         now: SystemTime,
     ) -> Result<CallerLog, SessionTransitionError> {
-        if self.state != SessionState::LoggingOff {
+        if self.state() != SessionState::LoggingOff {
             return Err(SessionTransitionError {
-                from: self.state,
+                from: self.state(),
                 to: SessionState::Ended,
             });
         }
-        if let Some(user) = self.user.as_mut() {
+        if let Some(user) = self.phase.user_mut() {
             user.record_last_call(now);
         }
         let line = format_logoff_line(self);
         let entry = CallerLog {
-            session_node: self.node_number,
+            session_node: self.shared.node_number,
             at: now,
             text: line,
             is_password_failure: false,
         };
-        self.transition_after_guard(SessionState::Ended);
-        self.logoff_at = Some(now);
+        self.move_to_ended(Some(now));
         Ok(entry)
     }
 
@@ -828,22 +1088,33 @@ impl Session {
     /// # Errors
     /// Returns [`EnterMenuError::WrongState`] when not in
     /// [`SessionState::Onboarded`],
-    /// [`EnterMenuError::UserMissing`] when no user is bound, or
-    /// [`EnterMenuError::PasswordResetPending`] when the bound
-    /// user has `force_password_reset` set (Slice 15).
+    /// [`EnterMenuError::PasswordResetPending`] when the bound user
+    /// has `force_password_reset` set (Slice 15).
     pub fn enter_menu(&mut self, now: SystemTime) -> Result<CallerLog, EnterMenuError> {
-        if self.state != SessionState::Onboarded {
-            return Err(EnterMenuError::WrongState(self.state));
-        }
-        let user = self.user.as_mut().ok_or(EnterMenuError::UserMissing)?;
+        let SessionPhase::Onboarded { user, .. } = &mut self.phase else {
+            return Err(EnterMenuError::WrongState(self.state()));
+        };
         if user.force_password_reset() {
             return Err(EnterMenuError::PasswordResetPending);
         }
         user.bump_times_called();
-        self.transition_after_guard(SessionState::Menu);
+        let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
+        let SessionPhase::Onboarded {
+            user,
+            authenticated_at,
+            time_remaining,
+        } = previous
+        else {
+            unreachable!("phase checked above");
+        };
+        self.phase = SessionPhase::Menu {
+            user,
+            authenticated_at,
+            time_remaining,
+        };
         let line = format_logon_line(self);
         Ok(CallerLog {
-            session_node: self.node_number,
+            session_node: self.shared.node_number,
             at: now,
             text: line,
             is_password_failure: false,
@@ -882,15 +1153,20 @@ impl Session {
         policy: SessionPolicy,
         now: SystemTime,
     ) -> Result<Option<CallerLog>, CompleteNewUserRegistrationError> {
-        if self.state != SessionState::NewUserRegistering {
-            return Err(CompleteNewUserRegistrationError::WrongState(self.state));
-        }
-        if !self.new_user_password_verified {
+        let password_verified = match &self.phase {
+            SessionPhase::NewUserRegistering {
+                password_verified, ..
+            } => *password_verified,
+            _ => return Err(CompleteNewUserRegistrationError::WrongState(self.state())),
+        };
+        if !password_verified {
             return Err(CompleteNewUserRegistrationError::GateNotVerified);
         }
-        self.user = Some(user);
-        self.authenticated_at = Some(now);
-        self.transition_after_guard(SessionState::Onboarded);
+        self.phase = SessionPhase::Onboarded {
+            user,
+            authenticated_at: now,
+            time_remaining: Duration::ZERO,
+        };
         Ok(self.on_enter_onboarded(policy, now))
     }
 
@@ -912,20 +1188,25 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`VerifyPasswordError::WrongState`] if the session is
-    /// not in [`SessionState::Authenticating`], or
-    /// [`VerifyPasswordError::UserMissing`] if no user is bound.
+    /// not in [`SessionState::Authenticating`].
     pub fn apply_password_match(
         &mut self,
         policy: SessionPolicy,
         now: SystemTime,
     ) -> Result<(VerifyPasswordOutcome, Option<CallerLog>), VerifyPasswordError> {
-        if self.state != SessionState::Authenticating {
-            return Err(VerifyPasswordError::WrongState(self.state));
-        }
-        let user_mut = self.user.as_mut().ok_or(VerifyPasswordError::UserMissing)?;
-        user_mut.clear_invalid_attempts();
-        self.authenticated_at = Some(now);
-        self.transition_after_guard(SessionState::Onboarded);
+        let SessionPhase::Authenticating { user, .. } = &mut self.phase else {
+            return Err(VerifyPasswordError::WrongState(self.state()));
+        };
+        user.clear_invalid_attempts();
+        let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
+        let SessionPhase::Authenticating { user, .. } = previous else {
+            unreachable!("phase checked above");
+        };
+        self.phase = SessionPhase::Onboarded {
+            user,
+            authenticated_at: now,
+            time_remaining: Duration::ZERO,
+        };
         let rejection = self.on_enter_onboarded(policy, now);
         let outcome = if rejection.is_some() {
             VerifyPasswordOutcome::LogonRejected
@@ -939,9 +1220,10 @@ impl Session {
     /// into [`SessionState::Onboarded`].
     ///
     /// Called by every code path that drives a session into
-    /// `Onboarded`: [`Session::apply_password_match`] today; later,
-    /// new-user registration (Slice 20), sysop direct logon (Slice 22)
-    /// and local logon (Slice 23). Rules fire in spec order:
+    /// `Onboarded`: [`Session::apply_password_match`] and
+    /// [`Session::complete_new_user_registration`] today; later,
+    /// sysop direct logon (Slice 22) and local logon (Slice 23).
+    /// Rules fire in spec order:
     ///
     /// 1. `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
     ///    — short-circuits the cluster by transitioning the session
@@ -963,12 +1245,12 @@ impl Session {
     /// programmer errors, not runtime failures.
     fn on_enter_onboarded(&mut self, policy: SessionPolicy, now: SystemTime) -> Option<CallerLog> {
         assert_eq!(
-            self.state,
+            self.state(),
             SessionState::Onboarded,
             "on_enter_onboarded called outside Onboarded state"
         );
         assert!(
-            self.user.is_some(),
+            self.user().is_some(),
             "on_enter_onboarded called without a bound user"
         );
         if let Some(entry) = self.reject_locked_or_insufficient_access(now) {
@@ -1001,13 +1283,12 @@ impl Session {
     /// caller and establishes both invariants before invocation.
     fn reject_locked_or_insufficient_access(&mut self, now: SystemTime) -> Option<CallerLog> {
         assert_eq!(
-            self.state,
+            self.state(),
             SessionState::Onboarded,
             "reject_locked_or_insufficient_access called outside Onboarded"
         );
         let user = self
-            .user
-            .as_ref()
+            .user()
             .expect("reject_locked_or_insufficient_access without bound user");
         if !user.is_locked_out() {
             return None;
@@ -1017,11 +1298,9 @@ impl Session {
         } else {
             LogoffReason::NewUserRejected
         };
-        self.transition_to(SessionState::LoggingOff)
-            .expect("onboarded -> logging_off is permitted");
-        self.logoff_reason = Some(reason);
+        self.move_to_logging_off(Some(reason));
         Some(CallerLog {
-            session_node: self.node_number,
+            session_node: self.shared.node_number,
             at: now,
             text: "Logon rejected: account locked or below access threshold".to_string(),
             is_password_failure: false,
@@ -1038,21 +1317,15 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`ForcePasswordResetError::WrongState`] when the
-    /// session is not in [`SessionState::Onboarded`], or
-    /// [`ForcePasswordResetError::UserMissing`] when no user is
-    /// bound.
+    /// session is not in [`SessionState::Onboarded`].
     pub fn force_password_reset_if_due(
         &mut self,
         password_expiry_days: u32,
         now: SystemTime,
     ) -> Result<(), ForcePasswordResetError> {
-        if self.state != SessionState::Onboarded {
-            return Err(ForcePasswordResetError::WrongState(self.state));
-        }
-        let user = self
-            .user
-            .as_mut()
-            .ok_or(ForcePasswordResetError::UserMissing)?;
+        let SessionPhase::Onboarded { user, .. } = &mut self.phase else {
+            return Err(ForcePasswordResetError::WrongState(self.state()));
+        };
         if user.is_account_locked() {
             return Ok(());
         }
@@ -1080,11 +1353,9 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`CompletePasswordResetError::WrongState`] when the
-    /// session is not in [`SessionState::Onboarded`],
-    /// [`CompletePasswordResetError::UserMissing`] when no user is
-    /// bound, or [`CompletePasswordResetError::ResetNotPending`]
-    /// when the bound user does not have `force_password_reset`
-    /// set.
+    /// session is not in [`SessionState::Onboarded`], or
+    /// [`CompletePasswordResetError::ResetNotPending`] when the bound
+    /// user does not have `force_password_reset` set.
     pub fn apply_password_change(
         &mut self,
         hash: String,
@@ -1092,13 +1363,9 @@ impl Session {
         kind: PasswordHashKind,
         now: SystemTime,
     ) -> Result<(), CompletePasswordResetError> {
-        if self.state != SessionState::Onboarded {
-            return Err(CompletePasswordResetError::WrongState(self.state));
-        }
-        let user = self
-            .user
-            .as_mut()
-            .ok_or(CompletePasswordResetError::UserMissing)?;
+        let SessionPhase::Onboarded { user, .. } = &mut self.phase else {
+            return Err(CompletePasswordResetError::WrongState(self.state()));
+        };
         if !user.force_password_reset() {
             return Err(CompletePasswordResetError::ResetNotPending);
         }
@@ -1115,22 +1382,25 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`VerifyPasswordError::WrongState`] if the session is
-    /// not in [`SessionState::Authenticating`], or
-    /// [`VerifyPasswordError::UserMissing`] if no user is bound.
+    /// not in [`SessionState::Authenticating`].
     pub fn apply_password_mismatch(
         &mut self,
         policy: SessionPolicy,
         now: SystemTime,
     ) -> Result<(VerifyPasswordOutcome, CallerLog), VerifyPasswordError> {
-        if self.state != SessionState::Authenticating {
-            return Err(VerifyPasswordError::WrongState(self.state));
-        }
-        let user_mut = self.user.as_mut().ok_or(VerifyPasswordError::UserMissing)?;
-        user_mut.bump_invalid_attempts();
-        self.password_retry_count = self.password_retry_count.saturating_add(1);
+        let SessionPhase::Authenticating {
+            user,
+            password_retry_count,
+            ..
+        } = &mut self.phase
+        else {
+            return Err(VerifyPasswordError::WrongState(self.state()));
+        };
+        user.bump_invalid_attempts();
+        *password_retry_count = (*password_retry_count).saturating_add(1);
 
         let entry = CallerLog {
-            session_node: self.node_number,
+            session_node: self.shared.node_number,
             at: now,
             text: "Password failure".to_string(),
             is_password_failure: true,
@@ -1138,17 +1408,15 @@ impl Session {
 
         let outcome = match policy.password_failure_decision(self) {
             PasswordFailureDecision::LockAccount => {
-                self.user
-                    .as_mut()
-                    .ok_or(VerifyPasswordError::UserMissing)?
-                    .lock_account();
-                self.transition_after_guard(SessionState::LoggingOff);
-                self.logoff_reason = Some(LogoffReason::LockedAccount);
+                let SessionPhase::Authenticating { user, .. } = &mut self.phase else {
+                    unreachable!("phase checked before password failure decision");
+                };
+                user.lock_account();
+                self.move_to_logging_off(Some(LogoffReason::LockedAccount));
                 VerifyPasswordOutcome::AccountLocked
             }
             PasswordFailureDecision::EndSession => {
-                self.transition_after_guard(SessionState::LoggingOff);
-                self.logoff_reason = Some(LogoffReason::ExcessivePasswordFails);
+                self.move_to_logging_off(Some(LogoffReason::ExcessivePasswordFails));
                 VerifyPasswordOutcome::TooManyFailures
             }
             PasswordFailureDecision::Continue => VerifyPasswordOutcome::NotMatching,
@@ -1170,21 +1438,20 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`InitialiseDailyBudgetError::WrongState`] when the
-    /// session is not in [`SessionState::Onboarded`], or
-    /// [`InitialiseDailyBudgetError::UserMissing`] when no user is
-    /// bound.
+    /// session is not in [`SessionState::Onboarded`].
     pub fn initialise_daily_budget(
         &mut self,
         now: SystemTime,
         daily_reset_offset: Duration,
     ) -> Result<(), InitialiseDailyBudgetError> {
-        if self.state != SessionState::Onboarded {
-            return Err(InitialiseDailyBudgetError::WrongState(self.state));
-        }
-        let user = self
-            .user
-            .as_mut()
-            .ok_or(InitialiseDailyBudgetError::UserMissing)?;
+        let SessionPhase::Onboarded {
+            user,
+            time_remaining,
+            ..
+        } = &mut self.phase
+        else {
+            return Err(InitialiseDailyBudgetError::WrongState(self.state()));
+        };
 
         let today = floor_to_day(now, daily_reset_offset);
         let last_call_day = user
@@ -1197,7 +1464,7 @@ impl Session {
         } else {
             user.bump_times_called_today();
         }
-        self.time_remaining = user.time_limit_per_call();
+        *time_remaining = user.time_limit_per_call();
         Ok(())
     }
 
@@ -1211,18 +1478,27 @@ impl Session {
     ///
     /// # Errors
     /// Returns [`TickMinuteError::WrongState`] when the session is not
-    /// in [`SessionState::Onboarded`] or [`SessionState::Menu`], or
-    /// [`TickMinuteError::UserMissing`] when no user is bound.
+    /// in [`SessionState::Onboarded`] or [`SessionState::Menu`].
     pub fn tick_minute(&mut self) -> Result<TickMinuteOutcome, TickMinuteError> {
-        if !matches!(self.state, SessionState::Onboarded | SessionState::Menu) {
-            return Err(TickMinuteError::WrongState(self.state));
-        }
-        let user = self.user.as_mut().ok_or(TickMinuteError::UserMissing)?;
-        user.add_time_used_today(Duration::from_secs(60));
-        self.time_remaining = self.time_remaining.saturating_sub(Duration::from_secs(60));
-        if self.time_remaining.is_zero() {
-            self.transition_after_guard(SessionState::LoggingOff);
-            self.logoff_reason = Some(LogoffReason::OutOfTime);
+        let expired = match &mut self.phase {
+            SessionPhase::Onboarded {
+                user,
+                time_remaining,
+                ..
+            }
+            | SessionPhase::Menu {
+                user,
+                time_remaining,
+                ..
+            } => {
+                user.add_time_used_today(Duration::from_secs(60));
+                *time_remaining = time_remaining.saturating_sub(Duration::from_secs(60));
+                time_remaining.is_zero()
+            }
+            _ => return Err(TickMinuteError::WrongState(self.state())),
+        };
+        if expired {
+            self.move_to_logging_off(Some(LogoffReason::OutOfTime));
             Ok(TickMinuteOutcome::TimeExpired)
         } else {
             Ok(TickMinuteOutcome::Continued)
@@ -1630,8 +1906,8 @@ fn floor_to_day(at: SystemTime, offset: Duration) -> i64 {
 /// the menu. The legacy `AmiExpress` format is something like
 /// `Logon: alice (node 1, 9600 baud, remote)`; we match that shape.
 fn format_logon_line(session: &Session) -> String {
-    let handle = session.user.as_ref().map_or("?", super::user::User::handle);
-    let channel = match session.channel {
+    let handle = session.user().map_or("?", super::user::User::handle);
+    let channel = match session.shared.channel {
         LogonChannel::SysopConsole => "sysop_console",
         LogonChannel::Local => "local",
         LogonChannel::Remote => "remote",
@@ -1639,7 +1915,7 @@ fn format_logon_line(session: &Session) -> String {
     };
     format!(
         "Logon: {handle} (node {}, {} baud, {channel})",
-        session.node_number, session.online_baud
+        session.shared.node_number, session.shared.online_baud
     )
 }
 
@@ -1648,8 +1924,8 @@ fn format_logon_line(session: &Session) -> String {
 /// Phase 1 emits a minimal line. Slice 53 onward extends it with
 /// transfer accounting (`bytes_uploaded`, `bytes_downloaded`).
 fn format_logoff_line(session: &Session) -> String {
-    let handle = session.user.as_ref().map_or("?", super::user::User::handle);
-    let reason = match session.logoff_reason {
+    let handle = session.user().map_or("?", super::user::User::handle);
+    let reason = match session.logoff_reason() {
         Some(LogoffReason::NormalLogoff) => "normal_logoff",
         Some(LogoffReason::NewUserRejected) => "new_user_rejected",
         Some(LogoffReason::ExcessivePasswordFails) => "excessive_password_fails",
@@ -1661,7 +1937,7 @@ fn format_logoff_line(session: &Session) -> String {
     };
     format!(
         "Logoff: {handle} (node {}, reason {reason})",
-        session.node_number
+        session.shared.node_number
     )
 }
 
@@ -1762,14 +2038,30 @@ mod tests {
 
     #[test]
     fn full_phase1_state_path_is_allowed() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.transition_to(SessionState::Authenticating).unwrap();
-        s.transition_to(SessionState::Onboarded).unwrap();
-        s.transition_to(SessionState::Menu).unwrap();
-        s.transition_to(SessionState::LoggingOff).unwrap();
-        s.transition_to(SessionState::Ended).unwrap();
-        assert_eq!(s.state(), SessionState::Ended);
+        assert!(is_session_transition_allowed(
+            SessionState::Connecting,
+            SessionState::Identifying
+        ));
+        assert!(is_session_transition_allowed(
+            SessionState::Identifying,
+            SessionState::Authenticating
+        ));
+        assert!(is_session_transition_allowed(
+            SessionState::Authenticating,
+            SessionState::Onboarded
+        ));
+        assert!(is_session_transition_allowed(
+            SessionState::Onboarded,
+            SessionState::Menu
+        ));
+        assert!(is_session_transition_allowed(
+            SessionState::Menu,
+            SessionState::LoggingOff
+        ));
+        assert!(is_session_transition_allowed(
+            SessionState::LoggingOff,
+            SessionState::Ended
+        ));
     }
 
     #[test]
@@ -1788,17 +2080,18 @@ mod tests {
     #[test]
     fn carrier_drop_from_authenticating_ends_session() {
         let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.transition_to(SessionState::Authenticating).unwrap();
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", alice()).unwrap();
         s.transition_to(SessionState::Ended).expect("allowed");
     }
 
     #[test]
     fn onboarded_can_short_circuit_to_logging_off() {
         let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.transition_to(SessionState::Authenticating).unwrap();
-        s.transition_to(SessionState::Onboarded).unwrap();
+        s.prompt_for_name().unwrap();
+        s.record_identified_user("alice", alice()).unwrap();
+        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+            .unwrap();
         s.transition_to(SessionState::LoggingOff)
             .expect("onboarded -> logging_off allowed");
     }
@@ -1849,15 +2142,6 @@ mod tests {
         let mut session = new_session(LogonChannel::Remote);
         session.prompt_for_name().unwrap();
         session.record_identified_user("alice", alice()).unwrap();
-        assert!(!session.is_authenticated());
-    }
-
-    #[test]
-    fn onboarded_without_user_is_not_authenticated() {
-        let mut session = new_session(LogonChannel::Remote);
-        session.transition_to(SessionState::Identifying).unwrap();
-        session.transition_to(SessionState::Authenticating).unwrap();
-        session.transition_to(SessionState::Onboarded).unwrap();
         assert!(!session.is_authenticated());
     }
 
@@ -2226,6 +2510,23 @@ mod tests {
         s
     }
 
+    fn authenticating_user_mut(session: &mut Session) -> &mut User {
+        match &mut session.phase {
+            SessionPhase::Authenticating { user, .. } => user,
+            other => panic!("expected authenticating phase, got {:?}", other.state()),
+        }
+    }
+
+    fn set_authenticating_password_retry_count(session: &mut Session, count: u32) {
+        match &mut session.phase {
+            SessionPhase::Authenticating {
+                password_retry_count,
+                ..
+            } => *password_retry_count = count,
+            other => panic!("expected authenticating phase, got {:?}", other.state()),
+        }
+    }
+
     #[test]
     fn verify_password_match_advances_to_onboarded() {
         let mut s = authenticated_session();
@@ -2245,7 +2546,7 @@ mod tests {
         let mut s = authenticated_session();
         // Pre-existing attempts on the user (e.g. from a prior failed
         // session) should be cleared on success.
-        s.user.as_mut().unwrap().bump_invalid_attempts();
+        authenticating_user_mut(&mut s).bump_invalid_attempts();
         s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
             .unwrap();
         assert_eq!(s.user().unwrap().invalid_attempts(), 0);
@@ -2281,8 +2582,8 @@ mod tests {
     #[test]
     fn session_policy_continues_below_password_failure_limit() {
         let mut s = authenticated_session();
-        s.password_retry_count = 1;
-        s.user.as_mut().unwrap().bump_invalid_attempts();
+        set_authenticating_password_retry_count(&mut s, 1);
+        authenticating_user_mut(&mut s).bump_invalid_attempts();
 
         assert_eq!(
             SessionPolicy::new(3).password_failure_decision(&s),
@@ -2293,9 +2594,9 @@ mod tests {
     #[test]
     fn session_policy_locks_account_when_user_failures_reach_limit() {
         let mut s = authenticated_session();
-        s.password_retry_count = 3;
+        set_authenticating_password_retry_count(&mut s, 3);
         for _ in 0..3 {
-            s.user.as_mut().unwrap().bump_invalid_attempts();
+            authenticating_user_mut(&mut s).bump_invalid_attempts();
         }
 
         assert_eq!(
@@ -2307,7 +2608,7 @@ mod tests {
     #[test]
     fn session_policy_ends_session_when_session_failures_reach_limit() {
         let mut s = authenticated_session();
-        s.password_retry_count = 3;
+        set_authenticating_password_retry_count(&mut s, 3);
 
         assert_eq!(
             SessionPolicy::new(3).password_failure_decision(&s),
@@ -2342,7 +2643,7 @@ mod tests {
         s.apply_password_mismatch(SessionPolicy::new(5), SystemTime::UNIX_EPOCH)
             .unwrap();
         // Simulate an out-of-band reset of the user-level counter.
-        s.user.as_mut().unwrap().clear_invalid_attempts();
+        authenticating_user_mut(&mut s).clear_invalid_attempts();
         let (outcome, _entry) = s
             .apply_password_mismatch(SessionPolicy::new(3), SystemTime::UNIX_EPOCH)
             .unwrap();
@@ -2474,10 +2775,11 @@ mod tests {
     /// [`Session::initialise_daily_budget`] under controlled inputs.
     fn session_at_onboarded_with(user: User) -> Session {
         let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.user = Some(user);
-        s.transition_to(SessionState::Authenticating).unwrap();
-        s.transition_to(SessionState::Onboarded).unwrap();
+        s.phase = SessionPhase::Onboarded {
+            user,
+            authenticated_at: SystemTime::UNIX_EPOCH,
+            time_remaining: Duration::ZERO,
+        };
         s
     }
 
@@ -2561,18 +2863,6 @@ mod tests {
     }
 
     #[test]
-    fn initialise_daily_budget_without_user_errors() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.transition_to(SessionState::Authenticating).unwrap();
-        s.transition_to(SessionState::Onboarded).unwrap();
-        let err = s
-            .initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
-            .expect_err("user missing");
-        assert!(matches!(err, InitialiseDailyBudgetError::UserMissing));
-    }
-
-    #[test]
     fn tick_minute_decrements_remaining_and_accumulates_used() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
             Duration::from_secs(5 * 60),
@@ -2620,16 +2910,6 @@ mod tests {
         let mut s = new_session(LogonChannel::Remote);
         let err = s.tick_minute().expect_err("must be onboarded/menu");
         assert!(matches!(err, TickMinuteError::WrongState(_)));
-    }
-
-    #[test]
-    fn tick_minute_without_user_errors() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.transition_to(SessionState::Authenticating).unwrap();
-        s.transition_to(SessionState::Onboarded).unwrap();
-        let err = s.tick_minute().expect_err("user missing");
-        assert!(matches!(err, TickMinuteError::UserMissing));
     }
 
     #[test]
@@ -2704,18 +2984,6 @@ mod tests {
             .force_password_reset_if_due(7, SystemTime::UNIX_EPOCH)
             .expect_err("must be onboarded");
         assert!(matches!(err, ForcePasswordResetError::WrongState(_)));
-    }
-
-    #[test]
-    fn force_password_reset_without_user_errors() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.transition_to(SessionState::Authenticating).unwrap();
-        s.transition_to(SessionState::Onboarded).unwrap();
-        let err = s
-            .force_password_reset_if_due(7, SystemTime::UNIX_EPOCH)
-            .expect_err("user missing");
-        assert!(matches!(err, ForcePasswordResetError::UserMissing));
     }
 
     #[test]
