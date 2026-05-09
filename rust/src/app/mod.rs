@@ -24,6 +24,7 @@ pub mod config_loader;
 pub mod node_pool;
 pub mod screens;
 pub mod seed;
+pub mod session_driver;
 pub mod session_flow;
 
 /// Entry point invoked by the binary's `main`.
