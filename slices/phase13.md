@@ -1,40 +1,37 @@
-# Phase 13 — Per-user accounting refinements
+# Phase 13 — User self-service
 
-Rounds out the accounting model: per-conference tallies, paid credit
-accounts, the daily byte cap, and the long tail of password hash
-algorithms with opportunistic in-place migration.
+Toggles, the `W` change-info command, the `S` and `T` stats / time
+screens, and the `O` page-sysop chat allowance.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
-## Slice 61 — Per-conference accounting
+## Slice 65 — Quiet mode + ANSI / RIP / expert toggles
 - **In Scope**
-  - `ConferenceMembership.bytes_uploaded`, `bytes_downloaded`, `files_uploaded`, `files_downloaded`, `messages_posted` updated by the relevant rules.
-  - Per-conference ratio override (`ConferenceMembership.ratio_mode != disabled` wins over user-level).
+  - Adds `Session.ansi_colour`, `Session.quick_logon`, `Session.rip_mode`, `Session.quiet_mode`, `Session.cmd_shortcuts` and `User.expert_mode`.
+  - Backfills the boolean-flag `ensures` clauses on `AcceptConnection` (Slice 7 deferred them).
+  - Menu commands `M` (ANSI on/off, per `Conf02/Menu.txt`), `X` (expert mode).
 - **Out of Scope**
-  - Reporting screens.
+  - RIP rendering itself — the flag is recorded; rendering is out of scope for the BBS core.
 
-## Slice 62 — Credit accounts
+## Slice 66 — `W` (change user info) command
 - **In Scope**
-  - `core.allium:CreditAccount` value attached to `User`.
-  - `credit_account_active(user)` true within `start_date + days_credited`.
-  - `track_uploads` / `track_downloads` toggle whether transfers count against the credit.
+  - Adds `User.real_name`, `User.internet_name`, `User.preferred_protocol` (first read here).
+  - Edit `location`, `phone_number`, `email`, `line_length`, `preferred_protocol`, `flags`.
+  - Edit `real_name` / `internet_name` when the current conference's `accepted_name_type` requires it.
 - **Out of Scope**
-  - Payment / billing integration.
+  - Handle changes (sysop-only; not modelled).
 
-## Slice 63 — Daily byte cap end-to-end
+## Slice 67 — `S` (user stats) + `T` (time) commands
 - **In Scope**
-  - Adds `User.daily_byte_limit`, `User.daily_bytes_downloaded`, `Session.bytes_remaining_today` (first read here).
-  - `User.daily_byte_limit` enforced by `CheckDownloadEligibility` and `Session.bytes_remaining_today`.
-  - Reset wired into `InitialiseDailyBudget`.
+  - Stats screen: `times_called`, `messages_posted`, `bytes_*_total`, `last_call`, `chat_minutes_remaining`.
+  - Time screen: `time_remaining`, `bytes_remaining_today`.
 - **Out of Scope**
-  - Per-conference daily caps (not in spec).
+  - Graphs / multi-conference summaries.
 
-## Slice 64 — Legacy + lower-round password hashes
+## Slice 68 — Sysop chat allowance (`O` page sysop)
 - **In Scope**
-  - Adds the remaining `PasswordHashKind` variants (`legacy`, `pbkdf2_5`, `pbkdf2_50`, `pbkdf2_100`, `pbkdf2_1000`).
-  - `verify_password` accepts all variants.
-  - On a successful logon under a weaker algorithm, re-hash with the configured `password_hash_kind` and update the stored fields (the in-place migration mentioned in `core.allium:PasswordHashKind`).
-  - Fixture vectors from `amiexpress/pwdhash.e` confirm parity with the legacy hash.
+  - Adds `User.chat_minutes_remaining`, `User.chat_minutes_per_call` (first read here).
+  - `chat_minutes_remaining` decrement; `O` command pages the sysop console (no chat protocol yet).
 - **Out of Scope**
-  - Forced bulk migration of stored passwords (out of scope; migration is opportunistic on logon).
+  - Two-way chat protocol — that's its own subsystem.

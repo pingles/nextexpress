@@ -69,7 +69,7 @@ NextExpress yet are listed at the end with their expected slice.
   budget before the menu loop starts.
 - **Allium rule:** `session.allium:TimeExpired` (the at-logon variant
   — TimeExpired today fires only at runtime; an at-logon check is on
-  the Phase 4 backlog).
+  the Phase 14 backlog).
 - **Display semantics:** fall-back text + immediate disconnect.
 - **Built-in fall-back:** `You have exceeded your time limit\r\nGoodbye\r\nDisconnecting..\r\n`
   (three literal lines, sent in order).
@@ -104,7 +104,7 @@ NextExpress yet are listed at the end with their expected slice.
   (multi-node concurrency enforcement).
 - **Allium rule:** none yet — the equivalent invariant is
   `OneActiveSessionPerNode` in `session.allium`, but that's per-node
-  not per-user. A `RejectConcurrentSession` rule is on the Phase 4
+  not per-user. A `RejectConcurrentSession` rule is on the Phase 14
   backlog.
 - **Display semantics:** fall-back text + immediate disconnect.
 - **Built-in fall-back:** `\r\nYou are already logged into another node!\r\n`.
@@ -236,7 +236,7 @@ NextExpress yet are listed at the end with their expected slice.
 - **Allium rule:** part of the adapter sequence around
   `session.allium:CompleteNewUserRegistration` (see that rule's
   `@guidance`); the sub-flow itself lands with `conferences.allium`
-  in Phase 5.
+  in Phase 4.
 - **Display semantics:** pause-after.
 - **Built-in fall-back:** none.
 - **Source:** `amiexpress/express.e:30057`.
@@ -278,7 +278,7 @@ NextExpress yet are listed at the end with their expected slice.
   three are displayed in sequence (system bulletin, then node-scoped,
   then conference-scoped).
 - **Allium rule:** none yet — bulletins land with the per-conference
-  Phase 5 work; the spec acknowledges them in `EnterMenu`'s
+  Phase 4 work; the spec acknowledges them in `EnterMenu`'s
   `@guidance`.
 - **Display semantics:** pause-after each.
 - **Built-in fall-back:** none — bulletins are sysop-supplied or
@@ -317,7 +317,7 @@ NextExpress yet are listed at the end with their expected slice.
   conference (when more than one exists). `CONF_JOINMSGBASE` is the
   conference-scoped variant; on miss the adapter falls through to the
   node-wide `JOINMSGBASE`.
-- **Allium rule:** Phase 5 / Phase 7 messaging slices.
+- **Allium rule:** Phase 4 / Phase 6 messaging slices.
 - **Display semantics:** cascading fallback.
 - **Built-in fall-back:** none beyond the cascade.
 - **Source:** `amiexpress/express.e:25170-25171`, `:25221-25222`.
@@ -358,7 +358,7 @@ NextExpress yet are listed at the end with their expected slice.
 ### `FILEHELP` (`FileHelp`)
 
 - **Trigger:** user requests help during file browsing.
-- **Allium rule:** `files.allium` help command (Phase 10).
+- **Allium rule:** `files.allium` help command (Phase 9).
 - **Display semantics:** fall-back text.
 - **Built-in fall-back:** `unAvailNotice(GSTR3, GSTR1)` — a
   translator-resolved string in the legacy code; NextExpress will
@@ -375,7 +375,7 @@ NextExpress yet are listed at the end with their expected slice.
 - **Trigger:** posting a message in a conference whose
   `accepted_name_type = real_name`, when the user has no
   `real_name` on file.
-- **Allium rule:** `messaging.allium:PostMail` precondition (Phase 8).
+- **Allium rule:** `messaging.allium:PostMail` precondition (Phase 7).
 - **Display semantics:** fall-back text + a 5-attempt input loop.
 - **Built-in fall-back:**
   `Real Names are required for messages in this conference/msgbase \r\n`
@@ -387,7 +387,7 @@ NextExpress yet are listed at the end with their expected slice.
 - **Trigger:** posting a message in a conference whose
   `accepted_name_type = internet_name`, when the user has no
   `internet_name` on file.
-- **Allium rule:** `messaging.allium:PostMail` precondition (Phase 8).
+- **Allium rule:** `messaging.allium:PostMail` precondition (Phase 7).
 - **Display semantics:** fall-back text + input loop.
 - **Built-in fall-back:**
   `Internet Names are required for messages in this conference/msgbase\r\n`
@@ -443,7 +443,7 @@ reflects the spec.
 | LOGON24 | not yet | (TimeExpired-at-logon, planned) | 14 polish |
 | NOCALLERSATBAUD | not yet | (no rule, baud-vestigial) | — |
 | NOT_TIME | not yet | (no rule, baud-vestigial) | — |
-| ONENODE | not yet | (RejectConcurrentSession, planned) | Phase 4 |
+| ONENODE | not yet | (RejectConcurrentSession, planned) | Phase 14 |
 | PRIVATE | not yet | `SysopDirectLogon` | 22 |
 | LOCKOUT0 / LOCKOUT1 | adapter has fall-back line | `RejectLockedOrInsufficientAccess` | 16 |
 | LOGON | adapter has fall-back line | `EnterMenu` (presentation) | 12 |
@@ -454,15 +454,15 @@ reflects the spec.
 | JOIN | not yet | (CompleteNewUserRegistration adapter sequence) | 20 follow-up |
 | JOINED | adapter has fall-back line ("Welcome aboard!") | (CompleteNewUserRegistration adapter sequence) | 20 |
 | MENU | implemented (with Phase-1 fall-back) | `EnterMenu` | 12 |
-| BULL / NODE_BULL / CONF_BULL | not yet | (Phase 5 / 7) | 31 |
+| BULL / NODE_BULL / CONF_BULL | not yet | (Phase 4 / 6) | 31 |
 | MAILSCAN | not yet | (Slice 41) | 41 |
 | JOINCONF | not yet | `JoinConference` | 32 |
-| CONF_JOINMSGBASE / JOINMSGBASE | not yet | (Phase 5) | 28 |
+| CONF_JOINMSGBASE / JOINMSGBASE | not yet | (Phase 4) | 28 |
 | DOWNLOAD | not yet | `BeginDownload` | 54 |
 | UPLOAD | not yet | `BeginUpload` | 56 |
 | NOUPLOADS | not yet | `BeginUpload` (rejection) | 56 |
-| FILEHELP | not yet | (Phase 10) | 52 |
-| REALNAMES | not yet | `PostMail` precondition | Phase 8 |
-| INTERNETNAMES | not yet | `PostMail` precondition | Phase 8 |
+| FILEHELP | not yet | (Phase 9) | 52 |
+| REALNAMES | not yet | `PostMail` precondition | Phase 7 |
+| INTERNETNAMES | not yet | `PostMail` precondition | Phase 7 |
 | LANGUAGES | not yet | (future.md) | — |
 | LOGOFF | adapter has fall-back line ("Goodbye!") | `FinaliseLogoff` | 13 |

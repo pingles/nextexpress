@@ -1,47 +1,26 @@
-# Phase 11 — Files (transfer)
+# Phase 11 — Files (admin)
 
-Zmodem download / upload over telnet, with eligibility pre-flight and
-background file checks for uploaded archives.
+Sysop-controlled file area maintenance: direct uploads, moves, deletes,
+admit-from-hold, and the lcfiles / quarantined transitions.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
-## Slice 53 — `Transfer` entity + Zmodem adapter (download stub)
+## Slice 58 — `SysopUploadFile`
 - **In Scope**
-  - `files.allium:Transfer` entity with `direction`, `started_at`, `bytes_transferred`, `cps`, `outcome`, `is_free_download`.
-  - Zmodem download adapter (`amiexpress/zmodem.e` is the reference) wired into `BeginDownload` / `TransferEnded`.
+  - `files.allium:SysopUploadFile` — bypass the user upload flow, place `available` immediately.
 - **Out of Scope**
-  - Xmodem, Ymodem, Hydra, FTP — pick zmodem only for this slice.
+  - Bulk import.
 
-## Slice 54 — `BeginDownload` + `CompleteDownload`
+## Slice 59 — `MoveFile` + `DeleteFile` + `AdmitHeldFile`
 - **In Scope**
-  - Adds `User.bytes_downloaded_total` (first read here).
-  - `files.allium:BeginDownload`, `CompleteDownload` rules with the spec's accounting on the user, file and `ConferenceMembership`.
-  - `is_free_download` honours `FileArea.free_downloads` and `Conference.free_downloads`.
+  - `files.allium:MoveFile`, `DeleteFile` (soft, status `removed`), `AdmitHeldFile`.
+  - Flagged-file rows pointing at a deleted file are dropped per the spec.
 - **Out of Scope**
-  - Pre-flight eligibility (Slice 55).
+  - Hard purge (audit trail kept per legacy behaviour).
 
-## Slice 55 — `CheckDownloadEligibility`
+## Slice 60 — `lcfiles` and `quarantined` workflows
 - **In Scope**
-  - Adds `User.ratio_mode`, `User.ratio_value` (first read here).
-  - `files.allium:CheckDownloadEligibility` — time, daily-byte cap, ratio (`ratio_check_passes`), credit-account bypass (`credit_account_active`).
-  - `DailyDownloadsLeQuota` invariant.
-  - Reports `DownloadEstimate` to the user.
+  - `available -> lcfiles -> available` round-trip; `available -> quarantined -> available` after sysop intervention.
 - **Out of Scope**
-  - Free-resuming (`files.allium` open question).
-
-## Slice 56 — `BeginUpload` + `CompleteUpload`
-- **In Scope**
-  - Adds `User.bytes_uploaded_total` (first read here).
-  - `files.allium:BeginUpload` allocates a `File` in `in_playpen`.
-  - `files.allium:CompleteUpload` charges `bytes_uploaded_total`, awards `upload_time_bonus` (legacy `(bytes / 2 + 60) seconds`), transitions to `available` or `held_for_review`.
-  - `TransferBytesNonNegative` and `FileSizeNonNegative` invariants.
-- **Out of Scope**
-  - Background check (Slice 57).
-
-## Slice 57 — Background file check
-- **In Scope**
-  - `files.allium:BackgroundCheck`, `BackgroundCheckPassed`, `BackgroundCheckFailed`.
-  - Adapter reads per-archive-type config (reference `defaultbbs/FCheck/{DMS,EXE,LHA,LZH,LZX,ZIP}.info`) but stores config in TOML per `AGENTS.md`.
-- **Out of Scope**
-  - Anti-virus engines — the adapter just shells out to a configured command.
+  - Surfacing low-credit weighting in download ratio computations (covered by Slice 55's ratio function once the formula is parameterised).

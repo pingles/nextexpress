@@ -1,33 +1,42 @@
-# Phase 8 — Messaging (write)
+# Phase 8 — Messaging (advanced)
 
-Posting mail: single-addressee `E`, broadcast `ALL` / `EALL` addressing,
-and the dedicated `C` (comment to sysop) command.
+Replies, forwards, censored users, attachments, and the destructive
+operations: delete, move and edit-header.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
-## Slice 42 — `PostMail` rule (single-addressee, `E` command)
+## Slice 45 — `ReplyToMail`
 - **In Scope**
-  - Adds `User.messages_posted` (first read here).
-  - `messaging.allium:PostMail` with `broadcast_to = none`.
-  - `lookup_user_by_name` and `display_name_of` black-box helpers honouring `Conference.accepted_name_type`.
-  - Message-base lock predicate (`lock_msgbase`) implemented as a per-base `Mutex`; treated as a black box per spec.
-  - User and per-conference `messages_posted` counters incremented.
+  - `messaging.allium:ReplyToMail` — `reply_keeps_broadcast` honoured for ALL replies.
 - **Out of Scope**
-  - Editor itself — line-mode for now; full-screen editor deferred.
-  - ALL / EALL (Slice 43).
-  - Censored users (Slice 47).
+  - Quoting prior message body (presentation concern).
 
-## Slice 43 — Broadcast addressing (ALL / EALL)
+## Slice 46 — `ForwardMail`
 - **In Scope**
-  - `messaging.allium:BroadcastTo` and `AllowedAddressing` — `addressing_allows` enforced at post time.
-  - `AllScanScope` per-conference toggle plumbed into the scan rule.
+  - `messaging.allium:ForwardMail` — `forward_header_for` builder, optional note appended.
 - **Out of Scope**
-  - EALL fan-out across conferences at write time (lazy per spec).
+  - Forwarding attachments (Slice 48).
 
-## Slice 44 — `PostCommentToSysop` (`C` command)
+## Slice 47 — Censored users + private/private-to-sysop
 - **In Scope**
-  - `messaging.allium:PostCommentToSysop` — composes a private message addressed to handle "Sysop", emits `CommentToSysopPosted`.
-  - Used by Slice 16's "leave a comment on the way out" exit path.
+  - Adds `User.censored` field (first read here).
+  - `User.censored` forces `private_to_sysop` visibility on `PostMail`.
+  - Listing screen shows lower-case glyph for sysop-only mail.
 - **Out of Scope**
-  - Out-of-band sysop notification (email, paging — separate adapter).
+  - Visibility transitions by sysop (Slice 49).
+
+## Slice 48 — `MailAttachment` + `AttachFileToMail`
+- **In Scope**
+  - `messaging.allium:MailAttachment` entity referencing a file by name.
+  - Both pre-upload and post-upload attachment paths.
+- **Out of Scope**
+  - The wire transfer for the attached file — that runs through Phase 10 once protocols land.
+
+## Slice 49 — `DeleteMail`, `MoveMail`, `EditMailHeader`
+- **In Scope**
+  - `messaging.allium:DeleteMail` — soft delete, bumps `lowest_undeleted_message`.
+  - `messaging.allium:MoveMail` — atomic delete-then-create across bases, attachments tagged onto the new mail.
+  - `messaging.allium:EditMailHeader` — sysop-only subject / addressee rewrite.
+- **Out of Scope**
+  - Bulk delete / archive.

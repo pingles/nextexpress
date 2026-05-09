@@ -1,37 +1,43 @@
-# Phase 14 — User self-service
+# Phase 14 — Sysop console & node controls
 
-Toggles, the `W` change-info command, the `S` and `T` stats / time
-screens, and the `O` page-sysop chat allowance.
+Lets the sysop log on locally, reserve nodes, suspend / resume / shut down
+nodes, and kick a session off another node.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
-## Slice 65 — Quiet mode + ANSI / RIP / expert toggles
+## Slice 22 — Sysop direct logon
 - **In Scope**
-  - Adds `Session.ansi_colour`, `Session.quick_logon`, `Session.rip_mode`, `Session.quiet_mode`, `Session.cmd_shortcuts` and `User.expert_mode`.
-  - Backfills the boolean-flag `ensures` clauses on `AcceptConnection` (Slice 7 deferred them).
-  - Menu commands `M` (ANSI on/off, per `Conf02/Menu.txt`), `X` (expert mode).
+  - `session.allium:SysopDirectLogon` — F1-equivalent local key shortcut on the BBS console creates a session at `state = onboarded` for `sysop_user()` (`slot_number = 1`), `channel = sysop_console`, skipping identification/auth.
 - **Out of Scope**
-  - RIP rendering itself — the flag is recorded; rendering is out of scope for the BBS core.
+  - F2-style "local logon" (Slice 23).
+  - "instantLogon" sysop key combo (`session.allium` open question).
 
-## Slice 66 — `W` (change user info) command
+## Slice 23 — Local logon + relogon
 - **In Scope**
-  - Adds `User.real_name`, `User.internet_name`, `User.preferred_protocol` (first read here).
-  - Edit `location`, `phone_number`, `email`, `line_length`, `preferred_protocol`, `flags`.
-  - Edit `real_name` / `internet_name` when the current conference's `accepted_name_type` requires it.
+  - `LogonChannel::local` — F2 path: still goes through identification/auth, but `online_baud = 0` and `is_remote = false`.
+  - `session.allium:RelogonRequested` — session ends with `relogon`; `ReleaseNode` flips node back to `connecting` instead of `idle`.
 - **Out of Scope**
-  - Handle changes (sysop-only; not modelled).
+  - Sysop "switch user" UX wrapping relogon.
 
-## Slice 67 — `S` (user stats) + `T` (time) commands
+## Slice 24 — Node reservation
 - **In Scope**
-  - Stats screen: `times_called`, `messages_posted`, `bytes_*_total`, `last_call`, `chat_minutes_remaining`.
-  - Time screen: `time_remaining`, `bytes_remaining_today`.
+  - Adds `Node.reserved_for: Option<UserId>`, the `reserved` status and the `idle -> reserved -> idle` / `reserved -> connecting` transitions plus the `ReservedHasUser` invariant.
+  - `session.allium:ReserveNodeForUser` and `ClearNodeReservation` rules.
+  - `AcceptConnection` rejects with `reserved_for_other` when the connecting user is not the reserved one.
 - **Out of Scope**
-  - Graphs / multi-conference summaries.
+  - The "page reserved-for-X user" out-of-band notification.
 
-## Slice 68 — Sysop chat allowance (`O` page sysop)
+## Slice 25 — Node suspend / resume / shutdown
 - **In Scope**
-  - Adds `User.chat_minutes_remaining`, `User.chat_minutes_per_call` (first read here).
-  - `chat_minutes_remaining` decrement; `O` command pages the sysop console (no chat protocol yet).
+  - Adds the `suspended` and `shutting_down` statuses and the `idle -> suspended -> idle` and `idle -> shutting_down` transitions.
+  - `session.allium:SuspendNode`, `ResumeNode`, `InitiateShutdown` rules.
+  - Cooperative shutdown — active sessions log off on their own clock per the rule's `@guidance`.
 - **Out of Scope**
-  - Two-way chat protocol — that's its own subsystem.
+  - OS-level signal handling for graceful daemon stop (config concern).
+
+## Slice 26 — Sysop kick
+- **In Scope**
+  - `session.allium:SysopKick` — sysop console command kicks a session on another node; `logoff_reason = sysop_kicked`.
+- **Out of Scope**
+  - Inter-node messaging (`OLM`); kick is a direct sysop action only.

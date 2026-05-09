@@ -1,19 +1,46 @@
-# Phase 6 — Conferences (admin)
+# Phase 6 — Messaging (read)
 
-Sysop-only: create new conferences, grant or revoke per-user access.
+Mail entity and on-disk store, read pointers, the `R`, `M` and `N`
+commands, and auto mail scan on join.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
-## Slice 35 — Sysop creates conference
+## Slice 37 — `Mail` entity + on-disk message store
 - **In Scope**
-  - `conferences.allium:SysopCreatesConference` — also creates `MessageBase` number 1 with the given defaults.
+  - `messaging.allium:Mail` entity with header + body, `transitions visibility`, `FromNameMatchesAuthor` and `DeletedMessagesHaveNoActiveReceived` invariants.
+  - File-based store (one file per message, header file separate per legacy convention).
+  - `MessageNumbersUniquePerBase` and `HighestMessageMatchesMaxNumber` invariants enforced by the store.
 - **Out of Scope**
-  - Editing existing conferences in place.
+  - `MailAttachment` (Slice 48).
+  - External message bases / `ext_msg_num` (deferred).
 
-## Slice 36 — Sysop grants / revokes access
+## Slice 38 — `ReadPointers` entity
 - **In Scope**
-  - `conferences.allium:SysopGrantsConferenceAccess`, `SysopRevokesConferenceAccess`.
-  - Idempotent: re-granting is a no-op; revoking sets `granted = false` rather than deleting (preserving counters per `core.allium:ConferenceMembership` "false rows can be kept for history").
+  - `core.allium:ReadPointers` with `last_read`, `last_scanned`, `new_since`.
+  - `ReadDoesNotExceedScanned` invariant.
+  - `read_pointers_for(user, msgbase)` black-box helper.
 - **Out of Scope**
-  - Bulk per-area grant by access level (`AREA.NewUser`, `AREA.Normal`, `AREA.Sysop` from `defaultbbs/Access/`).
+  - Pointer reset commands.
+
+## Slice 39 — `ReadMail` rule + `R` menu command
+- **In Scope**
+  - `messaging.allium:ReadMail` — gate on `has_access(user, read_message)` and `can_read(user, mail)`.
+  - Sets `received_at` for the addressee on first read; advances `last_read`.
+  - `DeletedMessagesNotAddressableByLastRead` invariant covered.
+- **Out of Scope**
+  - Reply / forward / delete (Phase 8).
+
+## Slice 40 — `ScanMail` + `M`/`N` menu commands
+- **In Scope**
+  - `messaging.allium:ScanMail` — emits `MailScanCompleted`, advances `last_scanned`.
+  - `count_unread_for`, `first_unread_number_for` black-box helpers.
+- **Out of Scope**
+  - EALL fan-out (`messaging.allium` open question — lazy at scan time).
+
+## Slice 41 — Auto mail scan on join
+- **In Scope**
+  - `conferences.allium:ScanMailOnJoin` — `follow_pointer` and `force_all` modes wire into the scan rule.
+  - Display `SCREEN_MAILSCAN` when there are unread messages.
+- **Out of Scope**
+  - Cross-conference (zoom) scans.

@@ -1,29 +1,47 @@
-# Phase 10 — Files (browse and flag)
+# Phase 10 — Files (transfer)
 
-File areas as data, the flagged-files list, and the `A` / `Z` commands
-for editing flags and searching.
+Zmodem download / upload over telnet, with eligibility pre-flight and
+background file checks for uploaded archives.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
-## Slice 50 — `Bytes` value type + `FileArea` + `File` entities
+## Slice 53 — `Transfer` entity + Zmodem adapter (download stub)
 - **In Scope**
-  - Introduces the `Bytes` value type (`core.allium:Bytes`) — `count: u64`, ordering, addition, saturating subtraction.
-  - `core.allium:FileArea`, `files.allium:File` (using `Bytes` for `File.size`) with `transitions status`.
-  - File listing reads `Conf<n>/Dir<m>` (legacy layout) and surfaces filename, size, description, status.
+  - `files.allium:Transfer` entity with `direction`, `started_at`, `bytes_transferred`, `cps`, `outcome`, `is_free_download`.
+  - Zmodem download adapter (`amiexpress/zmodem.e` is the reference) wired into `BeginDownload` / `TransferEnded`.
 - **Out of Scope**
-  - BCD packing (`core.allium:Bytes` notes BCD is a storage decision — adapter concern).
-  - Sysop-uploaded files (Slice 58).
+  - Xmodem, Ymodem, Hydra, FTP — pick zmodem only for this slice.
 
-## Slice 51 — `FlagFile` / `UnflagFile`
+## Slice 54 — `BeginDownload` + `CompleteDownload`
 - **In Scope**
-  - `files.allium:FlagFile` and `UnflagFile` rules; per-session flagged list bounded by `max_flagged_files()` (legacy `MAX_FLAGGED_FILES = 1000`).
-  - `FlaggedFilesAreDownloadable` invariant.
+  - Adds `User.bytes_downloaded_total` (first read here).
+  - `files.allium:BeginDownload`, `CompleteDownload` rules with the spec's accounting on the user, file and `ConferenceMembership`.
+  - `is_free_download` honours `FileArea.free_downloads` and `Conference.free_downloads`.
 - **Out of Scope**
-  - Persisting the flagged list across sessions (`files.allium` open question).
+  - Pre-flight eligibility (Slice 55).
 
-## Slice 52 — `A` (edit file flags) + `Z` (zippy search) commands
+## Slice 55 — `CheckDownloadEligibility`
 - **In Scope**
-  - List + edit the flagged set; zippy search across one or more areas filtered by substring.
+  - Adds `User.ratio_mode`, `User.ratio_value` (first read here).
+  - `files.allium:CheckDownloadEligibility` — time, daily-byte cap, ratio (`ratio_check_passes`), credit-account bypass (`credit_account_active`).
+  - `DailyDownloadsLeQuota` invariant.
+  - Reports `DownloadEstimate` to the user.
 - **Out of Scope**
-  - Wildcard / regex search syntax; substring is enough for the slice.
+  - Free-resuming (`files.allium` open question).
+
+## Slice 56 — `BeginUpload` + `CompleteUpload`
+- **In Scope**
+  - Adds `User.bytes_uploaded_total` (first read here).
+  - `files.allium:BeginUpload` allocates a `File` in `in_playpen`.
+  - `files.allium:CompleteUpload` charges `bytes_uploaded_total`, awards `upload_time_bonus` (legacy `(bytes / 2 + 60) seconds`), transitions to `available` or `held_for_review`.
+  - `TransferBytesNonNegative` and `FileSizeNonNegative` invariants.
+- **Out of Scope**
+  - Background check (Slice 57).
+
+## Slice 57 — Background file check
+- **In Scope**
+  - `files.allium:BackgroundCheck`, `BackgroundCheckPassed`, `BackgroundCheckFailed`.
+  - Adapter reads per-archive-type config (reference `defaultbbs/FCheck/{DMS,EXE,LHA,LZH,LZX,ZIP}.info`) but stores config in TOML per `AGENTS.md`.
+- **Out of Scope**
+  - Anti-virus engines — the adapter just shells out to a configured command.

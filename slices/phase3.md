@@ -45,5 +45,5 @@ table and asset inventory.
   - `Right` enum cataloguing every right referenced by `requires` clauses across `conferences.allium`, `messaging.allium`, and `files.allium`.
   - Pulled forward from Slice 31: per-access-level menu lookup. `ScreenRepository::default_menu` takes the user's `access_level` and walks `Conf02/Menu<N>.txt` from `access_level / 5 * 5` down by 5 to `5`, falling back to `Menu.txt` and the built-in stub. Mirrors `findSecurityScreen` in `amiexpress/express.e:6246`.
 - **Out of Scope**
-  - The sysop "validate user" command (lands with the rest of Phase 6 sysop-conference-admin work).
+  - The sysop "validate user" command (lands with the rest of Phase 5 sysop-conference-admin work).
   - `DEF_SCREENS` / `screenType` / `RIP` variants of the lookup — modern transports collapse these into the plain `.txt` path.

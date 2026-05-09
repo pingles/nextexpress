@@ -147,7 +147,7 @@ table and asset inventory.
 - **Out of Scope**
   - Accumulating `time_used_today` — Slice 14 introduces that field.
   - `relogon` re-entry (Slice 23).
-  - `format_logoff_line`'s byte-tally fields (filled in once Phase 11 lands transfer accounting).
+  - `format_logoff_line`'s byte-tally fields (filled in once Phase 10 lands transfer accounting).
 
 ## Slice 13a — Phase 1 wire-and-smoke (composition root + sysop seed)
 - **In Scope**

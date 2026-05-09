@@ -1,46 +1,33 @@
-# Phase 7 — Messaging (read)
+# Phase 7 — Messaging (write)
 
-Mail entity and on-disk store, read pointers, the `R`, `M` and `N`
-commands, and auto mail scan on join.
+Posting mail: single-addressee `E`, broadcast `ALL` / `EALL` addressing,
+and the dedicated `C` (comment to sysop) command.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle, progress
 table and asset inventory.
 
-## Slice 37 — `Mail` entity + on-disk message store
+## Slice 42 — `PostMail` rule (single-addressee, `E` command)
 - **In Scope**
-  - `messaging.allium:Mail` entity with header + body, `transitions visibility`, `FromNameMatchesAuthor` and `DeletedMessagesHaveNoActiveReceived` invariants.
-  - File-based store (one file per message, header file separate per legacy convention).
-  - `MessageNumbersUniquePerBase` and `HighestMessageMatchesMaxNumber` invariants enforced by the store.
+  - Adds `User.messages_posted` (first read here).
+  - `messaging.allium:PostMail` with `broadcast_to = none`.
+  - `lookup_user_by_name` and `display_name_of` black-box helpers honouring `Conference.accepted_name_type`.
+  - Message-base lock predicate (`lock_msgbase`) implemented as a per-base `Mutex`; treated as a black box per spec.
+  - User and per-conference `messages_posted` counters incremented.
 - **Out of Scope**
-  - `MailAttachment` (Slice 48).
-  - External message bases / `ext_msg_num` (deferred).
+  - Editor itself — line-mode for now; full-screen editor deferred.
+  - ALL / EALL (Slice 43).
+  - Censored users (Slice 47).
 
-## Slice 38 — `ReadPointers` entity
+## Slice 43 — Broadcast addressing (ALL / EALL)
 - **In Scope**
-  - `core.allium:ReadPointers` with `last_read`, `last_scanned`, `new_since`.
-  - `ReadDoesNotExceedScanned` invariant.
-  - `read_pointers_for(user, msgbase)` black-box helper.
+  - `messaging.allium:BroadcastTo` and `AllowedAddressing` — `addressing_allows` enforced at post time.
+  - `AllScanScope` per-conference toggle plumbed into the scan rule.
 - **Out of Scope**
-  - Pointer reset commands.
+  - EALL fan-out across conferences at write time (lazy per spec).
 
-## Slice 39 — `ReadMail` rule + `R` menu command
+## Slice 44 — `PostCommentToSysop` (`C` command)
 - **In Scope**
-  - `messaging.allium:ReadMail` — gate on `has_access(user, read_message)` and `can_read(user, mail)`.
-  - Sets `received_at` for the addressee on first read; advances `last_read`.
-  - `DeletedMessagesNotAddressableByLastRead` invariant covered.
+  - `messaging.allium:PostCommentToSysop` — composes a private message addressed to handle "Sysop", emits `CommentToSysopPosted`.
+  - Used by Slice 16's "leave a comment on the way out" exit path.
 - **Out of Scope**
-  - Reply / forward / delete (Phase 9).
-
-## Slice 40 — `ScanMail` + `M`/`N` menu commands
-- **In Scope**
-  - `messaging.allium:ScanMail` — emits `MailScanCompleted`, advances `last_scanned`.
-  - `count_unread_for`, `first_unread_number_for` black-box helpers.
-- **Out of Scope**
-  - EALL fan-out (`messaging.allium` open question — lazy at scan time).
-
-## Slice 41 — Auto mail scan on join
-- **In Scope**
-  - `conferences.allium:ScanMailOnJoin` — `follow_pointer` and `force_all` modes wire into the scan rule.
-  - Display `SCREEN_MAILSCAN` when there are unread messages.
-- **Out of Scope**
-  - Cross-conference (zoom) scans.
+  - Out-of-band sysop notification (email, paging — separate adapter).

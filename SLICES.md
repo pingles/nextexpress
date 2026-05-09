@@ -25,17 +25,17 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | 1 | [slices/phase1.md](slices/phase1.md) | 2–13, 8a, 13a | Sign in, see the menu, log off | Done |
 | 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow | Done |
 | 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding | Done |
-| 4 | [slices/phase4.md](slices/phase4.md) | 22–26 | Sysop console & node controls | Todo |
-| 5 | [slices/phase5.md](slices/phase5.md) | 27–34 | Conferences (read) | Todo |
-| 6 | [slices/phase6.md](slices/phase6.md) | 35–36 | Conferences (admin) | Todo |
-| 7 | [slices/phase7.md](slices/phase7.md) | 37–41 | Messaging (read) | Todo |
-| 8 | [slices/phase8.md](slices/phase8.md) | 42–44 | Messaging (write) | Todo |
-| 9 | [slices/phase9.md](slices/phase9.md) | 45–49 | Messaging (advanced) | Todo |
-| 10 | [slices/phase10.md](slices/phase10.md) | 50–52 | Files (browse and flag) | Todo |
-| 11 | [slices/phase11.md](slices/phase11.md) | 53–57 | Files (transfer) | Todo |
-| 12 | [slices/phase12.md](slices/phase12.md) | 58–60 | Files (admin) | Todo |
-| 13 | [slices/phase13.md](slices/phase13.md) | 61–64 | Per-user accounting refinements | Todo |
-| 14 | [slices/phase14.md](slices/phase14.md) | 65–68 | User self-service | Todo |
+| 4 | [slices/phase4.md](slices/phase4.md) | 27–34 | Conferences (read) | Todo |
+| 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Todo |
+| 6 | [slices/phase6.md](slices/phase6.md) | 37–41 | Messaging (read) | Todo |
+| 7 | [slices/phase7.md](slices/phase7.md) | 42–44 | Messaging (write) | Todo |
+| 8 | [slices/phase8.md](slices/phase8.md) | 45–49 | Messaging (advanced) | Todo |
+| 9 | [slices/phase9.md](slices/phase9.md) | 50–52 | Files (browse and flag) | Todo |
+| 10 | [slices/phase10.md](slices/phase10.md) | 53–57 | Files (transfer) | Todo |
+| 11 | [slices/phase11.md](slices/phase11.md) | 58–60 | Files (admin) | Todo |
+| 12 | [slices/phase12.md](slices/phase12.md) | 61–64 | Per-user accounting refinements | Todo |
+| 13 | [slices/phase13.md](slices/phase13.md) | 65–68 | User self-service | Todo |
+| 14 | [slices/phase14.md](slices/phase14.md) | 22–26 | Sysop console & node controls | Todo |
 | Future | [slices/future.md](slices/future.md) | — | Not yet sliced (FTP, HTTPd, QWK, FTN, OLM, …) | Todo |
 
 ## Concurrency model
