@@ -751,12 +751,36 @@ mod tests {
             bytes(b"MENU\r\n")
         }
 
+        fn conference_menu(&self, _conference_number: u32, _access_level: u8) -> ScreenFuture<'_> {
+            bytes(b"CONFMENU\r\n")
+        }
+
         fn new_user_password(&self) -> ScreenFuture<'_> {
             bytes(b"NEW USER\r\n")
         }
 
         fn no_new_users(&self) -> ScreenFuture<'_> {
             bytes(b"NO NEW USERS\r\n")
+        }
+
+        fn join_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"JOIN\r\n")
+        }
+
+        fn joined_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"JOINED\r\n")
+        }
+
+        fn joinconf_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"JOINCONF\r\n")
+        }
+
+        fn realnames_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"REALNAMES\r\n")
+        }
+
+        fn internetnames_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"INTERNETNAMES\r\n")
         }
     }
 

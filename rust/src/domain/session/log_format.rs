@@ -66,6 +66,7 @@ pub(super) fn format_logoff_line(session: &Session) -> String {
         Some(LogoffReason::OutOfTime) => "out_of_time",
         Some(LogoffReason::InputTimeout) => "input_timeout",
         Some(LogoffReason::CarrierLoss) => "carrier_loss",
+        Some(LogoffReason::NoConferenceAccess) => "no_conference_access",
         None => "unknown",
     };
     format!(

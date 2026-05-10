@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
+use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, MessageBaseRef};
 use crate::domain::password::PasswordHashKind;
 
 /// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
@@ -196,6 +197,8 @@ pub struct User {
     flags: BTreeSet<UserFlag>,
     ratio_mode: RatioMode,
     ratio_value: u32,
+    memberships: Vec<ConferenceMembership>,
+    last_joined: Option<MessageBaseRef>,
 }
 
 impl User {
@@ -253,6 +256,8 @@ impl User {
             flags: BTreeSet::new(),
             ratio_mode: RatioMode::Disabled,
             ratio_value: 0,
+            memberships: Vec::new(),
+            last_joined: None,
         })
     }
 
@@ -320,6 +325,8 @@ impl User {
             flags,
             ratio_mode,
             ratio_value,
+            memberships: Vec::new(),
+            last_joined: None,
         })
     }
 
@@ -609,6 +616,75 @@ impl User {
     #[must_use]
     pub fn ratio_value(&self) -> u32 {
         self.ratio_value
+    }
+
+    /// Returns the user's per-conference membership rows
+    /// (`core.allium:User.memberships`).
+    #[must_use]
+    pub fn memberships(&self) -> &[ConferenceMembership] {
+        &self.memberships
+    }
+
+    /// Adds a [`ConferenceMembership`] row, replacing any existing
+    /// row for the same `conference_number` so the user record never
+    /// carries two rows for the same conference. Used by
+    /// `conferences.allium:SysopGrantsConferenceAccess`'s "create new
+    /// row" branch and by adapters seeding a user record.
+    pub fn upsert_membership(&mut self, membership: ConferenceMembership) {
+        if let Some(existing) = self
+            .memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == membership.conference_number())
+        {
+            *existing = membership;
+        } else {
+            self.memberships.push(membership);
+        }
+    }
+
+    /// Toggles the `granted` flag on the membership for
+    /// `conference_number`.
+    ///
+    /// Mirrors `conferences.allium:SysopGrantsConferenceAccess`'s
+    /// "existing row" branch and `SysopRevokesConferenceAccess`. When
+    /// no row exists for the conference, returns `false` so the
+    /// caller can decide whether to create one (grant) or surface an
+    /// error (revoke).
+    pub fn set_membership_granted(&mut self, conference_number: u32, granted: bool) -> bool {
+        if let Some(existing) = self
+            .memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == conference_number)
+        {
+            existing.set_granted(granted);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns `true` when the user has a granted membership for
+    /// `conference` (spec: `conferences.allium:has_membership`).
+    #[must_use]
+    pub fn has_membership(&self, conference: &Conference) -> bool {
+        crate::domain::conference::has_membership(&self.memberships, conference)
+    }
+
+    /// Returns the user's last-joined (conference, msgbase) pair, if
+    /// any. Mirrors the `last_joined_conference` /
+    /// `last_joined_msgbase` pair on `core.allium:User`. They are
+    /// modelled here as a single optional [`MessageBaseRef`] so the
+    /// `VisitedMsgBaseBelongsToVisitedConference` invariant cannot
+    /// be violated by setting one without the other.
+    #[must_use]
+    pub fn last_joined(&self) -> Option<MessageBaseRef> {
+        self.last_joined
+    }
+
+    /// Records that the user joined `msgbase` inside `conference`.
+    /// Used by `conferences.allium:JoinConference` (Slice 30).
+    pub fn record_join(&mut self, conference: &Conference, msgbase: &MessageBase) {
+        self.last_joined = Some(MessageBaseRef::new(conference.number(), msgbase.number()));
     }
 
     /// Atomically replaces the user's stored credentials and clears
@@ -1006,6 +1082,99 @@ mod tests {
                 "existing user should have {right:?}"
             );
         }
+    }
+
+    fn make_conf(number: u32) -> Conference {
+        Conference::new(
+            number,
+            format!("Conf {number}"),
+            vec![MessageBase::new(number, 1, "main".to_string())],
+        )
+        .expect("valid")
+    }
+
+    #[test]
+    fn new_user_has_no_memberships_or_last_joined() {
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(user.memberships().is_empty());
+        assert!(user.last_joined().is_none());
+        assert!(!user.has_membership(&make_conf(1)));
+    }
+
+    #[test]
+    fn upsert_membership_appends_new_rows() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(1, true));
+        user.upsert_membership(ConferenceMembership::new(2, true));
+        assert_eq!(user.memberships().len(), 2);
+        let nums: Vec<u32> = user
+            .memberships()
+            .iter()
+            .map(ConferenceMembership::conference_number)
+            .collect();
+        assert_eq!(nums, vec![1, 2]);
+    }
+
+    #[test]
+    fn upsert_membership_replaces_existing_rows() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(1, true));
+        user.upsert_membership(ConferenceMembership::new(1, false));
+        assert_eq!(user.memberships().len(), 1);
+        assert!(!user.memberships()[0].is_granted());
+    }
+
+    #[test]
+    fn has_membership_uses_conference_number_match() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(2, true));
+        assert!(user.has_membership(&make_conf(2)));
+        assert!(!user.has_membership(&make_conf(1)));
+    }
+
+    #[test]
+    fn has_membership_ignores_revoked_rows() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(1, false));
+        assert!(!user.has_membership(&make_conf(1)));
+    }
+
+    #[test]
+    fn set_membership_granted_toggles_existing_row() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(1, true));
+        assert!(user.set_membership_granted(1, false));
+        assert!(!user.has_membership(&make_conf(1)));
+        assert!(user.set_membership_granted(1, true));
+        assert!(user.has_membership(&make_conf(1)));
+    }
+
+    #[test]
+    fn set_membership_granted_returns_false_for_unknown_conference() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(!user.set_membership_granted(99, true));
+        assert!(user.memberships().is_empty());
+    }
+
+    #[test]
+    fn record_join_stores_conference_and_msgbase_pair() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        let conf = make_conf(7);
+        let mb = conf.msgbases()[0].clone();
+        user.record_join(&conf, &mb);
+        let joined = user.last_joined().expect("set");
+        assert_eq!(joined.conference_number(), 7);
+        assert_eq!(joined.msgbase_number(), 1);
+    }
+
+    #[test]
+    fn record_join_overwrites_previous_join() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        let confs = [make_conf(1), make_conf(2)];
+        user.record_join(&confs[0], &confs[0].msgbases()[0]);
+        user.record_join(&confs[1], &confs[1].msgbases()[0]);
+        let joined = user.last_joined().expect("set");
+        assert_eq!(joined.conference_number(), 2);
     }
 
     #[test]

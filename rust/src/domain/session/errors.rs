@@ -139,6 +139,19 @@ pub enum CarrierLostError {
     WrongState(SessionState),
 }
 
+/// Errors returned by [`super::Session::auto_rejoin_conference`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum AutoRejoinError {
+    /// The session is not in [`SessionState::Onboarded`] or
+    /// [`SessionState::Menu`] — the spec's `JoinConference`
+    /// `requires` clause.
+    #[error("auto_rejoin_conference in unexpected state: {0:?}")]
+    WrongState(SessionState),
+    /// No user is bound to the session.
+    #[error("auto_rejoin_conference called without a bound user")]
+    UserMissing,
+}
+
 /// Errors returned by [`super::Session::tick_minute`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TickMinuteError {

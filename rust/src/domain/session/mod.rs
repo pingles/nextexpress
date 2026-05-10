@@ -7,6 +7,12 @@
 use std::time::{Duration, SystemTime};
 
 use crate::domain::caller_log::CallerLog;
+use crate::domain::conference::Conference;
+use crate::domain::conference::{first_accessible_conference, NameType};
+use crate::domain::conference_visit::{
+    next_accessible_conference_after, primary_msgbase_of, resolve_auto_rejoin,
+    resolve_explicit_join, ConferenceScan, ConferenceVisit, JoinResolution,
+};
 use crate::domain::user::User;
 
 mod budget;
@@ -27,7 +33,7 @@ const MAX_NAME_RETRIES: u32 = 5;
 pub use crate::domain::session_policy::{PasswordFailureDecision, SessionPolicy};
 pub use budget::{initialise_daily_budget, tick_minute};
 pub use errors::{
-    AcceptConnectionError, CarrierLostError, CompleteNewUserRegistrationError,
+    AcceptConnectionError, AutoRejoinError, CarrierLostError, CompleteNewUserRegistrationError,
     CompletePasswordResetError, EnterMenuError, ForcePasswordResetError, IdleTimeoutError,
     InitialiseDailyBudgetError, NameTypedError, TickMinuteError, VerifyNewUserPasswordError,
     VerifyPasswordError,
@@ -37,8 +43,8 @@ pub use lockout::{
     force_password_reset_if_due,
 };
 pub use outcomes::{
-    NameTypedOutcome, NewUserPasswordOutcome, NewUserRequestOutcome, TickMinuteOutcome,
-    VerifyPasswordOutcome,
+    AutoRejoinOutcome, ConferenceScanOutcome, ExplicitJoinOutcome, NameTypedOutcome,
+    NewUserPasswordOutcome, NewUserRequestOutcome, TickMinuteOutcome, VerifyPasswordOutcome,
 };
 pub use transitions::SessionTransitionError;
 
@@ -74,6 +80,11 @@ pub enum LogoffReason {
     LockedAccount,
     /// User typed `G` (or the configured logoff command).
     NormalLogoff,
+    /// `JoinConference` could not resolve any conference for the
+    /// user, so the session terminates immediately
+    /// (`conferences.allium:JoinConference`'s
+    /// `resolved_conference = null` branch, Slice 30).
+    NoConferenceAccess,
     /// The session burned through `time_remaining` while in
     /// `onboarded` or `menu`. Set by
     /// `session.allium:TimeExpired` (Slice 14).
@@ -117,6 +128,18 @@ pub enum SessionState {
 pub struct Session {
     shared: SessionShared,
     phase: SessionPhase,
+    /// Per-session conference visits (spec:
+    /// `conferences.allium:ConferenceVisit`). The collection is held
+    /// at the session level rather than inside `SessionPhase` so it
+    /// survives `Onboarded -> Menu` transitions and the
+    /// `SessionsHaveAtMostOneOpenVisit` invariant remains visible to
+    /// future-phase rules.
+    visits: Vec<ConferenceVisit>,
+    /// In-progress conference-scan, when the user has typed `CS`
+    /// (`conferences.allium:ConferenceScan`, Slice 33). While set
+    /// the `ShowConferenceBulletin` rule (Slice 31) suppresses
+    /// bulletins on per-step joins.
+    scan: Option<ConferenceScan>,
 }
 
 /// Session fields that are valid for every lifecycle phase.
@@ -127,6 +150,17 @@ struct SessionShared {
     connected_at: SystemTime,
     last_input_at: SystemTime,
     online_baud: u32,
+    /// `session.allium:Session.quick_logon` (first read in Slice 31).
+    /// When `true` the listener skips on-logon screens that are
+    /// considered chrome — currently the post-join conference
+    /// bulletin (`conferences.allium:ShowConferenceBulletin`). The
+    /// full toggle UI lands in Slice 65.
+    quick_logon: bool,
+    /// `session.allium:Session.display_name_type` (first read in
+    /// Slice 34). Set on every successful conference join to the
+    /// joined conference's `accepted_name_type`; controls how the
+    /// user's identity is rendered in messages going forward.
+    display_name_type: NameType,
 }
 
 /// Lifecycle-specific session data.
@@ -324,9 +358,37 @@ impl Session {
                 connected_at,
                 last_input_at: connected_at,
                 online_baud,
+                quick_logon: false,
+                display_name_type: NameType::Handle,
             },
             phase: SessionPhase::Connecting,
+            visits: Vec::new(),
+            scan: None,
         }
+    }
+
+    /// Returns whether the session is in quick-logon mode, suppressing
+    /// chrome-y on-logon screens (currently the post-join conference
+    /// bulletin). Mirrors `session.allium:Session.quick_logon`.
+    #[must_use]
+    pub fn quick_logon(&self) -> bool {
+        self.shared.quick_logon
+    }
+
+    /// Sets [`Self::quick_logon`]. Tests and the future Slice-65
+    /// presentation-toggles flow drive this directly.
+    pub fn set_quick_logon(&mut self, quick: bool) {
+        self.shared.quick_logon = quick;
+    }
+
+    /// Returns the [`NameType`] the session is currently rendering
+    /// the user's identity as
+    /// (`session.allium:Session.display_name_type`, Slice 34).
+    /// Updated on every successful conference join via the spec's
+    /// `JoinedConferenceForNameType` rule.
+    #[must_use]
+    pub fn display_name_type(&self) -> NameType {
+        self.shared.display_name_type
     }
 
     /// Returns this session's node number.
@@ -953,6 +1015,282 @@ impl Session {
             text: line,
             is_password_failure: false,
         })
+    }
+
+    /// Returns this session's conference-visit history (spec:
+    /// `conferences.allium:ConferenceVisit`). At most one entry has
+    /// `left_at == None` thanks to
+    /// [`Session::auto_rejoin_conference`] closing prior visits on
+    /// every join — that's the
+    /// `SessionsHaveAtMostOneOpenVisit` invariant.
+    #[must_use]
+    pub fn visits(&self) -> &[ConferenceVisit] {
+        &self.visits
+    }
+
+    /// Returns the visit currently open for this session, if any.
+    /// Phase 4's join workflow (Slice 30) keeps this in lock-step
+    /// with the bound user's `last_joined`.
+    #[must_use]
+    pub fn current_visit(&self) -> Option<&ConferenceVisit> {
+        self.visits.iter().find(|v| v.is_open())
+    }
+
+    /// Resolves the auto-rejoin path of
+    /// `conferences.allium:JoinConference` (Slice 30).
+    ///
+    /// On a successful resolution the session attaches a fresh
+    /// [`ConferenceVisit`] and updates the bound user's
+    /// `last_joined`. When the user has no granted membership for
+    /// any catalogued conference the session moves to
+    /// [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::NoConferenceAccess`].
+    ///
+    /// # Parameters
+    /// - `conferences`: catalogue loaded by the
+    ///   [`crate::domain::conference_repository::ConferenceRepository`],
+    ///   in ascending `number` order.
+    /// - `now`: timestamp recorded as `joined_at` on the new visit
+    ///   (and `left_at` on any prior open visit).
+    ///
+    /// # Errors
+    /// Returns [`AutoRejoinError::WrongState`] when the session is
+    /// not in [`SessionState::Onboarded`] or [`SessionState::Menu`],
+    /// or [`AutoRejoinError::UserMissing`] when no user is bound.
+    pub fn auto_rejoin_conference(
+        &mut self,
+        conferences: &[Conference],
+        now: SystemTime,
+    ) -> Result<AutoRejoinOutcome, AutoRejoinError> {
+        if !matches!(self.state(), SessionState::Onboarded | SessionState::Menu) {
+            return Err(AutoRejoinError::WrongState(self.state()));
+        }
+        let user = self.phase.user_mut().ok_or(AutoRejoinError::UserMissing)?;
+
+        let resolution = resolve_auto_rejoin(user, conferences);
+        match resolution {
+            JoinResolution::NoAccess => {
+                self.move_to_logging_off(Some(LogoffReason::NoConferenceAccess));
+                Ok(AutoRejoinOutcome::NoAccess)
+            }
+            JoinResolution::Resolved {
+                conference,
+                msgbase,
+                matched_request: _,
+            } => {
+                let conference_number = conference.number();
+                let msgbase_number = msgbase.number();
+                let conference_name_type = conference.accepted_name_type();
+                user.record_join(conference, msgbase);
+                let show_bulletin = !self.shared.quick_logon && self.scan.is_none();
+                let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
+                for visit in &mut self.visits {
+                    visit.close(now);
+                }
+                self.visits
+                    .push(ConferenceVisit::new(conference_number, msgbase_number, now));
+                Ok(AutoRejoinOutcome::Joined {
+                    conference_number,
+                    msgbase_number,
+                    show_bulletin,
+                    name_type_promoted_to,
+                })
+            }
+        }
+    }
+
+    /// Updates `display_name_type` to `target` (spec:
+    /// `conferences.allium:JoinedConferenceForNameType`, Slice 34).
+    /// Returns `Some(target)` if the value changed and `None` if the
+    /// session was already rendering that name-type, so callers can
+    /// surface the change without keeping their own before/after
+    /// state.
+    fn promote_display_name_type(&mut self, target: NameType) -> Option<NameType> {
+        if self.shared.display_name_type == target {
+            None
+        } else {
+            self.shared.display_name_type = target;
+            Some(target)
+        }
+    }
+
+    /// Resolves the explicit-join path of
+    /// `conferences.allium:JoinConference`
+    /// (`reason = explicit_join`, Slice 32).
+    ///
+    /// Models the user typing `J <number>` from the menu. When the
+    /// user has access to `target_conference_number` the session
+    /// attaches there directly; otherwise the resolver falls
+    /// through to `first_accessible_conference` and signals
+    /// `matched_request = false` so the listener can render the
+    /// legacy "You do not have access to the requested conference"
+    /// notice (`amiexpress/express.e:25157`) before the JOIN /
+    /// JOINED screens. With no granted memberships at all the
+    /// session moves to [`SessionState::LoggingOff`] with
+    /// [`LogoffReason::NoConferenceAccess`].
+    ///
+    /// # Errors
+    /// Returns [`AutoRejoinError::WrongState`] when the session is
+    /// not in [`SessionState::Onboarded`] or [`SessionState::Menu`],
+    /// or [`AutoRejoinError::UserMissing`] when no user is bound.
+    pub fn explicit_join_conference(
+        &mut self,
+        target_conference_number: u32,
+        conferences: &[Conference],
+        now: SystemTime,
+    ) -> Result<ExplicitJoinOutcome, AutoRejoinError> {
+        if !matches!(self.state(), SessionState::Onboarded | SessionState::Menu) {
+            return Err(AutoRejoinError::WrongState(self.state()));
+        }
+        let user = self.phase.user_mut().ok_or(AutoRejoinError::UserMissing)?;
+
+        let resolution = resolve_explicit_join(target_conference_number, user, conferences);
+        match resolution {
+            JoinResolution::NoAccess => {
+                self.move_to_logging_off(Some(LogoffReason::NoConferenceAccess));
+                Ok(ExplicitJoinOutcome::NoAccess)
+            }
+            JoinResolution::Resolved {
+                conference,
+                msgbase,
+                matched_request,
+            } => {
+                let conference_number = conference.number();
+                let msgbase_number = msgbase.number();
+                let conference_name_type = conference.accepted_name_type();
+                user.record_join(conference, msgbase);
+                let show_bulletin = !self.shared.quick_logon && self.scan.is_none();
+                let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
+                for visit in &mut self.visits {
+                    visit.close(now);
+                }
+                self.visits
+                    .push(ConferenceVisit::new(conference_number, msgbase_number, now));
+                Ok(ExplicitJoinOutcome::Joined {
+                    conference_number,
+                    msgbase_number,
+                    show_bulletin,
+                    matched_request,
+                    name_type_promoted_to,
+                })
+            }
+        }
+    }
+
+    /// Returns the in-progress conference-scan, if any
+    /// (`conferences.allium:ConferenceScan`, Slice 33).
+    #[must_use]
+    pub fn conference_scan(&self) -> Option<&ConferenceScan> {
+        self.scan.as_ref()
+    }
+
+    /// Starts a `CS` conference scan
+    /// (`conferences.allium:StartConferenceScan`, Slice 33).
+    ///
+    /// Initialises a [`ConferenceScan`] with `next_conference`
+    /// pointing at the first conference the user has access to,
+    /// and runs the first scan step so the listener has a join
+    /// outcome to display. When the user has no granted membership
+    /// the session terminates with
+    /// [`LogoffReason::NoConferenceAccess`].
+    ///
+    /// # Errors
+    /// Returns [`AutoRejoinError::WrongState`] when the session is
+    /// not in [`SessionState::Onboarded`] or [`SessionState::Menu`],
+    /// or [`AutoRejoinError::UserMissing`] when no user is bound.
+    pub fn start_conference_scan(
+        &mut self,
+        conferences: &[Conference],
+        now: SystemTime,
+    ) -> Result<ConferenceScanOutcome, AutoRejoinError> {
+        if !matches!(self.state(), SessionState::Onboarded | SessionState::Menu) {
+            return Err(AutoRejoinError::WrongState(self.state()));
+        }
+        let user = self.phase.user_mut().ok_or(AutoRejoinError::UserMissing)?;
+
+        let first = first_accessible_conference(user.memberships(), conferences);
+        let Some(first_conference) = first else {
+            self.move_to_logging_off(Some(LogoffReason::NoConferenceAccess));
+            return Ok(ConferenceScanOutcome::NoAccess);
+        };
+
+        let first_number = first_conference.number();
+        let mb = primary_msgbase_of(first_conference);
+        let msgbase_number = mb.number();
+        let conference_name_type = first_conference.accepted_name_type();
+        user.record_join(first_conference, mb);
+        let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
+        // The next call to step_conference_scan will resume from the
+        // conference *after* this one.
+        self.scan = Some(ConferenceScan::new(Some(first_number), now));
+        for visit in &mut self.visits {
+            visit.close(now);
+        }
+        self.visits
+            .push(ConferenceVisit::new(first_number, msgbase_number, now));
+        Ok(ConferenceScanOutcome::Stepped {
+            conference_number: first_number,
+            msgbase_number,
+            name_type_promoted_to,
+        })
+    }
+
+    /// Advances the in-progress conference scan
+    /// (`conferences.allium:StepConferenceScan` /
+    /// `FinishConferenceScan`, Slice 33).
+    ///
+    /// Joins the scan's `next_conference`. When no more conferences
+    /// remain, the scan finishes: `in_progress` is cleared and the
+    /// session re-attaches to `User.last_joined` per the spec's
+    /// "re-join the user's last conference at the end of the scan".
+    ///
+    /// # Errors
+    /// Returns [`AutoRejoinError::WrongState`] when no scan is
+    /// in progress on this session (the listener should call
+    /// [`Self::start_conference_scan`] first), or
+    /// [`AutoRejoinError::UserMissing`] when no user is bound.
+    pub fn step_conference_scan(
+        &mut self,
+        conferences: &[Conference],
+        now: SystemTime,
+    ) -> Result<ConferenceScanOutcome, AutoRejoinError> {
+        let Some(current_number) = self
+            .scan
+            .as_ref()
+            .and_then(ConferenceScan::next_conference_number)
+        else {
+            return Err(AutoRejoinError::WrongState(self.state()));
+        };
+        let user = self.phase.user_mut().ok_or(AutoRejoinError::UserMissing)?;
+
+        if let Some(next) = next_accessible_conference_after(user, conferences, current_number) {
+            let next_number = next.number();
+            let mb = primary_msgbase_of(next);
+            let msgbase_number = mb.number();
+            let conference_name_type = next.accepted_name_type();
+            user.record_join(next, mb);
+            let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
+            self.scan = Some(ConferenceScan::new(Some(next_number), now));
+            for visit in &mut self.visits {
+                visit.close(now);
+            }
+            self.visits
+                .push(ConferenceVisit::new(next_number, msgbase_number, now));
+            Ok(ConferenceScanOutcome::Stepped {
+                conference_number: next_number,
+                msgbase_number,
+                name_type_promoted_to,
+            })
+        } else {
+            // FinishConferenceScan: clear the scan and re-attach to
+            // the user's last_joined (which during the scan was
+            // updated to the last visited conference).
+            self.scan = None;
+            let last = user.last_joined();
+            Ok(ConferenceScanOutcome::Finished {
+                rejoined_conference: last.map(|r| r.conference_number()),
+            })
+        }
     }
 
     /// Applies `session.allium:CompleteNewUserRegistration`
@@ -2462,6 +2800,505 @@ mod tests {
         assert!(
             entry.text.contains("out_of_time"),
             "expected out_of_time in logoff line, got {entry:?}"
+        );
+    }
+
+    fn make_conf(number: u32) -> Conference {
+        use crate::domain::conference::MessageBase;
+        Conference::new(
+            number,
+            format!("Conf {number}"),
+            vec![MessageBase::new(number, 1, "main".to_string())],
+        )
+        .expect("valid")
+    }
+
+    fn make_conf_with_name_type(number: u32, name_type: NameType) -> Conference {
+        use crate::domain::conference::MessageBase;
+        Conference::with_name_type(
+            number,
+            format!("Conf {number}"),
+            vec![MessageBase::new(number, 1, "main".to_string())],
+            name_type,
+        )
+        .expect("valid")
+    }
+
+    fn user_with_grants(grants: &[u32]) -> User {
+        let mut user = alice();
+        for g in grants {
+            user.upsert_membership(crate::domain::conference::ConferenceMembership::new(
+                *g, true,
+            ));
+        }
+        user
+    }
+
+    #[test]
+    fn new_session_has_no_visits() {
+        let s = new_session(LogonChannel::Remote);
+        assert!(s.visits().is_empty());
+        assert!(s.current_visit().is_none());
+    }
+
+    #[test]
+    fn auto_rejoin_attaches_session_to_first_accessible_conference() {
+        let confs = vec![make_conf(1), make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[2]));
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(123);
+        let outcome = s.auto_rejoin_conference(&confs, now).expect("ok");
+        assert_eq!(
+            outcome,
+            AutoRejoinOutcome::Joined {
+                conference_number: 2,
+                msgbase_number: 1,
+                show_bulletin: true,
+                name_type_promoted_to: None,
+            }
+        );
+        let visit = s.current_visit().expect("open visit");
+        assert_eq!(visit.conference_number(), 2);
+        assert_eq!(visit.msgbase_number(), 1);
+        assert_eq!(visit.joined_at(), now);
+        assert_eq!(
+            s.user().unwrap().last_joined().unwrap().conference_number(),
+            2
+        );
+    }
+
+    #[test]
+    fn auto_rejoin_prefers_users_last_joined_when_still_accessible() {
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
+        let mut user = user_with_grants(&[1, 2, 3]);
+        user.record_join(&confs[2], &confs[2].msgbases()[0]);
+        let mut s = session_at_onboarded_with(user);
+        let outcome = s
+            .auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        assert!(matches!(
+            outcome,
+            AutoRejoinOutcome::Joined {
+                conference_number: 3,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn auto_rejoin_with_no_grants_moves_to_logging_off_with_no_conference_access() {
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(alice());
+        let outcome = s
+            .auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        assert_eq!(outcome, AutoRejoinOutcome::NoAccess);
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::NoConferenceAccess));
+        assert!(s.current_visit().is_none());
+    }
+
+    #[test]
+    fn auto_rejoin_closes_prior_open_visit_before_attaching_new_one() {
+        let confs = vec![make_conf(1), make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
+        let t1 = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let t2 = SystemTime::UNIX_EPOCH + Duration::from_secs(200);
+        s.auto_rejoin_conference(&confs[..1], t1).expect("ok");
+        // Force the user to next prefer conf 2 by directly recording a join
+        s.phase
+            .user_mut()
+            .unwrap()
+            .record_join(&confs[1], &confs[1].msgbases()[0]);
+        s.auto_rejoin_conference(&confs, t2).expect("ok");
+
+        // SessionsHaveAtMostOneOpenVisit: exactly one open visit, the new one.
+        let open: Vec<_> = s.visits().iter().filter(|v| v.is_open()).collect();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].conference_number(), 2);
+
+        // The previous visit is closed at t2.
+        let closed: Vec<_> = s.visits().iter().filter(|v| !v.is_open()).collect();
+        assert_eq!(closed.len(), 1);
+        assert_eq!(closed[0].conference_number(), 1);
+        assert_eq!(closed[0].left_at(), Some(t2));
+    }
+
+    #[test]
+    fn auto_rejoin_outside_onboarded_or_menu_errors() {
+        let confs = vec![make_conf(1)];
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect_err("wrong state");
+        assert_eq!(err, AutoRejoinError::WrongState(SessionState::Connecting));
+    }
+
+    #[test]
+    fn auto_rejoin_clears_show_bulletin_when_session_is_in_quick_logon_mode() {
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        s.set_quick_logon(true);
+        let outcome = s
+            .auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            AutoRejoinOutcome::Joined { show_bulletin, .. } => {
+                assert!(
+                    !show_bulletin,
+                    "quick_logon should suppress the conference bulletin"
+                );
+            }
+            AutoRejoinOutcome::NoAccess => panic!("expected Joined, got NoAccess"),
+        }
+    }
+
+    #[test]
+    fn quick_logon_round_trips_via_setter() {
+        let mut s = new_session(LogonChannel::Remote);
+        assert!(!s.quick_logon());
+        s.set_quick_logon(true);
+        assert!(s.quick_logon());
+        s.set_quick_logon(false);
+        assert!(!s.quick_logon());
+    }
+
+    #[test]
+    fn explicit_join_attaches_directly_when_user_has_access_to_target() {
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 2, 3]));
+        let outcome = s
+            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            ExplicitJoinOutcome::Joined {
+                conference_number,
+                msgbase_number,
+                matched_request,
+                show_bulletin,
+                ..
+            } => {
+                assert_eq!(conference_number, 2);
+                assert_eq!(msgbase_number, 1);
+                assert!(matched_request);
+                assert!(show_bulletin);
+            }
+            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+        }
+        assert_eq!(s.current_visit().unwrap().conference_number(), 2);
+    }
+
+    #[test]
+    fn explicit_join_falls_through_with_matched_request_false_when_no_access_to_target() {
+        let confs = vec![make_conf(1), make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        let outcome = s
+            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            ExplicitJoinOutcome::Joined {
+                conference_number,
+                matched_request,
+                ..
+            } => {
+                assert_eq!(conference_number, 1);
+                assert!(!matched_request);
+            }
+            ExplicitJoinOutcome::NoAccess => panic!("expected Joined fallback"),
+        }
+    }
+
+    #[test]
+    fn explicit_join_with_no_grants_anywhere_terminates_session_with_no_conference_access() {
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(alice());
+        let outcome = s
+            .explicit_join_conference(1, &confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        assert_eq!(outcome, ExplicitJoinOutcome::NoAccess);
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::NoConferenceAccess));
+    }
+
+    #[test]
+    fn explicit_join_outside_onboarded_or_menu_errors() {
+        let confs = vec![make_conf(1)];
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .explicit_join_conference(1, &confs, SystemTime::UNIX_EPOCH)
+            .expect_err("wrong state");
+        assert_eq!(err, AutoRejoinError::WrongState(SessionState::Connecting));
+    }
+
+    #[test]
+    fn explicit_join_from_menu_state_is_allowed() {
+        // `J` is typed at the menu, not during onboarding. Verify
+        // the method accepts the menu state.
+        let confs = vec![make_conf(1), make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
+        s.enter_menu(SystemTime::UNIX_EPOCH).expect("enter menu");
+        assert_eq!(s.state(), SessionState::Menu);
+        s.explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        assert_eq!(s.current_visit().unwrap().conference_number(), 2);
+    }
+
+    #[test]
+    fn explicit_join_clears_show_bulletin_under_quick_logon() {
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        s.set_quick_logon(true);
+        let outcome = s
+            .explicit_join_conference(1, &confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            ExplicitJoinOutcome::Joined { show_bulletin, .. } => assert!(!show_bulletin),
+            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+        }
+    }
+
+    #[test]
+    fn start_conference_scan_attaches_to_first_accessible_conference_and_marks_in_progress() {
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[2, 3]));
+        let outcome = s
+            .start_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            ConferenceScanOutcome::Stepped {
+                conference_number,
+                msgbase_number,
+                ..
+            } => {
+                assert_eq!(conference_number, 2);
+                assert_eq!(msgbase_number, 1);
+            }
+            other => panic!("expected Stepped, got {other:?}"),
+        }
+        let scan = s.conference_scan().expect("scan in progress");
+        // Scan started, with the next-conference pointer parked at the
+        // first joined conference (so step picks up after it).
+        assert_eq!(scan.next_conference_number(), Some(2));
+        assert_eq!(s.current_visit().unwrap().conference_number(), 2);
+    }
+
+    #[test]
+    fn step_conference_scan_advances_through_each_accessible_conference() {
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3), make_conf(5)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 3, 5]));
+        s.start_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        // First step jumps from 1 -> 3
+        match s
+            .step_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap()
+        {
+            ConferenceScanOutcome::Stepped {
+                conference_number, ..
+            } => assert_eq!(conference_number, 3),
+            other => panic!("expected Stepped, got {other:?}"),
+        }
+        // Second step jumps to 5
+        match s
+            .step_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap()
+        {
+            ConferenceScanOutcome::Stepped {
+                conference_number, ..
+            } => assert_eq!(conference_number, 5),
+            other => panic!("expected Stepped, got {other:?}"),
+        }
+        // Third step has no more — finishes.
+        match s
+            .step_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap()
+        {
+            ConferenceScanOutcome::Finished {
+                rejoined_conference,
+            } => assert_eq!(rejoined_conference, Some(5)),
+            other => panic!("expected Finished, got {other:?}"),
+        }
+        // Scan slot cleared.
+        assert!(s.conference_scan().is_none());
+    }
+
+    #[test]
+    fn start_conference_scan_with_no_grants_terminates_session() {
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(alice());
+        let outcome = s
+            .start_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        assert_eq!(outcome, ConferenceScanOutcome::NoAccess);
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::NoConferenceAccess));
+    }
+
+    #[test]
+    fn step_conference_scan_without_a_started_scan_errors() {
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        let err = s
+            .step_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .expect_err("no scan in progress");
+        assert!(matches!(err, AutoRejoinError::WrongState(_)));
+    }
+
+    #[test]
+    fn auto_rejoin_during_active_scan_suppresses_bulletin() {
+        // While a scan is in progress, ShowConferenceBulletin is
+        // suppressed (`conferences.allium:ShowConferenceBulletin`).
+        let confs = vec![make_conf(1), make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
+        s.start_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        // A subsequent auto_rejoin while scan is still in progress
+        // must not flag show_bulletin.
+        let outcome = s
+            .auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            AutoRejoinOutcome::Joined { show_bulletin, .. } => {
+                assert!(
+                    !show_bulletin,
+                    "scan-in-progress should suppress conference bulletin"
+                );
+            }
+            AutoRejoinOutcome::NoAccess => panic!("expected Joined"),
+        }
+    }
+
+    #[test]
+    fn start_conference_scan_outside_onboarded_or_menu_errors() {
+        let confs = vec![make_conf(1)];
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .start_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .expect_err("wrong state");
+        assert_eq!(err, AutoRejoinError::WrongState(SessionState::Connecting));
+    }
+
+    #[test]
+    fn new_session_starts_with_handle_display_name_type() {
+        let s = new_session(LogonChannel::Remote);
+        assert_eq!(s.display_name_type(), NameType::Handle);
+    }
+
+    #[test]
+    fn auto_rejoin_into_real_name_conference_promotes_display_name_type() {
+        let confs = vec![make_conf_with_name_type(1, NameType::RealName)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        let outcome = s
+            .auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            AutoRejoinOutcome::Joined {
+                name_type_promoted_to,
+                ..
+            } => assert_eq!(name_type_promoted_to, Some(NameType::RealName)),
+            AutoRejoinOutcome::NoAccess => panic!("expected Joined"),
+        }
+        assert_eq!(s.display_name_type(), NameType::RealName);
+    }
+
+    #[test]
+    fn auto_rejoin_into_handle_conference_does_not_signal_promotion() {
+        // The session already renders as Handle by default; joining
+        // a Handle conference is a no-op for display_name_type.
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        let outcome = s
+            .auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            AutoRejoinOutcome::Joined {
+                name_type_promoted_to,
+                ..
+            } => assert_eq!(name_type_promoted_to, None),
+            AutoRejoinOutcome::NoAccess => panic!("expected Joined"),
+        }
+        assert_eq!(s.display_name_type(), NameType::Handle);
+    }
+
+    #[test]
+    fn explicit_join_promotes_display_name_type_when_target_uses_internet_names() {
+        let confs = vec![
+            make_conf(1),
+            make_conf_with_name_type(2, NameType::InternetName),
+        ];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
+        let outcome = s
+            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            ExplicitJoinOutcome::Joined {
+                name_type_promoted_to,
+                ..
+            } => assert_eq!(name_type_promoted_to, Some(NameType::InternetName)),
+            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+        }
+        assert_eq!(s.display_name_type(), NameType::InternetName);
+    }
+
+    #[test]
+    fn conference_scan_step_promotes_display_name_type_when_visiting_real_name_conf() {
+        let confs = vec![
+            make_conf(1),
+            make_conf_with_name_type(2, NameType::RealName),
+        ];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
+        s.start_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let stepped = s
+            .step_conference_scan(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        match stepped {
+            ConferenceScanOutcome::Stepped {
+                conference_number,
+                name_type_promoted_to,
+                ..
+            } => {
+                assert_eq!(conference_number, 2);
+                assert_eq!(name_type_promoted_to, Some(NameType::RealName));
+            }
+            other => panic!("expected Stepped, got {other:?}"),
+        }
+        assert_eq!(s.display_name_type(), NameType::RealName);
+    }
+
+    #[test]
+    fn rejoining_same_name_type_conference_signals_no_promotion() {
+        // After moving to RealName once, rejoining another RealName
+        // conference must not flag promotion (the session is already
+        // rendering as RealName).
+        let confs = vec![
+            make_conf_with_name_type(1, NameType::RealName),
+            make_conf_with_name_type(2, NameType::RealName),
+        ];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let outcome = s
+            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        match outcome {
+            ExplicitJoinOutcome::Joined {
+                name_type_promoted_to,
+                ..
+            } => assert_eq!(name_type_promoted_to, None),
+            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+        }
+    }
+
+    #[test]
+    fn auto_rejoin_finalise_logoff_log_line_includes_no_conference_access_reason() {
+        let confs = vec![make_conf(1)];
+        let mut s = session_at_onboarded_with(alice());
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let entry = s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert!(
+            entry.text.contains("no_conference_access"),
+            "expected no_conference_access in goodbye line, got {entry:?}"
         );
     }
 }

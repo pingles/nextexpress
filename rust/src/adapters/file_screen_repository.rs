@@ -29,6 +29,32 @@ const FALLBACK_NEW_USER_PW: &[u8] = b"\r\nNew user registration.\r\n";
 /// why the connection is closing.
 const FALLBACK_NO_NEW_USERS: &[u8] = b"\r\nNew user registration is not available.\r\n";
 
+/// Built-in fallback for `Screens/JOIN.txt` (Slice 32). Rendered at
+/// the start of an explicit `J` join flow when no asset is on disk
+/// (`amiexpress/express.e:6582`).
+const FALLBACK_JOIN: &[u8] = b"\r\nJoining conference...\r\n";
+
+/// Built-in fallback for `Screens/JOINED.txt` (Slice 32). Rendered
+/// after a successful join (`amiexpress/express.e:6585`).
+const FALLBACK_JOINED: &[u8] = b"\r\nConference joined.\r\n";
+
+/// Built-in fallback for `Screens/JoinConf.txt` (Slice 32). Rendered
+/// as the prompt header for the no-arg `J` flow
+/// (`amiexpress/express.e:6588`).
+const FALLBACK_JOINCONF: &[u8] = b"\r\nJoin which conference?\r\n";
+
+/// Built-in fallback for `Screens/REALNAMES.txt` (Slice 34,
+/// `amiexpress/express.e:28169`). Rendered the first time a join
+/// promotes the session into a real-name conference.
+const FALLBACK_REALNAMES: &[u8] =
+    b"\r\nThis conference uses real names. Your posts will be tagged with your legal name.\r\n";
+
+/// Built-in fallback for `Screens/INTERNETNAMES.txt` (Slice 34,
+/// `amiexpress/express.e:28169`). Rendered the first time a join
+/// promotes the session into an internet-name conference.
+const FALLBACK_INTERNETNAMES: &[u8] =
+    b"\r\nThis conference uses internet names. Your posts will be tagged with your internet alias.\r\n";
+
 /// Lower bound for the security-level menu walk, mirroring the
 /// `minLevel := 5` default in `amiexpress/express.e:6246`
 /// (findSecurityScreen).
@@ -40,8 +66,18 @@ pub struct FileScreenRepository {
     bbs_path: PathBuf,
     banner: Mutex<Option<Vec<u8>>>,
     default_menu: Mutex<HashMap<u8, Vec<u8>>>,
+    /// Per-(`conference_number`, `access_level`) cache for
+    /// [`ScreenRepository::conference_menu`] (Slice 31). Filled
+    /// lazily on first lookup so the cache mirrors what was actually
+    /// asked for.
+    conference_menu: Mutex<HashMap<(u32, u8), Vec<u8>>>,
     new_user_password: Mutex<Option<Vec<u8>>>,
     no_new_users: Mutex<Option<Vec<u8>>>,
+    join: Mutex<Option<Vec<u8>>>,
+    joined: Mutex<Option<Vec<u8>>>,
+    joinconf: Mutex<Option<Vec<u8>>>,
+    realnames: Mutex<Option<Vec<u8>>>,
+    internetnames: Mutex<Option<Vec<u8>>>,
 }
 
 impl FileScreenRepository {
@@ -52,8 +88,14 @@ impl FileScreenRepository {
             bbs_path,
             banner: Mutex::new(None),
             default_menu: Mutex::new(HashMap::new()),
+            conference_menu: Mutex::new(HashMap::new()),
             new_user_password: Mutex::new(None),
             no_new_users: Mutex::new(None),
+            join: Mutex::new(None),
+            joined: Mutex::new(None),
+            joinconf: Mutex::new(None),
+            realnames: Mutex::new(None),
+            internetnames: Mutex::new(None),
         }
     }
 
@@ -117,6 +159,58 @@ impl FileScreenRepository {
         FALLBACK_MENU.to_vec()
     }
 
+    async fn conference_menu_bytes(&self, conference_number: u32, access_level: u8) -> Vec<u8> {
+        if let Some(bytes) = self
+            .conference_menu
+            .lock()
+            .await
+            .get(&(conference_number, access_level))
+            .cloned()
+        {
+            return bytes;
+        }
+        let loaded = match self
+            .resolve_conference_menu(conference_number, access_level)
+            .await
+        {
+            Some(bytes) => bytes,
+            None => self.default_menu_bytes(access_level).await,
+        };
+        let mut cached = self.conference_menu.lock().await;
+        cached
+            .entry((conference_number, access_level))
+            .or_insert_with(|| loaded.clone())
+            .clone()
+    }
+
+    /// Walks the per-conference menu lookup, returning `None` when no
+    /// asset is on disk so the caller can fall through to the
+    /// system-wide [`Self::default_menu_bytes`]. Mirrors the
+    /// security-level walk in [`Self::resolve_default_menu`] but
+    /// rooted at `Conf<NN>` instead of the hard-coded `Conf02`.
+    async fn resolve_conference_menu(
+        &self,
+        conference_number: u32,
+        access_level: u8,
+    ) -> Option<Vec<u8>> {
+        let conf_dir = self.bbs_path.join(format!("Conf{conference_number:02}"));
+        let mut sec_level = (access_level / 5) * 5;
+        while sec_level >= MIN_SECURITY_LEVEL {
+            let path = conf_dir.join(format!("Menu{sec_level}.txt"));
+            if let Ok(bytes) = tokio::fs::read(&path).await {
+                return Some(normalise_to_crlf(&bytes));
+            }
+            sec_level -= 5;
+        }
+        for candidate in ["menu.txt", "Menu.txt"] {
+            let path = conf_dir.join(candidate);
+            if let Ok(bytes) = tokio::fs::read(&path).await {
+                return Some(normalise_to_crlf(&bytes));
+            }
+        }
+        None
+    }
+
     async fn new_user_password_bytes(&self) -> Vec<u8> {
         let path = self.bbs_path.join("Screens").join("NEWUSERPW.txt");
         self.cached_file(&self.new_user_password, &path, FALLBACK_NEW_USER_PW)
@@ -126,6 +220,34 @@ impl FileScreenRepository {
     async fn no_new_users_bytes(&self) -> Vec<u8> {
         let path = self.bbs_path.join("Screens").join("NONEWUSERS.txt");
         self.cached_file(&self.no_new_users, &path, FALLBACK_NO_NEW_USERS)
+            .await
+    }
+
+    async fn join_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("JOIN.txt");
+        self.cached_file(&self.join, &path, FALLBACK_JOIN).await
+    }
+
+    async fn joined_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("JOINED.txt");
+        self.cached_file(&self.joined, &path, FALLBACK_JOINED).await
+    }
+
+    async fn joinconf_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("JoinConf.txt");
+        self.cached_file(&self.joinconf, &path, FALLBACK_JOINCONF)
+            .await
+    }
+
+    async fn realnames_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("REALNAMES.txt");
+        self.cached_file(&self.realnames, &path, FALLBACK_REALNAMES)
+            .await
+    }
+
+    async fn internetnames_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("INTERNETNAMES.txt");
+        self.cached_file(&self.internetnames, &path, FALLBACK_INTERNETNAMES)
             .await
     }
 }
@@ -139,12 +261,39 @@ impl ScreenRepository for FileScreenRepository {
         Box::pin(async move { self.default_menu_bytes(access_level).await })
     }
 
+    fn conference_menu(&self, conference_number: u32, access_level: u8) -> ScreenFuture<'_> {
+        Box::pin(async move {
+            self.conference_menu_bytes(conference_number, access_level)
+                .await
+        })
+    }
+
     fn new_user_password(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.new_user_password_bytes().await })
     }
 
     fn no_new_users(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.no_new_users_bytes().await })
+    }
+
+    fn join_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.join_bytes().await })
+    }
+
+    fn joined_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.joined_bytes().await })
+    }
+
+    fn joinconf_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.joinconf_bytes().await })
+    }
+
+    fn realnames_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.realnames_bytes().await })
+    }
+
+    fn internetnames_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.internetnames_bytes().await })
     }
 }
 
@@ -340,5 +489,164 @@ mod tests {
         .unwrap();
         let repo = FileScreenRepository::new(dir.path().to_path_buf());
         assert_eq!(repo.no_new_users().await, b"ACCESS DENIED\r\n");
+    }
+
+    #[tokio::test]
+    async fn conference_menu_loads_per_conference_lowercase_menu_file() {
+        // Slice 31: prefer `Conf<n>/menu.txt` over the system-wide
+        // fallback. The legacy seed ships a lowercase
+        // `defaultbbs/Conf01/menu.txt`.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf03")).unwrap();
+        std::fs::write(dir.path().join("Conf03").join("menu.txt"), b"CONF3\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.conference_menu(3, 50).await, b"CONF3\r\n");
+    }
+
+    #[tokio::test]
+    async fn conference_menu_falls_back_to_system_wide_default_menu() {
+        // No per-conference asset; the lookup walks all the way
+        // through to `default_menu`, which itself falls back to
+        // `Conf02/Menu.txt`.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf02")).unwrap();
+        std::fs::write(dir.path().join("Conf02").join("Menu.txt"), b"DEFAULT\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.conference_menu(7, 50).await, b"DEFAULT\r\n");
+    }
+
+    #[tokio::test]
+    async fn conference_menu_prefers_security_level_file_inside_conference_dir() {
+        // access_level 20 floors to secLevel 20. With both Menu20.txt
+        // and the plain menu.txt present, the security file wins.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf01")).unwrap();
+        std::fs::write(dir.path().join("Conf01").join("menu.txt"), b"PLAIN\n").unwrap();
+        std::fs::write(dir.path().join("Conf01").join("Menu20.txt"), b"TWENTY\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.conference_menu(1, 20).await, b"TWENTY\r\n");
+    }
+
+    #[tokio::test]
+    async fn conference_menu_walks_security_levels_in_steps_of_five_within_conf_dir() {
+        // access_level 20 floors to secLevel 20. With only Menu5.txt
+        // present in Conf01, the walk descends 20 -> 15 -> 10 -> 5
+        // and finds it. Pinning the FIVE result here closes a
+        // mutation-test gap on the `sec_level -= 5` step.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf01")).unwrap();
+        std::fs::write(dir.path().join("Conf01").join("Menu5.txt"), b"FIVE\n").unwrap();
+        std::fs::write(dir.path().join("Conf01").join("menu.txt"), b"PLAIN\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.conference_menu(1, 20).await, b"FIVE\r\n");
+    }
+
+    #[tokio::test]
+    async fn join_screen_falls_back_when_asset_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.join_screen().await, FALLBACK_JOIN);
+    }
+
+    #[tokio::test]
+    async fn join_screen_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("JOIN.txt"),
+            b"JOINING NOW\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.join_screen().await, b"JOINING NOW\r\n");
+    }
+
+    #[tokio::test]
+    async fn joined_screen_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("JOINED.txt"),
+            b"WELCOME TO CONF\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.joined_screen().await, b"WELCOME TO CONF\r\n");
+    }
+
+    #[tokio::test]
+    async fn joinconf_screen_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("JoinConf.txt"),
+            b"PICK A CONF\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.joinconf_screen().await, b"PICK A CONF\r\n");
+    }
+
+    #[tokio::test]
+    async fn realnames_screen_falls_back_when_asset_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.realnames_screen().await, FALLBACK_REALNAMES);
+    }
+
+    #[tokio::test]
+    async fn realnames_screen_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("REALNAMES.txt"),
+            b"REAL\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.realnames_screen().await, b"REAL\r\n");
+    }
+
+    #[tokio::test]
+    async fn internetnames_screen_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("INTERNETNAMES.txt"),
+            b"INET\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.internetnames_screen().await, b"INET\r\n");
+    }
+
+    #[tokio::test]
+    async fn internetnames_screen_falls_back_when_asset_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.internetnames_screen().await, FALLBACK_INTERNETNAMES);
+    }
+
+    #[tokio::test]
+    async fn joined_and_joinconf_fall_back_when_assets_are_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.joined_screen().await, FALLBACK_JOINED);
+        assert_eq!(repo.joinconf_screen().await, FALLBACK_JOINCONF);
+    }
+
+    #[tokio::test]
+    async fn conference_menu_caches_loaded_bytes_per_conference_and_level() {
+        // Verifies the (conference_number, access_level) cache: a
+        // rewrite after first access doesn't change the served
+        // bytes.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf01")).unwrap();
+        let path = dir.path().join("Conf01").join("menu.txt");
+        std::fs::write(&path, b"FIRST\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.conference_menu(1, 50).await, b"FIRST\r\n");
+        std::fs::write(&path, b"SECOND\n").unwrap();
+        assert_eq!(repo.conference_menu(1, 50).await, b"FIRST\r\n");
     }
 }

@@ -106,6 +106,123 @@ pub enum VerifyPasswordOutcome {
     LogonRejected,
 }
 
+/// Outcome of [`super::Session::auto_rejoin_conference`]
+/// (`conferences.allium:JoinConference` for `auto_rejoin`,
+/// Slice 30; bulletin suppression added in Slice 31; name-type
+/// promotion added in Slice 34).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoRejoinOutcome {
+    /// The user has been attached to a conference. The session
+    /// carries a fresh `ConferenceVisit`; the bound user's
+    /// `last_joined` mirrors `(conference_number, msgbase_number)`.
+    Joined {
+        /// 1-indexed number of the conference the session is now
+        /// attached to.
+        conference_number: u32,
+        /// 1-indexed number of the message base within that
+        /// conference.
+        msgbase_number: u32,
+        /// Whether the listener should render the conference
+        /// bulletin after the join (spec:
+        /// `conferences.allium:ShowConferenceBulletin`,
+        /// Slice 31). `false` whenever
+        /// [`super::Session::quick_logon`] is set or a
+        /// `ConferenceScan` is in progress (Slice 33).
+        show_bulletin: bool,
+        /// `Some(new_type)` when the join changed the session's
+        /// `display_name_type` (spec:
+        /// `conferences.allium:JoinedConferenceForNameType`,
+        /// Slice 34). The listener renders `SCREEN_REALNAMES` /
+        /// `SCREEN_INTERNETNAMES` accordingly. `None` when the
+        /// conference's `accepted_name_type` matched what the
+        /// session was already using.
+        name_type_promoted_to: Option<crate::domain::conference::NameType>,
+    },
+    /// The user has no granted membership in any catalogued
+    /// conference. The session has moved to
+    /// [`super::SessionState::LoggingOff`] with
+    /// [`super::LogoffReason::NoConferenceAccess`].
+    NoAccess,
+}
+
+/// Outcome of [`super::Session::explicit_join_conference`]
+/// (`conferences.allium:JoinConference` for `explicit_join`,
+/// Slice 32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExplicitJoinOutcome {
+    /// The user has been attached to a conference. The session
+    /// carries a fresh `ConferenceVisit`; the bound user's
+    /// `last_joined` mirrors `(conference_number, msgbase_number)`.
+    Joined {
+        /// 1-indexed number of the conference the session is now
+        /// attached to.
+        conference_number: u32,
+        /// 1-indexed number of the message base within that
+        /// conference.
+        msgbase_number: u32,
+        /// Whether the listener should render the conference
+        /// bulletin after the join (spec:
+        /// `conferences.allium:ShowConferenceBulletin`,
+        /// Slice 31). `false` whenever
+        /// [`super::Session::quick_logon`] is set.
+        show_bulletin: bool,
+        /// `true` when the resolved conference is the one the user
+        /// asked for; `false` when the resolver fell through to
+        /// `first_accessible_conference` (e.g. user typed `J 7`
+        /// without access to 7). The listener uses this to render
+        /// the legacy "You do not have access to the requested
+        /// conference" notice (`amiexpress/express.e:25157`)
+        /// before the JOIN / JOINED screens.
+        matched_request: bool,
+        /// Mirrors [`AutoRejoinOutcome::Joined::name_type_promoted_to`]
+        /// for explicit joins (Slice 34).
+        name_type_promoted_to: Option<crate::domain::conference::NameType>,
+    },
+    /// The user has no granted membership in any catalogued
+    /// conference. The session has moved to
+    /// [`super::SessionState::LoggingOff`] with
+    /// [`super::LogoffReason::NoConferenceAccess`].
+    NoAccess,
+}
+
+/// Outcome of [`super::Session::start_conference_scan`] and
+/// [`super::Session::step_conference_scan`]
+/// (`conferences.allium:StartConferenceScan` /
+/// `StepConferenceScan` / `FinishConferenceScan`, Slice 33).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConferenceScanOutcome {
+    /// The scan attached the session to a conference. The listener
+    /// renders any per-conference scan output (mail-scan summary
+    /// hooks land in Slice 41) and either calls
+    /// [`super::Session::step_conference_scan`] to continue or lets
+    /// the user terminate the scan.
+    Stepped {
+        /// 1-indexed number of the conference the session is now
+        /// attached to.
+        conference_number: u32,
+        /// 1-indexed number of the message base within that
+        /// conference.
+        msgbase_number: u32,
+        /// Mirrors [`AutoRejoinOutcome::Joined::name_type_promoted_to`]
+        /// for scan-step joins (Slice 34).
+        name_type_promoted_to: Option<crate::domain::conference::NameType>,
+    },
+    /// The scan has walked past the last accessible conference.
+    /// `in_progress` is now `false` and the session is left
+    /// attached to its `User.last_joined` per the spec.
+    Finished {
+        /// Conference number the session settled on at the end of
+        /// the scan, if any. `None` only on a session whose user
+        /// somehow has no `last_joined` after stepping (defensive).
+        rejoined_conference: Option<u32>,
+    },
+    /// The user has no granted membership in any catalogued
+    /// conference. The session has moved to
+    /// [`super::SessionState::LoggingOff`] with
+    /// [`super::LogoffReason::NoConferenceAccess`].
+    NoAccess,
+}
+
 /// Outcome of [`super::Session::tick_minute`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickMinuteOutcome {
