@@ -1,229 +1,34 @@
 //! Transport-agnostic application driver for an interactive BBS session.
 //!
-//! Driving adapters provide a [`Terminal`] implementation. The driver
-//! owns the BBS workflow: accepting the session, prompting for login,
-//! optional new-user registration, authentication, menu entry and
-//! logoff finalisation.
+//! Driving adapters provide a [`Terminal`] implementation (see
+//! [`crate::app::terminal`]). The driver owns the BBS workflow:
+//! accepting the session, prompting for login, optional new-user
+//! registration, authentication, menu entry and logoff finalisation.
+//!
+//! Wire-format byte constants live in [`crate::app::wire_text`].
 
 use std::collections::BTreeSet;
-use std::future::Future;
-use std::pin::Pin;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-use crate::app::screens::ScreenRepository;
-use crate::app::session_flow::{
-    self, DefaultRatio, NewUserGateConfig, NewUserProfile, NewUserRegistrationFlow,
+use crate::app::services::AppServices;
+use crate::app::session_flow::{self, NewUserProfile, NewUserRegistrationFlow};
+use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::wire_text::{
+    ACCOUNT_LOCKED_LINE, ANSI_PROMPT, AUTHENTICATED_LINE, COPYRIGHT_LINES, EMAIL_PROMPT,
+    GOODBYE_LINE, HANDLE_TAKEN_LINE, IDLE_TIMEOUT_LINE, INVALID_LINE_LENGTH_LINE,
+    LINE_LENGTH_PROMPT, LOCATION_PROMPT, LOGON_REJECTED_LINE, MENU_PROMPT, NAME_PROMPT,
+    NEW_USER_EXCESSIVE_FAILURES_LINE, NEW_USER_INVALID_PASSWORD_LINE, NEW_USER_PASSWORD_OK_LINE,
+    NEW_USER_PASSWORD_PROMPT, PASSWORDS_DO_NOT_MATCH_LINE, PASSWORD_PROMPT, PHONE_PROMPT,
+    REGISTRATION_COMPLETE_LINE, REGISTRATION_HANDLE_PROMPT, REGISTRATION_PASSWORD_CONFIRM_PROMPT,
+    REGISTRATION_PASSWORD_PROMPT, REGISTRATION_RETRIES_EXHAUSTED_LINE,
+    TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE, UNKNOWN_COMMAND_LINE,
+    UNKNOWN_USER_LINE, WRONG_PASSWORD_LINE,
 };
-use crate::domain::caller_log::CallerLogAppender;
-use crate::domain::password::PasswordHasher;
 use crate::domain::session::{
-    LogonChannel, NameTypedOutcome, NewUserPasswordOutcome, Session, SessionPolicy, SessionState,
+    LogonChannel, NameTypedOutcome, NewUserPasswordOutcome, Session, SessionState,
     VerifyPasswordOutcome,
 };
-use crate::domain::user_repository::{NameLookupResult, UserRepository};
-
-/// Future returned by [`Terminal`] operations.
-pub(crate) type TerminalFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
-
-/// Echo policy requested by the BBS workflow when reading a line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TerminalEcho {
-    /// Echo typed characters as they are entered.
-    Visible,
-    /// Hide the original characters and render masking characters.
-    Masked,
-}
-
-/// Result of a bounded line read from a terminal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TerminalRead {
-    /// A complete input line was received.
-    Line(String),
-    /// The peer disconnected cleanly.
-    Eof,
-    /// No input was received before the supplied timeout elapsed.
-    IdleTimedOut,
-}
-
-/// Application-facing terminal port.
-///
-/// Transport adapters implement this with protocol-specific byte IO.
-/// The driver deliberately asks for only terminal concepts: write
-/// bytes, flush output, and read a line with an echo policy and
-/// timeout.
-pub(crate) trait Terminal {
-    /// Error type returned by the concrete terminal adapter.
-    type Error;
-
-    /// Writes raw rendered BBS bytes to the terminal.
-    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error>;
-
-    /// Flushes any buffered terminal output.
-    fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error>;
-
-    /// Reads one line, applying the requested echo mode and input
-    /// timeout.
-    fn read_line(
-        &mut self,
-        echo: TerminalEcho,
-        timeout: Duration,
-    ) -> TerminalFuture<'_, TerminalRead, Self::Error>;
-}
-
-/// Dependencies needed to drive one interactive BBS session.
-#[derive(Clone, Copy)]
-pub(crate) struct SessionDriverContext<'a> {
-    user_repo: &'a (dyn UserRepository + Send + Sync),
-    hasher: &'a (dyn PasswordHasher + Send + Sync),
-    caller_log: &'a (dyn CallerLogAppender + Send + Sync),
-    screens: &'a (dyn ScreenRepository + Send + Sync),
-    session_policy: SessionPolicy,
-    default_ratio: DefaultRatio,
-    new_user_gate: &'a NewUserGateConfig,
-}
-
-impl<'a> SessionDriverContext<'a> {
-    /// Constructs a context for a single session driver.
-    #[must_use]
-    pub(crate) fn new(
-        user_repo: &'a (dyn UserRepository + Send + Sync),
-        hasher: &'a (dyn PasswordHasher + Send + Sync),
-        caller_log: &'a (dyn CallerLogAppender + Send + Sync),
-        screens: &'a (dyn ScreenRepository + Send + Sync),
-        session_policy: SessionPolicy,
-        default_ratio: DefaultRatio,
-        new_user_gate: &'a NewUserGateConfig,
-    ) -> Self {
-        Self {
-            user_repo,
-            hasher,
-            caller_log,
-            screens,
-            session_policy,
-            default_ratio,
-            new_user_gate,
-        }
-    }
-}
-
-/// Prompt sent before reading the user's handle. Mirrors the original
-/// `AmiExpress` wire format: a CRLF prefix and trailing space around the
-/// default `NAME_PROMPT` of `Enter your Name:` (see
-/// `amiexpress/express.e:29571` and `:31774`).
-const NAME_PROMPT: &[u8] = b"\r\nEnter your Name: ";
-
-/// Prompt for the user's password.
-pub(crate) const PASSWORD_PROMPT: &[u8] = b"PassWord: ";
-
-/// Prompt asking a registering user for the handle they want.
-/// Mirrors the wire format of [`NAME_PROMPT`] (CRLF prefix, trailing
-/// space) — `amiexpress/express.e:30141`.
-pub(crate) const REGISTRATION_HANDLE_PROMPT: &[u8] = b"\r\nEnter your Name: ";
-
-/// Prompt for the user's location during registration. Verbatim from
-/// `amiexpress/express.e:30194`.
-pub(crate) const LOCATION_PROMPT: &[u8] = b"City, State: ";
-
-/// Prompt for the user's phone number during registration. Verbatim
-/// from `amiexpress/express.e:30204`.
-pub(crate) const PHONE_PROMPT: &[u8] = b"Phone Number: ";
-
-/// Prompt for the user's email address during registration. Verbatim
-/// from `amiexpress/express.e:30215`.
-pub(crate) const EMAIL_PROMPT: &[u8] = b"E-Mail Address: ";
-
-/// First password prompt during registration. Verbatim from
-/// `amiexpress/express.e:30227`.
-pub(crate) const REGISTRATION_PASSWORD_PROMPT: &[u8] = b"Enter a PassWord: ";
-
-/// Confirmation password prompt during registration. Verbatim from
-/// `amiexpress/express.e:30233`.
-pub(crate) const REGISTRATION_PASSWORD_CONFIRM_PROMPT: &[u8] = b"Reenter the PassWord: ";
-
-/// Prompt asking the user for their preferred line length. Simplified
-/// from `amiexpress/express.e:11307` (which streams a 70..2 ladder
-/// before asking).
-pub(crate) const LINE_LENGTH_PROMPT: &[u8] = b"Enter line length (or 0 for Auto): ";
-
-/// Prompt asking whether the user wants ANSI graphics. Simplified from
-/// `amiexpress/express.e:29528`'s `ANSI, RIP or No graphics (A/r/n)?`
-/// — RIP rendering lands in a future toggles slice.
-pub(crate) const ANSI_PROMPT: &[u8] = b"Use ANSI graphics? (Y/n) ";
-
-/// Prompt for the sysop-set new-user password gate. Verbatim from
-/// `amiexpress/express.e:30018`.
-pub(crate) const NEW_USER_PASSWORD_PROMPT: &[u8] = b"Enter New User Password: ";
-
-/// Prompt printed after each menu screen, awaiting a command.
-pub(crate) const MENU_PROMPT: &[u8] = b"Command: ";
-
-/// Two-line copyright block printed on every accepted connection,
-/// directly after the BBS title banner. The `NextExpress` line sits
-/// above the `AmiExpress` line to make the lineage obvious; the
-/// `AmiExpress` line mirrors the original BBS's banner verbatim
-/// (`amiexpress/express.e:25690`, modulo the legacy file's mojibake of
-/// the © glyph).
-const COPYRIGHT_LINES: &[u8] = concat!(
-    "NextExpress ",
-    env!("CARGO_PKG_VERSION"),
-    " Copyright \u{00A9}2026\r\n",
-    "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
-)
-.as_bytes();
-
-/// Sent after a not-found name lookup to invite a retry.
-const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
-
-/// Sent when the typed handle is `NEW` (reserved) or already taken
-/// during registration. Followed by a fresh handle prompt.
-const HANDLE_TAKEN_LINE: &[u8] = b"That name is taken. Try another.\r\n";
-
-/// Sent when the user has burned through five handle retries during
-/// registration.
-const REGISTRATION_RETRIES_EXHAUSTED_LINE: &[u8] =
-    b"Too many failed registration attempts. Goodbye.\r\n";
-
-/// Sent when the two registration passwords don't match. Verbatim from
-/// `amiexpress/express.e:30237`.
-const PASSWORDS_DO_NOT_MATCH_LINE: &[u8] = b"\r\nPasswords do not match, try again..\r\n";
-
-/// Sent when the line-length input doesn't parse as a number in
-/// `0..=255`.
-const INVALID_LINE_LENGTH_LINE: &[u8] = b"Invalid line length.\r\n";
-
-/// Sent after the registration succeeds; immediately followed by the
-/// menu sequence inherited by every authenticated session.
-const REGISTRATION_COMPLETE_LINE: &[u8] = b"\r\nWelcome aboard!\r\n";
-
-/// Sent after each failed new-user password attempt. Verbatim from
-/// `amiexpress/express.e:30036`.
-const NEW_USER_INVALID_PASSWORD_LINE: &[u8] = b"Invalid PassWord\r\n";
-
-/// Sent when the gate's retry budget is exhausted. Verbatim from
-/// `amiexpress/express.e:30039`. Followed by a goodbye line.
-const NEW_USER_EXCESSIVE_FAILURES_LINE: &[u8] = b"\r\nExcessive Password Failure\r\nGoodbye.\r\n";
-
-/// Sent on a successful gate match. Verbatim from
-/// `amiexpress/express.e:30046`.
-const NEW_USER_PASSWORD_OK_LINE: &[u8] = b"Correct\r\n";
-
-/// Sent when the user has burned through all five name retries.
-const TOO_MANY_RETRIES_LINE: &[u8] = b"Too many failed login attempts. Goodbye.\r\n";
-
-/// Sent after a successful authentication.
-const AUTHENTICATED_LINE: &[u8] = b"Authenticated.\r\n";
-
-/// Sent when the password didn't match.
-const WRONG_PASSWORD_LINE: &[u8] = b"Incorrect password.\r\n";
-
-/// Sent for unrecognised menu commands.
-const UNKNOWN_COMMAND_LINE: &[u8] = b"Unknown command. Type G to log off.\r\n";
-
-/// Sent immediately before the connection closes on a normal logoff.
-const GOODBYE_LINE: &[u8] = b"Goodbye!\r\n";
-
-/// Sent immediately before the connection closes on idle timeout.
-const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
+use crate::domain::user_repository::NameLookupResult;
 
 /// Maximum handle attempts during registration before the session
 /// bails. Mirrors the original `AmiExpress` `doNewUser` retry budget at
@@ -231,16 +36,16 @@ const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
 const MAX_REGISTRATION_HANDLE_ATTEMPTS: u32 = 5;
 
 /// App-layer session workflow over a terminal port.
-pub(crate) struct SessionDriver<'a, T>
+pub(crate) struct SessionDriver<T>
 where
     T: Terminal,
 {
     terminal: T,
     session: Session,
-    context: SessionDriverContext<'a>,
+    services: AppServices,
 }
 
-impl<'a, T> SessionDriver<'a, T>
+impl<T> SessionDriver<T>
 where
     T: Terminal,
 {
@@ -250,7 +55,7 @@ where
         terminal: T,
         node_number: u32,
         channel: LogonChannel,
-        context: SessionDriverContext<'a>,
+        services: AppServices,
     ) -> Self {
         let session = Session::accept_connection(node_number, channel, 0, SystemTime::now(), None)
             .expect("freshly allocated node has no existing session");
@@ -258,7 +63,7 @@ where
         Self {
             terminal,
             session,
-            context,
+            services,
         }
     }
 
@@ -285,7 +90,7 @@ where
     }
 
     async fn start(&mut self) -> Result<(), T::Error> {
-        let banner = self.context.screens.banner().await;
+        let banner = self.services.screens().banner().await;
         self.terminal.write(&banner).await?;
         self.terminal.write(COPYRIGHT_LINES).await?;
         self.session
@@ -305,8 +110,8 @@ where
             let outcome = session_flow::name_typed(
                 &mut self.session,
                 typed.trim(),
-                self.context.user_repo,
-                self.context.new_user_gate,
+                self.services.user_repo(),
+                self.services.new_user_gate(),
                 SystemTime::now(),
             )
             .expect("session is in identifying");
@@ -332,7 +137,7 @@ where
     }
 
     async fn reject_disallowed_registration(&mut self) -> Result<(), T::Error> {
-        let screen = self.context.screens.no_new_users().await;
+        let screen = self.services.screens().no_new_users().await;
         self.terminal.write(&screen).await?;
         self.terminal.flush().await?;
         self.finalise_logoff();
@@ -350,10 +155,10 @@ where
             let outcome = session_flow::verify_password(
                 &mut self.session,
                 password.trim(),
-                self.context.user_repo,
-                self.context.hasher,
-                self.context.caller_log,
-                self.context.session_policy,
+                self.services.user_repo(),
+                self.services.hasher(),
+                self.services.caller_log(),
+                self.services.session_policy(),
                 SystemTime::now(),
             )
             .expect("session is in authenticating with a user");
@@ -368,18 +173,16 @@ where
                     self.terminal.flush().await?;
                 }
                 VerifyPasswordOutcome::AccountLocked => {
-                    self.write_and_flush(b"Account locked. Goodbye.\r\n")
-                        .await?;
+                    self.write_and_flush(ACCOUNT_LOCKED_LINE).await?;
                     return Ok(false);
                 }
                 VerifyPasswordOutcome::TooManyFailures => {
-                    self.write_and_flush(b"Too many password failures. Goodbye.\r\n")
+                    self.write_and_flush(TOO_MANY_PASSWORD_FAILURES_LINE)
                         .await?;
                     return Ok(false);
                 }
                 VerifyPasswordOutcome::LogonRejected => {
-                    self.write_and_flush(b"Logon rejected. Goodbye.\r\n")
-                        .await?;
+                    self.write_and_flush(LOGON_REJECTED_LINE).await?;
                     return Ok(false);
                 }
             }
@@ -389,8 +192,8 @@ where
     fn enter_menu(&mut self) {
         session_flow::enter_menu(
             &mut self.session,
-            self.context.user_repo,
-            self.context.caller_log,
+            self.services.user_repo(),
+            self.services.caller_log(),
             SystemTime::now(),
         )
         .expect("session is in onboarded with a user");
@@ -403,7 +206,7 @@ where
                 .user()
                 .expect("session is in menu with a user")
                 .access_level();
-            let menu = self.context.screens.default_menu(access_level).await;
+            let menu = self.services.screens().default_menu(access_level).await;
             self.terminal.write(&menu).await?;
             let Some(line) = self
                 .prompt_for_line(MENU_PROMPT, TerminalEcho::Visible)
@@ -444,7 +247,7 @@ where
     }
 
     async fn read_line(&mut self, echo: TerminalEcho) -> Result<TerminalRead, T::Error> {
-        let timeout = self.context.session_policy.input_timeout();
+        let timeout = self.services.session_policy().input_timeout();
         let outcome = self.terminal.read_line(echo, timeout).await?;
         if matches!(outcome, TerminalRead::Line(_)) {
             self.session.record_input(SystemTime::now());
@@ -454,7 +257,7 @@ where
 
     async fn handle_idle_timeout(&mut self) -> Result<(), T::Error> {
         self.session
-            .apply_idle_timeout(self.context.session_policy.treat_timeout_as_logoff())
+            .apply_idle_timeout(self.services.session_policy().treat_timeout_as_logoff())
             .expect("idle-permitted state when read times out");
         self.finalise_logoff();
         self.write_and_flush(IDLE_TIMEOUT_LINE).await
@@ -470,8 +273,8 @@ where
     fn finalise_logoff(&mut self) {
         session_flow::finalise_logoff(
             &mut self.session,
-            self.context.user_repo,
-            self.context.caller_log,
+            self.services.user_repo(),
+            self.services.caller_log(),
             SystemTime::now(),
         )
         .expect("logging_off can finalise");
@@ -486,7 +289,7 @@ where
         &mut self,
         password_required: bool,
     ) -> Result<bool, T::Error> {
-        let screen = self.context.screens.new_user_password().await;
+        let screen = self.services.screens().new_user_password().await;
         self.terminal.write(&screen).await?;
         if password_required && !self.run_new_user_password_gate().await? {
             return Ok(false);
@@ -538,8 +341,8 @@ where
             let outcome = session_flow::verify_new_user_password(
                 &mut self.session,
                 typed.trim(),
-                self.context.new_user_gate,
-                self.context.caller_log,
+                self.services.new_user_gate(),
+                self.services.caller_log(),
                 SystemTime::now(),
             )
             .expect("session is in new_user_registering and gate is configured");
@@ -579,7 +382,7 @@ where
             let trimmed = typed.trim();
             let available = !trimmed.is_empty()
                 && matches!(
-                    self.context.user_repo.find_by_handle(trimmed),
+                    self.services.user_repo().find_by_handle(trimmed),
                     NameLookupResult::NotFound
                 );
             if available {
@@ -665,11 +468,11 @@ where
         profile: NewUserProfile,
     ) -> Result<bool, T::Error> {
         let flow = NewUserRegistrationFlow::new(
-            self.context.user_repo,
-            self.context.hasher,
-            self.context.caller_log,
-            self.context.default_ratio,
-            self.context.session_policy,
+            self.services.user_repo(),
+            self.services.hasher(),
+            self.services.caller_log(),
+            self.services.default_ratio(),
+            self.services.session_policy(),
         );
         if flow
             .complete(&mut self.session, profile, SystemTime::now())
@@ -689,20 +492,22 @@ where
 mod tests {
     use std::collections::VecDeque;
     use std::convert::Infallible;
+    use std::sync::Arc;
     use std::time::{Duration, SystemTime};
 
     use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
     use crate::app::screens::{ScreenFuture, ScreenRepository};
+    use crate::app::services::AppServices;
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::{LogonChannel, SessionPolicy};
     use crate::domain::user::{RatioMode, User};
 
-    use super::{
-        SessionDriver, SessionDriverContext, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
-    };
+    use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+
+    use super::SessionDriver;
 
     struct FakeTerminal {
         inputs: VecDeque<TerminalRead>,
@@ -793,10 +598,12 @@ mod tests {
 
     #[tokio::test]
     async fn driver_runs_signin_menu_and_logoff_without_a_telnet_transport() {
-        let repo = InMemoryUserRepository::new(vec![alice_with_password("secret")]);
-        let hasher = Pbkdf2PasswordHasher::new();
-        let caller_log = InMemoryCallerLog::new();
-        let screens = StaticScreens;
+        let repo = Arc::new(InMemoryUserRepository::new(vec![alice_with_password(
+            "secret",
+        )]));
+        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+        let caller_log = Arc::new(InMemoryCallerLog::new());
+        let screens = Arc::new(StaticScreens);
         let gate = NewUserGateConfig {
             allow_new_users: true,
             new_user_password: None,
@@ -806,21 +613,21 @@ mod tests {
             mode: RatioMode::ByFiles,
             value: 3,
         };
-        let context = SessionDriverContext::new(
-            &repo,
-            &hasher,
-            &caller_log,
-            &screens,
+        let services = AppServices::new(
+            repo,
+            hasher,
+            caller_log.clone(),
+            screens,
             SessionPolicy::default(),
             ratio,
-            &gate,
+            gate,
         );
         let terminal = FakeTerminal::new([
             TerminalRead::Line("alice".to_string()),
             TerminalRead::Line("secret".to_string()),
             TerminalRead::Line("G".to_string()),
         ]);
-        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, context);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
 
         driver.run().await.expect("driver completes");
 

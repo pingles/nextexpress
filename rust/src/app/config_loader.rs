@@ -10,44 +10,26 @@ use std::path::Path;
 use crate::app::config::{Config, ConfigError};
 
 /// Errors returned by [`load_config`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum LoadConfigError {
     /// `path` couldn't be read (missing, permissions, IO).
+    #[error("couldn't read config {}: {error}", path.display())]
     Read {
         /// The path that was attempted.
         path: std::path::PathBuf,
         /// The underlying [`std::io::Error`].
+        #[source]
         error: std::io::Error,
     },
     /// `path` was read but didn't deserialise into [`Config`].
+    #[error("couldn't parse config {}: {error}", path.display())]
     Parse {
         /// The path that was attempted.
         path: std::path::PathBuf,
         /// The underlying [`ConfigError`] from [`Config::from_toml_str`].
+        #[source]
         error: ConfigError,
     },
-}
-
-impl std::fmt::Display for LoadConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Read { path, error } => {
-                write!(f, "couldn't read config {}: {error}", path.display())
-            }
-            Self::Parse { path, error } => {
-                write!(f, "couldn't parse config {}: {error}", path.display())
-            }
-        }
-    }
-}
-
-impl std::error::Error for LoadConfigError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Read { error, .. } => Some(error),
-            Self::Parse { error, .. } => Some(error),
-        }
-    }
 }
 
 /// Loads a [`Config`] from `path`, or returns [`Config::default`] when

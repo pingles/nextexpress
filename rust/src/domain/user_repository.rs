@@ -25,31 +25,22 @@ pub enum NameLookupResult {
 }
 
 /// Errors returned by [`UserRepository`] implementations.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UserRepositoryError {
     /// The caller tried to save a user the repository does not know.
+    #[error("user not found: {handle}")]
     UserNotFound {
         /// Handle on the user record that could not be saved.
         handle: String,
     },
     /// The caller tried to create a user whose handle (or slot) is
     /// already taken.
+    #[error("user already exists: {handle}")]
     DuplicateUser {
         /// Handle that collided with an existing record.
         handle: String,
     },
 }
-
-impl std::fmt::Display for UserRepositoryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UserNotFound { handle } => write!(f, "user not found: {handle}"),
-            Self::DuplicateUser { handle } => write!(f, "user already exists: {handle}"),
-        }
-    }
-}
-
-impl std::error::Error for UserRepositoryError {}
 
 /// Port over the user database.
 ///

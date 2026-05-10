@@ -63,25 +63,16 @@ impl NodePool {
 }
 
 /// Errors returned by [`NodePool::release`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReleaseError {
     /// The pool has no node with that number.
+    #[error("unknown node #{0}")]
     UnknownNode(u32),
     /// The node's current status does not permit transitioning to
     /// [`NodeStatus::Idle`].
-    InvalidTransition(TransitionError),
+    #[error(transparent)]
+    InvalidTransition(#[from] TransitionError),
 }
-
-impl std::fmt::Display for ReleaseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnknownNode(n) => write!(f, "unknown node #{n}"),
-            Self::InvalidTransition(t) => write!(f, "{t}"),
-        }
-    }
-}
-
-impl std::error::Error for ReleaseError {}
 
 #[cfg(test)]
 mod tests {

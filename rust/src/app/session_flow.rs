@@ -22,84 +22,36 @@ use crate::domain::user::{NewUserRegistration, RatioMode, User, UserError, UserF
 use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
 
 /// Errors returned by [`verify_password`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerifyPasswordFlowError {
     /// The underlying session rule failed.
-    Session(VerifyPasswordError),
+    #[error(transparent)]
+    Session(#[from] VerifyPasswordError),
     /// The changed user record could not be persisted.
-    Save(UserRepositoryError),
-}
-
-impl std::fmt::Display for VerifyPasswordFlowError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Session(error) => write!(f, "{error}"),
-            Self::Save(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for VerifyPasswordFlowError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Session(error) => Some(error),
-            Self::Save(error) => Some(error),
-        }
-    }
+    #[error(transparent)]
+    Save(#[from] UserRepositoryError),
 }
 
 /// Errors returned by [`enter_menu`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EnterMenuFlowError {
     /// The underlying session rule failed.
-    Session(EnterMenuError),
+    #[error(transparent)]
+    Session(#[from] EnterMenuError),
     /// The changed user record could not be persisted.
-    Save(UserRepositoryError),
-}
-
-impl std::fmt::Display for EnterMenuFlowError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Session(error) => write!(f, "{error}"),
-            Self::Save(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for EnterMenuFlowError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Session(error) => Some(error),
-            Self::Save(error) => Some(error),
-        }
-    }
+    #[error(transparent)]
+    Save(#[from] UserRepositoryError),
 }
 
 /// Errors returned by [`finalise_logoff`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FinaliseLogoffFlowError {
     /// The underlying session rule failed.
-    Session(SessionTransitionError),
+    #[error(transparent)]
+    Session(#[from] SessionTransitionError),
     /// The changed user record could not be persisted.
-    Save(UserRepositoryError),
-}
-
-impl std::fmt::Display for FinaliseLogoffFlowError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Session(error) => write!(f, "{error}"),
-            Self::Save(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for FinaliseLogoffFlowError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Session(error) => Some(error),
-            Self::Save(error) => Some(error),
-        }
-    }
+    #[error(transparent)]
+    Save(#[from] UserRepositoryError),
 }
 
 /// Handles `session.allium:NameTyped`.
@@ -164,36 +116,18 @@ pub struct NewUserGateConfig {
 }
 
 /// Errors returned by [`verify_new_user_password`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerifyNewUserPasswordFlowError {
     /// The underlying session rule failed.
-    Session(VerifyNewUserPasswordError),
+    #[error(transparent)]
+    Session(#[from] VerifyNewUserPasswordError),
     /// The gate configuration is missing — the caller invoked the
     /// gate flow even though `core/config.new_user_password` is
     /// `None`. The listener should never reach here in production;
     /// returning the error rather than silently passing protects
     /// against logic bugs.
+    #[error("verify_new_user_password called with no gate configured")]
     GateNotConfigured,
-}
-
-impl std::fmt::Display for VerifyNewUserPasswordFlowError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Session(error) => write!(f, "{error}"),
-            Self::GateNotConfigured => {
-                write!(f, "verify_new_user_password called with no gate configured")
-            }
-        }
-    }
-}
-
-impl std::error::Error for VerifyNewUserPasswordFlowError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Session(error) => Some(error),
-            Self::GateNotConfigured => None,
-        }
-    }
 }
 
 /// Handles `session.allium:VerifyNewUserPassword` (Slice 20a).
@@ -226,9 +160,11 @@ where
         .as_deref()
         .ok_or(VerifyNewUserPasswordFlowError::GateNotConfigured)?;
     let matches = matches_new_user_password(candidate, secret);
-    let (outcome, entry) = session
-        .apply_new_user_password_attempt(matches, gate.max_new_user_password_attempts, now)
-        .map_err(VerifyNewUserPasswordFlowError::Session)?;
+    let (outcome, entry) = session.apply_new_user_password_attempt(
+        matches,
+        gate.max_new_user_password_attempts,
+        now,
+    )?;
     if let Some(entry) = entry {
         caller_log.append(entry);
     }
@@ -270,31 +206,23 @@ where
     L: CallerLogAppender + ?Sized,
 {
     if session.state() != SessionState::Authenticating {
-        return Err(VerifyPasswordFlowError::Session(
-            VerifyPasswordError::WrongState(session.state()),
-        ));
+        return Err(VerifyPasswordError::WrongState(session.state()).into());
     }
-    let user = session.user().ok_or(VerifyPasswordFlowError::Session(
-        VerifyPasswordError::UserMissing,
-    ))?;
-    let matches = hasher.verify_password(user, candidate).map_err(|error| {
-        VerifyPasswordFlowError::Session(VerifyPasswordError::HashKindUnsupported(error))
-    })?;
+    let user = session.user().ok_or(VerifyPasswordError::UserMissing)?;
+    let matches = hasher
+        .verify_password(user, candidate)
+        .map_err(VerifyPasswordError::HashKindUnsupported)?;
 
     if matches {
-        let (outcome, rejection) = session
-            .apply_password_match(policy, now)
-            .map_err(VerifyPasswordFlowError::Session)?;
-        save_bound_user(session, user_repo).map_err(VerifyPasswordFlowError::Save)?;
+        let (outcome, rejection) = session.apply_password_match(policy, now)?;
+        save_bound_user(session, user_repo)?;
         if let Some(entry) = rejection {
             caller_log.append(entry);
         }
         Ok(outcome)
     } else {
-        let (outcome, entry) = session
-            .apply_password_mismatch(policy, now)
-            .map_err(VerifyPasswordFlowError::Session)?;
-        save_bound_user(session, user_repo).map_err(VerifyPasswordFlowError::Save)?;
+        let (outcome, entry) = session.apply_password_mismatch(policy, now)?;
+        save_bound_user(session, user_repo)?;
         caller_log.append(entry);
         Ok(outcome)
     }
@@ -317,10 +245,8 @@ where
     R: UserRepository + ?Sized,
     L: CallerLogAppender + ?Sized,
 {
-    let entry = session
-        .enter_menu(now)
-        .map_err(EnterMenuFlowError::Session)?;
-    save_bound_user(session, user_repo).map_err(EnterMenuFlowError::Save)?;
+    let entry = session.enter_menu(now)?;
+    save_bound_user(session, user_repo)?;
     caller_log.append(entry);
     Ok(())
 }
@@ -342,10 +268,8 @@ where
     R: UserRepository + ?Sized,
     L: CallerLogAppender + ?Sized,
 {
-    let entry = session
-        .finalise_logoff(now)
-        .map_err(FinaliseLogoffFlowError::Session)?;
-    save_bound_user(session, user_repo).map_err(FinaliseLogoffFlowError::Save)?;
+    let entry = session.finalise_logoff(now)?;
+    save_bound_user(session, user_repo)?;
     caller_log.append(entry);
     Ok(())
 }
@@ -386,42 +310,24 @@ pub struct NewUserProfile {
 }
 
 /// Errors returned by [`NewUserRegistrationFlow::complete`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CompleteNewUserRegistrationFlowError {
     /// The session is not in
     /// [`SessionState::NewUserRegistering`].
-    Session(CompleteNewUserRegistrationError),
+    #[error(transparent)]
+    Session(#[from] CompleteNewUserRegistrationError),
     /// The hasher failed to compute a hash for the supplied password.
-    Hash(PasswordError),
+    #[error(transparent)]
+    Hash(#[from] PasswordError),
     /// `User::register_new` rejected the constructed record (e.g. a
     /// PBKDF2 hash kind without a salt — should never happen for the
     /// configured default).
-    User(UserError),
+    #[error(transparent)]
+    User(#[from] UserError),
     /// The repository couldn't allocate or persist the new account
     /// (e.g. the chosen handle is already taken).
-    Save(UserRepositoryError),
-}
-
-impl std::fmt::Display for CompleteNewUserRegistrationFlowError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Session(error) => write!(f, "{error}"),
-            Self::Hash(error) => write!(f, "{error}"),
-            Self::User(error) => write!(f, "{error}"),
-            Self::Save(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for CompleteNewUserRegistrationFlowError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Session(error) => Some(error),
-            Self::Hash(error) => Some(error),
-            Self::User(error) => Some(error),
-            Self::Save(error) => Some(error),
-        }
-    }
+    #[error(transparent)]
+    Save(#[from] UserRepositoryError),
 }
 
 /// Default ratio policy applied to a freshly-registered new account.
@@ -513,15 +419,10 @@ where
         now: SystemTime,
     ) -> Result<(), CompleteNewUserRegistrationFlowError> {
         if session.state() != SessionState::NewUserRegistering {
-            return Err(CompleteNewUserRegistrationFlowError::Session(
-                CompleteNewUserRegistrationError::WrongState(session.state()),
-            ));
+            return Err(CompleteNewUserRegistrationError::WrongState(session.state()).into());
         }
         let kind = PasswordHashKind::Pbkdf210000;
-        let computed = self
-            .hasher
-            .compute_password_hash(&profile.password, kind)
-            .map_err(CompleteNewUserRegistrationFlowError::Hash)?;
+        let computed = self.hasher.compute_password_hash(&profile.password, kind)?;
         let user = User::register_new(NewUserRegistration {
             slot_number: self.user_repo.next_free_slot(),
             handle: profile.handle,
@@ -537,14 +438,9 @@ where
             ratio_mode: self.default_ratio.mode,
             ratio_value: self.default_ratio.value,
             now,
-        })
-        .map_err(CompleteNewUserRegistrationFlowError::User)?;
-        self.user_repo
-            .create(user.clone())
-            .map_err(CompleteNewUserRegistrationFlowError::Save)?;
-        let rejection = session
-            .complete_new_user_registration(user, self.policy, now)
-            .map_err(CompleteNewUserRegistrationFlowError::Session)?;
+        })?;
+        self.user_repo.create(user.clone())?;
+        let rejection = session.complete_new_user_registration(user, self.policy, now)?;
         if let Some(entry) = rejection {
             self.caller_log.append(entry);
         }
@@ -553,45 +449,27 @@ where
 }
 
 /// Errors returned by [`complete_password_reset`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CompletePasswordResetFlowError {
     /// The session is not at [`SessionState::Onboarded`], no user is
     /// bound, or `force_password_reset` isn't set.
-    Session(CompletePasswordResetError),
+    #[error(transparent)]
+    Session(#[from] CompletePasswordResetError),
     /// The candidate password doesn't satisfy the configured length
     /// or category thresholds.
+    #[error("candidate password is too weak")]
     WeakPassword,
     /// The candidate matches the user's current password. The spec
     /// requires the new password to differ from the old one.
+    #[error("new password must differ from old")]
     SameAsCurrent,
     /// The hasher rejected the user's stored hash kind, or refused
     /// to compute a fresh hash for the spec's default kind.
-    Hash(PasswordError),
+    #[error(transparent)]
+    Hash(#[from] PasswordError),
     /// The changed user record could not be persisted.
-    Save(UserRepositoryError),
-}
-
-impl std::fmt::Display for CompletePasswordResetFlowError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Session(error) => write!(f, "{error}"),
-            Self::WeakPassword => write!(f, "candidate password is too weak"),
-            Self::SameAsCurrent => write!(f, "new password must differ from old"),
-            Self::Hash(error) => write!(f, "{error}"),
-            Self::Save(error) => write!(f, "{error}"),
-        }
-    }
-}
-
-impl std::error::Error for CompletePasswordResetFlowError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Session(error) => Some(error),
-            Self::WeakPassword | Self::SameAsCurrent => None,
-            Self::Hash(error) => Some(error),
-            Self::Save(error) => Some(error),
-        }
-    }
+    #[error(transparent)]
+    Save(#[from] UserRepositoryError),
 }
 
 /// Handles `session.allium:CompletePasswordReset`.
@@ -626,19 +504,13 @@ where
     H: PasswordHasher + ?Sized,
 {
     if session.state() != SessionState::Onboarded {
-        return Err(CompletePasswordResetFlowError::Session(
-            CompletePasswordResetError::WrongState(session.state()),
-        ));
+        return Err(CompletePasswordResetError::WrongState(session.state()).into());
     }
     let user = session
         .user()
-        .ok_or(CompletePasswordResetFlowError::Session(
-            CompletePasswordResetError::UserMissing,
-        ))?;
+        .ok_or(CompletePasswordResetError::UserMissing)?;
     if !user.force_password_reset() {
-        return Err(CompletePasswordResetFlowError::Session(
-            CompletePasswordResetError::ResetNotPending,
-        ));
+        return Err(CompletePasswordResetError::ResetNotPending.into());
     }
     if !meets_password_strength(
         candidate,
@@ -647,10 +519,7 @@ where
     ) {
         return Err(CompletePasswordResetFlowError::WeakPassword);
     }
-    let same_as_current = hasher
-        .verify_password(user, candidate)
-        .map_err(CompletePasswordResetFlowError::Hash)?;
-    if same_as_current {
+    if hasher.verify_password(user, candidate)? {
         return Err(CompletePasswordResetFlowError::SameAsCurrent);
     }
 
@@ -659,14 +528,10 @@ where
     // PBKDF2 variants will land in Slice 64 with their migration
     // story; for now there is exactly one supported kind.
     let kind = crate::domain::password::PasswordHashKind::Pbkdf210000;
-    let computed = hasher
-        .compute_password_hash(candidate, kind)
-        .map_err(CompletePasswordResetFlowError::Hash)?;
+    let computed = hasher.compute_password_hash(candidate, kind)?;
 
-    session
-        .apply_password_change(computed.hash, computed.salt, kind, now)
-        .map_err(CompletePasswordResetFlowError::Session)?;
-    save_bound_user(session, user_repo).map_err(CompletePasswordResetFlowError::Save)?;
+    session.apply_password_change(computed.hash, computed.salt, kind, now)?;
+    save_bound_user(session, user_repo)?;
     Ok(())
 }
 

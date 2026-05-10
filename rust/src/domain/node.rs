@@ -72,25 +72,14 @@ impl Node {
 
 /// Returned when the requested transition is not in the spec's
 /// transition table for the Phase 1 subset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("invalid node transition: {from:?} -> {to:?}")]
 pub struct TransitionError {
     /// Status the node was in when the transition was attempted.
     pub from: NodeStatus,
     /// Status the caller asked to move into.
     pub to: NodeStatus,
 }
-
-impl std::fmt::Display for TransitionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "invalid node transition: {:?} -> {:?}",
-            self.from, self.to
-        )
-    }
-}
-
-impl std::error::Error for TransitionError {}
 
 /// Returns whether the spec's Phase 1 transition table permits
 /// `from -> to`. Later slices extend the table as more statuses land.

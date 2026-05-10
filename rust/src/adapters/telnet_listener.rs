@@ -15,21 +15,19 @@ use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
-use crate::app::screens::ScreenRepository;
-use crate::app::session_driver::{
-    SessionDriver, SessionDriverContext, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
+use crate::app::services::{
+    AppServices, SharedCallerLog, SharedHasher, SharedScreens, SharedUserRepo,
 };
+use crate::app::session_driver::SessionDriver;
+use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
+use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 #[cfg(test)]
-use crate::app::session_driver::{
+use crate::app::wire_text::{
     ANSI_PROMPT, EMAIL_PROMPT, LINE_LENGTH_PROMPT, LOCATION_PROMPT, MENU_PROMPT,
     NEW_USER_PASSWORD_PROMPT, PASSWORD_PROMPT, PHONE_PROMPT, REGISTRATION_HANDLE_PROMPT,
     REGISTRATION_PASSWORD_CONFIRM_PROMPT, REGISTRATION_PASSWORD_PROMPT,
 };
-use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
-use crate::domain::caller_log::CallerLogAppender;
-use crate::domain::password::PasswordHasher;
-use crate::domain::session::{LogonChannel, SessionPolicy};
-use crate::domain::user_repository::UserRepository;
+use crate::domain::session::LogonChannel;
 
 use super::file_screen_repository::FileScreenRepository;
 use super::telnet_line::{read_telnet_line, EchoMode};
@@ -49,55 +47,17 @@ const IAC_INIT: &[u8] = &[
 /// Sent to clients that arrive when every node is in use.
 const BUSY_LINE: &[u8] = b"All BBS nodes are busy. Please try again later.\r\n";
 
-/// Type alias for the user repository the listener drives.
-type SharedUserRepo = Arc<dyn UserRepository + Send + Sync + 'static>;
-
-/// Type alias for the password hasher the listener drives.
-type SharedHasher = Arc<dyn PasswordHasher + Send + Sync + 'static>;
-
-/// Type alias for the caller-log appender the listener drives.
-type SharedCallerLog = Arc<dyn CallerLogAppender + Send + Sync + 'static>;
-
-/// Type alias for the screen repository the listener reads from.
-type SharedScreens = Arc<dyn ScreenRepository + Send + Sync + 'static>;
-
 #[derive(Clone)]
 struct ListenerRuntime {
     pool: Arc<NodePool>,
-    user_repo: SharedUserRepo,
-    hasher: SharedHasher,
-    caller_log: SharedCallerLog,
-    screens: SharedScreens,
-    session_policy: SessionPolicy,
-    default_ratio: DefaultRatio,
-    new_user_gate: NewUserGateConfig,
-}
-
-impl ListenerRuntime {
-    fn session_context(&self) -> SessionDriverContext<'_> {
-        SessionDriverContext::new(
-            self.user_repo.as_ref(),
-            self.hasher.as_ref(),
-            self.caller_log.as_ref(),
-            self.screens.as_ref(),
-            self.session_policy,
-            self.default_ratio,
-            &self.new_user_gate,
-        )
-    }
+    services: AppServices,
 }
 
 /// Telnet listener and the application state it drives.
 pub struct TelnetListener {
     listener: TcpListener,
     pool: Arc<NodePool>,
-    session_policy: SessionPolicy,
-    default_ratio: DefaultRatio,
-    new_user_gate: NewUserGateConfig,
-    user_repo: SharedUserRepo,
-    hasher: SharedHasher,
-    caller_log: SharedCallerLog,
-    screens: SharedScreens,
+    services: AppServices,
 }
 
 impl TelnetListener {
@@ -140,16 +100,19 @@ impl TelnetListener {
             new_user_password: config.new_user_password.clone(),
             max_new_user_password_attempts: config.max_new_user_password_attempts,
         };
-        Ok(Self {
-            listener,
-            pool,
-            session_policy: config.session_policy(),
-            default_ratio,
-            new_user_gate,
+        let services = AppServices::new(
             user_repo,
             hasher,
             caller_log,
             screens,
+            config.session_policy(),
+            default_ratio,
+            new_user_gate,
+        );
+        Ok(Self {
+            listener,
+            pool,
+            services,
         })
     }
 
@@ -171,13 +134,7 @@ impl TelnetListener {
     fn runtime(&self) -> ListenerRuntime {
         ListenerRuntime {
             pool: self.pool.clone(),
-            user_repo: self.user_repo.clone(),
-            hasher: self.hasher.clone(),
-            caller_log: self.caller_log.clone(),
-            screens: self.screens.clone(),
-            session_policy: self.session_policy,
-            default_ratio: self.default_ratio,
-            new_user_gate: self.new_user_gate.clone(),
+            services: self.services.clone(),
         }
     }
 
@@ -211,9 +168,13 @@ async fn handle_connection(mut stream: TcpStream, runtime: ListenerRuntime) -> i
 
     let result = {
         stream.write_all(IAC_INIT).await?;
-        let context = runtime.session_context();
         let terminal = TelnetTerminal::new(&mut stream);
-        let mut driver = SessionDriver::new(terminal, node_number, LogonChannel::Remote, context);
+        let mut driver = SessionDriver::new(
+            terminal,
+            node_number,
+            LogonChannel::Remote,
+            runtime.services,
+        );
         driver.run().await
     };
     let _ = runtime.pool.release(node_number).await;
@@ -288,7 +249,7 @@ mod tests {
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
     use crate::domain::node::NodeStatus;
-    use crate::domain::password::PasswordHashKind;
+    use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::user::User;
     use crate::domain::user_repository::NameLookupResult;
 

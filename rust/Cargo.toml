@@ -22,6 +22,7 @@ rand = "0.8"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 toml = { version = "0.8", default-features = false, features = ["parse"] }
+thiserror = "2"
 
 [dev-dependencies]
 tempfile = "3.10"

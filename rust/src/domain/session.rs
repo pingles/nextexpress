@@ -13,19 +13,7 @@ use crate::domain::user::User;
 /// Maximum number of unknown handle entries before a session is ended.
 const MAX_NAME_RETRIES: u32 = 5;
 
-/// Default consecutive bad-password attempts before a session ends or
-/// account lockout applies.
-const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
-
-/// Default offset past midnight UTC used by
-/// [`SessionPolicy::new`] when no explicit value is supplied. Mirrors
-/// the legacy `AmiExpress` constant `21600` seconds (six hours) at
-/// `amiexpress/express.e:529`.
-const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
-
-/// Default per-input idle timeout used by [`SessionPolicy::new`]
-/// (`core.allium:config.input_timeout`, Slice 17). Five minutes.
-const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub use crate::domain::session_policy::{PasswordFailureDecision, SessionPolicy};
 
 /// How the user reached the BBS (spec: `session.allium:LogonChannel`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -73,187 +61,6 @@ pub enum LogoffReason {
     /// timeout fired with `treat_timeout_as_logoff = false`
     /// (Slice 17).
     CarrierLoss,
-}
-
-/// Policy decision after a password failure has been recorded on a
-/// session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PasswordFailureDecision {
-    /// Keep the session in password authentication.
-    Continue,
-    /// End the session because the session-level failure limit was
-    /// reached.
-    EndSession,
-    /// Lock the user's account because the user-level failure limit
-    /// was reached.
-    LockAccount,
-}
-
-/// Domain policy values that influence a session's behaviour.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionPolicy {
-    max_password_failures: u32,
-    daily_reset_offset: Duration,
-    password_expiry_days: u32,
-    min_password_length: u32,
-    min_password_categories: u32,
-    input_timeout: Duration,
-    treat_timeout_as_logoff: bool,
-}
-
-impl SessionPolicy {
-    /// Constructs a session policy with spec defaults: six-hour
-    /// daily reset, expiry disabled, no password-strength
-    /// enforcement, five-minute idle timeout, and the timeout
-    /// reported as `carrier_loss`.
-    ///
-    /// # Parameters
-    /// - `max_password_failures`: the number of consecutive bad
-    ///   password attempts that ends the session or locks the account.
-    ///
-    /// # Returns
-    /// A [`SessionPolicy`] carrying the supplied password-failure
-    /// limit and the listed defaults.
-    #[must_use]
-    pub fn new(max_password_failures: u32) -> Self {
-        Self {
-            max_password_failures,
-            daily_reset_offset: DEFAULT_DAILY_RESET_OFFSET,
-            password_expiry_days: 0,
-            min_password_length: 0,
-            min_password_categories: 0,
-            input_timeout: DEFAULT_INPUT_TIMEOUT,
-            treat_timeout_as_logoff: false,
-        }
-    }
-
-    /// Returns a copy of `self` with [`Self::daily_reset_offset`]
-    /// replaced by `offset`.
-    #[must_use]
-    pub fn with_daily_reset_offset(mut self, offset: Duration) -> Self {
-        self.daily_reset_offset = offset;
-        self
-    }
-
-    /// Returns the configured daily reset offset (Slice 14).
-    #[must_use]
-    pub fn daily_reset_offset(&self) -> Duration {
-        self.daily_reset_offset
-    }
-
-    /// Returns a copy of `self` with [`Self::password_expiry_days`]
-    /// replaced by `days`. `0` disables expiry.
-    #[must_use]
-    pub fn with_password_expiry_days(mut self, days: u32) -> Self {
-        self.password_expiry_days = days;
-        self
-    }
-
-    /// Returns the configured password expiry, in days (Slice 15).
-    /// `0` disables expiry.
-    #[must_use]
-    pub fn password_expiry_days(&self) -> u32 {
-        self.password_expiry_days
-    }
-
-    /// Returns a copy of `self` with [`Self::min_password_length`]
-    /// replaced by `length`. `0` disables the length check.
-    #[must_use]
-    pub fn with_min_password_length(mut self, length: u32) -> Self {
-        self.min_password_length = length;
-        self
-    }
-
-    /// Returns the configured minimum password length (Slice 15).
-    /// `0` disables the length check.
-    #[must_use]
-    pub fn min_password_length(&self) -> u32 {
-        self.min_password_length
-    }
-
-    /// Returns a copy of `self` with [`Self::min_password_categories`]
-    /// replaced by `categories`. `0` disables the category check;
-    /// values above `4` are treated as `4`.
-    #[must_use]
-    pub fn with_min_password_categories(mut self, categories: u32) -> Self {
-        self.min_password_categories = categories;
-        self
-    }
-
-    /// Returns the configured minimum password categories (Slice 15).
-    /// `0` disables the category check.
-    #[must_use]
-    pub fn min_password_categories(&self) -> u32 {
-        self.min_password_categories
-    }
-
-    /// Returns a copy of `self` with [`Self::input_timeout`] replaced
-    /// by `timeout`. Slice 17.
-    #[must_use]
-    pub fn with_input_timeout(mut self, timeout: Duration) -> Self {
-        self.input_timeout = timeout;
-        self
-    }
-
-    /// Returns the configured per-input idle timeout (Slice 17).
-    /// Mirrors `core/config.input_timeout`; the default is five
-    /// minutes.
-    #[must_use]
-    pub fn input_timeout(&self) -> Duration {
-        self.input_timeout
-    }
-
-    /// Returns a copy of `self` with
-    /// [`Self::treat_timeout_as_logoff`] replaced by `value`.
-    #[must_use]
-    pub fn with_treat_timeout_as_logoff(mut self, value: bool) -> Self {
-        self.treat_timeout_as_logoff = value;
-        self
-    }
-
-    /// Returns whether an idle timeout is reported as
-    /// [`LogoffReason::InputTimeout`] (`true`) or
-    /// [`LogoffReason::CarrierLoss`] (`false`). Mirrors
-    /// `core/config.treat_timeout_as_logoff`. Slice 17.
-    #[must_use]
-    pub fn treat_timeout_as_logoff(&self) -> bool {
-        self.treat_timeout_as_logoff
-    }
-
-    /// Decides what should happen after a password failure has been
-    /// recorded on `session`.
-    ///
-    /// The account-level lockout decision wins over the session-level
-    /// end decision when both counters have reached the configured
-    /// limit.
-    ///
-    /// # Parameters
-    /// - `session`: the session whose password-failure counters should
-    ///   be assessed.
-    ///
-    /// # Returns
-    /// A [`PasswordFailureDecision`] describing whether the session
-    /// may continue, should end, or should lock the bound account.
-    #[must_use]
-    pub fn password_failure_decision(&self, session: &Session) -> PasswordFailureDecision {
-        let user_failures = session
-            .user()
-            .map(super::user::User::invalid_attempts)
-            .unwrap_or_default();
-        if user_failures >= self.max_password_failures {
-            PasswordFailureDecision::LockAccount
-        } else if session.password_retry_count() >= self.max_password_failures {
-            PasswordFailureDecision::EndSession
-        } else {
-            PasswordFailureDecision::Continue
-        }
-    }
-}
-
-impl Default for SessionPolicy {
-    fn default() -> Self {
-        Self::new(DEFAULT_MAX_PASSWORD_FAILURES)
-    }
 }
 
 /// Lifecycle state of a [`Session`] (spec: `session.allium:Session.state`).
@@ -1507,23 +1314,12 @@ impl Session {
 }
 
 /// Errors returned by [`Session::accept_connection`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AcceptConnectionError {
     /// The node already has a non-ended session bound to it.
+    #[error("node already has an active session")]
     AlreadyActiveSession,
 }
-
-impl std::fmt::Display for AcceptConnectionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::AlreadyActiveSession => {
-                write!(f, "node already has an active session")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AcceptConnectionError {}
 
 /// Outcome of [`Session::name_typed`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1592,45 +1388,24 @@ pub enum NewUserPasswordOutcome {
 }
 
 /// Errors returned by [`Session::apply_new_user_password_attempt`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum VerifyNewUserPasswordError {
     /// The session is not in [`SessionState::NewUserRegistering`].
+    #[error("apply_new_user_password_attempt in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// The gate has already passed for this session; the caller
     /// should stop prompting.
+    #[error("new-user password gate already verified")]
     AlreadyVerified,
 }
 
-impl std::fmt::Display for VerifyNewUserPasswordError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(
-                f,
-                "apply_new_user_password_attempt in unexpected state: {s:?}"
-            ),
-            Self::AlreadyVerified => write!(f, "new-user password gate already verified"),
-        }
-    }
-}
-
-impl std::error::Error for VerifyNewUserPasswordError {}
-
 /// Errors returned by [`Session::name_typed`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum NameTypedError {
     /// The session is not in [`SessionState::Identifying`].
+    #[error("name typed in unexpected state: {0:?}")]
     WrongState(SessionState),
 }
-
-impl std::fmt::Display for NameTypedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "name typed in unexpected state: {s:?}"),
-        }
-    }
-}
-
-impl std::error::Error for NameTypedError {}
 
 /// Outcome of [`Session::verify_password`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1663,192 +1438,104 @@ pub enum VerifyPasswordOutcome {
 }
 
 /// Errors returned by [`Session::verify_password`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerifyPasswordError {
     /// The session is not in [`SessionState::Authenticating`].
+    #[error("verify_password in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// No user is bound to the session.
+    #[error("verify_password called without a bound user")]
     UserMissing,
     /// The hasher rejected the user's stored hash kind.
-    HashKindUnsupported(PasswordError),
+    #[error(transparent)]
+    HashKindUnsupported(#[from] PasswordError),
 }
-
-impl std::fmt::Display for VerifyPasswordError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "verify_password in unexpected state: {s:?}"),
-            Self::UserMissing => write!(f, "verify_password called without a bound user"),
-            Self::HashKindUnsupported(e) => write!(f, "{e}"),
-        }
-    }
-}
-
-impl std::error::Error for VerifyPasswordError {}
 
 /// Errors returned by [`Session::enter_menu`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum EnterMenuError {
     /// The session is not in [`SessionState::Onboarded`].
+    #[error("enter_menu in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// No user is bound to the session.
+    #[error("enter_menu called without a bound user")]
     UserMissing,
     /// The bound user has `force_password_reset` set; the listener
     /// must run the password-change sub-flow before retrying
     /// (`session.allium:CompletePasswordReset`, Slice 15).
+    #[error("enter_menu blocked: user must complete a forced password reset")]
     PasswordResetPending,
 }
 
-impl std::fmt::Display for EnterMenuError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "enter_menu in unexpected state: {s:?}"),
-            Self::UserMissing => write!(f, "enter_menu called without a bound user"),
-            Self::PasswordResetPending => write!(
-                f,
-                "enter_menu blocked: user must complete a forced password reset"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for EnterMenuError {}
-
 /// Errors returned by [`Session::complete_new_user_registration`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CompleteNewUserRegistrationError {
     /// The session is not in [`SessionState::NewUserRegistering`].
+    #[error("complete_new_user_registration in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// The new-user password gate (Slice 20a) has not yet passed.
     /// The spec rule's `requires:
     /// session.new_user_password_verified` precondition is not
     /// satisfied — the listener should run the gate first.
+    #[error("complete_new_user_registration blocked: new-user password gate not verified")]
     GateNotVerified,
 }
 
-impl std::fmt::Display for CompleteNewUserRegistrationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(
-                f,
-                "complete_new_user_registration in unexpected state: {s:?}"
-            ),
-            Self::GateNotVerified => write!(
-                f,
-                "complete_new_user_registration blocked: new-user password gate not verified"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CompleteNewUserRegistrationError {}
-
 /// Errors returned by [`Session::initialise_daily_budget`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum InitialiseDailyBudgetError {
     /// The session is not in [`SessionState::Onboarded`].
+    #[error("initialise_daily_budget in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// No user is bound to the session.
+    #[error("initialise_daily_budget called without a bound user")]
     UserMissing,
 }
-
-impl std::fmt::Display for InitialiseDailyBudgetError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "initialise_daily_budget in unexpected state: {s:?}"),
-            Self::UserMissing => write!(f, "initialise_daily_budget called without a bound user"),
-        }
-    }
-}
-
-impl std::error::Error for InitialiseDailyBudgetError {}
 
 /// Errors returned by [`Session::force_password_reset_if_due`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ForcePasswordResetError {
     /// The session is not in [`SessionState::Onboarded`].
+    #[error("force_password_reset_if_due in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// No user is bound to the session.
+    #[error("force_password_reset_if_due called without a bound user")]
     UserMissing,
 }
 
-impl std::fmt::Display for ForcePasswordResetError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => {
-                write!(f, "force_password_reset_if_due in unexpected state: {s:?}")
-            }
-            Self::UserMissing => {
-                write!(f, "force_password_reset_if_due called without a bound user")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ForcePasswordResetError {}
-
 /// Errors returned by [`Session::apply_password_change`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CompletePasswordResetError {
     /// The session is not in [`SessionState::Onboarded`].
+    #[error("apply_password_change in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// No user is bound to the session.
+    #[error("apply_password_change called without a bound user")]
     UserMissing,
     /// The bound user does not have `force_password_reset` set, so
     /// `CompletePasswordReset` doesn't apply.
+    #[error("apply_password_change called when force_password_reset is not set")]
     ResetNotPending,
 }
 
-impl std::fmt::Display for CompletePasswordResetError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "apply_password_change in unexpected state: {s:?}"),
-            Self::UserMissing => write!(f, "apply_password_change called without a bound user"),
-            Self::ResetNotPending => write!(
-                f,
-                "apply_password_change called when force_password_reset is not set"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CompletePasswordResetError {}
-
 /// Errors returned by [`Session::apply_idle_timeout`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum IdleTimeoutError {
     /// The session is not in one of the spec-permitted states for
     /// [`Session::apply_idle_timeout`] (`identifying`,
     /// `authenticating`, `onboarded`, `menu`).
+    #[error("apply_idle_timeout in unexpected state: {0:?}")]
     WrongState(SessionState),
 }
 
-impl std::fmt::Display for IdleTimeoutError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "apply_idle_timeout in unexpected state: {s:?}"),
-        }
-    }
-}
-
-impl std::error::Error for IdleTimeoutError {}
-
 /// Errors returned by [`Session::apply_carrier_loss`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CarrierLostError {
     /// The session is already in [`SessionState::LoggingOff`] or
     /// [`SessionState::Ended`], so `CarrierLost` is a no-op.
+    #[error("apply_carrier_loss in unexpected state: {0:?}")]
     WrongState(SessionState),
 }
-
-impl std::fmt::Display for CarrierLostError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "apply_carrier_loss in unexpected state: {s:?}"),
-        }
-    }
-}
-
-impl std::error::Error for CarrierLostError {}
 
 /// Outcome of [`Session::tick_minute`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1861,25 +1548,16 @@ pub enum TickMinuteOutcome {
 }
 
 /// Errors returned by [`Session::tick_minute`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum TickMinuteError {
     /// The session is not in [`SessionState::Onboarded`] or
     /// [`SessionState::Menu`].
+    #[error("tick_minute in unexpected state: {0:?}")]
     WrongState(SessionState),
     /// No user is bound to the session.
+    #[error("tick_minute called without a bound user")]
     UserMissing,
 }
-
-impl std::fmt::Display for TickMinuteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::WrongState(s) => write!(f, "tick_minute in unexpected state: {s:?}"),
-            Self::UserMissing => write!(f, "tick_minute called without a bound user"),
-        }
-    }
-}
-
-impl std::error::Error for TickMinuteError {}
 
 /// `session.allium:floor_to_day` black-box helper.
 ///
@@ -1943,25 +1621,14 @@ fn format_logoff_line(session: &Session) -> String {
 
 /// Returned when the requested transition is not in the spec's
 /// transition table for the Phase 1 subset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("invalid session transition: {from:?} -> {to:?}")]
 pub struct SessionTransitionError {
     /// State the session was in when the transition was attempted.
     pub from: SessionState,
     /// State the caller asked to move into.
     pub to: SessionState,
 }
-
-impl std::fmt::Display for SessionTransitionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "invalid session transition: {:?} -> {:?}",
-            self.from, self.to
-        )
-    }
-}
-
-impl std::error::Error for SessionTransitionError {}
 
 /// Returns whether the spec's transition table permits `from -> to`.
 ///

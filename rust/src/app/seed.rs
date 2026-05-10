@@ -17,32 +17,16 @@ use crate::domain::password::{PasswordError, PasswordHashKind, PasswordHasher};
 use crate::domain::user::{User, UserError};
 
 /// Errors returned by [`default_sysop`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SeedError {
     /// The hasher couldn't compute a hash for the seed credential.
-    Hash(PasswordError),
+    #[error("couldn't hash seed credential: {0}")]
+    Hash(#[source] PasswordError),
     /// The freshly hashed credential triple failed [`User::new`]'s
     /// invariants. This should never happen for the spec-default
     /// PBKDF2 hash, but is propagated rather than panicking.
-    User(UserError),
-}
-
-impl std::fmt::Display for SeedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Hash(error) => write!(f, "couldn't hash seed credential: {error}"),
-            Self::User(error) => write!(f, "couldn't construct seeded user: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for SeedError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Hash(error) => Some(error),
-            Self::User(error) => Some(error),
-        }
-    }
+    #[error("couldn't construct seeded user: {0}")]
+    User(#[source] UserError),
 }
 
 /// Builds the default sysop seed user.

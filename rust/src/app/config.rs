@@ -208,26 +208,11 @@ fn parse_duration_string(input: &str) -> Result<Duration, String> {
 }
 
 /// Errors returned by [`Config::from_toml_str`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     /// TOML failed to parse against the [`Config`] schema.
-    Parse(toml::de::Error),
-}
-
-impl std::fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Parse(error) => write!(f, "couldn't parse config: {error}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Parse(error) => Some(error),
-        }
-    }
+    #[error("couldn't parse config: {0}")]
+    Parse(#[source] toml::de::Error),
 }
 
 impl Config {

@@ -32,25 +32,14 @@ pub struct ComputedHash {
 }
 
 /// Errors returned by the [`PasswordHasher`] port.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PasswordError {
     /// The hasher does not implement the requested
     /// [`PasswordHashKind`]. Phase 1 only ships
     /// [`PasswordHashKind::Pbkdf210000`]; Slice 64 fills in the rest.
+    #[error("unsupported password hash kind: {0:?}")]
     UnsupportedHashKind(PasswordHashKind),
 }
-
-impl std::fmt::Display for PasswordError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsupportedHashKind(kind) => {
-                write!(f, "unsupported password hash kind: {kind:?}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for PasswordError {}
 
 /// `session.allium:meets_password_strength` black-box helper (Slice 15).
 ///

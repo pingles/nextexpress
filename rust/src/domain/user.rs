@@ -688,22 +688,13 @@ pub struct NewUserRegistration {
 }
 
 /// Errors returned by [`User::new`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UserError {
     /// The chosen [`PasswordHashKind`] requires a non-null salt
     /// (spec invariant `SaltMatchesAlgorithm`).
+    #[error("password hash kind requires a salt")]
     SaltRequired,
 }
-
-impl std::fmt::Display for UserError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SaltRequired => write!(f, "password hash kind requires a salt"),
-        }
-    }
-}
-
-impl std::error::Error for UserError {}
 
 /// Whether the spec's `SaltMatchesAlgorithm` invariant requires a non-null
 /// salt for `kind`.
