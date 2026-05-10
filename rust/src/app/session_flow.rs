@@ -535,6 +535,251 @@ where
     Ok(())
 }
 
+/// Phase-typed variants of the flow functions.
+///
+/// These take a [`crate::app::typed_session`] phase wrapper by value,
+/// delegate to the equivalent untyped function above, then dispatch
+/// the result into the appropriate next-phase wrapper or transition
+/// enum. The typed variants are how the driver consumes flow logic;
+/// the untyped variants stay around so domain-leaning tests can drive
+/// `Session` directly without the wrapper ceremony.
+pub(crate) mod typed {
+    use std::time::SystemTime;
+
+    use super::{
+        enter_menu as untyped_enter_menu, finalise_logoff as untyped_finalise_logoff,
+        name_typed as untyped_name_typed,
+        verify_new_user_password as untyped_verify_new_user_password,
+        verify_password as untyped_verify_password, CompleteNewUserRegistrationFlowError,
+        EnterMenuFlowError, FinaliseLogoffFlowError, NewUserGateConfig, NewUserProfile,
+        NewUserRegistrationFlow, VerifyNewUserPasswordFlowError, VerifyPasswordFlowError,
+    };
+    use crate::app::typed_session::{
+        AuthenticatingSession, EndedSession, IdentifyingSession, LoggingOffSession, MenuSession,
+        NameTypedTransition, NewUserPasswordTransition, NewUserRegisteringSession,
+        NewUserRegistrationResult, OnboardedSession, VerifyPasswordRejectionReason,
+        VerifyPasswordTransition,
+    };
+    use crate::domain::caller_log::CallerLogAppender;
+    use crate::domain::password::PasswordHasher;
+    use crate::domain::session::{
+        NameTypedOutcome, NewUserPasswordOutcome, SessionPolicy, SessionState,
+        VerifyPasswordOutcome,
+    };
+    use crate::domain::user_repository::UserRepository;
+
+    /// Phase-typed variant of [`super::name_typed`].
+    pub(crate) fn name_typed<R>(
+        session: IdentifyingSession,
+        typed: &str,
+        repo: &R,
+        gate: &NewUserGateConfig,
+        now: SystemTime,
+    ) -> NameTypedTransition
+    where
+        R: UserRepository + ?Sized,
+    {
+        let mut inner = session.into_inner();
+        let outcome = untyped_name_typed(&mut inner, typed, repo, gate, now)
+            .expect("IdentifyingSession guarantees Identifying state");
+        match outcome {
+            NameTypedOutcome::Authenticated => {
+                NameTypedTransition::Authenticated(AuthenticatingSession::from_session(inner))
+            }
+            NameTypedOutcome::NotFound => {
+                NameTypedTransition::Identifying(IdentifyingSession::from_session(inner))
+            }
+            NameTypedOutcome::NewUserRegistering { password_required } => {
+                NameTypedTransition::NewUserRegistering {
+                    session: NewUserRegisteringSession::from_session(inner),
+                    password_required,
+                }
+            }
+            NameTypedOutcome::NewUserRegistrationDisallowed => {
+                NameTypedTransition::Disallowed(LoggingOffSession::from_session(inner))
+            }
+            NameTypedOutcome::SessionEnded => {
+                NameTypedTransition::Ended(EndedSession::from_session(inner))
+            }
+        }
+    }
+
+    /// Phase-typed variant of [`super::verify_password`].
+    ///
+    /// # Errors
+    /// Forwards [`VerifyPasswordFlowError`] from the underlying flow.
+    /// `WrongState` and `UserMissing` cannot fire because the
+    /// [`AuthenticatingSession`] wrapper guarantees both invariants.
+    pub(crate) fn verify_password<R, H, L>(
+        session: AuthenticatingSession,
+        candidate: &str,
+        user_repo: &R,
+        hasher: &H,
+        caller_log: &L,
+        policy: SessionPolicy,
+        now: SystemTime,
+    ) -> Result<VerifyPasswordTransition, VerifyPasswordFlowError>
+    where
+        R: UserRepository + ?Sized,
+        H: PasswordHasher + ?Sized,
+        L: CallerLogAppender + ?Sized,
+    {
+        let mut inner = session.into_inner();
+        let outcome = untyped_verify_password(
+            &mut inner, candidate, user_repo, hasher, caller_log, policy, now,
+        )?;
+        Ok(match outcome {
+            VerifyPasswordOutcome::Authenticated => {
+                debug_assert_eq!(inner.state(), SessionState::Onboarded);
+                VerifyPasswordTransition::Onboarded(OnboardedSession::from_session(inner))
+            }
+            VerifyPasswordOutcome::NotMatching => {
+                debug_assert_eq!(inner.state(), SessionState::Authenticating);
+                VerifyPasswordTransition::Authenticating(AuthenticatingSession::from_session(inner))
+            }
+            VerifyPasswordOutcome::AccountLocked => VerifyPasswordTransition::LoggingOff {
+                session: LoggingOffSession::from_session(inner),
+                reason: VerifyPasswordRejectionReason::AccountLocked,
+            },
+            VerifyPasswordOutcome::TooManyFailures => VerifyPasswordTransition::LoggingOff {
+                session: LoggingOffSession::from_session(inner),
+                reason: VerifyPasswordRejectionReason::TooManyFailures,
+            },
+            VerifyPasswordOutcome::LogonRejected => VerifyPasswordTransition::LoggingOff {
+                session: LoggingOffSession::from_session(inner),
+                reason: VerifyPasswordRejectionReason::LogonRejected,
+            },
+        })
+    }
+
+    /// Phase-typed variant of [`super::verify_new_user_password`].
+    ///
+    /// # Errors
+    /// Forwards [`VerifyNewUserPasswordFlowError::GateNotConfigured`]
+    /// when the caller invoked the gate flow with no password gate
+    /// configured.
+    pub(crate) fn verify_new_user_password<L>(
+        session: NewUserRegisteringSession,
+        candidate: &str,
+        gate: &NewUserGateConfig,
+        caller_log: &L,
+        now: SystemTime,
+    ) -> Result<NewUserPasswordTransition, VerifyNewUserPasswordFlowError>
+    where
+        L: CallerLogAppender + ?Sized,
+    {
+        let mut inner = session.into_inner();
+        let outcome =
+            untyped_verify_new_user_password(&mut inner, candidate, gate, caller_log, now)?;
+        Ok(match outcome {
+            NewUserPasswordOutcome::Verified => {
+                NewUserPasswordTransition::Verified(NewUserRegisteringSession::from_session(inner))
+            }
+            NewUserPasswordOutcome::Mismatch => {
+                NewUserPasswordTransition::Mismatch(NewUserRegisteringSession::from_session(inner))
+            }
+            NewUserPasswordOutcome::TooManyFailures => {
+                NewUserPasswordTransition::TooManyFailures(LoggingOffSession::from_session(inner))
+            }
+        })
+    }
+
+    /// Phase-typed variant of [`super::enter_menu`].
+    ///
+    /// # Errors
+    /// Forwards [`EnterMenuFlowError`] when the bound user has
+    /// `force_password_reset` set or persistence fails.
+    pub(crate) fn enter_menu<R, L>(
+        session: OnboardedSession,
+        user_repo: &R,
+        caller_log: &L,
+        now: SystemTime,
+    ) -> Result<MenuSession, EnterMenuFlowError>
+    where
+        R: UserRepository + ?Sized,
+        L: CallerLogAppender + ?Sized,
+    {
+        let mut inner = session.into_inner();
+        untyped_enter_menu(&mut inner, user_repo, caller_log, now)?;
+        Ok(MenuSession::from_session(inner))
+    }
+
+    /// Phase-typed variant of [`super::finalise_logoff`].
+    ///
+    /// # Errors
+    /// Forwards [`FinaliseLogoffFlowError`] from persistence; the
+    /// state guard in the underlying function cannot fire because
+    /// [`LoggingOffSession`] guarantees the `LoggingOff` state.
+    pub(crate) fn finalise_logoff<R, L>(
+        session: LoggingOffSession,
+        user_repo: &R,
+        caller_log: &L,
+        now: SystemTime,
+    ) -> Result<EndedSession, FinaliseLogoffFlowError>
+    where
+        R: UserRepository + ?Sized,
+        L: CallerLogAppender + ?Sized,
+    {
+        let mut inner = session.into_inner();
+        untyped_finalise_logoff(&mut inner, user_repo, caller_log, now)?;
+        Ok(EndedSession::from_session(inner))
+    }
+
+    // `complete_password_reset` typed wrapper deliberately omitted —
+    // the password-reset slice will add a driver path that drives
+    // OnboardedSession through the reset before entering the menu.
+    // When that lands, mirror the shape of `enter_menu` here.
+
+    impl<R, H, L> NewUserRegistrationFlow<'_, R, H, L>
+    where
+        R: UserRepository + ?Sized,
+        H: PasswordHasher + ?Sized,
+        L: CallerLogAppender + ?Sized,
+    {
+        /// Phase-typed variant of [`Self::complete`]. Consumes a
+        /// [`NewUserRegisteringSession`] and returns either an
+        /// [`OnboardedSession`] (clean post-onboarded cluster) or a
+        /// [`LoggingOffSession`] (post-onboarded rejection).
+        ///
+        /// # Errors
+        /// On error, the session is returned alongside the failure so
+        /// the caller can either retry or finalise via the carrier
+        /// loss / idle paths. Errors come from the hasher, the user
+        /// constructor, or the repository.
+        pub(crate) fn complete_typed(
+            &self,
+            session: NewUserRegisteringSession,
+            profile: NewUserProfile,
+            now: SystemTime,
+        ) -> Result<
+            NewUserRegistrationResult,
+            Box<(
+                NewUserRegisteringSession,
+                CompleteNewUserRegistrationFlowError,
+            )>,
+        > {
+            let mut inner = session.into_inner();
+            match self.complete(&mut inner, profile, now) {
+                Ok(()) => Ok(match inner.state() {
+                    SessionState::Onboarded => {
+                        NewUserRegistrationResult::Onboarded(OnboardedSession::from_session(inner))
+                    }
+                    SessionState::LoggingOff => NewUserRegistrationResult::LoggingOff(
+                        LoggingOffSession::from_session(inner),
+                    ),
+                    other => unreachable!(
+                        "complete_new_user_registration leaves Onboarded or LoggingOff, got {other:?}"
+                    ),
+                }),
+                Err(error) => Err(Box::new((
+                    NewUserRegisteringSession::from_session(inner),
+                    error,
+                ))),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;

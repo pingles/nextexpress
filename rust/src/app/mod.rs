@@ -28,6 +28,7 @@ pub mod services;
 pub mod session_driver;
 pub mod session_flow;
 pub mod terminal;
+pub mod typed_session;
 pub mod wire_text;
 
 /// Entry point invoked by the binary's `main`.

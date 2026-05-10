@@ -6,6 +6,12 @@
 //! registration, authentication, menu entry and logoff finalisation.
 //!
 //! Wire-format byte constants live in [`crate::app::wire_text`].
+//!
+//! ## Phase types
+//! Each step of the workflow consumes and returns a phase wrapper from
+//! [`crate::app::typed_session`]. The wrong handle for a given
+//! transition becomes unrepresentable at compile time; the driver no
+//! longer needs to assert "session is in X" after every call.
 
 use std::collections::BTreeSet;
 use std::time::SystemTime;
@@ -13,6 +19,12 @@ use std::time::SystemTime;
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, NewUserProfile, NewUserRegistrationFlow};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::typed_session::{
+    AuthenticatingSession, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
+    MenuSession, NameTypedTransition, NewUserPasswordTransition, NewUserRegisteringSession,
+    NewUserRegistrationResult, OnboardedSession, VerifyPasswordRejectionReason,
+    VerifyPasswordTransition,
+};
 use crate::app::wire_text::{
     ACCOUNT_LOCKED_LINE, ANSI_PROMPT, AUTHENTICATED_LINE, COPYRIGHT_LINES, EMAIL_PROMPT,
     GOODBYE_LINE, HANDLE_TAKEN_LINE, IDLE_TIMEOUT_LINE, INVALID_LINE_LENGTH_LINE,
@@ -24,10 +36,7 @@ use crate::app::wire_text::{
     TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE, UNKNOWN_COMMAND_LINE,
     UNKNOWN_USER_LINE, WRONG_PASSWORD_LINE,
 };
-use crate::domain::session::{
-    LogonChannel, NameTypedOutcome, NewUserPasswordOutcome, Session, SessionState,
-    VerifyPasswordOutcome,
-};
+use crate::domain::session::LogonChannel;
 use crate::domain::user_repository::NameLookupResult;
 
 /// Maximum handle attempts during registration before the session
@@ -36,20 +45,50 @@ use crate::domain::user_repository::NameLookupResult;
 const MAX_REGISTRATION_HANDLE_ATTEMPTS: u32 = 5;
 
 /// App-layer session workflow over a terminal port.
+///
+/// The driver does not hold a [`crate::domain::session::Session`]
+/// field; phase wrappers are stack-local as they thread through
+/// [`Self::run`].
 pub(crate) struct SessionDriver<T>
 where
     T: Terminal,
 {
     terminal: T,
-    session: Session,
     services: AppServices,
+    node_number: u32,
+    channel: LogonChannel,
+}
+
+/// Outcome of the sign-in chain (handle + password / registration).
+/// Lets [`SessionDriver::run`] decide how to enter the menu vs. how to
+/// finalise.
+enum SignInResult {
+    /// Sign-in produced an authenticated, fully-onboarded session.
+    Onboarded(OnboardedSession),
+    /// Sign-in moved the session into `LoggingOff` (rejection,
+    /// timeout, carrier loss, exhausted retries, ...).
+    LoggingOff(LoggingOffSession),
+    /// Sign-in ended the session outright (handle retry budget
+    /// exhausted moves straight to `Ended`).
+    Ended(EndedSession),
+}
+
+/// Outcome of the password-verification loop. Lets the caller proceed
+/// to the menu or skip straight to logoff finalisation.
+enum AuthResult {
+    /// Credentials matched and the post-auth cluster ran clean.
+    Onboarded(OnboardedSession),
+    /// Logon rejected (lockout, retries, post-auth gate). The driver
+    /// has already written the wire message.
+    LoggingOff(LoggingOffSession),
 }
 
 impl<T> SessionDriver<T>
 where
     T: Terminal,
 {
-    /// Constructs a driver for a newly accepted connection.
+    /// Constructs a driver for a newly accepted connection. The
+    /// session itself is not constructed until [`Self::run`] starts.
     #[must_use]
     pub(crate) fn new(
         terminal: T,
@@ -57,28 +96,34 @@ where
         channel: LogonChannel,
         services: AppServices,
     ) -> Self {
-        let session = Session::accept_connection(node_number, channel, 0, SystemTime::now(), None)
-            .expect("freshly allocated node has no existing session");
-
         Self {
             terminal,
-            session,
             services,
+            node_number,
+            channel,
         }
     }
 
     /// Runs the BBS workflow until the terminal closes or the session
     /// reaches a final logoff path.
     pub(crate) async fn run(&mut self) -> Result<(), T::Error> {
-        self.start().await?;
-        if !self.identify().await? {
-            return Ok(());
-        }
-        if self.session.state() == SessionState::Authenticating && !self.authenticate().await? {
-            return Ok(());
-        }
-        self.enter_menu();
-        self.run_menu().await
+        let connecting =
+            ConnectingSession::accept(self.node_number, self.channel, 0, SystemTime::now())
+                .expect("freshly allocated node has no existing session");
+        let identifying = self.start(connecting).await?;
+        let signed_in = self.identify(identifying).await?;
+
+        let logging_off = match signed_in {
+            SignInResult::Onboarded(onboarded) => {
+                let menu = self.enter_menu(onboarded);
+                self.run_menu(menu).await?
+            }
+            SignInResult::LoggingOff(logging_off) => logging_off,
+            SignInResult::Ended(_ended) => return Ok(()),
+        };
+
+        self.finalise(logging_off);
+        Ok(())
     }
 
     /// Returns the terminal after the driver has finished. Intended
@@ -89,71 +134,115 @@ where
         self.terminal
     }
 
-    async fn start(&mut self) -> Result<(), T::Error> {
+    async fn start(
+        &mut self,
+        connecting: ConnectingSession,
+    ) -> Result<IdentifyingSession, T::Error> {
         let banner = self.services.screens().banner().await;
         self.terminal.write(&banner).await?;
         self.terminal.write(COPYRIGHT_LINES).await?;
-        self.session
-            .prompt_for_name()
-            .expect("connecting -> identifying");
-        Ok(())
+        Ok(connecting.prompt_for_name())
     }
 
-    async fn identify(&mut self) -> Result<bool, T::Error> {
+    async fn identify(
+        &mut self,
+        mut session: IdentifyingSession,
+    ) -> Result<SignInResult, T::Error> {
         loop {
-            let Some(typed) = self
-                .prompt_for_line(NAME_PROMPT, TerminalEcho::Visible)
-                .await?
-            else {
-                return Ok(false);
+            let read = self
+                .read_prompted(NAME_PROMPT, TerminalEcho::Visible)
+                .await?;
+            let line = match read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                TerminalRead::Eof => {
+                    return Ok(SignInResult::LoggingOff(
+                        session.into_active().apply_carrier_loss(),
+                    ));
+                }
+                TerminalRead::IdleTimedOut => {
+                    let logoff = session.into_active().apply_idle_timeout(
+                        self.services.session_policy().treat_timeout_as_logoff(),
+                    );
+                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    return Ok(SignInResult::LoggingOff(logoff));
+                }
             };
-            let outcome = session_flow::name_typed(
-                &mut self.session,
-                typed.trim(),
+            let trimmed = line.trim();
+            let transition = session_flow::typed::name_typed(
+                session,
+                trimmed,
                 self.services.user_repo(),
                 self.services.new_user_gate(),
                 SystemTime::now(),
-            )
-            .expect("session is in identifying");
-            match outcome {
-                NameTypedOutcome::Authenticated => return Ok(true),
-                NameTypedOutcome::NotFound => {
+            );
+            match transition {
+                NameTypedTransition::Authenticated(authenticating) => {
+                    return self
+                        .authenticate(authenticating)
+                        .await
+                        .map(|auth| match auth {
+                            AuthResult::Onboarded(s) => SignInResult::Onboarded(s),
+                            AuthResult::LoggingOff(s) => SignInResult::LoggingOff(s),
+                        });
+                }
+                NameTypedTransition::Identifying(retry) => {
                     self.terminal.write(UNKNOWN_USER_LINE).await?;
+                    session = retry;
                 }
-                NameTypedOutcome::NewUserRegistering { password_required } => {
-                    return self.run_new_user_registration(password_required).await;
+                NameTypedTransition::NewUserRegistering {
+                    session: registering,
+                    password_required,
+                } => {
+                    return self
+                        .run_new_user_registration(registering, password_required)
+                        .await;
                 }
-                NameTypedOutcome::NewUserRegistrationDisallowed => {
-                    self.reject_disallowed_registration().await?;
-                    return Ok(false);
+                NameTypedTransition::Disallowed(logging_off) => {
+                    let screen = self.services.screens().no_new_users().await;
+                    self.terminal.write(&screen).await?;
+                    self.terminal.flush().await?;
+                    return Ok(SignInResult::LoggingOff(logging_off));
                 }
-                NameTypedOutcome::SessionEnded => {
+                NameTypedTransition::Ended(ended) => {
                     self.terminal.write(TOO_MANY_RETRIES_LINE).await?;
                     self.terminal.flush().await?;
-                    return Ok(false);
+                    return Ok(SignInResult::Ended(ended));
                 }
             }
         }
     }
 
-    async fn reject_disallowed_registration(&mut self) -> Result<(), T::Error> {
-        let screen = self.services.screens().no_new_users().await;
-        self.terminal.write(&screen).await?;
-        self.terminal.flush().await?;
-        self.finalise_logoff();
-        Ok(())
-    }
-
-    async fn authenticate(&mut self) -> Result<bool, T::Error> {
+    async fn authenticate(
+        &mut self,
+        mut session: AuthenticatingSession,
+    ) -> Result<AuthResult, T::Error> {
         loop {
-            let Some(password) = self
-                .prompt_for_line(PASSWORD_PROMPT, TerminalEcho::Masked)
-                .await?
-            else {
-                return Ok(false);
+            let read = self
+                .read_prompted(PASSWORD_PROMPT, TerminalEcho::Masked)
+                .await?;
+            let password = match read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                TerminalRead::Eof => {
+                    return Ok(AuthResult::LoggingOff(
+                        session.into_active().apply_carrier_loss(),
+                    ));
+                }
+                TerminalRead::IdleTimedOut => {
+                    let logoff = session.into_active().apply_idle_timeout(
+                        self.services.session_policy().treat_timeout_as_logoff(),
+                    );
+                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    return Ok(AuthResult::LoggingOff(logoff));
+                }
             };
-            let outcome = session_flow::verify_password(
-                &mut self.session,
+            let transition = session_flow::typed::verify_password(
+                session,
                 password.trim(),
                 self.services.user_repo(),
                 self.services.hasher(),
@@ -161,123 +250,94 @@ where
                 self.services.session_policy(),
                 SystemTime::now(),
             )
-            .expect("session is in authenticating with a user");
-            match outcome {
-                VerifyPasswordOutcome::Authenticated => {
-                    self.terminal.write(AUTHENTICATED_LINE).await?;
-                    self.terminal.flush().await?;
-                    return Ok(true);
+            .expect("AuthenticatingSession guarantees Authenticating + bound user");
+            match transition {
+                VerifyPasswordTransition::Onboarded(onboarded) => {
+                    self.write_and_flush(AUTHENTICATED_LINE).await?;
+                    return Ok(AuthResult::Onboarded(onboarded));
                 }
-                VerifyPasswordOutcome::NotMatching => {
-                    self.terminal.write(WRONG_PASSWORD_LINE).await?;
-                    self.terminal.flush().await?;
+                VerifyPasswordTransition::Authenticating(retry) => {
+                    self.write_and_flush(WRONG_PASSWORD_LINE).await?;
+                    session = retry;
                 }
-                VerifyPasswordOutcome::AccountLocked => {
-                    self.write_and_flush(ACCOUNT_LOCKED_LINE).await?;
-                    return Ok(false);
-                }
-                VerifyPasswordOutcome::TooManyFailures => {
-                    self.write_and_flush(TOO_MANY_PASSWORD_FAILURES_LINE)
-                        .await?;
-                    return Ok(false);
-                }
-                VerifyPasswordOutcome::LogonRejected => {
-                    self.write_and_flush(LOGON_REJECTED_LINE).await?;
-                    return Ok(false);
+                VerifyPasswordTransition::LoggingOff {
+                    session: logging_off,
+                    reason,
+                } => {
+                    let line: &[u8] = match reason {
+                        VerifyPasswordRejectionReason::AccountLocked => ACCOUNT_LOCKED_LINE,
+                        VerifyPasswordRejectionReason::TooManyFailures => {
+                            TOO_MANY_PASSWORD_FAILURES_LINE
+                        }
+                        VerifyPasswordRejectionReason::LogonRejected => LOGON_REJECTED_LINE,
+                    };
+                    self.write_and_flush(line).await?;
+                    return Ok(AuthResult::LoggingOff(logging_off));
                 }
             }
         }
     }
 
-    fn enter_menu(&mut self) {
-        session_flow::enter_menu(
-            &mut self.session,
+    fn enter_menu(&mut self, onboarded: OnboardedSession) -> MenuSession {
+        session_flow::typed::enter_menu(
+            onboarded,
             self.services.user_repo(),
             self.services.caller_log(),
             SystemTime::now(),
         )
-        .expect("session is in onboarded with a user");
+        .expect("OnboardedSession with no force_password_reset enters menu cleanly")
     }
 
-    async fn run_menu(&mut self) -> Result<(), T::Error> {
+    async fn run_menu(&mut self, mut session: MenuSession) -> Result<LoggingOffSession, T::Error> {
         loop {
-            let access_level = self
-                .session
-                .user()
-                .expect("session is in menu with a user")
-                .access_level();
+            let access_level = session.user().access_level();
             let menu = self.services.screens().default_menu(access_level).await;
             self.terminal.write(&menu).await?;
-            let Some(line) = self
-                .prompt_for_line(MENU_PROMPT, TerminalEcho::Visible)
-                .await?
-            else {
-                return Ok(());
+            let read = self
+                .read_prompted(MENU_PROMPT, TerminalEcho::Visible)
+                .await?;
+            let line = match read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                TerminalRead::Eof => return Ok(session.into_active().apply_carrier_loss()),
+                TerminalRead::IdleTimedOut => {
+                    let logoff = session.into_active().apply_idle_timeout(
+                        self.services.session_policy().treat_timeout_as_logoff(),
+                    );
+                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    return Ok(logoff);
+                }
             };
             if line.trim().eq_ignore_ascii_case("G") {
-                self.session
-                    .user_requests_logoff()
-                    .expect("session is in menu");
-                self.finalise_logoff();
+                let logging_off = session.user_requests_logoff();
                 self.write_and_flush(GOODBYE_LINE).await?;
-                return Ok(());
+                return Ok(logging_off);
             }
             self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
         }
     }
 
-    async fn prompt_for_line(
-        &mut self,
-        prompt: &[u8],
-        echo: TerminalEcho,
-    ) -> Result<Option<String>, T::Error> {
-        self.terminal.write(prompt).await?;
-        self.terminal.flush().await?;
-        match self.read_line(echo).await? {
-            TerminalRead::Line(line) => Ok(Some(line)),
-            TerminalRead::Eof => {
-                self.handle_carrier_loss();
-                Ok(None)
-            }
-            TerminalRead::IdleTimedOut => {
-                self.handle_idle_timeout().await?;
-                Ok(None)
-            }
-        }
-    }
-
-    async fn read_line(&mut self, echo: TerminalEcho) -> Result<TerminalRead, T::Error> {
-        let timeout = self.services.session_policy().input_timeout();
-        let outcome = self.terminal.read_line(echo, timeout).await?;
-        if matches!(outcome, TerminalRead::Line(_)) {
-            self.session.record_input(SystemTime::now());
-        }
-        Ok(outcome)
-    }
-
-    async fn handle_idle_timeout(&mut self) -> Result<(), T::Error> {
-        self.session
-            .apply_idle_timeout(self.services.session_policy().treat_timeout_as_logoff())
-            .expect("idle-permitted state when read times out");
-        self.finalise_logoff();
-        self.write_and_flush(IDLE_TIMEOUT_LINE).await
-    }
-
-    fn handle_carrier_loss(&mut self) {
-        self.session
-            .apply_carrier_loss()
-            .expect("carrier-permitted state when peer closes");
-        self.finalise_logoff();
-    }
-
-    fn finalise_logoff(&mut self) {
-        session_flow::finalise_logoff(
-            &mut self.session,
+    fn finalise(&mut self, logging_off: LoggingOffSession) -> EndedSession {
+        session_flow::typed::finalise_logoff(
+            logging_off,
             self.services.user_repo(),
             self.services.caller_log(),
             SystemTime::now(),
         )
-        .expect("logging_off can finalise");
+        .expect("LoggingOffSession finalises cleanly when persistence succeeds")
+    }
+
+    async fn read_prompted(
+        &mut self,
+        prompt: &[u8],
+        echo: TerminalEcho,
+    ) -> Result<TerminalRead, T::Error> {
+        self.terminal.write(prompt).await?;
+        self.terminal.flush().await?;
+        let timeout = self.services.session_policy().input_timeout();
+        self.terminal.read_line(echo, timeout).await
     }
 
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
@@ -287,34 +347,47 @@ where
 
     async fn run_new_user_registration(
         &mut self,
+        session: NewUserRegisteringSession,
         password_required: bool,
-    ) -> Result<bool, T::Error> {
+    ) -> Result<SignInResult, T::Error> {
         let screen = self.services.screens().new_user_password().await;
         self.terminal.write(&screen).await?;
-        if password_required && !self.run_new_user_password_gate().await? {
-            return Ok(false);
-        }
+        let session = if password_required {
+            match self.run_new_user_password_gate(session).await? {
+                GateResult::Verified(s) => s,
+                GateResult::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
+            }
+        } else {
+            session
+        };
 
-        let Some(handle) = self.read_registration_handle().await? else {
-            return Ok(false);
+        let (session, handle) = match self.read_registration_handle(session).await? {
+            ReadField::Got(s, v) => (s, v),
+            ReadField::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
         };
-        let Some(location) = self.read_optional_field(LOCATION_PROMPT).await? else {
-            return Ok(false);
+        let (session, location) = match self.read_optional_field(session, LOCATION_PROMPT).await? {
+            ReadField::Got(s, v) => (s, v),
+            ReadField::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
         };
-        let Some(phone_number) = self.read_optional_field(PHONE_PROMPT).await? else {
-            return Ok(false);
+        let (session, phone_number) = match self.read_optional_field(session, PHONE_PROMPT).await? {
+            ReadField::Got(s, v) => (s, v),
+            ReadField::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
         };
-        let Some(email) = self.read_optional_field(EMAIL_PROMPT).await? else {
-            return Ok(false);
+        let (session, email) = match self.read_optional_field(session, EMAIL_PROMPT).await? {
+            ReadField::Got(s, v) => (s, v),
+            ReadField::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
         };
-        let Some(password) = self.read_registration_password().await? else {
-            return Ok(false);
+        let (session, password) = match self.read_registration_password(session).await? {
+            ReadField::Got(s, v) => (s, v),
+            ReadField::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
         };
-        let Some(line_length) = self.read_line_length().await? else {
-            return Ok(false);
+        let (session, line_length) = match self.read_line_length(session).await? {
+            ReadField::Got(s, v) => (s, v),
+            ReadField::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
         };
-        let Some(ansi_colour) = self.read_ansi_colour().await? else {
-            return Ok(false);
+        let (session, ansi_colour) = match self.read_ansi_colour(session).await? {
+            ReadField::Got(s, v) => (s, v),
+            ReadField::LoggingOff(s) => return Ok(SignInResult::LoggingOff(s)),
         };
 
         let profile = NewUserProfile {
@@ -327,57 +400,83 @@ where
             ansi_colour,
             flags: BTreeSet::new(),
         };
-        self.complete_new_user_registration(profile).await
+        self.complete_new_user_registration(session, profile).await
     }
 
-    async fn run_new_user_password_gate(&mut self) -> Result<bool, T::Error> {
+    async fn run_new_user_password_gate(
+        &mut self,
+        mut session: NewUserRegisteringSession,
+    ) -> Result<GateResult, T::Error> {
         loop {
-            let Some(typed) = self
-                .prompt_for_line(NEW_USER_PASSWORD_PROMPT, TerminalEcho::Masked)
-                .await?
-            else {
-                return Ok(false);
+            let read = self
+                .read_prompted(NEW_USER_PASSWORD_PROMPT, TerminalEcho::Masked)
+                .await?;
+            let typed = match read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                TerminalRead::Eof => {
+                    return Ok(GateResult::LoggingOff(
+                        session.into_active().apply_carrier_loss(),
+                    ));
+                }
+                TerminalRead::IdleTimedOut => {
+                    let logoff = session.into_active().apply_idle_timeout(
+                        self.services.session_policy().treat_timeout_as_logoff(),
+                    );
+                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    return Ok(GateResult::LoggingOff(logoff));
+                }
             };
-            let outcome = session_flow::verify_new_user_password(
-                &mut self.session,
+            let transition = session_flow::typed::verify_new_user_password(
+                session,
                 typed.trim(),
                 self.services.new_user_gate(),
                 self.services.caller_log(),
                 SystemTime::now(),
             )
-            .expect("session is in new_user_registering and gate is configured");
-            match outcome {
-                NewUserPasswordOutcome::Verified => {
+            .expect("NewUserRegisteringSession + configured gate guarantees flow ok");
+            match transition {
+                NewUserPasswordTransition::Verified(s) => {
                     self.write_and_flush(NEW_USER_PASSWORD_OK_LINE).await?;
-                    return Ok(true);
+                    return Ok(GateResult::Verified(s));
                 }
-                NewUserPasswordOutcome::Mismatch => {
+                NewUserPasswordTransition::Mismatch(s) => {
                     self.write_and_flush(NEW_USER_INVALID_PASSWORD_LINE).await?;
+                    session = s;
                 }
-                NewUserPasswordOutcome::TooManyFailures => {
+                NewUserPasswordTransition::TooManyFailures(s) => {
                     self.write_and_flush(NEW_USER_EXCESSIVE_FAILURES_LINE)
                         .await?;
-                    self.finalise_logoff();
-                    return Ok(false);
+                    return Ok(GateResult::LoggingOff(s));
                 }
             }
         }
     }
 
-    async fn read_registration_handle(&mut self) -> Result<Option<String>, T::Error> {
+    async fn read_registration_handle(
+        &mut self,
+        mut session: NewUserRegisteringSession,
+    ) -> Result<ReadField<String>, T::Error> {
         let mut attempts: u32 = 0;
         loop {
             if attempts >= MAX_REGISTRATION_HANDLE_ATTEMPTS {
                 self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
                     .await?;
-                self.handle_carrier_loss();
-                return Ok(None);
+                return Ok(ReadField::LoggingOff(
+                    session.into_active().apply_carrier_loss(),
+                ));
             }
-            let Some(typed) = self
-                .prompt_for_line(REGISTRATION_HANDLE_PROMPT, TerminalEcho::Visible)
-                .await?
-            else {
-                return Ok(None);
+            let read = self
+                .read_prompted(REGISTRATION_HANDLE_PROMPT, TerminalEcho::Visible)
+                .await?;
+            let typed = match read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                other => return self.handle_interrupt_registering(session, other).await,
             };
             let trimmed = typed.trim();
             let available = !trimmed.is_empty()
@@ -386,7 +485,7 @@ where
                     NameLookupResult::NotFound
                 );
             if available {
-                return Ok(Some(trimmed.to_string()));
+                return Ok(ReadField::Got(session, trimmed.to_string()));
             }
             self.terminal.write(HANDLE_TAKEN_LINE).await?;
             attempts += 1;
@@ -395,57 +494,82 @@ where
 
     async fn read_optional_field(
         &mut self,
+        mut session: NewUserRegisteringSession,
         prompt: &[u8],
-    ) -> Result<Option<Option<String>>, T::Error> {
-        let Some(typed) = self.prompt_for_line(prompt, TerminalEcho::Visible).await? else {
-            return Ok(None);
+    ) -> Result<ReadField<Option<String>>, T::Error> {
+        let read = self.read_prompted(prompt, TerminalEcho::Visible).await?;
+        let typed = match read {
+            TerminalRead::Line(line) => {
+                session.record_input(SystemTime::now());
+                line
+            }
+            other => return self.handle_interrupt_registering(session, other).await,
         };
         let trimmed = typed.trim();
-        Ok(Some(if trimmed.is_empty() {
+        let value = if trimmed.is_empty() {
             None
         } else {
             Some(trimmed.to_string())
-        }))
+        };
+        Ok(ReadField::Got(session, value))
     }
 
-    async fn read_registration_password(&mut self) -> Result<Option<String>, T::Error> {
+    async fn read_registration_password(
+        &mut self,
+        mut session: NewUserRegisteringSession,
+    ) -> Result<ReadField<String>, T::Error> {
         loop {
-            let Some(password) = self
-                .prompt_for_line(REGISTRATION_PASSWORD_PROMPT, TerminalEcho::Masked)
-                .await?
-            else {
-                return Ok(None);
+            let read = self
+                .read_prompted(REGISTRATION_PASSWORD_PROMPT, TerminalEcho::Masked)
+                .await?;
+            let password = match read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                other => return self.handle_interrupt_registering(session, other).await,
             };
             if password.trim().is_empty() {
                 continue;
             }
-            let Some(confirmed) = self
-                .prompt_for_line(REGISTRATION_PASSWORD_CONFIRM_PROMPT, TerminalEcho::Masked)
-                .await?
-            else {
-                return Ok(None);
+            let confirm_read = self
+                .read_prompted(REGISTRATION_PASSWORD_CONFIRM_PROMPT, TerminalEcho::Masked)
+                .await?;
+            let confirmed = match confirm_read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                other => return self.handle_interrupt_registering(session, other).await,
             };
             if password == confirmed {
-                return Ok(Some(password));
+                return Ok(ReadField::Got(session, password));
             }
             self.terminal.write(PASSWORDS_DO_NOT_MATCH_LINE).await?;
         }
     }
 
-    async fn read_line_length(&mut self) -> Result<Option<u32>, T::Error> {
+    async fn read_line_length(
+        &mut self,
+        mut session: NewUserRegisteringSession,
+    ) -> Result<ReadField<u32>, T::Error> {
         loop {
-            let Some(typed) = self
-                .prompt_for_line(LINE_LENGTH_PROMPT, TerminalEcho::Visible)
-                .await?
-            else {
-                return Ok(None);
+            let read = self
+                .read_prompted(LINE_LENGTH_PROMPT, TerminalEcho::Visible)
+                .await?;
+            let typed = match read {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    line
+                }
+                other => return self.handle_interrupt_registering(session, other).await,
             };
             let trimmed = typed.trim();
             if trimmed.is_empty() {
-                return Ok(Some(0));
+                return Ok(ReadField::Got(session, 0));
             }
             match trimmed.parse::<u32>() {
-                Ok(value) if value <= 255 => return Ok(Some(value)),
+                Ok(value) if value <= 255 => return Ok(ReadField::Got(session, value)),
                 _ => {
                     self.terminal.write(INVALID_LINE_LENGTH_LINE).await?;
                 }
@@ -453,20 +577,51 @@ where
         }
     }
 
-    async fn read_ansi_colour(&mut self) -> Result<Option<bool>, T::Error> {
-        let Some(ansi_typed) = self
-            .prompt_for_line(ANSI_PROMPT, TerminalEcho::Visible)
-            .await?
-        else {
-            return Ok(None);
+    async fn read_ansi_colour(
+        &mut self,
+        mut session: NewUserRegisteringSession,
+    ) -> Result<ReadField<bool>, T::Error> {
+        let read = self
+            .read_prompted(ANSI_PROMPT, TerminalEcho::Visible)
+            .await?;
+        let typed = match read {
+            TerminalRead::Line(line) => {
+                session.record_input(SystemTime::now());
+                line
+            }
+            other => return self.handle_interrupt_registering(session, other).await,
         };
-        Ok(Some(!ansi_typed.trim().eq_ignore_ascii_case("N")))
+        let value = !typed.trim().eq_ignore_ascii_case("N");
+        Ok(ReadField::Got(session, value))
+    }
+
+    /// Common handler for `Eof` / `IdleTimedOut` while collecting a
+    /// registration field. Consumes the session, applies the
+    /// appropriate domain transition, and emits the wire message.
+    async fn handle_interrupt_registering<TVal>(
+        &mut self,
+        session: NewUserRegisteringSession,
+        outcome: TerminalRead,
+    ) -> Result<ReadField<TVal>, T::Error> {
+        let logoff = match outcome {
+            TerminalRead::Eof => session.into_active().apply_carrier_loss(),
+            TerminalRead::IdleTimedOut => {
+                let logoff = session
+                    .into_active()
+                    .apply_idle_timeout(self.services.session_policy().treat_timeout_as_logoff());
+                self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                logoff
+            }
+            TerminalRead::Line(_) => unreachable!("interrupt path is for non-Line outcomes"),
+        };
+        Ok(ReadField::LoggingOff(logoff))
     }
 
     async fn complete_new_user_registration(
         &mut self,
+        session: NewUserRegisteringSession,
         profile: NewUserProfile,
-    ) -> Result<bool, T::Error> {
+    ) -> Result<SignInResult, T::Error> {
         let flow = NewUserRegistrationFlow::new(
             self.services.user_repo(),
             self.services.hasher(),
@@ -474,18 +629,48 @@ where
             self.services.default_ratio(),
             self.services.session_policy(),
         );
-        if flow
-            .complete(&mut self.session, profile, SystemTime::now())
-            .is_err()
-        {
-            self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
-                .await?;
-            self.handle_carrier_loss();
-            return Ok(false);
+        match flow.complete_typed(session, profile, SystemTime::now()) {
+            Ok(NewUserRegistrationResult::Onboarded(onboarded)) => {
+                self.write_and_flush(REGISTRATION_COMPLETE_LINE).await?;
+                Ok(SignInResult::Onboarded(onboarded))
+            }
+            Ok(NewUserRegistrationResult::LoggingOff(logging_off)) => {
+                // Post-onboarded RejectLockedOrInsufficientAccess
+                // short-circuited the cluster. Wire-message parity with
+                // the legacy path: tell the user the logon was rejected
+                // and let `finalise` close the session.
+                self.write_and_flush(LOGON_REJECTED_LINE).await?;
+                Ok(SignInResult::LoggingOff(logging_off))
+            }
+            Err(boxed) => {
+                let (session, _error) = *boxed;
+                // Hash, repo, or constructor error. The session is
+                // unchanged (still NewUserRegistering); apply
+                // carrier-loss so finalise can close it cleanly.
+                self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
+                    .await?;
+                let logoff = session.into_active().apply_carrier_loss();
+                Ok(SignInResult::LoggingOff(logoff))
+            }
         }
-        self.write_and_flush(REGISTRATION_COMPLETE_LINE).await?;
-        Ok(true)
     }
+}
+
+/// Result of reading a single registration field. The success arm
+/// returns the session by value alongside the field — the caller
+/// continues with both. The interrupt arm carries the session-now-
+/// logging-off so the caller bails up to [`SignInResult::LoggingOff`].
+enum ReadField<TVal> {
+    Got(NewUserRegisteringSession, TVal),
+    LoggingOff(LoggingOffSession),
+}
+
+/// Result of the new-user password gate. Either it passed (returns
+/// the wrapper for the caller to continue with) or it failed with a
+/// terminal outcome.
+enum GateResult {
+    Verified(NewUserRegisteringSession),
+    LoggingOff(LoggingOffSession),
 }
 
 #[cfg(test)]
