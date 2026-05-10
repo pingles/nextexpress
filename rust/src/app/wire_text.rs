@@ -141,3 +141,25 @@ pub(crate) const TOO_MANY_PASSWORD_FAILURES_LINE: &[u8] =
 /// Sent when the post-auth cluster rejects the logon for insufficient
 /// access.
 pub(crate) const LOGON_REJECTED_LINE: &[u8] = b"Logon rejected. Goodbye.\r\n";
+
+/// Sent when the auto-rejoin / explicit-join flow can't find any
+/// conference the user has access to (Slice 30 / Slice 34a). The
+/// session terminates with `LogoffReason::NoConferenceAccess`.
+pub(crate) const NO_CONFERENCE_ACCESS_LINE: &[u8] = b"\r\nNo accessible conferences. Goodbye.\r\n";
+
+/// Sent when the user types `J <num>` for a conference they don't
+/// have access to; the session falls through to the first accessible
+/// conference but the listener surfaces this notice first
+/// (`amiexpress/express.e:25157`).
+pub(crate) const NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE: &[u8] =
+    b"\r\nYou do not have access to the requested conference\r\n\r\n";
+
+/// Sent when the user types `J` without a target conference number.
+/// The simplified Phase-4 wiring rejects the no-arg form rather than
+/// running the `JoinConf` prompt sub-flow; future slices may refine
+/// this when the `JoinConf` prompt arrives.
+pub(crate) const JOIN_REQUIRES_NUMBER_LINE: &[u8] = b"\r\nUsage: J <conference-number>\r\n";
+
+/// Sent when `J <something>` cannot be parsed as a conference
+/// number.
+pub(crate) const INVALID_CONFERENCE_NUMBER_LINE: &[u8] = b"\r\nInvalid conference number.\r\n";

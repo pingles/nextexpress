@@ -29,7 +29,11 @@
 
 use std::time::SystemTime;
 
-use crate::domain::session::{AcceptConnectionError, LogonChannel, Session, SessionState};
+use crate::domain::conference::{Conference, NameType};
+use crate::domain::session::{
+    AcceptConnectionError, AutoRejoinOutcome, ExplicitJoinOutcome, LogonChannel, Session,
+    SessionState,
+};
 use crate::domain::user::User;
 
 /// Build a wrapper from a raw session, asserting (in debug builds) that
@@ -187,6 +191,44 @@ pub(crate) struct OnboardedSession {
     session: Session,
 }
 
+impl OnboardedSession {
+    /// Resolves the auto-rejoin path of
+    /// `conferences.allium:JoinConference` (Slice 30) and reports
+    /// the outcome back as a typed transition. Mirrors the spec's
+    /// `requires: session.state in {onboarded, menu}` precondition
+    /// — total from this phase.
+    #[must_use]
+    pub(crate) fn auto_rejoin_conference(
+        mut self,
+        conferences: &[Conference],
+        now: SystemTime,
+    ) -> AutoRejoinTransition {
+        let outcome = self
+            .session
+            .auto_rejoin_conference(conferences, now)
+            .expect("Onboarded -> auto_rejoin is total per spec requires-clause");
+        match outcome {
+            AutoRejoinOutcome::Joined {
+                conference_number,
+                msgbase_number,
+                show_bulletin,
+                name_type_promoted_to,
+            } => AutoRejoinTransition::Joined {
+                session: Self {
+                    session: self.session,
+                },
+                conference_number,
+                msgbase_number,
+                show_bulletin,
+                name_type_promoted_to,
+            },
+            AutoRejoinOutcome::NoAccess => AutoRejoinTransition::NoAccess(LoggingOffSession {
+                session: self.session,
+            }),
+        }
+    }
+}
+
 impl_constructor!(OnboardedSession, Onboarded);
 
 /// Wraps a [`Session`] in [`SessionState::Menu`]. The user is at the
@@ -204,6 +246,18 @@ impl MenuSession {
             .expect("Menu phase always has a bound user")
     }
 
+    /// Returns the conference number the session is currently
+    /// attached to (Slice 34a). Always `Some` after a successful
+    /// auto-rejoin; `None` for the (defensive) case where a Menu
+    /// session reaches this method without an open visit, in which
+    /// case the listener can render the system-wide menu.
+    #[must_use]
+    pub(crate) fn current_conference_number(&self) -> Option<u32> {
+        self.session
+            .current_visit()
+            .map(crate::domain::conference_visit::ConferenceVisit::conference_number)
+    }
+
     /// `session.allium:UserRequestsLogoff` from the menu — the only
     /// total transition out of `Menu` the driver invokes. Consumes
     /// `self` and yields a [`LoggingOffSession`].
@@ -214,6 +268,43 @@ impl MenuSession {
             .expect("Menu -> LoggingOff is total via UserRequestsLogoff");
         LoggingOffSession {
             session: self.session,
+        }
+    }
+
+    /// Resolves the explicit-join path of
+    /// `conferences.allium:JoinConference` (Slice 32) for a `J` /
+    /// `J <num>` command typed at the menu.
+    #[must_use]
+    pub(crate) fn explicit_join_conference(
+        mut self,
+        target_conference_number: u32,
+        conferences: &[Conference],
+        now: SystemTime,
+    ) -> ExplicitJoinTransition {
+        let outcome = self
+            .session
+            .explicit_join_conference(target_conference_number, conferences, now)
+            .expect("Menu -> explicit_join is total per spec requires-clause");
+        match outcome {
+            ExplicitJoinOutcome::Joined {
+                conference_number,
+                msgbase_number,
+                show_bulletin,
+                matched_request,
+                name_type_promoted_to,
+            } => ExplicitJoinTransition::Joined {
+                session: Self {
+                    session: self.session,
+                },
+                conference_number,
+                msgbase_number,
+                show_bulletin,
+                matched_request,
+                name_type_promoted_to,
+            },
+            ExplicitJoinOutcome::NoAccess => ExplicitJoinTransition::NoAccess(LoggingOffSession {
+                session: self.session,
+            }),
         }
     }
 
@@ -295,6 +386,79 @@ impl ActivePhase {
             Self::Menu(s) => s.session,
         }
     }
+}
+
+/// Outcome of [`OnboardedSession::auto_rejoin_conference`] expressed
+/// as next-phase ownership (Slice 30 / Slice 31 bulletin / Slice 34
+/// name-type).
+///
+/// Some fields are not yet read by the driver (Slice 34a wires only
+/// the JOINED-screen and name-type-promotion paths) but are part of
+/// the contract — kept on the enum so future slices can pin them
+/// down without changing the type.
+#[allow(dead_code)]
+pub(crate) enum AutoRejoinTransition {
+    /// The session is attached to a conference and may proceed into
+    /// the menu.
+    Joined {
+        /// The session, still in [`SessionState::Onboarded`].
+        session: OnboardedSession,
+        /// 1-indexed number of the conference attached to.
+        conference_number: u32,
+        /// 1-indexed number of the message base within that
+        /// conference.
+        msgbase_number: u32,
+        /// Whether the listener should render the conference
+        /// bulletin after the join (suppressed under
+        /// `quick_logon` or scan-in-progress).
+        show_bulletin: bool,
+        /// `Some(new_type)` when the join changed the session's
+        /// `display_name_type`; the listener renders
+        /// `SCREEN_REALNAMES` / `SCREEN_INTERNETNAMES` accordingly.
+        name_type_promoted_to: Option<NameType>,
+    },
+    /// The user has no granted membership for any conference; the
+    /// session has moved to [`SessionState::LoggingOff`] with
+    /// [`crate::domain::session::LogoffReason::NoConferenceAccess`].
+    NoAccess(LoggingOffSession),
+}
+
+/// Outcome of [`MenuSession::explicit_join_conference`] expressed as
+/// next-phase ownership (Slice 32). The session stays in
+/// [`SessionState::Menu`] on success.
+///
+/// `conference_number`, `msgbase_number` and `show_bulletin` are
+/// reserved for forthcoming slices that surface the joined
+/// coordinates (e.g. visit-history listings) and the bulletin
+/// rendering driver-side; the present driver only needs
+/// `matched_request` and `name_type_promoted_to`.
+#[allow(dead_code)]
+pub(crate) enum ExplicitJoinTransition {
+    /// The session reattached to a conference. `matched_request` is
+    /// `false` when the resolver fell through to
+    /// `first_accessible_conference` because the requested
+    /// conference wasn't accessible to the user.
+    Joined {
+        /// The session, still in [`SessionState::Menu`].
+        session: MenuSession,
+        /// 1-indexed number of the conference attached to.
+        conference_number: u32,
+        /// 1-indexed number of the message base within that
+        /// conference.
+        msgbase_number: u32,
+        /// Whether the listener should render the conference
+        /// bulletin after the join.
+        show_bulletin: bool,
+        /// `true` when the resolved conference matches what the user
+        /// asked for; `false` when the resolver fell through.
+        matched_request: bool,
+        /// Mirrors [`AutoRejoinTransition::Joined::name_type_promoted_to`].
+        name_type_promoted_to: Option<NameType>,
+    },
+    /// The user has no granted membership anywhere; the session has
+    /// moved to [`SessionState::LoggingOff`] with
+    /// [`crate::domain::session::LogoffReason::NoConferenceAccess`].
+    NoAccess(LoggingOffSession),
 }
 
 /// Outcome of [`crate::app::session_flow::name_typed`] expressed as

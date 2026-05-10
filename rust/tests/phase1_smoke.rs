@@ -28,6 +28,19 @@ fn binary_serves_signin_menu_goodbye_over_telnet() {
     );
     std::fs::write(&config_path, toml).expect("write config");
 
+    // Slice 34a: a session that never reaches a granted conference
+    // hits `no_conference_access` immediately after authentication.
+    // Drop a `Conf01/conference.toml` into the tempdir so the seeded
+    // sysop's auto-rejoin succeeds and the menu loop engages —
+    // matching what a fresh `cargo run` against the repo root sees.
+    let conf01 = dir.path().join("Conf01");
+    std::fs::create_dir_all(&conf01).expect("create Conf01");
+    std::fs::write(
+        conf01.join("conference.toml"),
+        b"number = 1\nname = \"Main\"\n[[msgbase]]\nnumber = 1\nname = \"main\"\n",
+    )
+    .expect("write conference.toml");
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_nextexpress"))
         .arg(&config_path)
         .stdout(Stdio::piped())

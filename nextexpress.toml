@@ -1,0 +1,15 @@
+# Default NextExpress configuration shipped with the repo.
+#
+# Pointing `bbs_path` at the repo root lets a fresh `cargo run`
+# pick up the checked-in `Screens/`, `Conf01/conference.toml`, and
+# `Conf02/conference.toml` without having to set up a separate BBS
+# tree first. Run from the repo root or pass an absolute path:
+#
+#   cd nextexpress      && cargo run --manifest-path rust/Cargo.toml -- ../nextexpress.toml
+#   cargo run -- /absolute/path/to/this/repo/nextexpress.toml
+#
+# See `core.allium:config` for the full list of recognised keys.
+
+port = 2323
+max_nodes = 32
+bbs_path = "."

@@ -69,3 +69,14 @@ table and asset inventory.
   - Real-name / internet-name screens displayed when promoted (`SCREEN_REALNAMES` / `SCREEN_INTERNETNAMES`, `amiexpress/express.e:28169`).
 - **Out of Scope**
   - Editing the user's `real_name` / `internet_name` (Slice 66).
+
+## Slice 34a — Phase 4 wire-and-smoke (closing slice)
+- **In Scope**
+  - Composition root (`app/mod.rs`) loads the conference catalogue via `FileConferenceRepository` from `config.bbs_path`. No runtime side-effects — the repo ships a default `Conf01/conference.toml` (and `Conf02/`) at the BBS root so a fresh `cargo run` against the supplied `nextexpress.toml` has a working catalogue out of the box.
+  - Default sysop seed grants memberships for every loaded conference so the seeded credentials can auto-rejoin without a separate admin step.
+  - `SessionDriver` calls `auto_rejoin_conference` between `Onboarded` and `enter_menu`. On `Joined` it renders `SCREEN_JOINED` plus any name-type promotion screen. On `NoAccess` it renders the no-conference-access notice and finalises the session.
+  - The menu loop loads the per-conference menu (`Conf<NN>/menu.txt`) for the session's open visit and dispatches `J <num>` through `explicit_join_conference`. Fallback joins surface the legacy "You do not have access" notice; failed joins terminate the session.
+  - A binary-level smoke test (`tests/phase4_smoke.rs`) walks the headline conference flow over telnet: sign-in → JOINED → Conf01 menu → `J 2` → Conf02 → `J 3` (real-name promotion) → `J 99` (fallback notice) → `G`.
+- **Out of Scope**
+  - `CS` (conference-scan) command surfacing in the menu loop — the domain methods exist (Slice 33) but aren't wired into the driver yet; they land with the messaging slices that exercise the per-conference mail-scan summary.
+  - No-arg `J` prompt sub-flow (Slice 32 already includes the `JOINCONF` screen asset; the prompt loop itself remains future work).

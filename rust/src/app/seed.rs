@@ -13,6 +13,7 @@
 
 use std::time::SystemTime;
 
+use crate::domain::conference::{Conference, ConferenceMembership};
 use crate::domain::password::{PasswordError, PasswordHashKind, PasswordHasher};
 use crate::domain::user::{User, UserError};
 
@@ -57,10 +58,65 @@ pub fn default_sysop(hasher: &dyn PasswordHasher) -> Result<User, SeedError> {
     .map_err(SeedError::User)
 }
 
+/// Grants `user` a `granted = true` [`ConferenceMembership`] for every
+/// conference in `conferences` (Slice 34a). Used by the composition
+/// root so the seeded sysop can auto-rejoin into a freshly bootstrapped
+/// catalogue without a separate admin step. Pre-existing rows for the
+/// same conference are upserted to `granted = true`.
+pub fn grant_all_memberships(user: &mut User, conferences: &[Conference]) {
+    for conference in conferences {
+        user.upsert_membership(ConferenceMembership::new(conference.number(), true));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::domain::conference::MessageBase;
+
+    fn make_conf(number: u32) -> Conference {
+        Conference::new(
+            number,
+            format!("Conf {number}"),
+            vec![MessageBase::new(number, 1, "main".to_string())],
+        )
+        .expect("valid")
+    }
+
+    #[test]
+    fn grant_all_memberships_adds_a_granted_row_per_conference() {
+        let hasher = Pbkdf2PasswordHasher::new();
+        let mut user = default_sysop(&hasher).expect("seed");
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
+        grant_all_memberships(&mut user, &confs);
+        for conf in &confs {
+            assert!(
+                user.has_membership(conf),
+                "missing grant for {}",
+                conf.number()
+            );
+        }
+    }
+
+    #[test]
+    fn grant_all_memberships_upserts_existing_rows_to_granted_true() {
+        let hasher = Pbkdf2PasswordHasher::new();
+        let mut user = default_sysop(&hasher).expect("seed");
+        // Pre-existing revoked row for conf 1.
+        user.upsert_membership(ConferenceMembership::new(1, false));
+        let confs = vec![make_conf(1)];
+        grant_all_memberships(&mut user, &confs);
+        assert!(user.has_membership(&confs[0]));
+    }
+
+    #[test]
+    fn grant_all_memberships_with_empty_catalogue_is_a_noop() {
+        let hasher = Pbkdf2PasswordHasher::new();
+        let mut user = default_sysop(&hasher).expect("seed");
+        grant_all_memberships(&mut user, &[]);
+        assert!(user.memberships().is_empty());
+    }
 
     #[test]
     fn default_sysop_uses_slot_1_and_handle_sysop() {

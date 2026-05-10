@@ -20,22 +20,25 @@ use crate::app::services::AppServices;
 use crate::app::session_flow::{self, NewUserProfile, NewUserRegistrationFlow};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::typed_session::{
-    AuthenticatingSession, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
-    MenuSession, NameTypedTransition, NewUserPasswordTransition, NewUserRegisteringSession,
+    AuthenticatingSession, AutoRejoinTransition, ConnectingSession, EndedSession,
+    ExplicitJoinTransition, IdentifyingSession, LoggingOffSession, MenuSession,
+    NameTypedTransition, NewUserPasswordTransition, NewUserRegisteringSession,
     NewUserRegistrationResult, OnboardedSession, VerifyPasswordRejectionReason,
     VerifyPasswordTransition,
 };
 use crate::app::wire_text::{
     ACCOUNT_LOCKED_LINE, ANSI_PROMPT, AUTHENTICATED_LINE, COPYRIGHT_LINES, EMAIL_PROMPT,
-    GOODBYE_LINE, HANDLE_TAKEN_LINE, IDLE_TIMEOUT_LINE, INVALID_LINE_LENGTH_LINE,
-    LINE_LENGTH_PROMPT, LOCATION_PROMPT, LOGON_REJECTED_LINE, MENU_PROMPT, NAME_PROMPT,
-    NEW_USER_EXCESSIVE_FAILURES_LINE, NEW_USER_INVALID_PASSWORD_LINE, NEW_USER_PASSWORD_OK_LINE,
-    NEW_USER_PASSWORD_PROMPT, PASSWORDS_DO_NOT_MATCH_LINE, PASSWORD_PROMPT, PHONE_PROMPT,
-    REGISTRATION_COMPLETE_LINE, REGISTRATION_HANDLE_PROMPT, REGISTRATION_PASSWORD_CONFIRM_PROMPT,
-    REGISTRATION_PASSWORD_PROMPT, REGISTRATION_RETRIES_EXHAUSTED_LINE,
-    TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE, UNKNOWN_COMMAND_LINE,
-    UNKNOWN_USER_LINE, WRONG_PASSWORD_LINE,
+    GOODBYE_LINE, HANDLE_TAKEN_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
+    INVALID_LINE_LENGTH_LINE, JOIN_REQUIRES_NUMBER_LINE, LINE_LENGTH_PROMPT, LOCATION_PROMPT,
+    LOGON_REJECTED_LINE, MENU_PROMPT, NAME_PROMPT, NEW_USER_EXCESSIVE_FAILURES_LINE,
+    NEW_USER_INVALID_PASSWORD_LINE, NEW_USER_PASSWORD_OK_LINE, NEW_USER_PASSWORD_PROMPT,
+    NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE, NO_CONFERENCE_ACCESS_LINE, PASSWORDS_DO_NOT_MATCH_LINE,
+    PASSWORD_PROMPT, PHONE_PROMPT, REGISTRATION_COMPLETE_LINE, REGISTRATION_HANDLE_PROMPT,
+    REGISTRATION_PASSWORD_CONFIRM_PROMPT, REGISTRATION_PASSWORD_PROMPT,
+    REGISTRATION_RETRIES_EXHAUSTED_LINE, TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE,
+    UNKNOWN_COMMAND_LINE, UNKNOWN_USER_LINE, WRONG_PASSWORD_LINE,
 };
+use crate::domain::conference::NameType;
 use crate::domain::session::LogonChannel;
 use crate::domain::user_repository::NameLookupResult;
 
@@ -83,6 +86,64 @@ enum AuthResult {
     LoggingOff(LoggingOffSession),
 }
 
+/// Outcome of [`SessionDriver::auto_rejoin`]. Mirrors the spec's
+/// `JoinConference` two-branch consequent (resolved vs.
+/// `no_conference_access`).
+enum AutoRejoinResult {
+    /// The session attached to a conference and may proceed into the
+    /// menu loop.
+    Joined(OnboardedSession),
+    /// The user has no granted membership; the session has moved to
+    /// `LoggingOff` with `LogoffReason::NoConferenceAccess`.
+    NoAccess(LoggingOffSession),
+}
+
+/// Outcome of [`SessionDriver::handle_explicit_join`]. The success
+/// branch returns the still-Menu-state session so the menu loop
+/// continues; failure terminates with `LogoffReason::NoConferenceAccess`.
+enum ExplicitJoinResult {
+    /// The user is now attached to a (possibly fallback) conference.
+    Joined(MenuSession),
+    /// The user lost their last membership; the session is closing.
+    NoAccess(LoggingOffSession),
+}
+
+/// Parsed shape of a `J <number>` command. Returned by
+/// [`parse_join_command`].
+enum JoinArg {
+    /// `J <n>` where `<n>` parsed as a `u32`.
+    Number(u32),
+    /// `J` (or `J ` / `J\t`) with no number.
+    Missing,
+    /// `J <token>` where `<token>` could not be parsed as a `u32`.
+    Invalid,
+}
+
+/// Recognises the Phase-4 `J` / `J <num>` menu command. Returns
+/// `None` for any other typed line so the menu loop can fall
+/// through to its existing dispatch (currently only `G`). Mirrors
+/// the legacy parsing in `amiexpress/express.e:25140` modulo the
+/// `getInverse` macro, which Phase 4 doesn't model yet.
+fn parse_join_command(line: &str) -> Option<JoinArg> {
+    let mut tokens = line.split_ascii_whitespace();
+    let head = tokens.next()?;
+    if !head.eq_ignore_ascii_case("J") {
+        return None;
+    }
+    let Some(arg) = tokens.next() else {
+        return Some(JoinArg::Missing);
+    };
+    if tokens.next().is_some() {
+        // Extra trailing tokens are treated as a malformed argument
+        // rather than silently ignored.
+        return Some(JoinArg::Invalid);
+    }
+    match arg.parse::<u32>() {
+        Ok(n) => Some(JoinArg::Number(n)),
+        Err(_) => Some(JoinArg::Invalid),
+    }
+}
+
 impl<T> SessionDriver<T>
 where
     T: Terminal,
@@ -114,16 +175,67 @@ where
         let signed_in = self.identify(identifying).await?;
 
         let logging_off = match signed_in {
-            SignInResult::Onboarded(onboarded) => {
-                let menu = self.enter_menu(onboarded);
-                self.run_menu(menu).await?
-            }
+            SignInResult::Onboarded(onboarded) => match self.auto_rejoin(onboarded).await? {
+                AutoRejoinResult::Joined(onboarded) => {
+                    let menu = self.enter_menu(onboarded);
+                    self.run_menu(menu).await?
+                }
+                AutoRejoinResult::NoAccess(logging_off) => logging_off,
+            },
             SignInResult::LoggingOff(logging_off) => logging_off,
             SignInResult::Ended(_ended) => return Ok(()),
         };
 
         self.finalise(logging_off);
         Ok(())
+    }
+
+    /// Resolves `conferences.allium:JoinConference` for the
+    /// auto-rejoin path (Slice 30) and renders the JOINED screen and
+    /// any name-type promotion screen (Slices 31 / 34). On
+    /// `NoAccess` the listener writes the no-access line so the user
+    /// understands why their session is closing — the
+    /// caller-log finalise entry will already record the underlying
+    /// `LogoffReason::NoConferenceAccess`.
+    async fn auto_rejoin(
+        &mut self,
+        onboarded: OnboardedSession,
+    ) -> Result<AutoRejoinResult, T::Error> {
+        let conferences = self.services.conferences();
+        match onboarded.auto_rejoin_conference(conferences, SystemTime::now()) {
+            AutoRejoinTransition::Joined {
+                session,
+                show_bulletin: _,
+                name_type_promoted_to,
+                ..
+            } => {
+                self.render_name_type_promotion(name_type_promoted_to)
+                    .await?;
+                let joined = self.services.screens().joined_screen().await;
+                self.terminal.write(&joined).await?;
+                self.terminal.flush().await?;
+                Ok(AutoRejoinResult::Joined(session))
+            }
+            AutoRejoinTransition::NoAccess(logging_off) => {
+                self.write_and_flush(NO_CONFERENCE_ACCESS_LINE).await?;
+                Ok(AutoRejoinResult::NoAccess(logging_off))
+            }
+        }
+    }
+
+    /// Renders `SCREEN_REALNAMES` / `SCREEN_INTERNETNAMES` when a
+    /// join promoted the session's `display_name_type` (Slice 34).
+    async fn render_name_type_promotion(
+        &mut self,
+        promoted: Option<NameType>,
+    ) -> Result<(), T::Error> {
+        let bytes = match promoted {
+            Some(NameType::RealName) => self.services.screens().realnames_screen().await,
+            Some(NameType::InternetName) => self.services.screens().internetnames_screen().await,
+            Some(NameType::Handle) | None => return Ok(()),
+        };
+        self.terminal.write(&bytes).await?;
+        self.terminal.flush().await
     }
 
     /// Returns the terminal after the driver has finished. Intended
@@ -291,8 +403,16 @@ where
     async fn run_menu(&mut self, mut session: MenuSession) -> Result<LoggingOffSession, T::Error> {
         loop {
             let access_level = session.user().access_level();
-            let menu = self.services.screens().default_menu(access_level).await;
-            self.terminal.write(&menu).await?;
+            let menu_bytes = match session.current_conference_number() {
+                Some(conf) => {
+                    self.services
+                        .screens()
+                        .conference_menu(conf, access_level)
+                        .await
+                }
+                None => self.services.screens().default_menu(access_level).await,
+            };
+            self.terminal.write(&menu_bytes).await?;
             let read = self
                 .read_prompted(MENU_PROMPT, TerminalEcho::Visible)
                 .await?;
@@ -310,12 +430,72 @@ where
                     return Ok(logoff);
                 }
             };
-            if line.trim().eq_ignore_ascii_case("G") {
+            let trimmed = line.trim();
+            if trimmed.eq_ignore_ascii_case("G") {
                 let logging_off = session.user_requests_logoff();
                 self.write_and_flush(GOODBYE_LINE).await?;
                 return Ok(logging_off);
             }
+            if let Some(arg) = parse_join_command(trimmed) {
+                match arg {
+                    JoinArg::Number(n) => {
+                        session = match self.handle_explicit_join(session, n).await? {
+                            ExplicitJoinResult::Joined(menu) => menu,
+                            ExplicitJoinResult::NoAccess(logging_off) => return Ok(logging_off),
+                        };
+                    }
+                    JoinArg::Missing => {
+                        self.write_and_flush(JOIN_REQUIRES_NUMBER_LINE).await?;
+                    }
+                    JoinArg::Invalid => {
+                        self.write_and_flush(INVALID_CONFERENCE_NUMBER_LINE).await?;
+                    }
+                }
+                continue;
+            }
             self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
+        }
+    }
+
+    /// Handles a `J <num>` command from the menu (Slice 32). Renders
+    /// JOIN before resolution, the legacy "no access" notice when
+    /// the resolver fell through, the JOINED screen on success, and
+    /// any name-type promotion screen (Slice 34).
+    async fn handle_explicit_join(
+        &mut self,
+        session: MenuSession,
+        target_conference_number: u32,
+    ) -> Result<ExplicitJoinResult, T::Error> {
+        let join_screen = self.services.screens().join_screen().await;
+        self.terminal.write(&join_screen).await?;
+        let conferences = self.services.conferences();
+        let outcome = session.explicit_join_conference(
+            target_conference_number,
+            conferences,
+            SystemTime::now(),
+        );
+        match outcome {
+            ExplicitJoinTransition::Joined {
+                session,
+                matched_request,
+                name_type_promoted_to,
+                ..
+            } => {
+                if !matched_request {
+                    self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
+                        .await?;
+                }
+                self.render_name_type_promotion(name_type_promoted_to)
+                    .await?;
+                let joined = self.services.screens().joined_screen().await;
+                self.terminal.write(&joined).await?;
+                self.terminal.flush().await?;
+                Ok(ExplicitJoinResult::Joined(session))
+            }
+            ExplicitJoinTransition::NoAccess(logging_off) => {
+                self.write_and_flush(NO_CONFERENCE_ACCESS_LINE).await?;
+                Ok(ExplicitJoinResult::NoAccess(logging_off))
+            }
         }
     }
 
@@ -807,9 +987,16 @@ mod tests {
 
     #[tokio::test]
     async fn driver_runs_signin_menu_and_logoff_without_a_telnet_transport() {
-        let repo = Arc::new(InMemoryUserRepository::new(vec![alice_with_password(
-            "secret",
-        )]));
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
         let hasher = Arc::new(Pbkdf2PasswordHasher::new());
         let caller_log = Arc::new(InMemoryCallerLog::new());
         let screens = Arc::new(StaticScreens);
@@ -827,6 +1014,7 @@ mod tests {
             hasher,
             caller_log.clone(),
             screens,
+            Arc::new(conferences),
             SessionPolicy::default(),
             ratio,
             gate,

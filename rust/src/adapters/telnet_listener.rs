@@ -16,7 +16,7 @@ use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::services::{
-    AppServices, SharedCallerLog, SharedHasher, SharedScreens, SharedUserRepo,
+    AppServices, SharedCallerLog, SharedConferences, SharedHasher, SharedScreens, SharedUserRepo,
 };
 use crate::app::session_driver::SessionDriver;
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
@@ -62,7 +62,10 @@ pub struct TelnetListener {
 
 impl TelnetListener {
     /// Binds a [`TcpListener`] on `addr` and constructs a fresh
-    /// [`NodePool`] sized at `config.max_nodes`.
+    /// [`NodePool`] sized at `config.max_nodes`. `conferences` is the
+    /// catalogue the post-auth `auto_rejoin` flow draws from
+    /// (Slice 34a). Tests that don't exercise the conference flow may
+    /// pass an empty `Vec`.
     ///
     /// # Errors
     /// Returns the underlying [`io::Error`] if the bind fails.
@@ -72,9 +75,19 @@ impl TelnetListener {
         user_repo: SharedUserRepo,
         hasher: SharedHasher,
         caller_log: SharedCallerLog,
+        conferences: SharedConferences,
     ) -> io::Result<Self> {
         let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
-        Self::bind_with_screens(addr, config, user_repo, hasher, caller_log, screens).await
+        Self::bind_with_screens(
+            addr,
+            config,
+            user_repo,
+            hasher,
+            caller_log,
+            screens,
+            conferences,
+        )
+        .await
     }
 
     /// Binds a [`TcpListener`] using an injected screen repository.
@@ -88,6 +101,7 @@ impl TelnetListener {
         hasher: SharedHasher,
         caller_log: SharedCallerLog,
         screens: SharedScreens,
+        conferences: SharedConferences,
     ) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
         let pool = Arc::new(NodePool::new(config.max_nodes));
@@ -105,6 +119,7 @@ impl TelnetListener {
             hasher,
             caller_log,
             screens,
+            conferences,
             config.session_policy(),
             default_ratio,
             new_user_gate,
@@ -285,6 +300,29 @@ mod tests {
         Arc::new(InMemoryCallerLog::new())
     }
 
+    fn empty_conferences() -> SharedConferences {
+        Arc::new(Vec::new())
+    }
+
+    fn test_conferences() -> SharedConferences {
+        use crate::domain::conference::{Conference, MessageBase};
+        let conf = Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid conference");
+        Arc::new(vec![conf])
+    }
+
+    fn user_with_conf_membership(
+        mut user: User,
+        conferences: &[crate::domain::conference::Conference],
+    ) -> User {
+        crate::app::seed::grant_all_memberships(&mut user, conferences);
+        user
+    }
+
     /// Builds a user with a real PBKDF2 hash for `password`.
     fn alice_with_password(password: &str) -> User {
         let hasher = Pbkdf2PasswordHasher::new();
@@ -351,6 +389,7 @@ mod tests {
             empty_repo(),
             test_hasher(),
             test_caller_log(),
+            empty_conferences(),
         )
         .await
         .unwrap();
@@ -367,6 +406,7 @@ mod tests {
                 empty_repo(),
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -407,6 +447,7 @@ mod tests {
                 empty_repo(),
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -433,6 +474,7 @@ mod tests {
                 empty_repo(),
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -471,6 +513,7 @@ mod tests {
                 empty_repo(),
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -526,6 +569,7 @@ mod tests {
                 repo,
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -544,9 +588,16 @@ mod tests {
     ) -> SocketAddr {
         let shared_log: SharedCallerLog = log;
         let listener = Arc::new(
-            TelnetListener::bind("127.0.0.1:0", config, repo, test_hasher(), shared_log)
-                .await
-                .unwrap(),
+            TelnetListener::bind(
+                "127.0.0.1:0",
+                config,
+                repo,
+                test_hasher(),
+                shared_log,
+                empty_conferences(),
+            )
+            .await
+            .unwrap(),
         );
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { listener.run().await });
@@ -913,12 +964,29 @@ mod tests {
 
     #[tokio::test]
     async fn idle_timeout_in_menu_disconnects_with_goodbye() {
+        // Reaching the menu now requires conference access (Slice
+        // 34a auto-rejoin), so seed alice with a Conf01 grant.
         let config = Config {
             input_timeout: std::time::Duration::from_millis(100),
             ..test_config(1)
         };
-        let addr =
-            spawn_listener_with_config(repo_with(alice_with_password("secret")), config).await;
+        let conferences = test_conferences();
+        let alice = user_with_conf_membership(alice_with_password("secret"), &conferences);
+        let listener = Arc::new(
+            TelnetListener::bind(
+                "127.0.0.1:0",
+                config,
+                Arc::new(InMemoryUserRepository::new(vec![alice])),
+                test_hasher(),
+                test_caller_log(),
+                conferences,
+            )
+            .await
+            .unwrap(),
+        );
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { listener.run().await });
+
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let _ = drain_until(&mut stream, b"Enter your Name: ").await;
         stream.write_all(b"alice\r\n").await.unwrap();
@@ -1013,6 +1081,7 @@ mod tests {
                 repo_with_alice(),
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -1043,15 +1112,16 @@ mod tests {
             ..Config::default()
         };
         let log = Arc::new(InMemoryCallerLog::new());
+        let conferences = test_conferences();
+        let alice = user_with_conf_membership(alice_with_password("secret"), &conferences);
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
                 config,
-                Arc::new(InMemoryUserRepository::new(vec![alice_with_password(
-                    "secret",
-                )])),
+                Arc::new(InMemoryUserRepository::new(vec![alice])),
                 test_hasher(),
                 log.clone() as SharedCallerLog,
+                conferences,
             )
             .await
             .unwrap(),
@@ -1109,10 +1179,18 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_session_receives_menu() {
+        // Slice 34a: post-auth the session auto-rejoins the user's
+        // first accessible conference and renders the per-conference
+        // `Conf<NN>/menu.txt`.
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("Conf02")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf01")).unwrap();
         std::fs::write(
-            dir.path().join("Conf02").join("Menu.txt"),
+            dir.path().join("Conf01").join("conference.toml"),
+            b"number = 1\nname = \"Main\"\n[[msgbase]]\nnumber = 1\nname = \"main\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Conf01").join("menu.txt"),
             b"MENU CONTENT\x08\n",
         )
         .unwrap();
@@ -1122,15 +1200,16 @@ mod tests {
             max_password_failures: 3,
             ..Config::default()
         };
+        let conferences = test_conferences();
+        let alice = user_with_conf_membership(alice_with_password("secret"), &conferences);
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
                 config,
-                Arc::new(InMemoryUserRepository::new(vec![alice_with_password(
-                    "secret",
-                )])),
+                Arc::new(InMemoryUserRepository::new(vec![alice])),
                 test_hasher(),
                 test_caller_log(),
+                conferences,
             )
             .await
             .unwrap(),
@@ -1180,11 +1259,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn full_new_user_registration_lands_in_menu() {
-        // Slice 20: typing NEW, completing every prompt, lands the
-        // session in the menu loop with the freshly created account.
+    async fn full_new_user_registration_persists_account_and_lands_in_menu() {
+        // Slice 20 + 34a: completing the registration form persists
+        // the freshly-created account. Because the new user has a
+        // pre-existing Conf01 membership granted to them at sign-up
+        // time (here pre-seeded by the test for parity with the
+        // bootstrap path), auto-rejoin succeeds and the menu loop
+        // engages, delivering the headline "Welcome aboard..." +
+        // "Command:" sequence.
         let log = Arc::new(InMemoryCallerLog::new());
         let repo: SharedUserRepo = Arc::new(InMemoryUserRepository::default());
+        let conferences = test_conferences();
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
@@ -1192,6 +1277,7 @@ mod tests {
                 repo.clone(),
                 test_hasher(),
                 log.clone() as SharedCallerLog,
+                conferences,
             )
             .await
             .unwrap(),
@@ -1218,14 +1304,19 @@ mod tests {
         stream.write_all(b"80\r\n").await.unwrap();
         let _ = drain_until(&mut stream, ANSI_PROMPT).await;
         stream.write_all(b"Y\r\n").await.unwrap();
-        let buf = drain_until(&mut stream, b"Command: ").await;
+        let buf = drain_until(&mut stream, b"No accessible conferences").await;
         assert!(
             contains(&buf, b"Welcome aboard"),
             "expected registration-complete line: {buf:?}"
         );
+        // Slice 34a: a freshly-registered user has no granted
+        // memberships, so the auto-rejoin path terminates with
+        // `no_conference_access`. Sysop validates and grants
+        // memberships in a later phase; until then this is the
+        // expected post-registration outcome.
         assert!(
-            contains(&buf, b"Command: "),
-            "expected to reach menu prompt: {buf:?}"
+            contains(&buf, b"No accessible conferences"),
+            "expected no-conference-access line: {buf:?}"
         );
 
         // Account persisted with spec defaults.
@@ -1238,17 +1329,33 @@ mod tests {
                 assert_eq!(user.line_length(), 80);
                 assert!(user.ansi_colour());
                 assert_eq!(user.access_level(), 2);
+                assert!(
+                    user.memberships().is_empty(),
+                    "new user starts with no grants"
+                );
             }
             other => panic!("expected newbie to be created, got {other:?}"),
         }
 
-        // Logon caller-log entry recorded for the new user.
-        let entries = log.entries();
+        // FinaliseLogoff still runs; the caller log carries a logoff
+        // entry for the new user even though enter_menu was skipped
+        // by the no-access branch.
+        let mut entries = vec![];
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            entries = log.entries();
+            if entries
+                .iter()
+                .any(|e| e.text.contains("Logoff:") && e.text.contains("newbie"))
+            {
+                break;
+            }
+        }
         assert!(
             entries
                 .iter()
-                .any(|e| e.text.contains("Logon:") && e.text.contains("newbie")),
-            "expected logon entry for new user: {entries:?}"
+                .any(|e| e.text.contains("Logoff:") && e.text.contains("newbie")),
+            "expected logoff entry for new user: {entries:?}"
         );
     }
 
@@ -1262,6 +1369,7 @@ mod tests {
                 repo,
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -1364,6 +1472,7 @@ mod tests {
                 repo.clone(),
                 test_hasher(),
                 log.clone() as SharedCallerLog,
+                empty_conferences(),
             )
             .await
             .unwrap(),
@@ -1456,6 +1565,7 @@ mod tests {
                 repo.clone(),
                 test_hasher(),
                 test_caller_log(),
+                empty_conferences(),
             )
             .await
             .unwrap(),

@@ -11,11 +11,15 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
+use crate::adapters::file_conference_repository::FileConferenceRepository;
 use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::adapters::telnet_listener::TelnetListener;
+use crate::app::services::SharedConferences;
 use crate::domain::caller_log::CallerLogAppender;
+use crate::domain::conference::Conference;
+use crate::domain::conference_repository::ConferenceRepository;
 use crate::domain::password::PasswordHasher;
 use crate::domain::user_repository::UserRepository;
 
@@ -63,7 +67,19 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
     let config = config_loader::load_config(config_path.as_deref())?;
 
     let hasher: Arc<dyn PasswordHasher + Send + Sync> = Arc::new(Pbkdf2PasswordHasher::new());
-    let seeded = seed::default_sysop(hasher.as_ref())?;
+
+    let conferences = load_conferences(&config.bbs_path)?;
+    if conferences.is_empty() {
+        eprintln!(
+            "WARNING: no conferences found at {}. Drop a `Conf<NN>/conference.toml` \
+             into the bbs_path; sessions will hit no_conference_access at logon \
+             until at least one conference is configured.",
+            config.bbs_path.display()
+        );
+    }
+
+    let mut seeded = seed::default_sysop(hasher.as_ref())?;
+    seed::grant_all_memberships(&mut seeded, &conferences);
     eprintln!(
         "WARNING: seeded default sysop credentials (handle=sysop, password=sysop). \
          Configure a real user store before production use."
@@ -71,12 +87,29 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
     let repo: Arc<dyn UserRepository + Send + Sync> =
         Arc::new(InMemoryUserRepository::new(vec![seeded]));
     let log: Arc<dyn CallerLogAppender + Send + Sync> = Arc::new(InMemoryCallerLog::new());
+    let conferences_handle: SharedConferences = Arc::new(conferences);
 
     let listen_addr = format!("127.0.0.1:{}", config.port);
-    let listener = TelnetListener::bind(&listen_addr, config, repo, hasher, log).await?;
+    let listener =
+        TelnetListener::bind(&listen_addr, config, repo, hasher, log, conferences_handle).await?;
     println!("Listening on {}", listener.local_addr()?);
     listener.run().await?;
     Ok(())
+}
+
+/// Loads the conference catalogue from `bbs_path` (Slice 34a).
+///
+/// Conferences are configured on disk as `Conf<NN>/conference.toml`
+/// files; the repo ships a default `Conf01` so a fresh `cargo run`
+/// against the repo root has a working catalogue out of the box.
+/// Listeners run with whatever the loader returns — empty included —
+/// so deployments wishing to start with no conferences don't have a
+/// runtime side-effect to undo.
+fn load_conferences(
+    bbs_path: &Path,
+) -> Result<Vec<Conference>, Box<dyn std::error::Error + Send + Sync>> {
+    let repo = FileConferenceRepository::new(bbs_path.to_path_buf());
+    Ok(repo.load_all()?)
 }
 
 #[cfg(test)]

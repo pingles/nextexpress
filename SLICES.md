@@ -25,7 +25,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | 1 | [slices/phase1.md](slices/phase1.md) | 2–13, 8a, 13a | Sign in, see the menu, log off | Done |
 | 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow | Done |
 | 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding | Done |
-| 4 | [slices/phase4.md](slices/phase4.md) | 27–34 | Conferences (read) | In progress |
+| 4 | [slices/phase4.md](slices/phase4.md) | 27–34, 34a | Conferences (read) | Done |
 | 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Todo |
 | 6 | [slices/phase6.md](slices/phase6.md) | 37–41 | Messaging (read) | Todo |
 | 7 | [slices/phase7.md](slices/phase7.md) | 42–44 | Messaging (write) | Todo |
@@ -250,6 +250,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 32 | Explicit `J` (join conference) command | Done |
 | 33 | `ConferenceScan` (CS command) | Done |
 | 34 | `JoinedConferenceForNameType` | Done |
+| 34a | Phase 4 wire-and-smoke (composition root + conference catalogue) | Done |
 | 35 | Sysop creates conference | Todo |
 | 36 | Sysop grants / revokes access | Todo |
 | 37 | `Mail` entity + on-disk message store | Todo |
