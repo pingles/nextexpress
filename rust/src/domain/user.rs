@@ -723,12 +723,12 @@ impl User {
 /// [`User::register_new`] consumes.
 ///
 /// Mirrors the `profile` argument of
-/// `session.allium:CompleteNewUserRegistration`. The slot number and
-/// ratio defaults come from outside the profile (the user
-/// repository's [`crate::domain::user_repository::UserRepository::next_free_slot`]
-/// and `core/config.default_ratio_*`); they are bundled here so
-/// `register_new` has every piece of data the spec rule names without
-/// reaching into other ports.
+/// `session.allium:CompleteNewUserRegistration`. The slot number is
+/// supplied by the repository when it invokes the build callback in
+/// [`crate::domain::user_repository::UserRepository::allocate_slot_and_create`];
+/// ratio defaults come from `core/config.default_ratio_*`. They are
+/// bundled here so `register_new` has every piece of data the spec
+/// rule names without reaching into other ports.
 #[derive(Debug, Clone)]
 pub struct NewUserRegistration {
     /// Slot allocated by the user repository.

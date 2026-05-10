@@ -19,8 +19,10 @@ use crate::domain::session::{
     SessionState, SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError,
     VerifyPasswordOutcome,
 };
-use crate::domain::user::{NewUserRegistration, RatioMode, User, UserError, UserFlag};
-use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
+use crate::domain::user::{NewUserRegistration, RatioMode, User, UserFlag};
+use crate::domain::user_repository::{
+    NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
+};
 
 /// Errors returned by [`verify_password`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -320,15 +322,11 @@ pub enum CompleteNewUserRegistrationFlowError {
     /// The hasher failed to compute a hash for the supplied password.
     #[error(transparent)]
     Hash(#[from] PasswordError),
-    /// `User::register_new` rejected the constructed record (e.g. a
-    /// PBKDF2 hash kind without a salt — should never happen for the
-    /// configured default).
+    /// The repository couldn't allocate or persist the new account.
+    /// Wraps both `User::register_new` validation failures and
+    /// repository-side consistency errors (handle/slot collisions).
     #[error(transparent)]
-    User(#[from] UserError),
-    /// The repository couldn't allocate or persist the new account
-    /// (e.g. the chosen handle is already taken).
-    #[error(transparent)]
-    Save(#[from] UserRepositoryError),
+    Create(#[from] UserCreationError),
 }
 
 /// Default ratio policy applied to a freshly-registered new account.
@@ -424,23 +422,27 @@ where
         }
         let kind = PasswordHashKind::Pbkdf210000;
         let computed = self.hasher.compute_password_hash(&profile.password, kind)?;
-        let user = User::register_new(NewUserRegistration {
-            slot_number: self.user_repo.next_free_slot(),
-            handle: profile.handle,
-            location: profile.location,
-            phone_number: profile.phone_number,
-            email: profile.email,
-            password_hash: computed.hash,
-            password_salt: computed.salt,
-            password_hash_kind: kind,
-            line_length: profile.line_length,
-            ansi_colour: profile.ansi_colour,
-            flags: profile.flags,
-            ratio_mode: self.default_ratio.mode,
-            ratio_value: self.default_ratio.value,
-            now,
-        })?;
-        self.user_repo.create(user.clone())?;
+        let default_ratio = self.default_ratio;
+        let user = self
+            .user_repo
+            .allocate_slot_and_create(Box::new(move |slot| {
+                User::register_new(NewUserRegistration {
+                    slot_number: slot,
+                    handle: profile.handle,
+                    location: profile.location,
+                    phone_number: profile.phone_number,
+                    email: profile.email,
+                    password_hash: computed.hash,
+                    password_salt: computed.salt,
+                    password_hash_kind: kind,
+                    line_length: profile.line_length,
+                    ansi_colour: profile.ansi_colour,
+                    flags: profile.flags,
+                    ratio_mode: default_ratio.mode,
+                    ratio_value: default_ratio.value,
+                    now,
+                })
+            }))?;
         let rejection = session.complete_new_user_registration(user, self.policy, now)?;
         if let Some(entry) = rejection {
             self.caller_log.append(entry);
@@ -857,20 +859,25 @@ mod tests {
             Ok(())
         }
 
-        fn next_free_slot(&self) -> u32 {
-            let users = self.users.lock().unwrap();
-            users.iter().map(User::slot_number).max().unwrap_or(0) + 1
-        }
-
-        fn create(&self, user: User) -> Result<(), UserRepositoryError> {
+        fn allocate_slot_and_create(
+            &self,
+            build_user: crate::domain::user_repository::BuildUserFn<'_>,
+        ) -> Result<User, UserCreationError> {
             let mut users = self.users.lock().unwrap();
+            let slot = users.iter().map(User::slot_number).max().unwrap_or(0) + 1;
+            let user = build_user(slot)?;
             if users.iter().any(|u| u.handle() == user.handle()) {
-                return Err(UserRepositoryError::DuplicateUser {
+                return Err(UserCreationError::DuplicateUser {
                     handle: user.handle().to_string(),
                 });
             }
-            users.push(user);
-            Ok(())
+            if users.iter().any(|u| u.slot_number() == user.slot_number()) {
+                return Err(UserCreationError::DuplicateSlot {
+                    slot: user.slot_number(),
+                });
+            }
+            users.push(user.clone());
+            Ok(user)
         }
     }
 
@@ -1468,7 +1475,7 @@ mod tests {
             .expect_err("duplicate handle should error");
         assert!(matches!(
             err,
-            CompleteNewUserRegistrationFlowError::Save(UserRepositoryError::DuplicateUser { .. })
+            CompleteNewUserRegistrationFlowError::Create(UserCreationError::DuplicateUser { .. })
         ));
         // Session stays in NewUserRegistering so the caller can re-prompt.
         assert_eq!(session.state(), SessionState::NewUserRegistering);

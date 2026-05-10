@@ -7,7 +7,9 @@
 use std::sync::Mutex;
 
 use crate::domain::user::User;
-use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
+use crate::domain::user_repository::{
+    BuildUserFn, NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
+};
 
 /// In-memory adapter seeded from a static [`Vec<User>`].
 #[derive(Debug, Default)]
@@ -49,20 +51,25 @@ impl UserRepository for InMemoryUserRepository {
         Ok(())
     }
 
-    fn next_free_slot(&self) -> u32 {
-        let users = self.users.lock().expect("user repository mutex");
-        users.iter().map(User::slot_number).max().unwrap_or(0) + 1
-    }
-
-    fn create(&self, user: User) -> Result<(), UserRepositoryError> {
+    fn allocate_slot_and_create(
+        &self,
+        build_user: BuildUserFn<'_>,
+    ) -> Result<User, UserCreationError> {
         let mut users = self.users.lock().expect("user repository mutex");
+        let slot = users.iter().map(User::slot_number).max().unwrap_or(0) + 1;
+        let user = build_user(slot)?;
         if users.iter().any(|u| u.handle() == user.handle()) {
-            return Err(UserRepositoryError::DuplicateUser {
+            return Err(UserCreationError::DuplicateUser {
                 handle: user.handle().to_string(),
             });
         }
-        users.push(user);
-        Ok(())
+        if users.iter().any(|u| u.slot_number() == user.slot_number()) {
+            return Err(UserCreationError::DuplicateSlot {
+                slot: user.slot_number(),
+            });
+        }
+        users.push(user.clone());
+        Ok(user)
     }
 }
 
@@ -84,6 +91,20 @@ mod tests {
             100,
         )
         .expect("valid user")
+    }
+
+    fn build_with_handle(handle: &'static str) -> BuildUserFn<'static> {
+        Box::new(move |slot| {
+            User::new(
+                slot,
+                handle.to_string(),
+                PasswordHashKind::Pbkdf210000,
+                "hash".to_string(),
+                Some("salt".to_string()),
+                SystemTime::UNIX_EPOCH,
+                100,
+            )
+        })
     }
 
     #[test]
@@ -150,43 +171,74 @@ mod tests {
     }
 
     #[test]
-    fn next_free_slot_starts_at_one_when_empty() {
+    fn allocate_slot_and_create_starts_at_one_when_empty() {
         let repo = InMemoryUserRepository::default();
-        assert_eq!(repo.next_free_slot(), 1);
+        let user = repo
+            .allocate_slot_and_create(build_with_handle("alice"))
+            .expect("create");
+        assert_eq!(user.slot_number(), 1);
     }
 
     #[test]
-    fn next_free_slot_returns_one_above_max_used() {
+    fn allocate_slot_and_create_returns_one_above_max_used() {
         let repo = InMemoryUserRepository::new(vec![
             user_with_handle(1, "sysop"),
             user_with_handle(7, "alice"),
             user_with_handle(3, "bob"),
         ]);
-        assert_eq!(repo.next_free_slot(), 8);
+        let user = repo
+            .allocate_slot_and_create(build_with_handle("carol"))
+            .expect("create");
+        assert_eq!(user.slot_number(), 8);
     }
 
     #[test]
-    fn create_adds_user_when_handle_is_unique() {
+    fn allocate_slot_and_create_persists_user() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(1, "sysop")]);
-        repo.create(user_with_handle(2, "alice")).expect("create");
+        repo.allocate_slot_and_create(build_with_handle("alice"))
+            .expect("create");
         assert!(matches!(
             repo.find_by_handle("alice"),
             NameLookupResult::Found(_)
         ));
-        assert_eq!(repo.next_free_slot(), 3);
     }
 
     #[test]
-    fn create_rejects_duplicate_handle() {
+    fn allocate_slot_and_create_rejects_duplicate_handle() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(1, "alice")]);
         let err = repo
-            .create(user_with_handle(2, "alice"))
+            .allocate_slot_and_create(build_with_handle("alice"))
             .expect_err("duplicate should error");
         assert_eq!(
             err,
-            UserRepositoryError::DuplicateUser {
+            UserCreationError::DuplicateUser {
                 handle: "alice".to_string()
             }
         );
+    }
+
+    #[test]
+    fn allocate_slot_and_create_propagates_build_failure() {
+        let repo = InMemoryUserRepository::default();
+        let err = repo
+            .allocate_slot_and_create(Box::new(|slot| {
+                // PBKDF2 without a salt: should be rejected by `User::new`.
+                User::new(
+                    slot,
+                    "alice".to_string(),
+                    PasswordHashKind::Pbkdf210000,
+                    "hash".to_string(),
+                    None,
+                    SystemTime::UNIX_EPOCH,
+                    100,
+                )
+            }))
+            .expect_err("build failure should propagate");
+        assert!(matches!(err, UserCreationError::Build(_)));
+        // No user should have been persisted.
+        assert!(matches!(
+            repo.find_by_handle("alice"),
+            NameLookupResult::NotFound
+        ));
     }
 }
