@@ -119,6 +119,59 @@ enum JoinArg {
     Invalid,
 }
 
+/// Looks up `conference_number` in `conferences` and renders the
+/// inline auto-rejoin announcement matching the legacy `joinConf`
+/// output (`amiexpress/express.e:5071-5073`). Returns just the
+/// conference-name segment when the lookup fails, which is
+/// defensive — `auto_rejoin_conference` only reports
+/// `conference_number`s that came from the catalogue.
+fn format_auto_rejoin_line(
+    conferences: &[crate::domain::conference::Conference],
+    conference_number: u32,
+    msgbase_number: u32,
+) -> Vec<u8> {
+    let (conference_name, msgbase_name) =
+        resolve_conference_strings(conferences, conference_number, msgbase_number);
+    crate::app::wire_text::auto_rejoin_line(conference_number, conference_name, msgbase_name)
+}
+
+/// Looks up `conference_number` in `conferences` and renders the
+/// inline explicit-join announcement matching the legacy `joinConf`
+/// output (`amiexpress/express.e:5079-5083`).
+fn format_explicit_join_line(
+    conferences: &[crate::domain::conference::Conference],
+    conference_number: u32,
+    msgbase_number: u32,
+) -> Vec<u8> {
+    let (conference_name, msgbase_name) =
+        resolve_conference_strings(conferences, conference_number, msgbase_number);
+    crate::app::wire_text::explicit_join_line(conference_name, msgbase_name)
+}
+
+/// Resolves `(conference_name, msgbase_name)` for the wire-format
+/// helpers. The `msgbase_name` is `Some(_)` only when the
+/// conference holds more than one message base, mirroring the
+/// `getConfMsgBaseCount(conf)>1` branch in legacy `joinConf`.
+fn resolve_conference_strings(
+    conferences: &[crate::domain::conference::Conference],
+    conference_number: u32,
+    msgbase_number: u32,
+) -> (&str, Option<&str>) {
+    let Some(conference) = conferences.iter().find(|c| c.number() == conference_number) else {
+        return ("?", None);
+    };
+    let msgbase_name = if conference.msgbases().len() > 1 {
+        conference
+            .msgbases()
+            .iter()
+            .find(|m| m.number() == msgbase_number)
+            .map(crate::domain::conference::MessageBase::name)
+    } else {
+        None
+    };
+    (conference.name(), msgbase_name)
+}
+
 /// Recognises the Phase-4 `J` / `J <num>` menu command. Returns
 /// `None` for any other typed line so the menu loop can fall
 /// through to its existing dispatch (currently only `G`). Mirrors
@@ -205,15 +258,15 @@ where
         match onboarded.auto_rejoin_conference(conferences, SystemTime::now()) {
             AutoRejoinTransition::Joined {
                 session,
+                conference_number,
+                msgbase_number,
                 show_bulletin: _,
                 name_type_promoted_to,
-                ..
             } => {
+                let line = format_auto_rejoin_line(conferences, conference_number, msgbase_number);
+                self.write_and_flush(&line).await?;
                 self.render_name_type_promotion(name_type_promoted_to)
                     .await?;
-                let joined = self.services.screens().joined_screen().await;
-                self.terminal.write(&joined).await?;
-                self.terminal.flush().await?;
                 Ok(AutoRejoinResult::Joined(session))
             }
             AutoRejoinTransition::NoAccess(logging_off) => {
@@ -457,17 +510,15 @@ where
         }
     }
 
-    /// Handles a `J <num>` command from the menu (Slice 32). Renders
-    /// JOIN before resolution, the legacy "no access" notice when
-    /// the resolver fell through, the JOINED screen on success, and
-    /// any name-type promotion screen (Slice 34).
+    /// Handles a `J <num>` command from the menu (Slice 32). Writes
+    /// the legacy "no access" notice when the resolver fell through,
+    /// the inline `Joining Conference: <name>` announcement on
+    /// success, and any name-type promotion screen (Slice 34).
     async fn handle_explicit_join(
         &mut self,
         session: MenuSession,
         target_conference_number: u32,
     ) -> Result<ExplicitJoinResult, T::Error> {
-        let join_screen = self.services.screens().join_screen().await;
-        self.terminal.write(&join_screen).await?;
         let conferences = self.services.conferences();
         let outcome = session.explicit_join_conference(
             target_conference_number,
@@ -477,19 +528,24 @@ where
         match outcome {
             ExplicitJoinTransition::Joined {
                 session,
+                conference_number,
+                msgbase_number,
                 matched_request,
                 name_type_promoted_to,
                 ..
             } => {
+                // Compute the announcement bytes up-front so the
+                // immutable borrow on `self.services.conferences()`
+                // doesn't overlap the mutable borrows below.
+                let line =
+                    format_explicit_join_line(conferences, conference_number, msgbase_number);
                 if !matched_request {
                     self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
                         .await?;
                 }
+                self.write_and_flush(&line).await?;
                 self.render_name_type_promotion(name_type_promoted_to)
                     .await?;
-                let joined = self.services.screens().joined_screen().await;
-                self.terminal.write(&joined).await?;
-                self.terminal.flush().await?;
                 Ok(ExplicitJoinResult::Joined(session))
             }
             ExplicitJoinTransition::NoAccess(logging_off) => {
@@ -872,7 +928,58 @@ mod tests {
 
     use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 
-    use super::SessionDriver;
+    use super::{resolve_conference_strings, SessionDriver};
+
+    #[test]
+    fn resolve_conference_strings_returns_name_only_for_single_msgbase_conferences() {
+        // Mirrors `getConfMsgBaseCount(conf)>1 = false` branch in
+        // legacy `joinConf` (`amiexpress/express.e:5072`): the
+        // announcement omits the `[<msgbase>]` segment.
+        use crate::domain::conference::{Conference, MessageBase};
+        let confs = vec![Conference::new(
+            7,
+            "Solo".to_string(),
+            vec![MessageBase::new(7, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let (name, mb) = resolve_conference_strings(&confs, 7, 1);
+        assert_eq!(name, "Solo");
+        assert!(
+            mb.is_none(),
+            "single-msgbase conferences should not include a msgbase name"
+        );
+    }
+
+    #[test]
+    fn resolve_conference_strings_emits_msgbase_for_multi_msgbase_conferences() {
+        // Mirrors `getConfMsgBaseCount(conf)>1 = true` branch in
+        // legacy `joinConf` (`amiexpress/express.e:5070`): the
+        // announcement carries `[<msgbase>]`.
+        use crate::domain::conference::{Conference, MessageBase};
+        let confs = vec![Conference::new(
+            3,
+            "Tech-and-misc".to_string(),
+            vec![
+                MessageBase::new(3, 1, "main".to_string()),
+                MessageBase::new(3, 2, "tech".to_string()),
+            ],
+        )
+        .expect("valid")];
+        let (name, mb) = resolve_conference_strings(&confs, 3, 2);
+        assert_eq!(name, "Tech-and-misc");
+        assert_eq!(mb, Some("tech"));
+    }
+
+    #[test]
+    fn resolve_conference_strings_returns_question_mark_for_unknown_conference() {
+        // Defensive fallback: a conference number that's not in the
+        // catalogue produces "?". Today this is unreachable (the
+        // resolver only reports numbers that came from the
+        // catalogue) but the helper has to be total.
+        let (name, mb) = resolve_conference_strings(&[], 99, 1);
+        assert_eq!(name, "?");
+        assert!(mb.is_none());
+    }
 
     struct FakeTerminal {
         inputs: VecDeque<TerminalRead>,
@@ -941,14 +1048,6 @@ mod tests {
 
         fn no_new_users(&self) -> ScreenFuture<'_> {
             bytes(b"NO NEW USERS\r\n")
-        }
-
-        fn join_screen(&self) -> ScreenFuture<'_> {
-            bytes(b"JOIN\r\n")
-        }
-
-        fn joined_screen(&self) -> ScreenFuture<'_> {
-            bytes(b"JOINED\r\n")
         }
 
         fn joinconf_screen(&self) -> ScreenFuture<'_> {

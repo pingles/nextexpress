@@ -29,18 +29,15 @@ const FALLBACK_NEW_USER_PW: &[u8] = b"\r\nNew user registration.\r\n";
 /// why the connection is closing.
 const FALLBACK_NO_NEW_USERS: &[u8] = b"\r\nNew user registration is not available.\r\n";
 
-/// Built-in fallback for `Screens/JOIN.txt` (Slice 32). Rendered at
-/// the start of an explicit `J` join flow when no asset is on disk
-/// (`amiexpress/express.e:6582`).
-const FALLBACK_JOIN: &[u8] = b"\r\nJoining conference...\r\n";
-
-/// Built-in fallback for `Screens/JOINED.txt` (Slice 32). Rendered
-/// after a successful join (`amiexpress/express.e:6585`).
-const FALLBACK_JOINED: &[u8] = b"\r\nConference joined.\r\n";
-
 /// Built-in fallback for `Screens/JoinConf.txt` (Slice 32). Rendered
 /// as the prompt header for the no-arg `J` flow
 /// (`amiexpress/express.e:6588`).
+///
+/// `SCREEN_JOIN` / `SCREEN_JOINED` are intentionally absent: the
+/// conference-join wire output is hardcoded inline in legacy
+/// `joinConf` (`amiexpress/express.e:5071-5085`); the matching
+/// `SCREEN_JOIN` / `SCREEN_JOINED` files belong to the new-user
+/// registration flow (`:30057`, `:30125`).
 const FALLBACK_JOINCONF: &[u8] = b"\r\nJoin which conference?\r\n";
 
 /// Built-in fallback for `Screens/REALNAMES.txt` (Slice 34,
@@ -73,8 +70,6 @@ pub struct FileScreenRepository {
     conference_menu: Mutex<HashMap<(u32, u8), Vec<u8>>>,
     new_user_password: Mutex<Option<Vec<u8>>>,
     no_new_users: Mutex<Option<Vec<u8>>>,
-    join: Mutex<Option<Vec<u8>>>,
-    joined: Mutex<Option<Vec<u8>>>,
     joinconf: Mutex<Option<Vec<u8>>>,
     realnames: Mutex<Option<Vec<u8>>>,
     internetnames: Mutex<Option<Vec<u8>>>,
@@ -91,8 +86,6 @@ impl FileScreenRepository {
             conference_menu: Mutex::new(HashMap::new()),
             new_user_password: Mutex::new(None),
             no_new_users: Mutex::new(None),
-            join: Mutex::new(None),
-            joined: Mutex::new(None),
             joinconf: Mutex::new(None),
             realnames: Mutex::new(None),
             internetnames: Mutex::new(None),
@@ -223,16 +216,6 @@ impl FileScreenRepository {
             .await
     }
 
-    async fn join_bytes(&self) -> Vec<u8> {
-        let path = self.bbs_path.join("Screens").join("JOIN.txt");
-        self.cached_file(&self.join, &path, FALLBACK_JOIN).await
-    }
-
-    async fn joined_bytes(&self) -> Vec<u8> {
-        let path = self.bbs_path.join("Screens").join("JOINED.txt");
-        self.cached_file(&self.joined, &path, FALLBACK_JOINED).await
-    }
-
     async fn joinconf_bytes(&self) -> Vec<u8> {
         let path = self.bbs_path.join("Screens").join("JoinConf.txt");
         self.cached_file(&self.joinconf, &path, FALLBACK_JOINCONF)
@@ -274,14 +257,6 @@ impl ScreenRepository for FileScreenRepository {
 
     fn no_new_users(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.no_new_users_bytes().await })
-    }
-
-    fn join_screen(&self) -> ScreenFuture<'_> {
-        Box::pin(async move { self.join_bytes().await })
-    }
-
-    fn joined_screen(&self) -> ScreenFuture<'_> {
-        Box::pin(async move { self.joined_bytes().await })
     }
 
     fn joinconf_screen(&self) -> ScreenFuture<'_> {
@@ -542,39 +517,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn join_screen_falls_back_when_asset_is_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = FileScreenRepository::new(dir.path().to_path_buf());
-        assert_eq!(repo.join_screen().await, FALLBACK_JOIN);
-    }
-
-    #[tokio::test]
-    async fn join_screen_loads_from_disk_when_present() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
-        std::fs::write(
-            dir.path().join("Screens").join("JOIN.txt"),
-            b"JOINING NOW\x08\n",
-        )
-        .unwrap();
-        let repo = FileScreenRepository::new(dir.path().to_path_buf());
-        assert_eq!(repo.join_screen().await, b"JOINING NOW\r\n");
-    }
-
-    #[tokio::test]
-    async fn joined_screen_loads_from_disk_when_present() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
-        std::fs::write(
-            dir.path().join("Screens").join("JOINED.txt"),
-            b"WELCOME TO CONF\x08\n",
-        )
-        .unwrap();
-        let repo = FileScreenRepository::new(dir.path().to_path_buf());
-        assert_eq!(repo.joined_screen().await, b"WELCOME TO CONF\r\n");
-    }
-
-    #[tokio::test]
     async fn joinconf_screen_loads_from_disk_when_present() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
@@ -628,10 +570,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn joined_and_joinconf_fall_back_when_assets_are_missing() {
+    async fn joinconf_falls_back_when_asset_is_missing() {
         let dir = tempfile::tempdir().unwrap();
         let repo = FileScreenRepository::new(dir.path().to_path_buf());
-        assert_eq!(repo.joined_screen().await, FALLBACK_JOINED);
         assert_eq!(repo.joinconf_screen().await, FALLBACK_JOINCONF);
     }
 

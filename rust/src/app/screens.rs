@@ -33,25 +33,23 @@ pub trait ScreenRepository {
     /// per-conference asset is on disk.
     fn conference_menu(&self, conference_number: u32, access_level: u8) -> ScreenFuture<'_>;
 
-    /// Returns the `SCREEN_JOIN` asset (`Screens/JOIN.txt`,
-    /// `amiexpress/express.e:6582-6584`). Rendered at the start of
-    /// the join sub-flow when a user explicitly types `J` from the
-    /// menu (Slice 32). When the asset is missing the adapter
-    /// returns a built-in fallback that names the action.
-    fn join_screen(&self) -> ScreenFuture<'_>;
-
-    /// Returns the `SCREEN_JOINED` asset (`Screens/JOINED.txt`,
-    /// `amiexpress/express.e:6585-6587`). Rendered after the
-    /// session has successfully attached to the requested
-    /// conference (Slice 32). When the asset is missing the adapter
-    /// returns a built-in confirmation line.
-    fn joined_screen(&self) -> ScreenFuture<'_>;
-
     /// Returns the `SCREEN_JOINCONF` asset
     /// (`Screens/JoinConf.txt`, `amiexpress/express.e:6588-6590`).
     /// Rendered as the prompt header when the user typed `J`
     /// without a conference number and the listener is asking which
     /// conference to join (`amiexpress/express.e:25143`).
+    ///
+    /// `SCREEN_JOIN` and `SCREEN_JOINED` (`Screens/JOIN.txt`,
+    /// `Screens/JOINED.txt`) are deliberately *not* part of the
+    /// conference-join port: in the legacy source they are
+    /// new-user-flow welcome screens displayed by
+    /// `processNewUserRegistration` (`amiexpress/express.e:30057`,
+    /// `:30125`), not by `joinConf`. The conference-join wire
+    /// output (`Conference <n>: <name> Auto-ReJoined` /
+    /// `Joining Conference: <name>`) is hardcoded inline at
+    /// `amiexpress/express.e:5071-5085` and rendered by the driver
+    /// via [`crate::app::wire_text::auto_rejoin_line`] /
+    /// [`crate::app::wire_text::explicit_join_line`].
     fn joinconf_screen(&self) -> ScreenFuture<'_>;
 
     /// Returns the `SCREEN_REALNAMES` asset (Slice 34,

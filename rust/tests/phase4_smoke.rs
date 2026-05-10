@@ -139,9 +139,11 @@ fn walk_phase4_conference_flow(addr: &str) -> Result<(), String> {
             String::from_utf8_lossy(&post_auth)
         ));
     }
-    if !contains(&post_auth, b"Conference joined.") {
+    // Legacy `joinConf` (`amiexpress/express.e:5073`) emits
+    // `Conference <n>: <name> Auto-ReJoined` on auto-rejoin.
+    if !contains(&post_auth, b"Conference 1: Main Auto-ReJoined") {
         return Err(format!(
-            "expected JOINED fallback line after auto-rejoin, got {:?}",
+            "expected legacy auto-rejoin announcement after auto-rejoin, got {:?}",
             String::from_utf8_lossy(&post_auth)
         ));
     }
@@ -156,9 +158,13 @@ fn walk_phase4_conference_flow(addr: &str) -> Result<(), String> {
             String::from_utf8_lossy(&post_j)
         ));
     }
-    if !contains(&post_j, b"Joining conference") && !contains(&post_j, b"Conference joined.") {
+    // Legacy `joinConf` (`amiexpress/express.e:5083`) emits
+    // `\x1b[32mJoining Conference\x1b[33m:\x1b[0m <name>` on
+    // explicit join. The ANSI escapes carry colour; the readable
+    // text is `Joining Conference: Programming`.
+    if !contains(&post_j, b"Joining Conference") || !contains(&post_j, b"Programming") {
         return Err(format!(
-            "expected JOIN / JOINED fallback lines after `J 2`, got {:?}",
+            "expected legacy `Joining Conference: Programming` line after `J 2`, got {:?}",
             String::from_utf8_lossy(&post_j)
         ));
     }

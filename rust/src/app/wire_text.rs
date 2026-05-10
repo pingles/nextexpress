@@ -163,3 +163,105 @@ pub(crate) const JOIN_REQUIRES_NUMBER_LINE: &[u8] = b"\r\nUsage: J <conference-n
 /// Sent when `J <something>` cannot be parsed as a conference
 /// number.
 pub(crate) const INVALID_CONFERENCE_NUMBER_LINE: &[u8] = b"\r\nInvalid conference number.\r\n";
+
+/// Formats the auto-rejoin announcement (Slice 30 / Slice 34a).
+/// Mirrors the legacy `joinConf` output at
+/// `amiexpress/express.e:5071-5073`:
+///
+/// ```text
+///   Conference <n>: <name> Auto-ReJoined          (single msgbase)
+///   Conference <n>: <name> [<msgbase>] Auto-ReJoined (multiple msgbases)
+/// ```
+///
+/// `\b\n` in the legacy source becomes telnet `\r\n` on the wire
+/// (lines 5065 and 5088 wrap the announcement with one CRLF on
+/// either side). `msgbase_name` is `Some(_)` only when the
+/// conference holds more than one message base, mirroring the
+/// `getConfMsgBaseCount(conf)>1` branch in the legacy.
+pub(crate) fn auto_rejoin_line(
+    conference_number: u32,
+    conference_name: &str,
+    msgbase_name: Option<&str>,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(conference_name.len() + 32);
+    out.extend_from_slice(b"\r\nConference ");
+    out.extend_from_slice(conference_number.to_string().as_bytes());
+    out.extend_from_slice(b": ");
+    out.extend_from_slice(conference_name.as_bytes());
+    if let Some(mb) = msgbase_name {
+        out.extend_from_slice(b" [");
+        out.extend_from_slice(mb.as_bytes());
+        out.push(b']');
+    }
+    out.extend_from_slice(b" Auto-ReJoined\r\n");
+    out
+}
+
+/// Formats the explicit-join announcement (Slice 32 / Slice 34a).
+/// Mirrors the legacy `joinConf` output at
+/// `amiexpress/express.e:5079-5083`:
+///
+/// ```text
+///   <ESC>[32mJoining Conference<ESC>[33m:<ESC>[0m <name>
+///   <ESC>[32mJoining Conference<ESC>[33m:<ESC>[0m <name> [<msgbase>]
+/// ```
+///
+/// The ANSI colour escapes are emitted verbatim — the legacy
+/// listener (and ours, by way of `aePuts`) writes them to the wire
+/// when `ansiColour` is true; clients without colour rendering
+/// still receive the readable text in between.
+pub(crate) fn explicit_join_line(conference_name: &str, msgbase_name: Option<&str>) -> Vec<u8> {
+    let mut out = Vec::with_capacity(conference_name.len() + 48);
+    out.extend_from_slice(b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m ");
+    out.extend_from_slice(conference_name.as_bytes());
+    if let Some(mb) = msgbase_name {
+        out.extend_from_slice(b" [");
+        out.extend_from_slice(mb.as_bytes());
+        out.push(b']');
+    }
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_rejoin_line_single_msgbase_matches_legacy_format() {
+        // `amiexpress/express.e:5073` —
+        // `Conference \d: \s Auto-ReJoined` wrapped with CRLFs.
+        assert_eq!(
+            auto_rejoin_line(1, "Main", None),
+            b"\r\nConference 1: Main Auto-ReJoined\r\n",
+        );
+    }
+
+    #[test]
+    fn auto_rejoin_line_includes_msgbase_when_supplied() {
+        // `amiexpress/express.e:5071` — `\d: \s [\s] Auto-ReJoined`.
+        assert_eq!(
+            auto_rejoin_line(2, "Programming", Some("tech")),
+            b"\r\nConference 2: Programming [tech] Auto-ReJoined\r\n",
+        );
+    }
+
+    #[test]
+    fn explicit_join_line_single_msgbase_matches_legacy_ansi_format() {
+        // `amiexpress/express.e:5083` — ESC sequences carry colour;
+        // text is `Joining Conference: <name>`.
+        assert_eq!(
+            explicit_join_line("Main", None),
+            b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Main\r\n",
+        );
+    }
+
+    #[test]
+    fn explicit_join_line_includes_msgbase_when_supplied() {
+        // `amiexpress/express.e:5079` — multi-msgbase variant.
+        assert_eq!(
+            explicit_join_line("Programming", Some("tech")),
+            b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Programming [tech]\r\n",
+        );
+    }
+}
