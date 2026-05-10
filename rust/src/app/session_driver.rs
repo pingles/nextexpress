@@ -17,7 +17,9 @@ use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use crate::app::services::AppServices;
-use crate::app::session_flow::{self, NewUserProfile, NewUserRegistrationFlow};
+use crate::app::session_flow::{
+    self, NewUserProfile, NewUserRegistrationFlow, NEW_USER_REGISTRATION_LITERAL,
+};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::typed_session::{
     AuthenticatingSession, AutoRejoinTransition, ConnectingSession, EndedSession,
@@ -716,6 +718,7 @@ where
             };
             let trimmed = typed.trim();
             let available = !trimmed.is_empty()
+                && trimmed != NEW_USER_REGISTRATION_LITERAL
                 && matches!(
                     self.services.user_repo().find_by_handle(trimmed),
                     NameLookupResult::NotFound
@@ -1154,5 +1157,56 @@ mod tests {
             .entries()
             .iter()
             .any(|entry| entry.text.contains("Logoff:") && entry.text.contains("alice")));
+    }
+
+    #[tokio::test]
+    async fn registration_handle_prompt_rejects_new_literal() {
+        // After moving the NEW literal out of UserRepository the
+        // registration handle prompt has to explicitly reject the
+        // command word; otherwise a user could register themselves
+        // under the same name the login flow uses to trigger
+        // registration in the first place.
+        let repo = Arc::new(InMemoryUserRepository::new(vec![]));
+        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+        let caller_log = Arc::new(InMemoryCallerLog::new());
+        let screens = Arc::new(StaticScreens);
+        let gate = NewUserGateConfig {
+            allow_new_users: true,
+            new_user_password: None,
+            max_new_user_password_attempts: 3,
+        };
+        let ratio = DefaultRatio {
+            mode: RatioMode::ByFiles,
+            value: 3,
+        };
+        let services = AppServices::new(
+            repo,
+            hasher,
+            caller_log,
+            screens,
+            Arc::new(vec![]),
+            SessionPolicy::default(),
+            ratio,
+            gate,
+        );
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("NEW".to_string()),
+            // First registration handle attempt — should be rejected.
+            TerminalRead::Line("NEW".to_string()),
+            // EOF ends the run; the test only cares that we
+            // see HANDLE_TAKEN_LINE after the NEW attempt.
+            TerminalRead::Eof,
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver.run().await.expect("driver completes");
+
+        let terminal = driver.into_terminal();
+        let output = terminal.output();
+        let taken = b"That name is taken.";
+        assert!(
+            output.windows(taken.len()).any(|w| w == taken),
+            "expected handle-taken line to appear after typing NEW at the registration prompt",
+        );
     }
 }

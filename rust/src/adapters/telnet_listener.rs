@@ -1334,7 +1334,7 @@ mod tests {
                     "new user starts with no grants"
                 );
             }
-            other => panic!("expected newbie to be created, got {other:?}"),
+            NameLookupResult::NotFound => panic!("expected newbie to be created"),
         }
 
         // FinaliseLogoff still runs; the caller log carries a logoff
@@ -1613,7 +1613,7 @@ mod tests {
             NameLookupResult::Found(user) => {
                 assert!(user.is_new_user());
             }
-            other => panic!("expected newbie to be created, got {other:?}"),
+            NameLookupResult::NotFound => panic!("expected newbie to be created"),
         }
     }
 }

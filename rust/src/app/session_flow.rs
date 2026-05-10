@@ -57,13 +57,23 @@ pub enum FinaliseLogoffFlowError {
     Save(#[from] UserRepositoryError),
 }
 
+/// Login-command literal that triggers the new-user registration
+/// branch of `session.allium:NameTyped`. The legacy `AmiExpress`
+/// source recognises this at the name prompt; keeping it next to the
+/// `name_typed` flow (rather than inside `UserRepository`) means
+/// repository adapters stay pure storage.
+pub const NEW_USER_REGISTRATION_LITERAL: &str = "NEW";
+
 /// Handles `session.allium:NameTyped`.
 ///
-/// Looks up `typed` through `repo`, then applies the matching
-/// [`Session`] transition. The `user_typed_NEW` branch additionally
-/// fires the on-enter cluster for `new_user_registering`
-/// (`RejectDisallowedRegistration` and `InitialiseNewUserGate`,
-/// Slice 20a) using `gate`.
+/// Resolves `typed` to one of three branches:
+///
+/// 1. `NEW_USER_REGISTRATION_LITERAL` — fires the on-enter cluster
+///    for `new_user_registering` (`RejectDisallowedRegistration` and
+///    `InitialiseNewUserGate`, Slice 20a) using `gate`.
+/// 2. Known handle in `repo` — binds the user and moves to
+///    authentication.
+/// 3. Unknown handle — records the miss for the unknown-name rule.
 ///
 /// # Errors
 /// Returns [`NameTypedError::WrongState`] when `session` is not in
@@ -82,22 +92,23 @@ where
         return Err(NameTypedError::WrongState(session.state()));
     }
 
+    if typed == NEW_USER_REGISTRATION_LITERAL {
+        let outcome = session.record_new_user_request(
+            gate.allow_new_users,
+            gate.new_user_password.is_some(),
+            now,
+        )?;
+        return Ok(match outcome {
+            NewUserRequestOutcome::Initialised { password_required } => {
+                NameTypedOutcome::NewUserRegistering { password_required }
+            }
+            NewUserRequestOutcome::Rejected => NameTypedOutcome::NewUserRegistrationDisallowed,
+        });
+    }
+
     match repo.find_by_handle(typed) {
         NameLookupResult::Found(user) => session.record_identified_user(typed, *user),
         NameLookupResult::NotFound => session.record_unknown_name(now),
-        NameLookupResult::UserTypedNew => {
-            let outcome = session.record_new_user_request(
-                gate.allow_new_users,
-                gate.new_user_password.is_some(),
-                now,
-            )?;
-            Ok(match outcome {
-                NewUserRequestOutcome::Initialised { password_required } => {
-                    NameTypedOutcome::NewUserRegistering { password_required }
-                }
-                NewUserRequestOutcome::Rejected => NameTypedOutcome::NewUserRegistrationDisallowed,
-            })
-        }
     }
 }
 
@@ -837,9 +848,6 @@ mod tests {
 
     impl UserRepository for TestRepo {
         fn find_by_handle(&self, typed: &str) -> NameLookupResult {
-            if typed == "NEW" {
-                return NameLookupResult::UserTypedNew;
-            }
             let users = self.users.lock().unwrap();
             if let Some(user) = users.iter().find(|u| u.handle() == typed) {
                 NameLookupResult::Found(Box::new(user.clone()))
@@ -1443,7 +1451,7 @@ mod tests {
                 assert_eq!(user.location(), Some("Townsville"));
                 assert_eq!(user.email(), Some("newbie@example.com"));
             }
-            other => panic!("expected found, got {other:?}"),
+            NameLookupResult::NotFound => panic!("expected newbie to be created"),
         }
         // Fresh new user is not rejected, so no caller-log entry.
         assert!(log.entries().is_empty());

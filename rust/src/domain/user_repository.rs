@@ -12,16 +12,18 @@ use crate::domain::user::{User, UserError};
 /// boxes the [`User`] payload so the enum stays small as new optional
 /// fields land on `User`; this matters because the enum is returned
 /// by every name lookup the BBS performs.
+///
+/// Application-level command literals such as the `NEW` registration
+/// keyword are recognised by the login flow before the lookup reaches
+/// the repository, so the port stays pure storage.
 #[derive(Debug, Clone)]
 pub enum NameLookupResult {
     /// A user with that handle exists. The repository returns the
     /// resolved record with the lookup result to avoid a second
     /// lookup/use race.
     Found(Box<User>),
-    /// No user matches and the input was not the new-user literal.
+    /// No user matches the typed handle.
     NotFound,
-    /// The literal `NEW` — request to register a new account.
-    UserTypedNew,
 }
 
 /// Errors returned by [`UserRepository::save`].

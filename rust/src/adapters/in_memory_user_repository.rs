@@ -29,9 +29,6 @@ impl InMemoryUserRepository {
 
 impl UserRepository for InMemoryUserRepository {
     fn find_by_handle(&self, typed: &str) -> NameLookupResult {
-        if typed == "NEW" {
-            return NameLookupResult::UserTypedNew;
-        }
         let users = self.users.lock().expect("user repository mutex");
         if let Some(user) = users.iter().find(|u| u.handle() == typed) {
             NameLookupResult::Found(Box::new(user.clone()))
@@ -112,7 +109,7 @@ mod tests {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
         match repo.find_by_handle("alice") {
             NameLookupResult::Found(user) => assert_eq!(user.handle(), "alice"),
-            other => panic!("expected found, got {other:?}"),
+            NameLookupResult::NotFound => panic!("expected found, got not-found"),
         }
     }
 
@@ -126,11 +123,14 @@ mod tests {
     }
 
     #[test]
-    fn literal_new_keyword_returns_user_typed_new() {
+    fn literal_new_keyword_is_pure_storage_lookup() {
+        // The `NEW` registration literal is recognised by the login
+        // flow before reaching the repository, so the port treats it
+        // as any other handle.
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
         assert!(matches!(
             repo.find_by_handle("NEW"),
-            NameLookupResult::UserTypedNew
+            NameLookupResult::NotFound
         ));
     }
 
@@ -152,7 +152,7 @@ mod tests {
 
         match repo.find_by_handle("alice") {
             NameLookupResult::Found(user) => assert_eq!(user.times_called(), 1),
-            other => panic!("expected found, got {other:?}"),
+            NameLookupResult::NotFound => panic!("expected found, got not-found"),
         }
     }
 
