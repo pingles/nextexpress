@@ -21,6 +21,12 @@
             "command": "output=$(make -C \"$CLAUDE_PROJECT_DIR\" clippy 2>&1) || echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Clippy failed - fix before stopping:\\n\" + .)}'",
             "statusMessage": "Running cargo clippy",
             "timeout": 300
+          },
+          {
+            "type": "command",
+            "command": "output=$(make -C \"$CLAUDE_PROJECT_DIR\" test 2>&1) || echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Tests failed - fix before stopping:\\n\" + .)}'",
+            "statusMessage": "Running cargo nextest",
+            "timeout": 300
           }
         ]
       }
