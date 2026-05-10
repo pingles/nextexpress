@@ -7,6 +7,8 @@ MANIFEST    := --manifest-path rust/Cargo.toml
 BIN         := nextexpress
 RELEASE_BIN := rust/target/release/$(BIN)
 SOURCES     := $(shell find rust/src -name '*.rs') rust/Cargo.toml rust/Cargo.lock
+MUTANTS_LOG := target/mutants-run.log
+MUTANTS_ARGS ?=
 
 .PHONY: all build test doctest mutants check fmt clippy clean
 
@@ -29,7 +31,8 @@ doctest:
 	cargo test $(MANIFEST) --doc
 
 mutants:
-	cd rust && cargo mutants
+	mkdir -p rust/target
+	cd rust && bash -o pipefail -c 'cargo mutants $(MUTANTS_ARGS) 2>&1 | tee $(MUTANTS_LOG)'
 
 # Mirrors the "Before Committing" checklist in AGENTS.md.
 check:
@@ -37,7 +40,8 @@ check:
 	cargo clippy $(MANIFEST) --all-targets -- -D warnings
 	cargo nextest run $(MANIFEST)
 	cargo test $(MANIFEST) --doc
-	cd rust && cargo mutants
+	mkdir -p rust/target
+	cd rust && bash -o pipefail -c 'cargo mutants $(MUTANTS_ARGS) 2>&1 | tee $(MUTANTS_LOG)'
 
 fmt:
 	cargo fmt $(MANIFEST)
