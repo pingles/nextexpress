@@ -4,16 +4,43 @@
 //! Presentation booleans, time accounting, temp access and reserved-for
 //! arrive in their owning slices.
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use crate::domain::caller_log::CallerLog;
-use crate::domain::password::{PasswordError, PasswordHashKind};
 use crate::domain::user::User;
+
+mod budget;
+mod errors;
+mod lockout;
+mod log_format;
+mod outcomes;
+mod transitions;
+
+#[cfg(test)]
+use log_format::floor_to_day;
+use log_format::{format_logoff_line, format_logon_line};
+use transitions::is_session_transition_allowed;
 
 /// Maximum number of unknown handle entries before a session is ended.
 const MAX_NAME_RETRIES: u32 = 5;
 
 pub use crate::domain::session_policy::{PasswordFailureDecision, SessionPolicy};
+pub use budget::{initialise_daily_budget, tick_minute};
+pub use errors::{
+    AcceptConnectionError, CarrierLostError, CompleteNewUserRegistrationError,
+    CompletePasswordResetError, EnterMenuError, ForcePasswordResetError, IdleTimeoutError,
+    InitialiseDailyBudgetError, NameTypedError, TickMinuteError, VerifyNewUserPasswordError,
+    VerifyPasswordError,
+};
+pub use lockout::{
+    apply_password_change, apply_password_match, apply_password_mismatch,
+    force_password_reset_if_due,
+};
+pub use outcomes::{
+    NameTypedOutcome, NewUserPasswordOutcome, NewUserRequestOutcome, TickMinuteOutcome,
+    VerifyPasswordOutcome,
+};
+pub use transitions::SessionTransitionError;
 
 /// How the user reached the BBS (spec: `session.allium:LogonChannel`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -977,52 +1004,6 @@ impl Session {
         Ok(self.on_enter_onboarded(policy, now))
     }
 
-    /// Applies the matching branch of `session.allium:VerifyPassword`.
-    ///
-    /// Clears `user.invalid_attempts`, sets `authenticated_at`, and
-    /// transitions to [`SessionState::Onboarded`], then fires the
-    /// `state becomes onboarded` rule cluster via
-    /// [`Session::on_enter_onboarded`].
-    ///
-    /// # Returns
-    /// A tuple of:
-    /// - the [`VerifyPasswordOutcome`] — `Authenticated` on the normal
-    ///   path, or `LogonRejected` when
-    ///   `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
-    ///   short-circuited the post-auth cluster;
-    /// - an optional [`CallerLog`] entry the rejection rule emits.
-    ///   The caller is responsible for appending this to the log.
-    ///
-    /// # Errors
-    /// Returns [`VerifyPasswordError::WrongState`] if the session is
-    /// not in [`SessionState::Authenticating`].
-    pub fn apply_password_match(
-        &mut self,
-        policy: SessionPolicy,
-        now: SystemTime,
-    ) -> Result<(VerifyPasswordOutcome, Option<CallerLog>), VerifyPasswordError> {
-        let SessionPhase::Authenticating { user, .. } = &mut self.phase else {
-            return Err(VerifyPasswordError::WrongState(self.state()));
-        };
-        user.clear_invalid_attempts();
-        let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
-        let SessionPhase::Authenticating { user, .. } = previous else {
-            unreachable!("phase checked above");
-        };
-        self.phase = SessionPhase::Onboarded {
-            user,
-            authenticated_at: now,
-            time_remaining: Duration::ZERO,
-        };
-        let rejection = self.on_enter_onboarded(policy, now);
-        let outcome = if rejection.is_some() {
-            VerifyPasswordOutcome::LogonRejected
-        } else {
-            VerifyPasswordOutcome::Authenticated
-        };
-        Ok((outcome, rejection))
-    }
-
     /// Fires every spec rule whose `when` clause is the transition
     /// into [`SessionState::Onboarded`].
     ///
@@ -1050,7 +1031,11 @@ impl Session {
     /// user bound — both invariants the caller is required to have
     /// just established by the transition. The guard violations are
     /// programmer errors, not runtime failures.
-    fn on_enter_onboarded(&mut self, policy: SessionPolicy, now: SystemTime) -> Option<CallerLog> {
+    pub(super) fn on_enter_onboarded(
+        &mut self,
+        policy: SessionPolicy,
+        now: SystemTime,
+    ) -> Option<CallerLog> {
         assert_eq!(
             self.state(),
             SessionState::Onboarded,
@@ -1063,9 +1048,9 @@ impl Session {
         if let Some(entry) = self.reject_locked_or_insufficient_access(now) {
             return Some(entry);
         }
-        self.initialise_daily_budget(now, policy.daily_reset_offset())
+        budget::initialise_daily_budget(self, now, policy.daily_reset_offset())
             .expect("guards hold immediately after transition to Onboarded");
-        self.force_password_reset_if_due(policy.password_expiry_days(), now)
+        lockout::force_password_reset_if_due(self, policy.password_expiry_days(), now)
             .expect("guards hold immediately after transition to Onboarded");
         None
     }
@@ -1113,565 +1098,14 @@ impl Session {
             is_password_failure: false,
         })
     }
-
-    /// `session.allium:ForcePasswordReset` rule (Slice 15).
-    ///
-    /// Sets `user.force_password_reset` when `password_expiry_days >
-    /// 0` and the elapsed time since `password_last_updated` exceeds
-    /// that many days, **or** when the sysop has already set the flag
-    /// on the user. The rule is a no-op for locked accounts (per the
-    /// spec's `requires: not user.account_locked`).
-    ///
-    /// # Errors
-    /// Returns [`ForcePasswordResetError::WrongState`] when the
-    /// session is not in [`SessionState::Onboarded`].
-    pub fn force_password_reset_if_due(
-        &mut self,
-        password_expiry_days: u32,
-        now: SystemTime,
-    ) -> Result<(), ForcePasswordResetError> {
-        let SessionPhase::Onboarded { user, .. } = &mut self.phase else {
-            return Err(ForcePasswordResetError::WrongState(self.state()));
-        };
-        if user.is_account_locked() {
-            return Ok(());
-        }
-        let already_flagged = user.force_password_reset();
-        let expired = password_expiry_days > 0
-            && now
-                .duration_since(user.password_last_updated())
-                .map(|d| d > Duration::from_secs(u64::from(password_expiry_days) * 86_400))
-                .unwrap_or(false);
-        if expired || already_flagged {
-            user.set_force_password_reset(true);
-        }
-        Ok(())
-    }
-
-    /// Applies `session.allium:CompletePasswordReset` to the bound
-    /// user (Slice 15).
-    ///
-    /// Replaces the user's stored credentials with the freshly
-    /// computed `(hash, salt, kind)` triple, sets
-    /// `password_last_updated = now`, and clears
-    /// `force_password_reset`. The strength check and
-    /// "differs-from-old" check are the caller's responsibility (see
-    /// `app::session_flow::complete_password_reset`).
-    ///
-    /// # Errors
-    /// Returns [`CompletePasswordResetError::WrongState`] when the
-    /// session is not in [`SessionState::Onboarded`], or
-    /// [`CompletePasswordResetError::ResetNotPending`] when the bound
-    /// user does not have `force_password_reset` set.
-    pub fn apply_password_change(
-        &mut self,
-        hash: String,
-        salt: Option<String>,
-        kind: PasswordHashKind,
-        now: SystemTime,
-    ) -> Result<(), CompletePasswordResetError> {
-        let SessionPhase::Onboarded { user, .. } = &mut self.phase else {
-            return Err(CompletePasswordResetError::WrongState(self.state()));
-        };
-        if !user.force_password_reset() {
-            return Err(CompletePasswordResetError::ResetNotPending);
-        }
-        user.record_password_change(hash, salt, kind, now);
-        Ok(())
-    }
-
-    /// Applies the non-matching branch of `session.allium:VerifyPassword`.
-    ///
-    /// Increments `user.invalid_attempts` and `password_retry_count`,
-    /// returns the caller-log "Password failure" entry, and may move the
-    /// session to [`SessionState::LoggingOff`] when the
-    /// [`SessionPolicy`] failure limit is reached.
-    ///
-    /// # Errors
-    /// Returns [`VerifyPasswordError::WrongState`] if the session is
-    /// not in [`SessionState::Authenticating`].
-    pub fn apply_password_mismatch(
-        &mut self,
-        policy: SessionPolicy,
-        now: SystemTime,
-    ) -> Result<(VerifyPasswordOutcome, CallerLog), VerifyPasswordError> {
-        let SessionPhase::Authenticating {
-            user,
-            password_retry_count,
-            ..
-        } = &mut self.phase
-        else {
-            return Err(VerifyPasswordError::WrongState(self.state()));
-        };
-        user.bump_invalid_attempts();
-        *password_retry_count = (*password_retry_count).saturating_add(1);
-
-        let entry = CallerLog {
-            session_node: self.shared.node_number,
-            at: now,
-            text: "Password failure".to_string(),
-            is_password_failure: true,
-        };
-
-        let outcome = match policy.password_failure_decision(self) {
-            PasswordFailureDecision::LockAccount => {
-                let SessionPhase::Authenticating { user, .. } = &mut self.phase else {
-                    unreachable!("phase checked before password failure decision");
-                };
-                user.lock_account();
-                self.move_to_logging_off(Some(LogoffReason::LockedAccount));
-                VerifyPasswordOutcome::AccountLocked
-            }
-            PasswordFailureDecision::EndSession => {
-                self.move_to_logging_off(Some(LogoffReason::ExcessivePasswordFails));
-                VerifyPasswordOutcome::TooManyFailures
-            }
-            PasswordFailureDecision::Continue => VerifyPasswordOutcome::NotMatching,
-        };
-        Ok((outcome, entry))
-    }
-
-    /// `session.allium:InitialiseDailyBudget` rule (Slice 14).
-    ///
-    /// Fires once the session has reached
-    /// [`SessionState::Onboarded`]. If `now` falls in a different
-    /// accounting day from the user's previous `last_call`, the daily
-    /// counters reset; otherwise `times_called_today` increments.
-    /// `time_remaining` is then set to `user.time_limit_per_call`.
-    ///
-    /// The accounting day boundary is `daily_reset_offset` past
-    /// midnight UTC (the legacy `AmiExpress` default is six hours, so
-    /// the day rolls over at 06:00 UTC).
-    ///
-    /// # Errors
-    /// Returns [`InitialiseDailyBudgetError::WrongState`] when the
-    /// session is not in [`SessionState::Onboarded`].
-    pub fn initialise_daily_budget(
-        &mut self,
-        now: SystemTime,
-        daily_reset_offset: Duration,
-    ) -> Result<(), InitialiseDailyBudgetError> {
-        let SessionPhase::Onboarded {
-            user,
-            time_remaining,
-            ..
-        } = &mut self.phase
-        else {
-            return Err(InitialiseDailyBudgetError::WrongState(self.state()));
-        };
-
-        let today = floor_to_day(now, daily_reset_offset);
-        let last_call_day = user
-            .last_call()
-            .map(|t| floor_to_day(t, daily_reset_offset));
-        let is_new_day = last_call_day.is_none_or(|d| d != today);
-
-        if is_new_day {
-            user.reset_daily_counters();
-        } else {
-            user.bump_times_called_today();
-        }
-        *time_remaining = user.time_limit_per_call();
-        Ok(())
-    }
-
-    /// `session.allium:UpdateTimeUsed` + `TimeExpired` rules (Slice 14).
-    ///
-    /// Decrements [`Self::time_remaining`] by one minute (saturating at
-    /// zero) and accumulates the same minute against
-    /// `user.time_used_today`. If `time_remaining` reaches zero the
-    /// session transitions to [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::OutOfTime`].
-    ///
-    /// # Errors
-    /// Returns [`TickMinuteError::WrongState`] when the session is not
-    /// in [`SessionState::Onboarded`] or [`SessionState::Menu`].
-    pub fn tick_minute(&mut self) -> Result<TickMinuteOutcome, TickMinuteError> {
-        let expired = match &mut self.phase {
-            SessionPhase::Onboarded {
-                user,
-                time_remaining,
-                ..
-            }
-            | SessionPhase::Menu {
-                user,
-                time_remaining,
-                ..
-            } => {
-                user.add_time_used_today(Duration::from_secs(60));
-                *time_remaining = time_remaining.saturating_sub(Duration::from_secs(60));
-                time_remaining.is_zero()
-            }
-            _ => return Err(TickMinuteError::WrongState(self.state())),
-        };
-        if expired {
-            self.move_to_logging_off(Some(LogoffReason::OutOfTime));
-            Ok(TickMinuteOutcome::TimeExpired)
-        } else {
-            Ok(TickMinuteOutcome::Continued)
-        }
-    }
-}
-
-/// Errors returned by [`Session::accept_connection`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum AcceptConnectionError {
-    /// The node already has a non-ended session bound to it.
-    #[error("node already has an active session")]
-    AlreadyActiveSession,
-}
-
-/// Outcome of [`Session::name_typed`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NameTypedOutcome {
-    /// User found; session has moved to authenticating and is ready
-    /// for [`Session::user`] to drive the password prompt.
-    Authenticated,
-    /// Handle did not match any user. The retry counter has been
-    /// incremented. The listener should re-prompt.
-    NotFound,
-    /// Five not-found strikes in a row. The session has ended with
-    /// [`LogoffReason::NewUserRejected`].
-    SessionEnded,
-    /// The literal `NEW` was typed and registration is permitted. The
-    /// session is in [`SessionState::NewUserRegistering`]; the listener
-    /// now drives the registration sub-flow. `password_required` is
-    /// `true` when the new-user password gate (Slice 20a) is armed
-    /// and must pass before [`Session::complete_new_user_registration`]
-    /// will accept the form.
-    NewUserRegistering { password_required: bool },
-    /// The literal `NEW` was typed but registration is disabled
-    /// (`core/config.allow_new_users = false`). The session has
-    /// already moved to [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::NewUserRejected`] via
-    /// `RejectDisallowedRegistration`; the caller should run
-    /// `FinaliseLogoff`.
-    NewUserRegistrationDisallowed,
-}
-
-/// Outcome of [`Session::record_new_user_request`]. Mirrors the spec's
-/// `becomes new_user_registering` cluster: the transition either
-/// initialises the gate (Initialised) or is short-circuited by
-/// `RejectDisallowedRegistration` (Rejected).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NewUserRequestOutcome {
-    /// `core/config.allow_new_users = true`. The session is in
-    /// [`SessionState::NewUserRegistering`] with gate state
-    /// initialised. `password_required` is `true` when the
-    /// `new_user_password` gate must pass before completion.
-    Initialised {
-        /// Mirrors `core/config.new_user_password != null`.
-        password_required: bool,
-    },
-    /// `core/config.allow_new_users = false`. The session has
-    /// transitioned to [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::NewUserRejected`].
-    Rejected,
-}
-
-/// Outcome of [`Session::apply_new_user_password_attempt`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NewUserPasswordOutcome {
-    /// The candidate matched. The gate is now verified and
-    /// [`Session::complete_new_user_registration`] may proceed once
-    /// the registration form is collected.
-    Verified,
-    /// The candidate did not match. The attempt counter has been
-    /// incremented and a caller-log entry returned. The listener
-    /// should re-prompt.
-    Mismatch,
-    /// The attempt counter has reached
-    /// `core/config.max_new_user_password_attempts`. The session has
-    /// moved to [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::NewUserRejected`].
-    TooManyFailures,
-}
-
-/// Errors returned by [`Session::apply_new_user_password_attempt`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum VerifyNewUserPasswordError {
-    /// The session is not in [`SessionState::NewUserRegistering`].
-    #[error("apply_new_user_password_attempt in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// The gate has already passed for this session; the caller
-    /// should stop prompting.
-    #[error("new-user password gate already verified")]
-    AlreadyVerified,
-}
-
-/// Errors returned by [`Session::name_typed`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum NameTypedError {
-    /// The session is not in [`SessionState::Identifying`].
-    #[error("name typed in unexpected state: {0:?}")]
-    WrongState(SessionState),
-}
-
-/// Outcome of [`Session::verify_password`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerifyPasswordOutcome {
-    /// Credentials match. The session has moved to
-    /// [`SessionState::Onboarded`], `authenticated_at` is set, and
-    /// `user.invalid_attempts` is cleared.
-    Authenticated,
-    /// Credentials do not match. The session stays in
-    /// [`SessionState::Authenticating`]; the listener should re-prompt.
-    NotMatching,
-    /// `user.invalid_attempts` reached `max_password_failures`. The
-    /// account is now locked, the session has moved to
-    /// [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::LockedAccount`].
-    AccountLocked,
-    /// `password_retry_count` reached `max_password_failures` for
-    /// this session. The session has moved to
-    /// [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::ExcessivePasswordFails`].
-    TooManyFailures,
-    /// Credentials matched, but
-    /// `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
-    /// short-circuited the post-auth rule cluster: the user's
-    /// account was already locked or below the minimum access tier.
-    /// The session has moved to [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::LockedAccount`] or
-    /// [`LogoffReason::NewUserRejected`].
-    LogonRejected,
-}
-
-/// Errors returned by [`Session::verify_password`].
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum VerifyPasswordError {
-    /// The session is not in [`SessionState::Authenticating`].
-    #[error("verify_password in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// No user is bound to the session.
-    #[error("verify_password called without a bound user")]
-    UserMissing,
-    /// The hasher rejected the user's stored hash kind.
-    #[error(transparent)]
-    HashKindUnsupported(#[from] PasswordError),
-}
-
-/// Errors returned by [`Session::enter_menu`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum EnterMenuError {
-    /// The session is not in [`SessionState::Onboarded`].
-    #[error("enter_menu in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// No user is bound to the session.
-    #[error("enter_menu called without a bound user")]
-    UserMissing,
-    /// The bound user has `force_password_reset` set; the listener
-    /// must run the password-change sub-flow before retrying
-    /// (`session.allium:CompletePasswordReset`, Slice 15).
-    #[error("enter_menu blocked: user must complete a forced password reset")]
-    PasswordResetPending,
-}
-
-/// Errors returned by [`Session::complete_new_user_registration`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum CompleteNewUserRegistrationError {
-    /// The session is not in [`SessionState::NewUserRegistering`].
-    #[error("complete_new_user_registration in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// The new-user password gate (Slice 20a) has not yet passed.
-    /// The spec rule's `requires:
-    /// session.new_user_password_verified` precondition is not
-    /// satisfied — the listener should run the gate first.
-    #[error("complete_new_user_registration blocked: new-user password gate not verified")]
-    GateNotVerified,
-}
-
-/// Errors returned by [`Session::initialise_daily_budget`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum InitialiseDailyBudgetError {
-    /// The session is not in [`SessionState::Onboarded`].
-    #[error("initialise_daily_budget in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// No user is bound to the session.
-    #[error("initialise_daily_budget called without a bound user")]
-    UserMissing,
-}
-
-/// Errors returned by [`Session::force_password_reset_if_due`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ForcePasswordResetError {
-    /// The session is not in [`SessionState::Onboarded`].
-    #[error("force_password_reset_if_due in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// No user is bound to the session.
-    #[error("force_password_reset_if_due called without a bound user")]
-    UserMissing,
-}
-
-/// Errors returned by [`Session::apply_password_change`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum CompletePasswordResetError {
-    /// The session is not in [`SessionState::Onboarded`].
-    #[error("apply_password_change in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// No user is bound to the session.
-    #[error("apply_password_change called without a bound user")]
-    UserMissing,
-    /// The bound user does not have `force_password_reset` set, so
-    /// `CompletePasswordReset` doesn't apply.
-    #[error("apply_password_change called when force_password_reset is not set")]
-    ResetNotPending,
-}
-
-/// Errors returned by [`Session::apply_idle_timeout`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum IdleTimeoutError {
-    /// The session is not in one of the spec-permitted states for
-    /// [`Session::apply_idle_timeout`] (`identifying`,
-    /// `authenticating`, `onboarded`, `menu`).
-    #[error("apply_idle_timeout in unexpected state: {0:?}")]
-    WrongState(SessionState),
-}
-
-/// Errors returned by [`Session::apply_carrier_loss`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum CarrierLostError {
-    /// The session is already in [`SessionState::LoggingOff`] or
-    /// [`SessionState::Ended`], so `CarrierLost` is a no-op.
-    #[error("apply_carrier_loss in unexpected state: {0:?}")]
-    WrongState(SessionState),
-}
-
-/// Outcome of [`Session::tick_minute`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TickMinuteOutcome {
-    /// The session has time left and remains in `onboarded` or `menu`.
-    Continued,
-    /// `time_remaining` has reached zero. The session has moved to
-    /// [`SessionState::LoggingOff`] with [`LogoffReason::OutOfTime`].
-    TimeExpired,
-}
-
-/// Errors returned by [`Session::tick_minute`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum TickMinuteError {
-    /// The session is not in [`SessionState::Onboarded`] or
-    /// [`SessionState::Menu`].
-    #[error("tick_minute in unexpected state: {0:?}")]
-    WrongState(SessionState),
-    /// No user is bound to the session.
-    #[error("tick_minute called without a bound user")]
-    UserMissing,
-}
-
-/// `session.allium:floor_to_day` black-box helper.
-///
-/// Buckets `at` into a day index where the boundary sits
-/// `offset` past midnight UTC. The legacy `AmiExpress` equivalent is
-/// `Div(currTime - 21600, 86400)` (six-hour offset) — see
-/// `amiexpress/express.e:529`.
-fn floor_to_day(at: SystemTime, offset: Duration) -> i64 {
-    fn saturating_i64(secs: u64) -> i64 {
-        i64::try_from(secs).unwrap_or(i64::MAX)
-    }
-
-    let secs = match at.duration_since(UNIX_EPOCH) {
-        Ok(d) => saturating_i64(d.as_secs()),
-        Err(e) => -saturating_i64(e.duration().as_secs()),
-    };
-    let offset_secs = saturating_i64(offset.as_secs());
-    (secs - offset_secs).div_euclid(86_400)
-}
-
-/// `session.allium:format_logon_line` black-box helper.
-///
-/// Produces the line written to the caller log when a session reaches
-/// the menu. The legacy `AmiExpress` format is something like
-/// `Logon: alice (node 1, 9600 baud, remote)`; we match that shape.
-fn format_logon_line(session: &Session) -> String {
-    let handle = session.user().map_or("?", super::user::User::handle);
-    let channel = match session.shared.channel {
-        LogonChannel::SysopConsole => "sysop_console",
-        LogonChannel::Local => "local",
-        LogonChannel::Remote => "remote",
-        LogonChannel::Ftp => "ftp",
-    };
-    format!(
-        "Logon: {handle} (node {}, {} baud, {channel})",
-        session.shared.node_number, session.shared.online_baud
-    )
-}
-
-/// `session.allium:format_logoff_line` black-box helper.
-///
-/// Phase 1 emits a minimal line. Slice 53 onward extends it with
-/// transfer accounting (`bytes_uploaded`, `bytes_downloaded`).
-fn format_logoff_line(session: &Session) -> String {
-    let handle = session.user().map_or("?", super::user::User::handle);
-    let reason = match session.logoff_reason() {
-        Some(LogoffReason::NormalLogoff) => "normal_logoff",
-        Some(LogoffReason::NewUserRejected) => "new_user_rejected",
-        Some(LogoffReason::ExcessivePasswordFails) => "excessive_password_fails",
-        Some(LogoffReason::LockedAccount) => "locked_account",
-        Some(LogoffReason::OutOfTime) => "out_of_time",
-        Some(LogoffReason::InputTimeout) => "input_timeout",
-        Some(LogoffReason::CarrierLoss) => "carrier_loss",
-        None => "unknown",
-    };
-    format!(
-        "Logoff: {handle} (node {}, reason {reason})",
-        session.shared.node_number
-    )
-}
-
-/// Returned when the requested transition is not in the spec's
-/// transition table for the Phase 1 subset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("invalid session transition: {from:?} -> {to:?}")]
-pub struct SessionTransitionError {
-    /// State the session was in when the transition was attempted.
-    pub from: SessionState,
-    /// State the caller asked to move into.
-    pub to: SessionState,
-}
-
-/// Returns whether the spec's transition table permits `from -> to`.
-///
-/// Some transitions land in the table because a rule's body requires
-/// them even though the explicit transition list in
-/// `session.allium:Session` doesn't enumerate them:
-/// - `Authenticating -> LoggingOff` lets
-///   `session.allium:VerifyPassword` end the session via its
-///   `FinaliseLogoff` hand-off (Slice 11).
-/// - `Identifying -> LoggingOff` and `Connecting -> LoggingOff` let
-///   `session.allium:IdleTimeout` (Slice 17) and
-///   `session.allium:CarrierLost` (Slice 18) end an
-///   unauthenticated session via the
-///   `FinaliseUnauthenticatedLogoff` rule, which is itself only
-///   reachable through `LoggingOff`.
-/// - `NewUserRegistering -> LoggingOff` lets the same idle / carrier
-///   rules end an in-progress registration (Slice 19 brings the
-///   state in; both rules' `requires:` lists already name it).
-fn is_session_transition_allowed(from: SessionState, to: SessionState) -> bool {
-    use SessionState::{
-        Authenticating, Connecting, Ended, Identifying, LoggingOff, Menu, NewUserRegistering,
-        Onboarded,
-    };
-    matches!(
-        (from, to),
-        (Connecting, Identifying | LoggingOff | Ended)
-            | (
-                Identifying,
-                Authenticating | NewUserRegistering | LoggingOff | Ended
-            )
-            | (Authenticating | NewUserRegistering, Onboarded)
-            | (Authenticating | NewUserRegistering | LoggingOff, Ended)
-            | (
-                Authenticating | NewUserRegistering | Onboarded | Menu,
-                LoggingOff
-            )
-            | (Onboarded, Menu)
-    )
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::UNIX_EPOCH;
+
     use super::*;
+    use crate::domain::password::PasswordHashKind;
 
     fn new_session(channel: LogonChannel) -> Session {
         Session::new(1, channel, 9_600, SystemTime::UNIX_EPOCH)
@@ -1757,8 +1191,7 @@ mod tests {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", alice()).unwrap();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         s.transition_to(SessionState::LoggingOff)
             .expect("onboarded -> logging_off allowed");
     }
@@ -1798,9 +1231,12 @@ mod tests {
         let mut session = new_session(LogonChannel::Remote);
         session.prompt_for_name().unwrap();
         session.record_identified_user("alice", alice()).unwrap();
-        session
-            .apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(
+            &mut session,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
         assert!(session.is_authenticated());
     }
 
@@ -2198,9 +1634,8 @@ mod tests {
     fn verify_password_match_advances_to_onboarded() {
         let mut s = authenticated_session();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(60);
-        let (outcome, rejection) = s
-            .apply_password_match(SessionPolicy::default(), now)
-            .unwrap();
+        let (outcome, rejection) =
+            apply_password_match(&mut s, SessionPolicy::default(), now).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::Authenticated);
         assert!(rejection.is_none());
         assert_eq!(s.state(), SessionState::Onboarded);
@@ -2214,8 +1649,7 @@ mod tests {
         // Pre-existing attempts on the user (e.g. from a prior failed
         // session) should be cleared on success.
         authenticating_user_mut(&mut s).bump_invalid_attempts();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(s.user().unwrap().invalid_attempts(), 0);
     }
 
@@ -2226,8 +1660,7 @@ mod tests {
         let mut user = alice();
         user.set_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
         s.record_identified_user("alice", user).unwrap();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         // InitialiseDailyBudget consequent of the transition.
         assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
     }
@@ -2235,9 +1668,8 @@ mod tests {
     #[test]
     fn verify_password_mismatch_bumps_counters() {
         let mut s = authenticated_session();
-        let (outcome, entry) = s
-            .apply_password_mismatch(SessionPolicy::new(3), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        let (outcome, entry) =
+            apply_password_mismatch(&mut s, SessionPolicy::new(3), SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::NotMatching);
         assert_eq!(s.state(), SessionState::Authenticating);
         assert_eq!(s.password_retry_count(), 1);
@@ -2286,9 +1718,8 @@ mod tests {
     #[test]
     fn verify_password_locks_account_when_user_attempts_reach_max() {
         let mut s = authenticated_session();
-        let (outcome, _entry) = s
-            .apply_password_mismatch(SessionPolicy::new(1), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        let (outcome, _entry) =
+            apply_password_mismatch(&mut s, SessionPolicy::new(1), SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::AccountLocked);
         assert_eq!(s.state(), SessionState::LoggingOff);
         assert_eq!(s.logoff_reason(), Some(LogoffReason::LockedAccount));
@@ -2305,15 +1736,12 @@ mod tests {
         // user-level check wins. This test manually clears the user
         // counter mid-session to exercise the session-level branch.
         let mut s = authenticated_session();
-        s.apply_password_mismatch(SessionPolicy::new(5), SystemTime::UNIX_EPOCH)
-            .unwrap();
-        s.apply_password_mismatch(SessionPolicy::new(5), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_mismatch(&mut s, SessionPolicy::new(5), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_mismatch(&mut s, SessionPolicy::new(5), SystemTime::UNIX_EPOCH).unwrap();
         // Simulate an out-of-band reset of the user-level counter.
         authenticating_user_mut(&mut s).clear_invalid_attempts();
-        let (outcome, _entry) = s
-            .apply_password_mismatch(SessionPolicy::new(3), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        let (outcome, _entry) =
+            apply_password_mismatch(&mut s, SessionPolicy::new(3), SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::TooManyFailures);
         assert_eq!(s.state(), SessionState::LoggingOff);
         assert_eq!(
@@ -2327,8 +1755,7 @@ mod tests {
     fn enter_menu_advances_state_and_logs() {
         let mut s = authenticated_session();
         // Get to onboarded via successful verify.
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         let now = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(120);
         let entry = s.enter_menu(now).unwrap();
         assert_eq!(s.state(), SessionState::Menu);
@@ -2353,8 +1780,7 @@ mod tests {
     /// Drives a session from connecting to menu via the rule chain.
     fn session_at_menu() -> Session {
         let mut s = authenticated_session();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
         s
     }
@@ -2370,8 +1796,7 @@ mod tests {
     #[test]
     fn user_requests_logoff_from_onboarded_is_allowed() {
         let mut s = authenticated_session();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         s.user_requests_logoff().unwrap();
         assert_eq!(s.state(), SessionState::LoggingOff);
     }
@@ -2412,8 +1837,7 @@ mod tests {
     #[test]
     fn verify_password_outside_authenticating_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let err = s
-            .apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
+        let err = apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH)
             .expect_err("must be authenticating");
         assert!(matches!(err, VerifyPasswordError::WrongState(_)));
     }
@@ -2469,8 +1893,7 @@ mod tests {
             Duration::from_secs(30 * 60),
             Duration::from_secs(60 * 60),
         ));
-        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
-            .unwrap();
+        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         // Spec: new-day branch sets times_called_today = 0.
         assert_eq!(s.user().unwrap().times_called_today(), 0);
         assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
@@ -2489,8 +1912,7 @@ mod tests {
         let mut s = session_at_onboarded_with(user);
 
         let later_today = UNIX_EPOCH + Duration::from_secs(20 * 3_600);
-        s.initialise_daily_budget(later_today, DAILY_RESET_OFFSET)
-            .unwrap();
+        initialise_daily_budget(&mut s, later_today, DAILY_RESET_OFFSET).unwrap();
         // Same-day branch: times_called_today increments, time_used preserved.
         assert_eq!(s.user().unwrap().times_called_today(), 2);
         assert_eq!(
@@ -2513,8 +1935,7 @@ mod tests {
         let mut s = session_at_onboarded_with(user);
 
         let today = UNIX_EPOCH + Duration::from_secs(36 * 3_600);
-        s.initialise_daily_budget(today, DAILY_RESET_OFFSET)
-            .unwrap();
+        initialise_daily_budget(&mut s, today, DAILY_RESET_OFFSET).unwrap();
         assert_eq!(s.user().unwrap().times_called_today(), 0);
         assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
         assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
@@ -2523,8 +1944,7 @@ mod tests {
     #[test]
     fn initialise_daily_budget_outside_onboarded_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let err = s
-            .initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
+        let err = initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
             .expect_err("must be onboarded");
         assert!(matches!(err, InitialiseDailyBudgetError::WrongState(_)));
     }
@@ -2535,9 +1955,8 @@ mod tests {
             Duration::from_secs(5 * 60),
             Duration::from_secs(60 * 60),
         ));
-        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
-            .unwrap();
-        let outcome = s.tick_minute().unwrap();
+        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
+        let outcome = tick_minute(&mut s).unwrap();
         assert_eq!(outcome, TickMinuteOutcome::Continued);
         assert_eq!(s.time_remaining(), Duration::from_secs(4 * 60));
         assert_eq!(s.user().unwrap().time_used_today(), Duration::from_secs(60));
@@ -2549,10 +1968,9 @@ mod tests {
             Duration::from_secs(5 * 60),
             Duration::from_secs(60 * 60),
         ));
-        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
-            .unwrap();
+        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
-        let outcome = s.tick_minute().unwrap();
+        let outcome = tick_minute(&mut s).unwrap();
         assert_eq!(outcome, TickMinuteOutcome::Continued);
         assert_eq!(s.state(), SessionState::Menu);
     }
@@ -2563,9 +1981,8 @@ mod tests {
             Duration::from_secs(60),
             Duration::from_secs(60 * 60),
         ));
-        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
-            .unwrap();
-        let outcome = s.tick_minute().unwrap();
+        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
+        let outcome = tick_minute(&mut s).unwrap();
         assert_eq!(outcome, TickMinuteOutcome::TimeExpired);
         assert_eq!(s.state(), SessionState::LoggingOff);
         assert_eq!(s.logoff_reason(), Some(LogoffReason::OutOfTime));
@@ -2575,7 +1992,7 @@ mod tests {
     #[test]
     fn tick_minute_outside_onboarded_or_menu_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let err = s.tick_minute().expect_err("must be onboarded/menu");
+        let err = tick_minute(&mut s).expect_err("must be onboarded/menu");
         assert!(matches!(err, TickMinuteError::WrongState(_)));
     }
 
@@ -2587,9 +2004,8 @@ mod tests {
             Duration::ZERO,
             Duration::from_secs(60 * 60),
         ));
-        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
-            .unwrap();
-        let outcome = s.tick_minute().unwrap();
+        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
+        let outcome = tick_minute(&mut s).unwrap();
         assert_eq!(outcome, TickMinuteOutcome::TimeExpired);
         assert_eq!(s.time_remaining(), Duration::ZERO);
     }
@@ -2600,7 +2016,7 @@ mod tests {
         // alice's password_last_updated is UNIX_EPOCH.
         let mut s = session_at_onboarded_with(user.clone());
         let now = UNIX_EPOCH + Duration::from_secs(10 * 86_400);
-        s.force_password_reset_if_due(7, now).unwrap();
+        force_password_reset_if_due(&mut s, 7, now).unwrap();
         assert!(s.user().unwrap().force_password_reset());
         // The bound clone of alice that we still hold isn't mutated.
         assert!(!user.force_password_reset());
@@ -2610,7 +2026,7 @@ mod tests {
     fn force_password_reset_keeps_flag_when_expiry_not_elapsed() {
         let mut s = session_at_onboarded_with(alice());
         let now = UNIX_EPOCH + Duration::from_secs(3 * 86_400);
-        s.force_password_reset_if_due(7, now).unwrap();
+        force_password_reset_if_due(&mut s, 7, now).unwrap();
         assert!(!s.user().unwrap().force_password_reset());
     }
 
@@ -2619,7 +2035,7 @@ mod tests {
         let mut s = session_at_onboarded_with(alice());
         // Even far in the future, expiry=0 means "disabled".
         let now = UNIX_EPOCH + Duration::from_secs(1_000 * 86_400);
-        s.force_password_reset_if_due(0, now).unwrap();
+        force_password_reset_if_due(&mut s, 0, now).unwrap();
         assert!(!s.user().unwrap().force_password_reset());
     }
 
@@ -2629,7 +2045,7 @@ mod tests {
         user.set_force_password_reset(true);
         let mut s = session_at_onboarded_with(user);
         // Even with expiry disabled, a pre-set flag survives.
-        s.force_password_reset_if_due(0, UNIX_EPOCH).unwrap();
+        force_password_reset_if_due(&mut s, 0, UNIX_EPOCH).unwrap();
         assert!(s.user().unwrap().force_password_reset());
     }
 
@@ -2639,7 +2055,7 @@ mod tests {
         user.lock_account();
         let mut s = session_at_onboarded_with(user);
         let now = UNIX_EPOCH + Duration::from_secs(1_000 * 86_400);
-        s.force_password_reset_if_due(7, now).unwrap();
+        force_password_reset_if_due(&mut s, 7, now).unwrap();
         // Spec: requires not user.account_locked.
         assert!(!s.user().unwrap().force_password_reset());
     }
@@ -2647,8 +2063,7 @@ mod tests {
     #[test]
     fn force_password_reset_outside_onboarded_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let err = s
-            .force_password_reset_if_due(7, SystemTime::UNIX_EPOCH)
+        let err = force_password_reset_if_due(&mut s, 7, SystemTime::UNIX_EPOCH)
             .expect_err("must be onboarded");
         assert!(matches!(err, ForcePasswordResetError::WrongState(_)));
     }
@@ -2662,7 +2077,7 @@ mod tests {
         s.record_identified_user("alice", user).unwrap();
         let policy = SessionPolicy::default().with_password_expiry_days(1);
         let now = UNIX_EPOCH + Duration::from_secs(7 * 86_400);
-        s.apply_password_match(policy, now).unwrap();
+        apply_password_match(&mut s, policy, now).unwrap();
         assert!(s.user().unwrap().force_password_reset());
     }
 
@@ -2685,7 +2100,8 @@ mod tests {
         user.set_force_password_reset(true);
         let mut s = session_at_onboarded_with(user);
         let later = UNIX_EPOCH + Duration::from_secs(5_000);
-        s.apply_password_change(
+        apply_password_change(
+            &mut s,
             "fresh".to_string(),
             Some("freshsalt".to_string()),
             PasswordHashKind::Pbkdf210000,
@@ -2704,7 +2120,8 @@ mod tests {
         let mut user = alice();
         user.set_force_password_reset(true);
         let mut s = session_at_onboarded_with(user);
-        s.apply_password_change(
+        apply_password_change(
+            &mut s,
             "fresh".to_string(),
             Some("freshsalt".to_string()),
             PasswordHashKind::Pbkdf210000,
@@ -2718,28 +2135,28 @@ mod tests {
     #[test]
     fn apply_password_change_outside_onboarded_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let err = s
-            .apply_password_change(
-                "fresh".to_string(),
-                None,
-                PasswordHashKind::Pbkdf210000,
-                SystemTime::UNIX_EPOCH,
-            )
-            .expect_err("must be onboarded");
+        let err = apply_password_change(
+            &mut s,
+            "fresh".to_string(),
+            None,
+            PasswordHashKind::Pbkdf210000,
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect_err("must be onboarded");
         assert!(matches!(err, CompletePasswordResetError::WrongState(_)));
     }
 
     #[test]
     fn apply_password_change_without_pending_reset_errors() {
         let mut s = session_at_onboarded_with(alice()); // flag NOT set.
-        let err = s
-            .apply_password_change(
-                "fresh".to_string(),
-                None,
-                PasswordHashKind::Pbkdf210000,
-                SystemTime::UNIX_EPOCH,
-            )
-            .expect_err("flag not set");
+        let err = apply_password_change(
+            &mut s,
+            "fresh".to_string(),
+            None,
+            PasswordHashKind::Pbkdf210000,
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect_err("flag not set");
         assert!(matches!(err, CompletePasswordResetError::ResetNotPending));
     }
 
@@ -2813,9 +2230,8 @@ mod tests {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        let (outcome, rejection) = s
-            .apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        let (outcome, rejection) =
+            apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::LogonRejected);
         assert!(rejection.is_some());
         assert_eq!(s.state(), SessionState::LoggingOff);
@@ -2834,8 +2250,7 @@ mod tests {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(s.time_remaining(), Duration::ZERO);
     }
 
@@ -2849,8 +2264,7 @@ mod tests {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         assert_ne!(s.state(), SessionState::Menu);
         let err = s
             .enter_menu(SystemTime::UNIX_EPOCH)
@@ -3042,9 +2456,8 @@ mod tests {
             Duration::from_secs(60),
             Duration::from_secs(60 * 60),
         ));
-        s.initialise_daily_budget(SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET)
-            .unwrap();
-        s.tick_minute().unwrap();
+        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
+        tick_minute(&mut s).unwrap();
         let entry = s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
         assert!(
             entry.text.contains("out_of_time"),

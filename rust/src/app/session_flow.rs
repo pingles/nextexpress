@@ -13,6 +13,7 @@ use crate::domain::password::{
     meets_password_strength, PasswordError, PasswordHashKind, PasswordHasher,
 };
 use crate::domain::session::{
+    apply_password_change, apply_password_match, apply_password_mismatch,
     CompleteNewUserRegistrationError, CompletePasswordResetError, EnterMenuError, NameTypedError,
     NameTypedOutcome, NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPolicy,
     SessionState, SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError,
@@ -214,14 +215,14 @@ where
         .map_err(VerifyPasswordError::HashKindUnsupported)?;
 
     if matches {
-        let (outcome, rejection) = session.apply_password_match(policy, now)?;
+        let (outcome, rejection) = apply_password_match(session, policy, now)?;
         save_bound_user(session, user_repo)?;
         if let Some(entry) = rejection {
             caller_log.append(entry);
         }
         Ok(outcome)
     } else {
-        let (outcome, entry) = session.apply_password_mismatch(policy, now)?;
+        let (outcome, entry) = apply_password_mismatch(session, policy, now)?;
         save_bound_user(session, user_repo)?;
         caller_log.append(entry);
         Ok(outcome)
@@ -530,7 +531,7 @@ where
     let kind = crate::domain::password::PasswordHashKind::Pbkdf210000;
     let computed = hasher.compute_password_hash(candidate, kind)?;
 
-    session.apply_password_change(computed.hash, computed.salt, kind, now)?;
+    apply_password_change(session, computed.hash, computed.salt, kind, now)?;
     save_bound_user(session, user_repo)?;
     Ok(())
 }
@@ -1255,8 +1256,7 @@ mod tests {
         let mut s = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        s.apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
         s
     }
 
@@ -1349,9 +1349,12 @@ mod tests {
         let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
         session.prompt_for_name().unwrap();
         session.record_identified_user("alice", user).unwrap();
-        session
-            .apply_password_match(SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .unwrap();
+        apply_password_match(
+            &mut session,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .unwrap();
         // Flag NOT set on this user.
         let err = complete_password_reset(
             &mut session,
