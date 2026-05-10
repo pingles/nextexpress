@@ -16,6 +16,7 @@ use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::adapters::telnet_listener::TelnetListener;
+use crate::app::runtime::Runtime;
 use crate::app::services::SharedConferences;
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::Conference;
@@ -26,6 +27,7 @@ use crate::domain::user_repository::UserRepository;
 pub mod config;
 pub mod config_loader;
 pub mod node_pool;
+pub mod runtime;
 pub mod screens;
 pub mod seed;
 pub mod services;
@@ -89,9 +91,9 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
     let log: Arc<dyn CallerLogAppender + Send + Sync> = Arc::new(InMemoryCallerLog::new());
     let conferences_handle: SharedConferences = Arc::new(conferences);
 
+    let runtime = Runtime::from_config(&config, repo, hasher, log, conferences_handle);
     let listen_addr = format!("127.0.0.1:{}", config.port);
-    let listener =
-        TelnetListener::bind(&listen_addr, config, repo, hasher, log, conferences_handle).await?;
+    let listener = TelnetListener::bind(&listen_addr, runtime).await?;
     println!("Listening on {}", listener.local_addr()?);
     listener.run().await?;
     Ok(())

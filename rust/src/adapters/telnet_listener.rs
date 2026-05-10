@@ -1,9 +1,12 @@
 //! Telnet listener and terminal adapter (Slice 8 / Slice 9).
 //!
 //! Boots a [`tokio::net::TcpListener`], allocates a node from the
-//! application [`NodePool`] for every accepted connection, performs
-//! telnet negotiation and delegates the BBS workflow to
-//! [`crate::app::session_driver`].
+//! application [`crate::app::node_pool::NodePool`] for every accepted
+//! connection, performs telnet negotiation and delegates the BBS
+//! workflow to [`crate::app::session_driver`]. All non-transport
+//! wiring (driven adapters, configuration-derived policy values, node
+//! pool sizing) lives in [`crate::app::runtime::Runtime`] — the
+//! listener is handed an already-built runtime.
 
 use std::io;
 use std::net::SocketAddr;
@@ -13,13 +16,10 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
-use crate::app::services::{
-    AppServices, SharedCallerLog, SharedConferences, SharedHasher, SharedScreens, SharedUserRepo,
-};
+use crate::app::runtime::Runtime;
+use crate::app::services::AppServices;
 use crate::app::session_driver::SessionDriver;
-use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 #[cfg(test)]
 use crate::app::wire_text::{
@@ -29,7 +29,6 @@ use crate::app::wire_text::{
 };
 use crate::domain::session::LogonChannel;
 
-use super::file_screen_repository::FileScreenRepository;
 use super::telnet_line::{read_telnet_line, EchoMode};
 
 /// Bytes sent at the start of every accepted connection to set up
@@ -47,88 +46,26 @@ const IAC_INIT: &[u8] = &[
 /// Sent to clients that arrive when every node is in use.
 const BUSY_LINE: &[u8] = b"All BBS nodes are busy. Please try again later.\r\n";
 
-#[derive(Clone)]
-struct ListenerRuntime {
-    pool: Arc<NodePool>,
-    services: AppServices,
-}
-
-/// Telnet listener and the application state it drives.
+/// Telnet listener bound to a socket and connected to an
+/// already-wired [`Runtime`]. The listener itself owns no
+/// configuration — its job ends at telnet negotiation.
 pub struct TelnetListener {
     listener: TcpListener,
-    pool: Arc<NodePool>,
-    services: AppServices,
+    runtime: Runtime,
 }
 
 impl TelnetListener {
-    /// Binds a [`TcpListener`] on `addr` and constructs a fresh
-    /// [`NodePool`] sized at `config.max_nodes`. `conferences` is the
-    /// catalogue the post-auth `auto_rejoin` flow draws from
-    /// (Slice 34a). Tests that don't exercise the conference flow may
-    /// pass an empty `Vec`.
+    /// Binds a [`TcpListener`] on `addr` and stores the
+    /// pre-constructed [`Runtime`] every accepted connection will
+    /// share. Composition (driven adapters, policy values, node pool
+    /// sizing) happens before this call — see
+    /// [`Runtime::from_config`].
     ///
     /// # Errors
     /// Returns the underlying [`io::Error`] if the bind fails.
-    pub async fn bind<A: ToSocketAddrs>(
-        addr: A,
-        config: Config,
-        user_repo: SharedUserRepo,
-        hasher: SharedHasher,
-        caller_log: SharedCallerLog,
-        conferences: SharedConferences,
-    ) -> io::Result<Self> {
-        let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
-        Self::bind_with_screens(
-            addr,
-            config,
-            user_repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences,
-        )
-        .await
-    }
-
-    /// Binds a [`TcpListener`] using an injected screen repository.
-    ///
-    /// # Errors
-    /// Returns the underlying [`io::Error`] if the bind fails.
-    pub async fn bind_with_screens<A: ToSocketAddrs>(
-        addr: A,
-        config: Config,
-        user_repo: SharedUserRepo,
-        hasher: SharedHasher,
-        caller_log: SharedCallerLog,
-        screens: SharedScreens,
-        conferences: SharedConferences,
-    ) -> io::Result<Self> {
+    pub async fn bind<A: ToSocketAddrs>(addr: A, runtime: Runtime) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        let pool = Arc::new(NodePool::new(config.max_nodes));
-        let default_ratio = DefaultRatio {
-            mode: config.default_ratio_mode,
-            value: config.default_ratio_value,
-        };
-        let new_user_gate = NewUserGateConfig {
-            allow_new_users: config.allow_new_users,
-            new_user_password: config.new_user_password.clone(),
-            max_new_user_password_attempts: config.max_new_user_password_attempts,
-        };
-        let services = AppServices::new(
-            user_repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences,
-            config.session_policy(),
-            default_ratio,
-            new_user_gate,
-        );
-        Ok(Self {
-            listener,
-            pool,
-            services,
-        })
+        Ok(Self { listener, runtime })
     }
 
     /// Returns the local address the listener is bound to.
@@ -140,17 +77,9 @@ impl TelnetListener {
         self.listener.local_addr()
     }
 
-    /// Returns a clone of the shared [`NodePool`] for tests and the
-    /// supervisor to introspect.
+    /// Returns a clone of the shared [`NodePool`] handle.
     pub fn pool(&self) -> Arc<NodePool> {
-        self.pool.clone()
-    }
-
-    fn runtime(&self) -> ListenerRuntime {
-        ListenerRuntime {
-            pool: self.pool.clone(),
-            services: self.services.clone(),
-        }
+        self.runtime.pool()
     }
 
     /// Accepts connections forever, spawning a per-session task for
@@ -161,7 +90,7 @@ impl TelnetListener {
     pub async fn run(&self) -> io::Result<()> {
         loop {
             let (stream, _peer) = self.listener.accept().await?;
-            let runtime = self.runtime();
+            let runtime = self.runtime.clone();
             tokio::spawn(async move {
                 let _ = handle_connection(stream, runtime).await;
             });
@@ -174,8 +103,9 @@ impl TelnetListener {
 /// Splits into "could allocate a node" and "couldn't"; on the happy
 /// path the task lives until the client closes the connection. On the
 /// busy path it writes the busy line and exits.
-async fn handle_connection(mut stream: TcpStream, runtime: ListenerRuntime) -> io::Result<()> {
-    let Some(node_number) = runtime.pool.allocate().await else {
+async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Result<()> {
+    let pool = runtime.pool();
+    let Some(node_number) = pool.allocate().await else {
         stream.write_all(BUSY_LINE).await?;
         stream.flush().await?;
         return Ok(());
@@ -184,15 +114,11 @@ async fn handle_connection(mut stream: TcpStream, runtime: ListenerRuntime) -> i
     let result = {
         stream.write_all(IAC_INIT).await?;
         let terminal = TelnetTerminal::new(&mut stream);
-        let mut driver = SessionDriver::new(
-            terminal,
-            node_number,
-            LogonChannel::Remote,
-            runtime.services,
-        );
+        let services: AppServices = runtime.services().clone();
+        let mut driver = SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
         driver.run().await
     };
-    let _ = runtime.pool.release(node_number).await;
+    let _ = pool.release(node_number).await;
     result
 }
 
@@ -263,10 +189,26 @@ mod tests {
     use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::config::Config;
+    use crate::app::services::{SharedCallerLog, SharedConferences, SharedHasher, SharedUserRepo};
     use crate::domain::node::NodeStatus;
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::user::User;
     use crate::domain::user_repository::NameLookupResult;
+
+    /// Wires a [`Runtime`] from the test inputs. Tests stay close to
+    /// the previous `bind(addr, config, repo, hasher, log, confs)`
+    /// shape but the composition now flows through the same entry
+    /// point production uses.
+    fn test_runtime(
+        config: &Config,
+        user_repo: SharedUserRepo,
+        hasher: SharedHasher,
+        caller_log: SharedCallerLog,
+        conferences: SharedConferences,
+    ) -> Runtime {
+        Runtime::from_config(config, user_repo, hasher, caller_log, conferences)
+    }
 
     fn nonexistent_bbs() -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -385,11 +327,13 @@ mod tests {
     async fn listener_binds_and_reports_address() {
         let listener = TelnetListener::bind(
             "127.0.0.1:0",
-            test_config(1),
-            empty_repo(),
-            test_hasher(),
-            test_caller_log(),
-            empty_conferences(),
+            test_runtime(
+                &test_config(1),
+                empty_repo(),
+                test_hasher(),
+                test_caller_log(),
+                empty_conferences(),
+            ),
         )
         .await
         .unwrap();
@@ -402,11 +346,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                test_config(1),
-                empty_repo(),
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &test_config(1),
+                    empty_repo(),
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -443,11 +389,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                empty_repo(),
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &config,
+                    empty_repo(),
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -470,11 +418,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                test_config(2),
-                empty_repo(),
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &test_config(2),
+                    empty_repo(),
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -509,11 +459,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                test_config(1),
-                empty_repo(),
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &test_config(1),
+                    empty_repo(),
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -565,11 +517,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                repo,
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &config,
+                    repo,
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -590,11 +544,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                repo,
-                test_hasher(),
-                shared_log,
-                empty_conferences(),
+                test_runtime(
+                    &config,
+                    repo,
+                    test_hasher(),
+                    shared_log,
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -975,11 +931,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                Arc::new(InMemoryUserRepository::new(vec![alice])),
-                test_hasher(),
-                test_caller_log(),
-                conferences,
+                test_runtime(
+                    &config,
+                    Arc::new(InMemoryUserRepository::new(vec![alice])),
+                    test_hasher(),
+                    test_caller_log(),
+                    conferences,
+                ),
             )
             .await
             .unwrap(),
@@ -1077,11 +1035,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                repo_with_alice(),
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &config,
+                    repo_with_alice(),
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -1117,11 +1077,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                Arc::new(InMemoryUserRepository::new(vec![alice])),
-                test_hasher(),
-                log.clone() as SharedCallerLog,
-                conferences,
+                test_runtime(
+                    &config,
+                    Arc::new(InMemoryUserRepository::new(vec![alice])),
+                    test_hasher(),
+                    log.clone() as SharedCallerLog,
+                    conferences,
+                ),
             )
             .await
             .unwrap(),
@@ -1205,11 +1167,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                Arc::new(InMemoryUserRepository::new(vec![alice])),
-                test_hasher(),
-                test_caller_log(),
-                conferences,
+                test_runtime(
+                    &config,
+                    Arc::new(InMemoryUserRepository::new(vec![alice])),
+                    test_hasher(),
+                    test_caller_log(),
+                    conferences,
+                ),
             )
             .await
             .unwrap(),
@@ -1273,11 +1237,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                test_config(1),
-                repo.clone(),
-                test_hasher(),
-                log.clone() as SharedCallerLog,
-                conferences,
+                test_runtime(
+                    &test_config(1),
+                    repo.clone(),
+                    test_hasher(),
+                    log.clone() as SharedCallerLog,
+                    conferences,
+                ),
             )
             .await
             .unwrap(),
@@ -1365,11 +1331,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                test_config(1),
-                repo,
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &test_config(1),
+                    repo,
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -1468,11 +1436,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                repo.clone(),
-                test_hasher(),
-                log.clone() as SharedCallerLog,
-                empty_conferences(),
+                test_runtime(
+                    &config,
+                    repo.clone(),
+                    test_hasher(),
+                    log.clone() as SharedCallerLog,
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
@@ -1561,11 +1531,13 @@ mod tests {
         let listener = Arc::new(
             TelnetListener::bind(
                 "127.0.0.1:0",
-                config,
-                repo.clone(),
-                test_hasher(),
-                test_caller_log(),
-                empty_conferences(),
+                test_runtime(
+                    &config,
+                    repo.clone(),
+                    test_hasher(),
+                    test_caller_log(),
+                    empty_conferences(),
+                ),
             )
             .await
             .unwrap(),
