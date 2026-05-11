@@ -61,20 +61,29 @@ flowchart LR
     Presenter --> WireText["wire_text"]
 
     AppRun --> MailRegistry["InMemoryMailStores (registry)"]
-    MailRegistry --> MailStore["FileMailStore (per msgbase)"]
+    MailRegistry --> FileMailStore["FileMailStore (per msgbase)"]
     Runtime --> MailRegistry
+    Services --> MailStoresPort["MailStores (port)"]
+    MailStoresPort --> MailPort["MailStore (port)"]
 
     AutoRejoin --> ScanOnJoin["mail_scan_on_join (Slice 41)"]
     Menu --> ScanOnJoin
-    Menu --> ReadFlow["ReadMail / ScanMail rules"]
-    ScanOnJoin --> ReadFlow
+    Menu --> ReadHandler["menu_flow::handle_read_mail / handle_scan_mail"]
+    ReadHandler --> MailStoresPort
+    ScanOnJoin --> MailStoresPort
+    ReadHandler --> ReadMailRule["domain::read_mail"]
+    ReadHandler --> ScanMailRule["domain::scan_mail"]
+    ScanOnJoin --> ScanMailRule
 
     Flow --> DomainSession["domain::Session"]
     Flow --> DomainUser["domain::User"]
     Flow --> DomainConference["domain::Conference"]
     Flow --> Ports["UserRepository / PasswordHasher / CallerLogAppender"]
-    ReadFlow --> Pointers["domain::ReadPointers"]
-    ReadFlow --> Mail["domain::Mail"]
+    ReadMailRule --> Pointers["domain::ReadPointers"]
+    ReadMailRule --> Mail["domain::Mail"]
+    ScanMailRule --> Pointers
+    ScanMailRule --> Mail
+    ScanMailRule --> MailPort
 
     ConfRepo -.implements.-> ConfPort["ConferenceRepository"]
     UserRepo -.implements.-> Ports
@@ -82,8 +91,8 @@ flowchart LR
     CallerLog -.implements.-> Ports
     Screens -.implements.-> ScreenPort["ScreenRepository"]
 
-    MailRegistry -.implements.-> MailStoresPort["MailStores"]
-    MailStore -.implements.-> MailPort["MailStore"]
+    MailRegistry -.implements.-> MailStoresPort
+    FileMailStore -.implements.-> MailPort
 ```
 
 Phase 6 messaging is wired end-to-end: `domain::Mail` (Slice 37, entity)
@@ -102,17 +111,22 @@ Slice 38 introduces `domain::ReadPointers`, attached as a `Vec` on every
 msgbase)` is the spec's black box; rows are lazily created on first
 `ReadMail` / `ScanMail` for a base.
 
-Slices 39–41 wire the headline read flow:
-- Slice 39 (`domain::read_mail::read_mail` + `can_read`): the `R <num>`
-  menu command loads the message from the per-msgbase store, applies the
-  rule (marks `received_at` for the addressee, advances `last_read`),
-  saves the mutated mail back, and renders the legacy header block plus
-  body to the terminal.
-- Slice 40 (`domain::scan_mail::scan_mail`): the `M` / `N` menu commands
-  walk the current message base, count messages visible-and-unread to
-  the user, advance `last_scanned`, and render a summary line. The same
-  helper backs the spec's `count_unread_for` / `first_unread_number_for`
-  black boxes.
+Slices 39–41 wire the headline read flow. The domain rules stay pure;
+the app layer (`app::menu_flow` and `app::mail_scan_on_join`) is what
+resolves the per-msgbase `MailStore` handle through the `MailStores`
+port (`services.mail_stores().for_msgbase(...)`), locks it, and threads
+it into the rule:
+- Slice 39 (`domain::read_mail::read_mail` + `can_read`): the rule
+  itself takes an already-loaded `&mut Mail`. The `R <num>` menu glue
+  in `menu_flow::handle_read_mail` does the `MailStore::load` →
+  `read_mail` → `MailStore::save` dance, then renders the legacy header
+  block plus body to the terminal.
+- Slice 40 (`domain::scan_mail::scan_mail`): the rule takes a
+  `MailStore` directly (it walks the base itself). The `M` / `N` menu
+  commands in `menu_flow::handle_scan_mail` resolve the store, lock it,
+  call the rule (advancing `last_scanned`), and render a summary line.
+  The same helper backs the spec's `count_unread_for` /
+  `first_unread_number_for` black boxes.
 - Slice 41 (`app::mail_scan_on_join`): both the auto-rejoin path (in
   `SessionDriver`) and the explicit-join path (in `MenuFlow`) call the
   shared `scan_mail_on_join` helper after the new `ConferenceVisit` is
