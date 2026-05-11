@@ -9,6 +9,7 @@ table and asset inventory.
 ## Slice 37 — `Mail` entity + on-disk message store
 - **In Scope**
   - `messaging.allium:Mail` entity with header + body, `transitions visibility`, `FromNameMatchesAuthor` and `DeletedMessagesHaveNoActiveReceived` invariants.
+  - File-based store: one JSON file per message (header + body combined) at `<msgbase-dir>/<zero-padded-number>.json`. This departs from the legacy `HeaderFile` (packed binary array) + separate body file + `MailStats` layout — the spec notes "conceptually it is one message" and AGENTS.md endorses a modern approach where sensible. Importing a legacy on-disk base, if ever needed, is a separate migration tool.
   - `MessageNumbersUniquePerBase` enforced by filename = number; `HighestMessageMatchesMaxNumber` derived by directory scan at init and cached in memory.
   - `lock_msgbase(msgbase)` predicate backed by an in-memory `tokio::sync::Mutex` per message base; no on-disk lock file.
 - **Out of Scope**
