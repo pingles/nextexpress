@@ -9,6 +9,8 @@ pub mod caller_log;
 pub mod conference;
 pub mod conference_repository;
 pub mod conference_visit;
+pub mod mail;
+pub mod mail_store;
 pub mod node;
 pub mod password;
 pub mod session;

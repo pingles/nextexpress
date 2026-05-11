@@ -9,12 +9,14 @@ system easier to understand and extend.
 The implementation follows a ports-and-adapters direction:
 
 - `rust/src/domain/` holds core BBS concepts: `Session`, `User`, `Conference`,
-  `Node`, repositories, password hashing, caller logs, and session policy.
+  `Node`, `Mail`, repositories (users, conferences, mail), password hashing,
+  caller logs, and session policy.
 - `rust/src/app/` is the application layer: configuration, runtime
   composition, session orchestration, terminal/screen ports, typed session
   wrappers, and use-case functions.
 - `rust/src/adapters/` holds concrete technology choices: telnet, file-backed
-  conferences/screens, in-memory users/logs, and PBKDF2 hashing.
+  conferences/screens, file-backed mail store (JSON per message), in-memory
+  users/logs, and PBKDF2 hashing.
 - `rust/tests/architecture.rs` guards the most important rule today: domain
   code must not import `app` or `adapters`.
 
@@ -64,7 +66,19 @@ flowchart LR
     Hasher -.implements.-> Ports
     CallerLog -.implements.-> Ports
     Screens -.implements.-> ScreenPort["ScreenRepository"]
+
+    MailStore["FileMailStore (per msgbase)"] -.implements.-> MailPort["MailStore"]
+    MailStore --> Mail["domain::Mail"]
 ```
+
+Phase 6, Slice 37 introduced messaging persistence: `domain::Mail` (entity)
+and the `MailStore` port, plus the `FileMailStore` adapter. Each per-msgbase
+store writes one JSON file per message at
+`<msgbase-dir>/<zero-padded-number>.json`, scans the directory at open time
+to recover the cached `highest_message` high-water mark, and backs the spec's
+`lock_msgbase(msgbase)` predicate with an in-process `tokio::sync::Mutex`.
+Wiring the store into the composition root is a Phase 6 slice that arrives
+when the first message-reading rule (Slice 39 `ReadMail`) lands.
 
 The transport adapter, runtime composition, session-driving sub-flows, and the
 repository port shape were sharpened in recent refactorings:

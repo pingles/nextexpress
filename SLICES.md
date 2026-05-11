@@ -27,7 +27,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding | Done |
 | 4 | [slices/phase4.md](slices/phase4.md) | 27–34, 34a | Conferences (read) | Done |
 | 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Skipped |
-| 6 | [slices/phase6.md](slices/phase6.md) | 37–41 | Messaging (read) | Todo |
+| 6 | [slices/phase6.md](slices/phase6.md) | 37–41 | Messaging (read) | In progress |
 | 7 | [slices/phase7.md](slices/phase7.md) | 42–44 | Messaging (write) | Todo |
 | 8 | [slices/phase8.md](slices/phase8.md) | 45–49 | Messaging (advanced) | Todo |
 | 9 | [slices/phase9.md](slices/phase9.md) | 50–52 | Files (browse and flag) | Todo |
@@ -253,7 +253,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 34a | Phase 4 wire-and-smoke (composition root + conference catalogue) | Done |
 | 35 | Sysop creates conference | Skipped |
 | 36 | Sysop grants / revokes access | Skipped |
-| 37 | `Mail` entity + on-disk message store | Todo |
+| 37 | `Mail` entity + on-disk message store | Done |
 | 38 | `ReadPointers` entity | Todo |
 | 39 | `ReadMail` rule + `R` menu command | Todo |
 | 40 | `ScanMail` + `M` / `N` menu commands | Todo |
