@@ -19,7 +19,8 @@ use crate::adapters::file_screen_repository::FileScreenRepository;
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::services::{
-    AppServices, SharedCallerLog, SharedConferences, SharedHasher, SharedScreens, SharedUserRepo,
+    AppServices, SharedCallerLog, SharedConferences, SharedHasher, SharedMailStores, SharedScreens,
+    SharedUserRepo,
 };
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 
@@ -47,9 +48,18 @@ impl Runtime {
         hasher: SharedHasher,
         caller_log: SharedCallerLog,
         conferences: SharedConferences,
+        mail_stores: SharedMailStores,
     ) -> Self {
         let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
-        Self::with_screens(config, user_repo, hasher, caller_log, screens, conferences)
+        Self::with_screens(
+            config,
+            user_repo,
+            hasher,
+            caller_log,
+            screens,
+            conferences,
+            mail_stores,
+        )
     }
 
     /// Variant of [`Self::from_config`] that takes a pre-constructed
@@ -63,6 +73,7 @@ impl Runtime {
         caller_log: SharedCallerLog,
         screens: SharedScreens,
         conferences: SharedConferences,
+        mail_stores: SharedMailStores,
     ) -> Self {
         let pool = Arc::new(NodePool::new(config.max_nodes));
         let default_ratio = DefaultRatio {
@@ -80,6 +91,7 @@ impl Runtime {
             caller_log,
             screens,
             conferences,
+            mail_stores,
             config.session_policy(),
             default_ratio,
             new_user_gate,

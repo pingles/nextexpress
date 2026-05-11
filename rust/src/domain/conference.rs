@@ -8,7 +8,10 @@
 //! reads or writes are present. `accepted_name_type` arrives with
 //! Slice 34 (`JoinedConferenceForNameType`), per-conference accounting
 //! with Slice 61, and message high-water marks with Slice 37 (mail
-//! storage).
+//! storage). [`ConferenceMembership`]'s `pointers` collection arrives
+//! with Slice 38 (`ReadPointers`).
+
+use crate::domain::read_pointers::ReadPointers;
 
 /// How the user's display name is rendered when reading or posting
 /// messages in a given conference (spec: `core.allium:NameType`).
@@ -228,9 +231,10 @@ impl Conference {
 /// `core.allium:ConferenceMembership`).
 ///
 /// Phase 4 only consumes the `granted` flag; per-conference
-/// accounting (bytes, file counts, ratios), the
-/// `messages_posted` counter and read-pointer rows arrive in the
-/// slices that introduce the rules reading them.
+/// accounting (bytes, file counts, ratios) and the `messages_posted`
+/// counter arrive in the slices that introduce the rules reading
+/// them. Slice 38 adds the per-`MessageBase` [`ReadPointers`]
+/// collection.
 ///
 /// The membership is identified by its `conference_number` rather
 /// than by an owned [`Conference`] reference; the conference
@@ -240,6 +244,7 @@ impl Conference {
 pub struct ConferenceMembership {
     conference_number: u32,
     granted: bool,
+    pointers: Vec<ReadPointers>,
 }
 
 impl ConferenceMembership {
@@ -249,11 +254,18 @@ impl ConferenceMembership {
     /// `granted` flag rather than adding and removing rows: the
     /// legacy spec retains revoked rows so per-conference history
     /// (counters, ratios) survives a re-grant.
+    ///
+    /// New memberships start with no read-pointer rows; per the
+    /// schema-growth principle, a [`ReadPointers`] row is created
+    /// lazily by [`Self::upsert_pointers`] the first time a
+    /// `ReadMail`, `ScanMail`, or `ScanMailOnJoin` rule touches a
+    /// particular [`MessageBase`].
     #[must_use]
     pub fn new(conference_number: u32, granted: bool) -> Self {
         Self {
             conference_number,
             granted,
+            pointers: Vec::new(),
         }
     }
 
@@ -277,6 +289,43 @@ impl ConferenceMembership {
     /// `SysopRevokesConferenceAccess`.
     pub fn set_granted(&mut self, granted: bool) {
         self.granted = granted;
+    }
+
+    /// Returns every [`ReadPointers`] row attached to this
+    /// membership, in insertion order (spec:
+    /// `core.allium:ConferenceMembership.pointers`).
+    #[must_use]
+    pub fn pointers(&self) -> &[ReadPointers] {
+        &self.pointers
+    }
+
+    /// Returns the [`ReadPointers`] row for `msgbase_number`, if any.
+    #[must_use]
+    pub fn pointers_for(&self, msgbase_number: u32) -> Option<&ReadPointers> {
+        self.pointers
+            .iter()
+            .find(|p| p.msgbase_number() == msgbase_number)
+    }
+
+    /// Returns a mutable reference to the [`ReadPointers`] row for
+    /// `msgbase_number`, if any.
+    pub fn pointers_for_mut(&mut self, msgbase_number: u32) -> Option<&mut ReadPointers> {
+        self.pointers
+            .iter_mut()
+            .find(|p| p.msgbase_number() == msgbase_number)
+    }
+
+    /// Replaces the [`ReadPointers`] row for `pointers.msgbase_number()`
+    /// or appends a new one. Mirrors the lazy-create behaviour expected
+    /// by `messaging.allium:ReadMail`, `ScanMail`, and `ScanMailOnJoin`:
+    /// callers do not need to pre-seed pointers when the user has never
+    /// touched a base before.
+    pub fn upsert_pointers(&mut self, pointers: ReadPointers) {
+        if let Some(existing) = self.pointers_for_mut(pointers.msgbase_number()) {
+            *existing = pointers;
+        } else {
+            self.pointers.push(pointers);
+        }
     }
 }
 
@@ -519,5 +568,60 @@ mod tests {
         let confs = vec![make_conf(1)];
         let memberships: Vec<ConferenceMembership> = vec![];
         assert!(first_accessible_conference(&memberships, &confs).is_none());
+    }
+
+    #[test]
+    fn new_membership_has_no_read_pointer_rows() {
+        // Per the schema-growth doc-comment: pointer rows are created
+        // lazily by the first ReadMail / ScanMail / ScanMailOnJoin
+        // call. A freshly-constructed membership must not pre-allocate
+        // them.
+        let m = ConferenceMembership::new(5, true);
+        assert!(m.pointers().is_empty());
+        assert!(m.pointers_for(1).is_none());
+    }
+
+    #[test]
+    fn upsert_pointers_appends_new_rows() {
+        let mut m = ConferenceMembership::new(5, true);
+        m.upsert_pointers(ReadPointers::fresh(1, std::time::SystemTime::UNIX_EPOCH));
+        m.upsert_pointers(ReadPointers::fresh(2, std::time::SystemTime::UNIX_EPOCH));
+        assert_eq!(m.pointers().len(), 2);
+        let bases: Vec<u32> = m
+            .pointers()
+            .iter()
+            .map(ReadPointers::msgbase_number)
+            .collect();
+        assert_eq!(bases, vec![1, 2]);
+    }
+
+    #[test]
+    fn upsert_pointers_replaces_existing_rows_for_same_msgbase() {
+        let mut m = ConferenceMembership::new(5, true);
+        m.upsert_pointers(ReadPointers::fresh(1, std::time::SystemTime::UNIX_EPOCH));
+        let replaced =
+            ReadPointers::new(1, 4, 4, std::time::SystemTime::UNIX_EPOCH).expect("valid");
+        m.upsert_pointers(replaced);
+
+        assert_eq!(m.pointers().len(), 1);
+        let only = m.pointers_for(1).expect("present");
+        assert_eq!(only.last_read(), 4);
+        assert_eq!(only.last_scanned(), 4);
+    }
+
+    #[test]
+    fn pointers_for_mut_returns_mutable_handle_to_existing_row() {
+        let mut m = ConferenceMembership::new(5, true);
+        m.upsert_pointers(ReadPointers::fresh(2, std::time::SystemTime::UNIX_EPOCH));
+        let row = m.pointers_for_mut(2).expect("present");
+        row.advance_last_read(3);
+        assert_eq!(m.pointers_for(2).expect("present").last_read(), 3);
+    }
+
+    #[test]
+    fn pointers_for_mut_returns_none_when_msgbase_unknown() {
+        let mut m = ConferenceMembership::new(5, true);
+        m.upsert_pointers(ReadPointers::fresh(2, std::time::SystemTime::UNIX_EPOCH));
+        assert!(m.pointers_for_mut(99).is_none());
     }
 }

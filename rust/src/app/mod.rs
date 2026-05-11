@@ -12,21 +12,25 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use crate::adapters::file_conference_repository::FileConferenceRepository;
+use crate::adapters::file_mail_store::FileMailStore;
 use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::adapters::telnet_listener::TelnetListener;
 use crate::app::runtime::Runtime;
-use crate::app::services::SharedConferences;
+use crate::app::services::{SharedConferences, SharedMailStores};
 use crate::domain::caller_log::CallerLogAppender;
-use crate::domain::conference::Conference;
+use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::conference_repository::ConferenceRepository;
+use crate::domain::mail_store::{MailStore, MailStores};
 use crate::domain::password::PasswordHasher;
 use crate::domain::user_repository::UserRepository;
 
 pub mod config;
 pub mod config_loader;
 pub mod login_flow;
+pub mod mail_scan_on_join;
 pub mod menu_flow;
 pub mod node_pool;
 pub mod registration_flow;
@@ -93,9 +97,15 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
     let repo: Arc<dyn UserRepository + Send + Sync> =
         Arc::new(InMemoryUserRepository::new(vec![seeded]));
     let log: Arc<dyn CallerLogAppender + Send + Sync> = Arc::new(InMemoryCallerLog::new());
+
+    // Slice 41a: open one FileMailStore per known (conference,
+    // msgbase) coordinate so the menu's R / M / N commands can
+    // resolve a backing store for the session's open visit.
+    let mail_stores: SharedMailStores = open_mail_stores(&config.bbs_path, &conferences)?;
+
     let conferences_handle: SharedConferences = Arc::new(conferences);
 
-    let runtime = Runtime::from_config(&config, repo, hasher, log, conferences_handle);
+    let runtime = Runtime::from_config(&config, repo, hasher, log, conferences_handle, mail_stores);
     let listen_addr = format!("127.0.0.1:{}", config.port);
     let listener = TelnetListener::bind(&listen_addr, runtime).await?;
     println!("Listening on {}", listener.local_addr()?);
@@ -116,6 +126,40 @@ fn load_conferences(
 ) -> Result<Vec<Conference>, Box<dyn std::error::Error + Send + Sync>> {
     let repo = FileConferenceRepository::new(bbs_path.to_path_buf());
     Ok(repo.load_all()?)
+}
+
+/// Opens one [`FileMailStore`] per known `(conference, msgbase)`
+/// coordinate, rooted at `<bbs_path>/Conf<NN>/MsgBase[<M>]/`,
+/// and bundles them into an [`InMemoryMailStores`] registry (Slice
+/// 41a).
+///
+/// The `MsgBase` directory has no numeric suffix for `msgbase=1`
+/// (matches the legacy `AmiExpress` single-base layout, which only
+/// ever needed one directory). Higher-numbered bases append the
+/// number: `MsgBase2`, `MsgBase3`, etc.
+fn open_mail_stores(
+    bbs_path: &Path,
+    conferences: &[Conference],
+) -> Result<SharedMailStores, Box<dyn std::error::Error + Send + Sync>> {
+    let mut registry = InMemoryMailStores::new();
+    for conf in conferences {
+        for msgbase in conf.msgbases() {
+            let dir_name = if msgbase.number() == 1 {
+                "MsgBase".to_string()
+            } else {
+                format!("MsgBase{}", msgbase.number())
+            };
+            let dir = bbs_path
+                .join(format!("Conf{:02}", conf.number()))
+                .join(dir_name);
+            let coord = MessageBaseRef::new(conf.number(), msgbase.number());
+            let store = FileMailStore::open(dir, coord)?;
+            let boxed: Box<dyn MailStore + Send> = Box::new(store);
+            registry.register(coord, std::sync::Arc::new(tokio::sync::Mutex::new(boxed)));
+        }
+    }
+    let shared: SharedMailStores = Arc::new(registry) as Arc<dyn MailStores + Send + Sync>;
+    Ok(shared)
 }
 
 #[cfg(test)]

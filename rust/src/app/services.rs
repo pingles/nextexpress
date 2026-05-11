@@ -17,6 +17,7 @@ use crate::app::screens::ScreenRepository;
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::Conference;
+use crate::domain::mail_store::MailStores;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::SessionPolicy;
 use crate::domain::user_repository::UserRepository;
@@ -31,6 +32,8 @@ pub type SharedCallerLog = Arc<dyn CallerLogAppender + Send + Sync + 'static>;
 pub type SharedScreens = Arc<dyn ScreenRepository + Send + Sync + 'static>;
 /// Shared, immutable conference catalogue handle (Slice 34a).
 pub type SharedConferences = Arc<Vec<Conference>>;
+/// Shared mail-store registry handle (Slice 39 / 41a).
+pub type SharedMailStores = Arc<dyn MailStores + Send + Sync + 'static>;
 
 /// Container for the trait-object ports and policy values an
 /// interactive BBS session reads. Cheap to clone (one `Arc` bump per
@@ -42,6 +45,7 @@ pub struct AppServices {
     caller_log: SharedCallerLog,
     screens: SharedScreens,
     conferences: SharedConferences,
+    mail_stores: SharedMailStores,
     session_policy: SessionPolicy,
     default_ratio: DefaultRatio,
     new_user_gate: Arc<NewUserGateConfig>,
@@ -58,6 +62,7 @@ impl AppServices {
         caller_log: SharedCallerLog,
         screens: SharedScreens,
         conferences: SharedConferences,
+        mail_stores: SharedMailStores,
         session_policy: SessionPolicy,
         default_ratio: DefaultRatio,
         new_user_gate: NewUserGateConfig,
@@ -68,6 +73,7 @@ impl AppServices {
             caller_log,
             screens,
             conferences,
+            mail_stores,
             session_policy,
             default_ratio,
             new_user_gate: Arc::new(new_user_gate),
@@ -106,6 +112,12 @@ impl AppServices {
     #[must_use]
     pub fn conferences(&self) -> &[Conference] {
         self.conferences.as_ref()
+    }
+
+    /// Returns the mail-store registry (Slice 39 / 41a).
+    #[must_use]
+    pub fn mail_stores(&self) -> &(dyn MailStores + Send + Sync) {
+        self.mail_stores.as_ref()
     }
 
     /// Returns the configured [`SessionPolicy`] (Copy).

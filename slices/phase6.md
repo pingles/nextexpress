@@ -46,3 +46,15 @@ table and asset inventory.
   - Display `SCREEN_MAILSCAN` when there are unread messages.
 - **Out of Scope**
   - Cross-conference (zoom) scans.
+
+## Slice 41a — Phase 6 wire-and-smoke (closing slice)
+- **In Scope**
+  - Composition root opens a `MailStore` rooted at each conference's `MsgBase/` directory (alongside the Slice 28 conference layout) and exposes it through the `SessionDriver` so the menu loop can resolve a mail store for the session's open `ConferenceVisit`.
+  - `ReadPointers` persistence story chosen and wired: pointers live alongside the user record (one row per `(user, msgbase)`), loaded on logon and flushed on logoff. The repo ships a default seed so the supplied sysop account has pointers for every seeded conference's message base out of the box.
+  - `SessionDriver` dispatches `R <num>` → `ReadMail`, `M` → `ScanMail` (forward), `N` → `ScanMail` (from `last_scanned + 1`) from the menu loop, rendering legacy prompts / `SCREEN_MAILSCAN` for the unread-count summary.
+  - Auto mail scan fires on `JoinConference` (Slice 41) for the joined message base; the resulting `MailScanCompleted` summary is rendered before the menu prompt.
+  - A binary-level smoke test (`tests/phase6_smoke.rs`) drives the headline read flow over telnet: sign-in → JOINED → auto-scan summary → `R <n>` (advances `last_read`, sets `received_at`) → `N` (no further unread) → `J 2` (cross-conference scan summary) → `G`.
+- **Out of Scope**
+  - Posting / replying / forwarding / deleting mail (Phases 7–8).
+  - EALL fan-out and cross-conference (zoom) mail scans (deferred — see Slice 40 / 41 out-of-scope notes).
+  - `CS` (conference scan) command surfacing in the menu loop with per-conference mail-scan summaries — Slice 34a deferred this to "the messaging slices that exercise the per-conference mail-scan summary"; revisit once 41a is green.

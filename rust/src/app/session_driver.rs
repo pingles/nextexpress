@@ -160,7 +160,7 @@ where
         let conferences = self.services.conferences();
         match onboarded.auto_rejoin_conference(conferences, SystemTime::now()) {
             AutoRejoinTransition::Joined {
-                session,
+                mut session,
                 conference_number,
                 msgbase_number,
                 show_bulletin: _,
@@ -173,6 +173,15 @@ where
                     &mut self.terminal,
                     self.services.screens(),
                     name_type_promoted_to,
+                )
+                .await?;
+                // Slice 41: fire `conferences.allium:ScanMailOnJoin`
+                // in `follow_pointer` mode for the auto-rejoin path.
+                crate::app::mail_scan_on_join::scan_mail_on_join(
+                    &mut self.terminal,
+                    &self.services,
+                    &mut session,
+                    crate::app::mail_scan_on_join::JoinScanMode::FollowPointer,
                 )
                 .await?;
                 Ok(AutoRejoinResult::Joined(session))
@@ -232,14 +241,20 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
     use crate::app::screens::{ScreenFuture, ScreenRepository};
-    use crate::app::services::AppServices;
+    use crate::app::services::{AppServices, SharedMailStores};
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
+    use crate::domain::mail_store::MailStores;
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::{LogonChannel, SessionPolicy};
     use crate::domain::user::{RatioMode, User};
+
+    fn test_mail_stores() -> SharedMailStores {
+        Arc::new(InMemoryMailStores::new()) as Arc<dyn MailStores + Send + Sync>
+    }
 
     use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 
@@ -325,6 +340,10 @@ mod tests {
         fn internetnames_screen(&self) -> ScreenFuture<'_> {
             bytes(b"INTERNETNAMES\r\n")
         }
+
+        fn mailscan_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"MAILSCAN\r\n")
+        }
     }
 
     fn bytes(value: &'static [u8]) -> ScreenFuture<'static> {
@@ -378,6 +397,7 @@ mod tests {
             caller_log.clone(),
             screens,
             Arc::new(conferences),
+            test_mail_stores(),
             SessionPolicy::default(),
             ratio,
             gate,
@@ -446,6 +466,7 @@ mod tests {
             caller_log,
             screens,
             Arc::new(vec![]),
+            test_mail_stores(),
             SessionPolicy::default(),
             ratio,
             gate,

@@ -8,11 +8,16 @@ use std::time::{Duration, SystemTime};
 
 use crate::domain::caller_log::CallerLog;
 use crate::domain::conference::Conference;
+use crate::domain::conference::MessageBaseRef;
 use crate::domain::conference::{first_accessible_conference, NameType};
 use crate::domain::conference_visit::{
     next_accessible_conference_after, primary_msgbase_of, resolve_auto_rejoin,
     resolve_explicit_join, ConferenceScan, ConferenceVisit, JoinResolution,
 };
+use crate::domain::mail::Mail;
+use crate::domain::mail_store::MailStore;
+use crate::domain::read_mail::{read_mail, ReadMailError};
+use crate::domain::scan_mail::{scan_mail, ScanMailError, ScanResult};
 use crate::domain::user::User;
 
 mod budget;
@@ -1015,6 +1020,83 @@ impl Session {
             text: line,
             is_password_failure: false,
         })
+    }
+
+    /// Applies `messaging.allium:ReadMail` to the session's bound
+    /// user and `mail` at `now`.
+    ///
+    /// Side-effects (per the spec's `ensures` block):
+    /// - if `mail` is unread and the reader is the addressee, marks
+    ///   `mail.received_at = now`;
+    /// - advances the user's [`ReadPointers`](crate::domain::read_pointers::ReadPointers)
+    ///   row for `mail.msgbase` so `last_read >= mail.number`.
+    ///
+    /// The caller (the menu loop) is responsible for persisting both
+    /// `mail` and the bound user back to their respective stores; this
+    /// method only performs the in-memory mutation.
+    ///
+    /// # Errors
+    /// Returns the matching [`ReadMailError`] variant when any of
+    /// `ReadMail`'s `requires` clauses fail.
+    ///
+    /// # Panics
+    /// Panics if the session is not in [`SessionState::Menu`] — the
+    /// typed wrapper [`crate::app::typed_session::MenuSession`] guarantees this,
+    /// so reaching the panic means the wrapper has been bypassed.
+    pub fn apply_read_mail(
+        &mut self,
+        mail: &mut Mail,
+        now: SystemTime,
+    ) -> Result<(), ReadMailError> {
+        assert!(
+            matches!(self.state(), SessionState::Menu),
+            "apply_read_mail requires Menu state, got {:?}",
+            self.state(),
+        );
+        let user = self
+            .phase
+            .user_mut()
+            .expect("apply_read_mail: Menu state always has a bound user");
+        read_mail(user, mail, now)
+    }
+
+    /// Applies `messaging.allium:ScanMail` to the session's bound
+    /// user, `msgbase` and `store` at `now`.
+    ///
+    /// Side effects (per the spec's `ensures` block) are documented
+    /// on [`crate::domain::scan_mail::scan_mail`]; this wrapper just
+    /// gates on session state being [`SessionState::Onboarded`] or
+    /// [`SessionState::Menu`] (the spec's `requires: session.state
+    /// in {onboarded, menu}`).
+    ///
+    /// # Errors
+    /// Returns the matching [`ScanMailError`] variant.
+    ///
+    /// # Panics
+    /// Panics if the session is not in [`SessionState::Onboarded`]
+    /// or [`SessionState::Menu`] — the typed wrapper
+    /// [`crate::app::typed_session::MenuSession`] /
+    /// [`crate::app::typed_session::OnboardedSession`] guarantees this.
+    pub fn apply_scan_mail<S>(
+        &mut self,
+        store: &S,
+        msgbase: MessageBaseRef,
+        from_message: u32,
+        now: SystemTime,
+    ) -> Result<ScanResult, ScanMailError>
+    where
+        S: MailStore + ?Sized,
+    {
+        assert!(
+            matches!(self.state(), SessionState::Onboarded | SessionState::Menu),
+            "apply_scan_mail requires Onboarded or Menu state, got {:?}",
+            self.state(),
+        );
+        let user = self
+            .phase
+            .user_mut()
+            .expect("apply_scan_mail: state has a bound user");
+        scan_mail(user, store, msgbase, from_message, now)
     }
 
     /// Returns this session's conference-visit history (spec:
@@ -3300,5 +3382,70 @@ mod tests {
             entry.text.contains("no_conference_access"),
             "expected no_conference_access in goodbye line, got {entry:?}"
         );
+    }
+
+    #[test]
+    fn apply_read_mail_from_menu_state_advances_pointer_and_marks_received() {
+        // Build a Menu-state session for alice (slot 2 in `alice()`).
+        // After the read, the bound user must carry an advanced read
+        // pointer, and the addressed mail must hold a `received_at`.
+        use crate::domain::conference::MessageBaseRef;
+        use crate::domain::mail::{BroadcastTo, MailVisibility, NewMail};
+        let confs = vec![make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[2]));
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(s.state(), SessionState::Menu);
+
+        let mut mail = Mail::new(NewMail {
+            msgbase: MessageBaseRef::new(2, 1),
+            number: 3,
+            visibility: MailVisibility::Public,
+            from_name: "Sysop".to_string(),
+            to_name: "alice".to_string(),
+            broadcast_to: BroadcastTo::None,
+            subject: "Welcome".to_string(),
+            posted_at: SystemTime::UNIX_EPOCH,
+            author_slot: 1,
+            addressee_slot: Some(s.user().unwrap().slot_number()),
+            body: "Hi alice".to_string(),
+        });
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
+        s.apply_read_mail(&mut mail, now).expect("happy path");
+
+        assert_eq!(mail.received_at(), Some(now));
+        let pointers = s
+            .user()
+            .unwrap()
+            .read_pointers_for(MessageBaseRef::new(2, 1))
+            .expect("created lazily by ReadMail");
+        assert_eq!(pointers.last_read(), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "apply_read_mail requires Menu state")]
+    fn apply_read_mail_outside_menu_panics() {
+        // The typed wrapper guarantees we only call this from
+        // MenuSession, so reaching this assertion in production means
+        // the wrapper was bypassed — surface that as a panic with a
+        // clear message rather than a silently incorrect mutation.
+        use crate::domain::conference::MessageBaseRef;
+        use crate::domain::mail::{BroadcastTo, MailVisibility, NewMail};
+        let mut s = new_session(LogonChannel::Remote);
+        let mut mail = Mail::new(NewMail {
+            msgbase: MessageBaseRef::new(2, 1),
+            number: 1,
+            visibility: MailVisibility::Public,
+            from_name: "x".to_string(),
+            to_name: "y".to_string(),
+            broadcast_to: BroadcastTo::None,
+            subject: "x".to_string(),
+            posted_at: SystemTime::UNIX_EPOCH,
+            author_slot: 1,
+            addressee_slot: Some(2),
+            body: String::new(),
+        });
+        let _ = s.apply_read_mail(&mut mail, SystemTime::UNIX_EPOCH);
     }
 }

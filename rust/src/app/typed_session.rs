@@ -29,12 +29,36 @@
 
 use std::time::SystemTime;
 
-use crate::domain::conference::{Conference, NameType};
+use crate::domain::conference::{Conference, MessageBaseRef, NameType};
+use crate::domain::mail::Mail;
+use crate::domain::mail_store::MailStore;
+use crate::domain::read_mail::ReadMailError;
+use crate::domain::scan_mail::{ScanMailError, ScanResult};
 use crate::domain::session::{
     AcceptConnectionError, AutoRejoinOutcome, ExplicitJoinOutcome, LogonChannel, Session,
     SessionState,
 };
 use crate::domain::user::User;
+
+/// Trait shared by [`OnboardedSession`] and [`MenuSession`] for the
+/// auto-scan-on-join helper. Both phases can launch a mail scan
+/// (`messaging.allium:ScanMail`'s `requires: session.state in
+/// {onboarded, menu}`); the auto-rejoin path runs in `Onboarded`
+/// and the explicit-join path in `Menu`.
+pub(crate) trait ScanOnJoin {
+    /// Returns the `(conference_number, msgbase_number)` pair for
+    /// the session's open visit, or `None` when none is open.
+    fn current_msgbase(&self) -> Option<(u32, u32)>;
+
+    /// Applies `messaging.allium:ScanMail` to the bound user.
+    fn scan_mail(
+        &mut self,
+        store: &dyn MailStore,
+        msgbase: MessageBaseRef,
+        from_message: u32,
+        now: SystemTime,
+    ) -> Result<ScanResult, ScanMailError>;
+}
 
 /// Build a wrapper from a raw session, asserting (in debug builds) that
 /// the underlying state matches the expected phase.
@@ -227,6 +251,33 @@ impl OnboardedSession {
             }),
         }
     }
+
+    /// Returns the bound user. Always `Some` in this phase.
+    #[must_use]
+    #[allow(dead_code)]
+    pub(crate) fn user(&self) -> &User {
+        self.session
+            .user()
+            .expect("Onboarded phase always has a bound user")
+    }
+}
+
+impl ScanOnJoin for OnboardedSession {
+    fn current_msgbase(&self) -> Option<(u32, u32)> {
+        let visit = self.session.current_visit()?;
+        Some((visit.conference_number(), visit.msgbase_number()))
+    }
+
+    fn scan_mail(
+        &mut self,
+        store: &dyn MailStore,
+        msgbase: MessageBaseRef,
+        from_message: u32,
+        now: SystemTime,
+    ) -> Result<ScanResult, ScanMailError> {
+        self.session
+            .apply_scan_mail(store, msgbase, from_message, now)
+    }
 }
 
 impl_constructor!(OnboardedSession, Onboarded);
@@ -256,6 +307,15 @@ impl MenuSession {
         self.session
             .current_visit()
             .map(crate::domain::conference_visit::ConferenceVisit::conference_number)
+    }
+
+    /// Returns the `(conference_number, msgbase_number)` pair for
+    /// the session's open visit (Slice 39). Used by the `R` / `M` /
+    /// `N` menu commands to locate the active message base.
+    #[must_use]
+    pub(crate) fn current_msgbase(&self) -> Option<(u32, u32)> {
+        let visit = self.session.current_visit()?;
+        Some((visit.conference_number(), visit.msgbase_number()))
     }
 
     /// `session.allium:UserRequestsLogoff` from the menu — the only
@@ -312,6 +372,43 @@ impl MenuSession {
     #[must_use]
     pub(crate) fn into_active(self) -> ActivePhase {
         ActivePhase::Menu(self)
+    }
+
+    /// Applies `messaging.allium:ReadMail` (Slice 39) to `mail` at
+    /// `now`, mutating both the bound user's read pointers and the
+    /// mail's `received_at` per the spec's `ensures` block.
+    ///
+    /// The caller is responsible for persisting the mutated `mail`
+    /// back to its [`crate::domain::mail_store::MailStore`]; the bound
+    /// user is flushed at logoff by the session flow.
+    ///
+    /// # Errors
+    /// Returns the matching [`ReadMailError`] variant when the rule
+    /// rejects the request.
+    pub(crate) fn read_mail(
+        &mut self,
+        mail: &mut Mail,
+        now: SystemTime,
+    ) -> Result<(), ReadMailError> {
+        self.session.apply_read_mail(mail, now)
+    }
+}
+
+impl ScanOnJoin for MenuSession {
+    fn current_msgbase(&self) -> Option<(u32, u32)> {
+        let visit = self.session.current_visit()?;
+        Some((visit.conference_number(), visit.msgbase_number()))
+    }
+
+    fn scan_mail(
+        &mut self,
+        store: &dyn MailStore,
+        msgbase: MessageBaseRef,
+        from_message: u32,
+        now: SystemTime,
+    ) -> Result<ScanResult, ScanMailError> {
+        self.session
+            .apply_scan_mail(store, msgbase, from_message, now)
     }
 }
 

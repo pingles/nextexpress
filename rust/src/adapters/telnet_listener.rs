@@ -187,10 +187,14 @@ mod tests {
 
     use super::*;
     use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
     use crate::app::config::Config;
-    use crate::app::services::{SharedCallerLog, SharedConferences, SharedHasher, SharedUserRepo};
+    use crate::app::services::{
+        SharedCallerLog, SharedConferences, SharedHasher, SharedMailStores, SharedUserRepo,
+    };
+    use crate::domain::mail_store::MailStores;
     use crate::domain::node::NodeStatus;
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::user::User;
@@ -207,7 +211,16 @@ mod tests {
         caller_log: SharedCallerLog,
         conferences: SharedConferences,
     ) -> Runtime {
-        Runtime::from_config(config, user_repo, hasher, caller_log, conferences)
+        let mail_stores: SharedMailStores = std::sync::Arc::new(InMemoryMailStores::new())
+            as std::sync::Arc<dyn MailStores + Send + Sync>;
+        Runtime::from_config(
+            config,
+            user_repo,
+            hasher,
+            caller_log,
+            conferences,
+            mail_stores,
+        )
     }
 
     fn nonexistent_bbs() -> PathBuf {

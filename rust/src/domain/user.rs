@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, MessageBaseRef};
 use crate::domain::password::PasswordHashKind;
+use crate::domain::read_pointers::ReadPointers;
 
 /// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -687,6 +688,53 @@ impl User {
         self.last_joined = Some(MessageBaseRef::new(conference.number(), msgbase.number()));
     }
 
+    /// Returns the [`ReadPointers`] row this user holds for `msgbase`,
+    /// if any. This is the spec's
+    /// `core.allium:read_pointers_for(user, msgbase)` helper.
+    ///
+    /// A `None` return value means either: the user has no membership
+    /// row for the parent conference at all, or the membership exists
+    /// but no rule has yet caused a [`ReadPointers`] row to be created
+    /// for `msgbase`. The two cases share a return value because all
+    /// of `ReadMail`, `ScanMail`, and `ScanMailOnJoin` treat them
+    /// equivalently — they lazily create a fresh row before mutating.
+    #[must_use]
+    pub fn read_pointers_for(&self, msgbase: MessageBaseRef) -> Option<&ReadPointers> {
+        self.memberships
+            .iter()
+            .find(|m| m.conference_number() == msgbase.conference_number())
+            .and_then(|m| m.pointers_for(msgbase.msgbase_number()))
+    }
+
+    /// Returns a mutable reference to the [`ReadPointers`] row for
+    /// `msgbase`, if any. Same lookup semantics as
+    /// [`Self::read_pointers_for`].
+    pub fn read_pointers_for_mut(&mut self, msgbase: MessageBaseRef) -> Option<&mut ReadPointers> {
+        self.memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == msgbase.conference_number())
+            .and_then(|m| m.pointers_for_mut(msgbase.msgbase_number()))
+    }
+
+    /// Inserts or replaces a [`ReadPointers`] row for `msgbase` on the
+    /// user's [`ConferenceMembership`] for the parent conference.
+    ///
+    /// Returns `true` when the row was upserted, `false` when the user
+    /// has no membership row for `msgbase.conference_number()` (in
+    /// which case the caller should refuse the operation — the spec's
+    /// `read_message` precondition implies the user has access).
+    pub fn upsert_read_pointers(&mut self, pointers: ReadPointers, conference_number: u32) -> bool {
+        let Some(membership) = self
+            .memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == conference_number)
+        else {
+            return false;
+        };
+        membership.upsert_pointers(pointers);
+        true
+    }
+
     /// Atomically replaces the user's stored credentials and clears
     /// [`Self::force_password_reset`].
     ///
@@ -1175,6 +1223,77 @@ mod tests {
         user.record_join(&confs[1], &confs[1].msgbases()[0]);
         let joined = user.last_joined().expect("set");
         assert_eq!(joined.conference_number(), 2);
+    }
+
+    #[test]
+    fn read_pointers_for_returns_none_when_no_membership_exists() {
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(user.read_pointers_for(MessageBaseRef::new(7, 1)).is_none());
+    }
+
+    #[test]
+    fn read_pointers_for_returns_none_when_membership_has_no_row_for_msgbase() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        // No pointer rows seeded; the helper must surface this case as
+        // None so callers know to lazily-create.
+        assert!(user.read_pointers_for(MessageBaseRef::new(7, 1)).is_none());
+    }
+
+    #[test]
+    fn read_pointers_for_returns_existing_row() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        let when = SystemTime::UNIX_EPOCH + Duration::from_secs(50);
+        assert!(user.upsert_read_pointers(ReadPointers::new(2, 3, 5, when).expect("valid"), 7,));
+
+        let got = user
+            .read_pointers_for(MessageBaseRef::new(7, 2))
+            .expect("present");
+        assert_eq!(got.msgbase_number(), 2);
+        assert_eq!(got.last_read(), 3);
+        assert_eq!(got.last_scanned(), 5);
+        assert_eq!(got.new_since(), when);
+    }
+
+    #[test]
+    fn read_pointers_for_does_not_cross_conferences() {
+        // A pointer row for (conf=7, msgbase=1) must not satisfy a
+        // lookup for (conf=8, msgbase=1) — the conference component of
+        // MessageBaseRef is load-bearing.
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        assert!(user.upsert_read_pointers(ReadPointers::fresh(1, SystemTime::UNIX_EPOCH), 7,));
+        assert!(user.read_pointers_for(MessageBaseRef::new(8, 1)).is_none());
+    }
+
+    #[test]
+    fn upsert_read_pointers_refuses_when_no_membership_exists() {
+        // The spec's read_message precondition implies the user has a
+        // membership; the helper must refuse to silently create one.
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        let upserted =
+            user.upsert_read_pointers(ReadPointers::fresh(1, SystemTime::UNIX_EPOCH), 99);
+        assert!(!upserted);
+        assert!(user.memberships().is_empty());
+    }
+
+    #[test]
+    fn read_pointers_for_mut_advances_in_place() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        user.upsert_read_pointers(ReadPointers::fresh(1, SystemTime::UNIX_EPOCH), 7);
+
+        let row = user
+            .read_pointers_for_mut(MessageBaseRef::new(7, 1))
+            .expect("present");
+        row.advance_last_read(4);
+
+        let after = user
+            .read_pointers_for(MessageBaseRef::new(7, 1))
+            .expect("present");
+        assert_eq!(after.last_read(), 4);
+        assert_eq!(after.last_scanned(), 4);
     }
 
     #[test]

@@ -9,14 +9,18 @@ system easier to understand and extend.
 The implementation follows a ports-and-adapters direction:
 
 - `rust/src/domain/` holds core BBS concepts: `Session`, `User`, `Conference`,
-  `Node`, `Mail`, persistence ports (`UserRepository`, `ConferenceRepository`,
-  `MailStore`), password hashing, caller logs, and session policy.
+  `Node`, `Mail`, `ReadPointers`, persistence ports (`UserRepository`,
+  `ConferenceRepository`, `MailStore`, `MailStores`), the messaging rules
+  (`read_mail`, `scan_mail`), password hashing, caller logs, and session
+  policy.
 - `rust/src/app/` is the application layer: configuration, runtime
   composition, session orchestration, terminal/screen ports, typed session
   wrappers, and use-case functions.
 - `rust/src/adapters/` holds concrete technology choices: telnet, file-backed
-  conferences/screens, file-backed mail store (JSON per message), in-memory
-  users/logs, and PBKDF2 hashing.
+  conferences/screens, file-backed mail store (JSON per message), an in-memory
+  mail-stores registry (`InMemoryMailStores`) the composition root populates
+  with one `FileMailStore` per known `(conference, msgbase)` coordinate,
+  in-memory users/logs, and PBKDF2 hashing.
 - `rust/tests/architecture.rs` guards the most important rule today: domain
   code must not import `app` or `adapters`.
 
@@ -56,10 +60,21 @@ flowchart LR
     AutoRejoin --> Flow
     Presenter --> WireText["wire_text"]
 
+    AppRun --> MailRegistry["InMemoryMailStores (registry)"]
+    MailRegistry --> MailStore["FileMailStore (per msgbase)"]
+    Runtime --> MailRegistry
+
+    AutoRejoin --> ScanOnJoin["mail_scan_on_join (Slice 41)"]
+    Menu --> ScanOnJoin
+    Menu --> ReadFlow["ReadMail / ScanMail rules"]
+    ScanOnJoin --> ReadFlow
+
     Flow --> DomainSession["domain::Session"]
     Flow --> DomainUser["domain::User"]
     Flow --> DomainConference["domain::Conference"]
     Flow --> Ports["UserRepository / PasswordHasher / CallerLogAppender"]
+    ReadFlow --> Pointers["domain::ReadPointers"]
+    ReadFlow --> Mail["domain::Mail"]
 
     ConfRepo -.implements.-> ConfPort["ConferenceRepository"]
     UserRepo -.implements.-> Ports
@@ -67,27 +82,50 @@ flowchart LR
     CallerLog -.implements.-> Ports
     Screens -.implements.-> ScreenPort["ScreenRepository"]
 
-    MailStore["FileMailStore (per msgbase)"] -.implements.-> MailPort["MailStore"]
-    MailStore --> Mail["domain::Mail"]
-    MailPending["(not yet wired into AppRun;<br/>arrives with Slice 39 ReadMail)"] -.- MailStore
-
-    classDef pending fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#666
-    class MailStore,Mail,MailPort,MailPending pending
+    MailRegistry -.implements.-> MailStoresPort["MailStores"]
+    MailStore -.implements.-> MailPort["MailStore"]
 ```
 
-Phase 6, Slice 37 introduced messaging persistence: `domain::Mail` (entity)
-and the `MailStore` port, plus the `FileMailStore` adapter. Each per-msgbase
-store writes one JSON file per message at
+Phase 6 messaging is wired end-to-end: `domain::Mail` (Slice 37, entity)
+plus the `MailStore` port land per-msgbase via the `FileMailStore` adapter.
+Each store writes one JSON file per message at
 `<msgbase-dir>/<zero-padded-number>.json`, scans the directory at open time
 to recover the cached `highest_message` high-water mark, and backs the spec's
 `lock_msgbase(msgbase)` predicate with an in-process `tokio::sync::Mutex`.
 Timestamps on the wire (`posted_at`, `received_at`) are RFC 3339 strings in
 UTC via the `time` crate's `serde-well-known` adapter; non-UTC offsets in
 hand-written files parse to the same instant as their UTC form, which keeps
-the door open for sysops migrating data from other systems. Wiring the store
-into the composition root is a Phase 6 slice that arrives when the first
-message-reading rule (Slice 39 `ReadMail`) lands — the diagram shows the
-unwired nodes greyed out until then.
+the door open for sysops migrating data from other systems.
+
+Slice 38 introduces `domain::ReadPointers`, attached as a `Vec` on every
+`ConferenceMembership`. The user-level helper `read_pointers_for(user,
+msgbase)` is the spec's black box; rows are lazily created on first
+`ReadMail` / `ScanMail` for a base.
+
+Slices 39–41 wire the headline read flow:
+- Slice 39 (`domain::read_mail::read_mail` + `can_read`): the `R <num>`
+  menu command loads the message from the per-msgbase store, applies the
+  rule (marks `received_at` for the addressee, advances `last_read`),
+  saves the mutated mail back, and renders the legacy header block plus
+  body to the terminal.
+- Slice 40 (`domain::scan_mail::scan_mail`): the `M` / `N` menu commands
+  walk the current message base, count messages visible-and-unread to
+  the user, advance `last_scanned`, and render a summary line. The same
+  helper backs the spec's `count_unread_for` / `first_unread_number_for`
+  black boxes.
+- Slice 41 (`app::mail_scan_on_join`): both the auto-rejoin path (in
+  `SessionDriver`) and the explicit-join path (in `MenuFlow`) call the
+  shared `scan_mail_on_join` helper after the new `ConferenceVisit` is
+  created. When the scan surfaces unread mail the listener writes
+  `SCREEN_MAILSCAN` plus the summary line; an empty scan still emits the
+  summary so the user knows they were checked.
+
+Slice 41a wires the file-backed `MailStores` registry into the composition
+root: `app::run` walks the loaded conferences and opens one `FileMailStore`
+per `(conference, msgbase)` coordinate, registering them in an
+`InMemoryMailStores` registry served as the `MailStores` port through
+`AppServices`. Read pointers ride along with the bound user record and
+flush on logoff via the existing `save_bound_user` path.
 
 The transport adapter, runtime composition, session-driving sub-flows, and the
 repository port shape were sharpened in recent refactorings:

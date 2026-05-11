@@ -52,6 +52,11 @@ const FALLBACK_REALNAMES: &[u8] =
 const FALLBACK_INTERNETNAMES: &[u8] =
     b"\r\nThis conference uses internet names. Your posts will be tagged with your internet alias.\r\n";
 
+/// Built-in fallback for `Screens/MAILSCAN.txt` (Slice 41,
+/// `amiexpress/axenums.e:19`). Rendered immediately before the
+/// auto-scan-on-join summary when the user has unread mail.
+const FALLBACK_MAILSCAN: &[u8] = b"\r\n*** New mail in this conference ***\r\n";
+
 /// Lower bound for the security-level menu walk, mirroring the
 /// `minLevel := 5` default in `amiexpress/express.e:6246`
 /// (findSecurityScreen).
@@ -73,6 +78,7 @@ pub struct FileScreenRepository {
     joinconf: Mutex<Option<Vec<u8>>>,
     realnames: Mutex<Option<Vec<u8>>>,
     internetnames: Mutex<Option<Vec<u8>>>,
+    mailscan: Mutex<Option<Vec<u8>>>,
 }
 
 impl FileScreenRepository {
@@ -89,6 +95,7 @@ impl FileScreenRepository {
             joinconf: Mutex::new(None),
             realnames: Mutex::new(None),
             internetnames: Mutex::new(None),
+            mailscan: Mutex::new(None),
         }
     }
 
@@ -233,6 +240,12 @@ impl FileScreenRepository {
         self.cached_file(&self.internetnames, &path, FALLBACK_INTERNETNAMES)
             .await
     }
+
+    async fn mailscan_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("MAILSCAN.txt");
+        self.cached_file(&self.mailscan, &path, FALLBACK_MAILSCAN)
+            .await
+    }
 }
 
 impl ScreenRepository for FileScreenRepository {
@@ -269,6 +282,10 @@ impl ScreenRepository for FileScreenRepository {
 
     fn internetnames_screen(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.internetnames_bytes().await })
+    }
+
+    fn mailscan_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.mailscan_bytes().await })
     }
 }
 

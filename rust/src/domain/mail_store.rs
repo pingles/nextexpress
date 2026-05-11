@@ -9,8 +9,36 @@
 //! [`MailDraft`] and the store atomically allocates the next number,
 //! persists the mail, and updates its cached high-water mark.
 
+use std::sync::Arc;
+
+use tokio::sync::Mutex;
+
 use crate::domain::conference::MessageBaseRef;
 use crate::domain::mail::{Mail, MailDraft};
+
+/// Thread-safe shared handle to a single-msgbase [`MailStore`]
+/// implementation, locked behind a [`tokio::sync::Mutex`] so the menu
+/// loop can `lock().await` from inside an async task.
+///
+/// Cloning a [`SharedMailStore`] bumps the [`Arc`] count; concurrent
+/// readers serialise through the mutex. Per the spec's
+/// `lock_msgbase(msgbase)` predicate (`messaging.allium:PostMail`),
+/// holding the mutex is the in-process equivalent of the legacy
+/// `MailLock` sentinel file.
+pub type SharedMailStore = Arc<Mutex<Box<dyn MailStore + Send>>>;
+
+/// Registry of [`MailStore`] handles keyed by [`MessageBaseRef`].
+///
+/// The composition root opens one store per known message base at
+/// startup and serves them via this port. Returning `None` means the
+/// caller asked for a base that has no configured store — the menu
+/// loop surfaces this as "no message base for this conference" rather
+/// than constructing one on the fly.
+pub trait MailStores: Send + Sync {
+    /// Returns the shared, lockable handle bound to `msgbase`, or
+    /// `None` when the registry has no store for that coordinate.
+    fn for_msgbase(&self, msgbase: MessageBaseRef) -> Option<SharedMailStore>;
+}
 
 /// Errors returned by [`MailStore`] implementations.
 #[derive(Debug, thiserror::Error)]
@@ -104,4 +132,20 @@ pub trait MailStore {
     /// [`MailStoreError::Malformed`] / [`MailStoreError::NumberMismatch`]
     /// / [`MailStoreError::MsgbaseMismatch`] for corrupted data.
     fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError>;
+
+    /// Overwrites the persisted message at `mail.number()` with the
+    /// supplied payload. Used by `messaging.allium:ReadMail` (Slice 39)
+    /// to persist `received_at` once the addressee has read the mail,
+    /// and by the visibility-transition rules in Phase 8.
+    ///
+    /// `mail.msgbase()` must equal [`Self::msgbase`] and a message at
+    /// `mail.number()` must already exist in the store — `save` is
+    /// not an alternative to [`Self::insert`].
+    ///
+    /// # Errors
+    /// Returns [`MailStoreError::MsgbaseMismatch`] when
+    /// `mail.msgbase()` disagrees with the store's binding, and
+    /// [`MailStoreError::Io`] when the underlying storage rejects the
+    /// write.
+    fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError>;
 }

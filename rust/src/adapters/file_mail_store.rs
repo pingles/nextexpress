@@ -143,6 +143,19 @@ impl MailStore for FileMailStore {
             .into_mail_checked(self.msgbase, number, &path)
             .map(Some)
     }
+
+    fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError> {
+        if mail.msgbase() != self.msgbase {
+            return Err(MailStoreError::MsgbaseMismatch {
+                path: self.path_for(mail.number()).display().to_string(),
+                payload_conference: mail.msgbase().conference_number(),
+                payload_msgbase: mail.msgbase().msgbase_number(),
+                store_conference: self.msgbase.conference_number(),
+                store_msgbase: self.msgbase.msgbase_number(),
+            });
+        }
+        self.write(mail)
+    }
 }
 
 fn scan_dir_for_highest(dir: &Path, msgbase: MessageBaseRef) -> Result<u32, MailStoreError> {
@@ -839,6 +852,68 @@ mod tests {
             written.contains(r#""received_at": null"#),
             "expected null received_at on a freshly-posted mail, got:\n{written}",
         );
+    }
+
+    #[test]
+    fn save_persists_received_at_so_reload_returns_it() {
+        // Slice 39: ReadMail's `mail.received_at = now` consequent
+        // must survive a reload. Without `save`, the timestamp lived
+        // only in memory and the rule's effect would not persist.
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        let mut mail = store.insert(sample_draft()).expect("insert");
+        mail.mark_received(t(500)).expect("mark");
+        store.save(&mail).expect("save");
+
+        let reopened = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        let loaded = reopened.load(mail.number()).unwrap().expect("present");
+        assert_eq!(loaded.received_at(), Some(t(500)));
+    }
+
+    #[test]
+    fn save_rejects_a_mail_whose_msgbase_disagrees_with_the_store() {
+        // Defence against a caller handing us a mail loaded from a
+        // different msgbase: writing it under our directory would
+        // silently break the on-disk MessageBaseRef coordinate.
+        use crate::domain::mail::{Mail, NewMail};
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        store.insert(sample_draft()).expect("insert");
+
+        // Build a Mail whose msgbase claims (9,4). We can do this by
+        // constructing it directly rather than via the store.
+        let foreign = Mail::new(NewMail {
+            msgbase: MessageBaseRef::new(9, 4),
+            number: 1,
+            visibility: MailVisibility::Public,
+            from_name: "x".to_string(),
+            to_name: "y".to_string(),
+            broadcast_to: BroadcastTo::None,
+            subject: "x".to_string(),
+            posted_at: t(0),
+            author_slot: 1,
+            addressee_slot: Some(2),
+            body: String::new(),
+        });
+        let err = store.save(&foreign).expect_err("msgbase mismatch");
+        assert!(matches!(err, MailStoreError::MsgbaseMismatch { .. }));
+    }
+
+    #[test]
+    fn save_can_be_followed_by_a_subsequent_insert_that_still_increments() {
+        // `save` updates an existing record; it must not perturb the
+        // cached high-water mark used by `insert`.
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        let mut m1 = store.insert(sample_draft()).expect("insert");
+        m1.mark_received(t(500)).unwrap();
+        store.save(&m1).expect("save");
+        let m2 = store.insert(sample_draft()).expect("insert again");
+        assert_eq!(m2.number(), 2);
+        assert_eq!(store.highest_message(), 2);
     }
 
     #[test]

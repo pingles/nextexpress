@@ -80,4 +80,11 @@ pub trait ScreenRepository {
     /// (Slice 20a). When the asset is missing the adapter returns a
     /// built-in "registration not available" line.
     fn no_new_users(&self) -> ScreenFuture<'_>;
+
+    /// Returns the `SCREEN_MAILSCAN` asset (Slice 41,
+    /// `amiexpress/axenums.e:19`). Rendered immediately before the
+    /// scan-summary line whenever an auto-scan-on-join surfaces at
+    /// least one unread message — gives the sysop a hook for a
+    /// "you've got new mail" splash.
+    fn mailscan_screen(&self) -> ScreenFuture<'_>;
 }
