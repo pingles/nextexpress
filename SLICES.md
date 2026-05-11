@@ -26,7 +26,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow | Done |
 | 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding | Done |
 | 4 | [slices/phase4.md](slices/phase4.md) | 27–34, 34a | Conferences (read) | Done |
-| 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Todo |
+| 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Skipped |
 | 6 | [slices/phase6.md](slices/phase6.md) | 37–41 | Messaging (read) | Todo |
 | 7 | [slices/phase7.md](slices/phase7.md) | 42–44 | Messaging (write) | Todo |
 | 8 | [slices/phase8.md](slices/phase8.md) | 45–49 | Messaging (advanced) | Todo |
@@ -251,8 +251,8 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 33 | `ConferenceScan` (CS command) | Done |
 | 34 | `JoinedConferenceForNameType` | Done |
 | 34a | Phase 4 wire-and-smoke (composition root + conference catalogue) | Done |
-| 35 | Sysop creates conference | Todo |
-| 36 | Sysop grants / revokes access | Todo |
+| 35 | Sysop creates conference | Skipped |
+| 36 | Sysop grants / revokes access | Skipped |
 | 37 | `Mail` entity + on-disk message store | Todo |
 | 38 | `ReadPointers` entity | Todo |
 | 39 | `ReadMail` rule + `R` menu command | Todo |
@@ -285,6 +285,57 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 66 | `W` (change user info) command | Todo |
 | 67 | `S` (user stats) + `T` (time) commands | Todo |
 | 68 | Sysop chat allowance (`O` page sysop) | Todo |
+
+## Skipped slices
+
+Slices land here when the work has been considered and deliberately not
+done, rather than merely deferred. A skipped slice keeps its number (so
+later slices don't renumber) but ships no rules, no code and no tests.
+The entry below explains why — so a future contributor doesn't quietly
+resurrect the slice without revisiting the reasoning.
+
+### Phase 5 — Conferences (admin) — Slices 35, 36
+
+Phase 5 was sketched from the spec's sysop-admin section
+(`conferences.allium:SysopCreatesConference`,
+`SysopGrantsConferenceAccess`, `SysopRevokesConferenceAccess`). On
+re-reading the legacy AmiExpress source it turns out neither rule
+corresponds to a runtime command the legacy ever had, and neither has a
+planned caller in any other phase:
+
+- **No legacy runtime "create conference".** `cmds.numConf` is read once
+  at startup from the `NCONFS` tooltype (`amiexpress/express.e:31791`).
+  `conferenceMaintenance()` (`amiexpress/express.e:22686`) only edits
+  *existing* conferences (ratios, mail-scan pointer resets, capacity).
+  `ACS_CREATE_CONFERENCE` exists as a name in `axcommon.e:20` but is
+  never checked anywhere in the source. The legacy "create a
+  conference" workflow is stop-BBS / edit-tooltypes / make-directories
+  / restart — which already maps onto NextExpress's "drop a
+  `Conf<NN>/conference.toml` and restart" (Slice 28's
+  `FileConferenceRepository`).
+- **No legacy runtime "grant/revoke access" command pair.** Access is
+  held in the user record's 10-char `conferenceAccess` field and is
+  only mutated as a whole string from the F6 account editor's `F` field
+  (`amiexpress/express.e:21446`), the `PRESET.AREA` tooltype copier
+  (`:21333`) or the Shift-F6 temporary-access swap (`:7900`). Slice 36's
+  bulk-by-AREA-name form was already out of scope. The per-(user,
+  conference) data primitives already exist
+  (`User::upsert_membership`, `User::set_membership_granted` in
+  `rust/src/domain/user.rs`); they are exercised by the Slice 34a
+  composition-root seed.
+- **No planned caller anywhere.** Phase 13's `W` command edits the
+  user's *own* info only. Phase 14 (sysop console & node controls) is
+  entirely about local logon and node-level operations — none of its
+  slices touch `Conference` or `ConferenceMembership`. The legacy F6
+  account editor and `conferenceMaintenance()` are not sliced anywhere
+  and, per `AGENTS.md`'s "configuration via files rather than a separate
+  program" rule, are intended to be replaced by file edits (and a
+  possible CLI wizard, listed under [`slices/future.md`](slices/future.md)
+  as "axSetupTool replacement") rather than in-BBS commands.
+
+If a future in-BBS sysop-admin surface lands (or the CLI wizard grows a
+"new conference" subcommand), the rules can be revived then — they will
+have a caller and a user-visible behaviour to anchor the tests.
 
 ## Asset inventory (from `amiexpress/deployment/binaries.lha`)
 
