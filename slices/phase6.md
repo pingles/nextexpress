@@ -9,11 +9,12 @@ table and asset inventory.
 ## Slice 37 — `Mail` entity + on-disk message store
 - **In Scope**
   - `messaging.allium:Mail` entity with header + body, `transitions visibility`, `FromNameMatchesAuthor` and `DeletedMessagesHaveNoActiveReceived` invariants.
-  - File-based store (one file per message, header file separate per legacy convention).
-  - `MessageNumbersUniquePerBase` and `HighestMessageMatchesMaxNumber` invariants enforced by the store.
+  - `MessageNumbersUniquePerBase` enforced by filename = number; `HighestMessageMatchesMaxNumber` derived by directory scan at init and cached in memory.
+  - `lock_msgbase(msgbase)` predicate backed by an in-memory `tokio::sync::Mutex` per message base; no on-disk lock file.
 - **Out of Scope**
   - `MailAttachment` (Slice 48).
   - External message bases / `ext_msg_num` (deferred).
+  - Legacy on-disk format compatibility (migration tool — future).
 
 ## Slice 38 — `ReadPointers` entity
 - **In Scope**
