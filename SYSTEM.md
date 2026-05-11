@@ -9,8 +9,8 @@ system easier to understand and extend.
 The implementation follows a ports-and-adapters direction:
 
 - `rust/src/domain/` holds core BBS concepts: `Session`, `User`, `Conference`,
-  `Node`, `Mail`, repositories (users, conferences, mail), password hashing,
-  caller logs, and session policy.
+  `Node`, `Mail`, persistence ports (`UserRepository`, `ConferenceRepository`,
+  `MailStore`), password hashing, caller logs, and session policy.
 - `rust/src/app/` is the application layer: configuration, runtime
   composition, session orchestration, terminal/screen ports, typed session
   wrappers, and use-case functions.
@@ -69,6 +69,10 @@ flowchart LR
 
     MailStore["FileMailStore (per msgbase)"] -.implements.-> MailPort["MailStore"]
     MailStore --> Mail["domain::Mail"]
+    MailPending["(not yet wired into AppRun;<br/>arrives with Slice 39 ReadMail)"] -.- MailStore
+
+    classDef pending fill:#fafafa,stroke:#999,stroke-dasharray:4 3,color:#666
+    class MailStore,Mail,MailPort,MailPending pending
 ```
 
 Phase 6, Slice 37 introduced messaging persistence: `domain::Mail` (entity)
@@ -77,8 +81,13 @@ store writes one JSON file per message at
 `<msgbase-dir>/<zero-padded-number>.json`, scans the directory at open time
 to recover the cached `highest_message` high-water mark, and backs the spec's
 `lock_msgbase(msgbase)` predicate with an in-process `tokio::sync::Mutex`.
-Wiring the store into the composition root is a Phase 6 slice that arrives
-when the first message-reading rule (Slice 39 `ReadMail`) lands.
+Timestamps on the wire (`posted_at`, `received_at`) are RFC 3339 strings in
+UTC via the `time` crate's `serde-well-known` adapter; non-UTC offsets in
+hand-written files parse to the same instant as their UTC form, which keeps
+the door open for sysops migrating data from other systems. Wiring the store
+into the composition root is a Phase 6 slice that arrives when the first
+message-reading rule (Slice 39 `ReadMail`) lands — the diagram shows the
+unwired nodes greyed out until then.
 
 The transport adapter, runtime composition, session-driving sub-flows, and the
 repository port shape were sharpened in recent refactorings:
