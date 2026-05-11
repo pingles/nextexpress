@@ -56,7 +56,8 @@ surviving mutant is equivalent or intentionally deferred.
 
 ## System Design
 
-Lean towards hexagonal architecture: core domain components shouldn't depend on non-domain code.
+* Lean towards hexagonal architecture: core domain components shouldn't depend on non-domain code.
+* Prefer simplicity; don't create abstractions before necessary.
 
 ## Before Committing
 
@@ -64,6 +65,7 @@ Lean towards hexagonal architecture: core domain components shouldn't depend on 
 2. No compile warnings `cargo build`
 3. Run doctests with `cargo test --doc`
 4. Check for insufficient tests with `cargo mutants`
+5. Update the SYSTEM.md document to reflect current design. Ensure the diagram reflects the current system.
 
 Formatting (`cargo fmt`) and clippy (`cargo clippy -- -D warnings`) run
 automatically via Claude Code hooks defined in `.claude/settings.json` — fmt
