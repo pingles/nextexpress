@@ -551,7 +551,7 @@ where
 
 /// Phase-typed variants of the flow functions.
 ///
-/// These take a [`crate::app::typed_session`] phase wrapper by value,
+/// These take a [`crate::domain::session::typed`] phase wrapper by value,
 /// delegate to the equivalent untyped function above, then dispatch
 /// the result into the appropriate next-phase wrapper or transition
 /// enum. The typed variants are how the driver consumes flow logic;
@@ -568,14 +568,14 @@ pub(crate) mod typed {
         EnterMenuFlowError, FinaliseLogoffFlowError, NewUserGateConfig, NewUserProfile,
         NewUserRegistrationFlow, VerifyNewUserPasswordFlowError, VerifyPasswordFlowError,
     };
-    use crate::app::typed_session::{
+    use crate::domain::caller_log::CallerLogAppender;
+    use crate::domain::password::PasswordHasher;
+    use crate::domain::session::typed::{
         AuthenticatingSession, EndedSession, IdentifyingSession, LoggingOffSession, MenuSession,
         NameTypedTransition, NewUserPasswordTransition, NewUserRegisteringSession,
         NewUserRegistrationResult, OnboardedSession, VerifyPasswordRejectionReason,
         VerifyPasswordTransition,
     };
-    use crate::domain::caller_log::CallerLogAppender;
-    use crate::domain::password::PasswordHasher;
     use crate::domain::session::{
         NameTypedOutcome, NewUserPasswordOutcome, SessionPolicy, SessionState,
         VerifyPasswordOutcome,

@@ -11,15 +11,15 @@ use std::time::SystemTime;
 use crate::app::services::AppServices;
 use crate::app::session_flow;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::typed_session::{
-    AuthenticatingSession, EndedSession, IdentifyingSession, LoggingOffSession,
-    NameTypedTransition, NewUserRegisteringSession, OnboardedSession,
-    VerifyPasswordRejectionReason, VerifyPasswordTransition,
-};
 use crate::app::wire_text::{
     ACCOUNT_LOCKED_LINE, AUTHENTICATED_LINE, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE, NAME_PROMPT,
     PASSWORD_PROMPT, TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE, UNKNOWN_USER_LINE,
     WRONG_PASSWORD_LINE,
+};
+use crate::domain::session::typed::{
+    AuthenticatingSession, EndedSession, IdentifyingSession, LoggingOffSession,
+    NameTypedTransition, NewUserRegisteringSession, OnboardedSession,
+    VerifyPasswordRejectionReason, VerifyPasswordTransition,
 };
 
 /// Outcome reported by [`LoginFlow::identify`]. The new-user branch is
@@ -203,14 +203,11 @@ where
         prompt: &[u8],
         echo: TerminalEcho,
     ) -> Result<TerminalRead, T::Error> {
-        self.terminal.write(prompt).await?;
-        self.terminal.flush().await?;
         let timeout = self.services.session_policy().input_timeout();
-        self.terminal.read_line(echo, timeout).await
+        crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
     }
 
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
-        self.terminal.write(bytes).await?;
-        self.terminal.flush().await
+        crate::app::terminal::write_and_flush(self.terminal, bytes).await
     }
 }

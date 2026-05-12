@@ -110,7 +110,7 @@ impl ConferenceRepository for FileConferenceRepository {
             let parsed: ConferenceToml = toml::from_str(&text).map_err(|source| {
                 ConferenceRepositoryError::MalformedConference {
                     path: toml_path.display().to_string(),
-                    source,
+                    source: Box::new(source),
                 }
             })?;
             if parsed.number != expected_number {

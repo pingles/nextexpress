@@ -9,36 +9,14 @@
 //! [`MailDraft`] and the store atomically allocates the next number,
 //! persists the mail, and updates its cached high-water mark.
 
-use std::sync::Arc;
-
-use tokio::sync::Mutex;
+use std::error::Error;
 
 use crate::domain::conference::MessageBaseRef;
 use crate::domain::mail::{Mail, MailDraft};
 
-/// Thread-safe shared handle to a single-msgbase [`MailStore`]
-/// implementation, locked behind a [`tokio::sync::Mutex`] so the menu
-/// loop can `lock().await` from inside an async task.
-///
-/// Cloning a [`SharedMailStore`] bumps the [`Arc`] count; concurrent
-/// readers serialise through the mutex. Per the spec's
-/// `lock_msgbase(msgbase)` predicate (`messaging.allium:PostMail`),
-/// holding the mutex is the in-process equivalent of the legacy
-/// `MailLock` sentinel file.
-pub type SharedMailStore = Arc<Mutex<Box<dyn MailStore + Send>>>;
-
-/// Registry of [`MailStore`] handles keyed by [`MessageBaseRef`].
-///
-/// The composition root opens one store per known message base at
-/// startup and serves them via this port. Returning `None` means the
-/// caller asked for a base that has no configured store — the menu
-/// loop surfaces this as "no message base for this conference" rather
-/// than constructing one on the fly.
-pub trait MailStores: Send + Sync {
-    /// Returns the shared, lockable handle bound to `msgbase`, or
-    /// `None` when the registry has no store for that coordinate.
-    fn for_msgbase(&self, msgbase: MessageBaseRef) -> Option<SharedMailStore>;
-}
+/// Adapter-originated source error attached to domain-shaped
+/// persistence failures.
+pub type StoreSourceError = Box<dyn Error + Send + Sync + 'static>;
 
 /// Errors returned by [`MailStore`] implementations.
 #[derive(Debug, thiserror::Error)]
@@ -53,7 +31,7 @@ pub enum MailStoreError {
         path: String,
         /// Underlying parse error.
         #[source]
-        source: serde_json::Error,
+        source: StoreSourceError,
     },
     /// A mail could not be serialised to JSON. The in-memory writers
     /// used by [`MailStore`] implementations cannot themselves fail, so
@@ -66,7 +44,7 @@ pub enum MailStoreError {
         number: u32,
         /// Underlying serde error.
         #[source]
-        source: serde_json::Error,
+        source: StoreSourceError,
     },
     /// A persisted message's recorded number disagrees with the number
     /// encoded in its filename. Catches manual edits that would

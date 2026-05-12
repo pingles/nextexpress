@@ -14,11 +14,11 @@
 //! next-phase wrapper, so the wrong handle becomes unrepresentable.
 //!
 //! ## Layering
-//! Wrappers and their constructors live in [`crate::app`] (this
-//! module) so the domain entity stays untouched. Constructors are
-//! `pub(in crate::app)` — only flow code may build them. Read-only
-//! accessors are `pub(crate)` so the driver can render prompts and
-//! logs without unwrapping the inner session.
+//! Wrappers and their constructors live beside [`Session`] so this
+//! module is the single typed entry point for session state
+//! transitions. Constructors are crate-visible for app-layer flow
+//! code; raw transition helpers on [`Session`] remain private where a
+//! typed wrapper covers them.
 //!
 //! ## Cross-phase operations
 //! [`ActivePhase`] enum collects every wrapper from which idle-timeout
@@ -64,7 +64,7 @@ pub(crate) trait ScanOnJoin {
 /// Build a wrapper from a raw session, asserting (in debug builds) that
 /// the underlying state matches the expected phase.
 ///
-/// `from_session` and `into_inner` are uniformly `pub(in crate::app)`
+/// `from_session` and `into_inner` are uniformly `pub(crate)`
 /// so any phase wrapper can be reconstructed by flow code, even if
 /// the current driver doesn't exercise that round-trip for every
 /// phase yet. `#[allow(dead_code)]` on the impl block suppresses the
@@ -76,10 +76,10 @@ macro_rules! impl_constructor {
         #[allow(dead_code)]
         impl $wrapper {
             /// Constructs a phase wrapper from an already-transitioned
-            /// session. Visible only inside the application layer; flow
+            /// session. Visible only inside this crate; flow
             /// functions are the only callers.
             #[must_use]
-            pub(in crate::app) fn from_session(session: Session) -> Self {
+            pub(crate) fn from_session(session: Session) -> Self {
                 debug_assert_eq!(
                     session.state(),
                     SessionState::$state,
@@ -94,10 +94,10 @@ macro_rules! impl_constructor {
             }
 
             /// Returns the inner session by value. Visible only inside
-            /// the application layer; flow functions consume wrappers
+            /// this crate; flow functions consume wrappers
             /// and rebuild them on transition.
             #[must_use]
-            pub(in crate::app) fn into_inner(self) -> Session {
+            pub(crate) fn into_inner(self) -> Session {
                 self.session
             }
         }
@@ -576,8 +576,7 @@ pub(crate) enum ExplicitJoinTransition {
     NoAccess(LoggingOffSession),
 }
 
-/// Outcome of [`crate::app::session_flow::name_typed`] expressed as
-/// next-phase ownership.
+/// Outcome of the name-typed flow expressed as next-phase ownership.
 pub(crate) enum NameTypedTransition {
     /// Handle resolved to a known user; collect the password next.
     Authenticated(AuthenticatingSession),
@@ -600,8 +599,8 @@ pub(crate) enum NameTypedTransition {
     Ended(EndedSession),
 }
 
-/// Outcome of [`crate::app::session_flow::verify_password`] expressed
-/// as next-phase ownership.
+/// Outcome of the password-verification flow expressed as next-phase
+/// ownership.
 pub(crate) enum VerifyPasswordTransition {
     /// Credentials matched; the post-onboarded cluster has run.
     Onboarded(OnboardedSession),
@@ -634,11 +633,10 @@ pub(crate) enum VerifyPasswordRejectionReason {
     LogonRejected,
 }
 
-/// Outcome of [`crate::app::session_flow::NewUserRegistrationFlow::complete_typed`]
-/// expressed as next-phase ownership. The post-onboarded rule cluster
-/// may move the session to [`SessionState::LoggingOff`] on a fresh
-/// registration whose ratio / access tier triggers
-/// `RejectLockedOrInsufficientAccess`.
+/// Outcome of the new-user registration flow expressed as next-phase
+/// ownership. The post-onboarded rule cluster may move the session to
+/// [`SessionState::LoggingOff`] on a fresh registration whose ratio /
+/// access tier triggers `RejectLockedOrInsufficientAccess`.
 pub(crate) enum NewUserRegistrationResult {
     /// The new user was created and the post-onboarded cluster ran
     /// clean.
@@ -648,8 +646,8 @@ pub(crate) enum NewUserRegistrationResult {
     LoggingOff(LoggingOffSession),
 }
 
-/// Outcome of [`crate::app::session_flow::verify_new_user_password`]
-/// expressed as next-phase ownership.
+/// Outcome of the new-user password gate expressed as next-phase
+/// ownership.
 pub(crate) enum NewUserPasswordTransition {
     /// Gate match. Stay in [`SessionState::NewUserRegistering`] with
     /// `password_verified` set; the registration form follows.

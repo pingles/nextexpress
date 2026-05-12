@@ -13,8 +13,8 @@
 
 use std::collections::HashMap;
 
+use crate::app::mail_stores::{MailStores, SharedMailStore};
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail_store::{MailStores, SharedMailStore};
 
 /// In-process [`MailStores`] registry keyed by [`MessageBaseRef`].
 ///

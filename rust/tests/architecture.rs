@@ -12,6 +12,14 @@ use std::path::{Path, PathBuf};
 
 /// Roots `domain` is forbidden to import from.
 const FORBIDDEN_ROOTS: &[&str] = &["adapters", "app"];
+/// Runtime / adapter crates that must not appear in domain code.
+const FORBIDDEN_INFRASTRUCTURE_REFERENCES: &[&str] = &[
+    "tokio::",
+    "serde_json::",
+    "toml::",
+    "std::fs::",
+    "std::net::",
+];
 
 /// Walks `dir` recursively and returns every `*.rs` file it contains.
 fn rust_sources(dir: &Path) -> Vec<PathBuf> {
@@ -53,6 +61,16 @@ fn use_violates(line: &str, forbidden: &str) -> bool {
         || target.trim_end_matches([';', ' ']) == forbidden
 }
 
+/// Returns true when a non-comment source line names an
+/// infrastructure-only crate or module. This intentionally checks
+/// fully-qualified references as well as `use` lines, because a domain
+/// error such as `source: serde_json::Error` couples the domain to an
+/// adapter detail without needing an import.
+fn references_infrastructure(line: &str, forbidden: &str) -> bool {
+    let trimmed = line.trim_start();
+    !trimmed.starts_with("//") && line.contains(forbidden)
+}
+
 #[test]
 fn domain_does_not_depend_on_adapters_or_app() {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -85,6 +103,37 @@ fn domain_does_not_depend_on_adapters_or_app() {
 }
 
 #[test]
+fn domain_does_not_depend_on_runtime_or_adapter_crates() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let domain_dir = Path::new(manifest_dir).join("src").join("domain");
+
+    let mut violations: Vec<String> = Vec::new();
+    for path in rust_sources(&domain_dir) {
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
+        for (idx, line) in content.lines().enumerate() {
+            for forbidden in FORBIDDEN_INFRASTRUCTURE_REFERENCES {
+                if references_infrastructure(line, forbidden) {
+                    violations.push(format!(
+                        "{}:{} references `{}` ({})",
+                        path.display(),
+                        idx + 1,
+                        forbidden,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "domain layer must stay free of runtime/adapter crates; found:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn use_violates_detects_canonical_forms() {
     assert!(use_violates("use crate::adapters;", "adapters"));
     assert!(use_violates("use crate::adapters::Foo;", "adapters"));
@@ -99,4 +148,16 @@ fn use_violates_ignores_unrelated_mentions() {
     assert!(!use_violates("    let adapters = 3;", "adapters"));
     assert!(!use_violates("use std::collections::HashMap;", "adapters"));
     assert!(!use_violates("use crate::adapter_helpers;", "adapters"));
+}
+
+#[test]
+fn references_infrastructure_ignores_comments_but_catches_code() {
+    assert!(!references_infrastructure(
+        "//! adapter uses serde_json::Error",
+        "serde_json::"
+    ));
+    assert!(references_infrastructure(
+        "source: serde_json::Error,",
+        "serde_json::"
+    ));
 }

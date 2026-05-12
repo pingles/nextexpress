@@ -8,12 +8,10 @@
 
 use std::time::SystemTime;
 
+use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg, PostArg, ScanArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::{format_explicit_join_line, render_name_type_promotion};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::typed_session::{
-    ExplicitJoinTransition, LoggingOffSession, MenuSession, ScanOnJoin,
-};
 use crate::app::wire_text::{
     render_mail_body, render_mail_header, render_post_success, render_scan_summary,
     DELETED_MESSAGE_LINE, GOODBYE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
@@ -26,18 +24,10 @@ use crate::app::wire_text::{
 use crate::domain::conference::MessageBaseRef;
 use crate::domain::post_mail::{PostMailDraft, PostMailError};
 use crate::domain::read_mail::ReadMailError;
+use crate::domain::session::typed::{
+    ExplicitJoinTransition, LoggingOffSession, MenuSession, ScanOnJoin,
+};
 use crate::domain::user_repository::NameLookupResult;
-
-/// Parsed shape of a `J <number>` command. Returned by
-/// [`parse_join_command`].
-enum JoinArg {
-    /// `J <n>` where `<n>` parsed as a `u32`.
-    Number(u32),
-    /// `J` (or `J ` / `J\t`) with no number.
-    Missing,
-    /// `J <token>` where `<token>` could not be parsed as a `u32`.
-    Invalid,
-}
 
 /// Outcome of [`MenuFlow::handle_explicit_join`]. The success branch
 /// returns the still-Menu-state session so the menu loop continues;
@@ -103,51 +93,49 @@ where
                 }
             };
             let trimmed = line.trim();
-            if trimmed.eq_ignore_ascii_case("G") {
-                let logging_off = session.user_requests_logoff();
-                self.write_and_flush(GOODBYE_LINE).await?;
-                return Ok(logging_off);
-            }
-            if let Some(arg) = parse_join_command(trimmed) {
-                match arg {
-                    JoinArg::Number(n) => {
+            match parse_menu_command(trimmed) {
+                MenuCommand::Logoff => {
+                    let logging_off = session.user_requests_logoff();
+                    self.write_and_flush(GOODBYE_LINE).await?;
+                    return Ok(logging_off);
+                }
+                MenuCommand::Join(arg) => match arg {
+                    NumberArg::Number(n) => {
                         session = match self.handle_explicit_join(session, n).await? {
                             ExplicitJoinResult::Joined(menu) => menu,
-                            ExplicitJoinResult::NoAccess(logging_off) => return Ok(logging_off),
+                            ExplicitJoinResult::NoAccess(logging_off) => {
+                                return Ok(logging_off);
+                            }
                         };
                     }
-                    JoinArg::Missing => {
+                    NumberArg::Missing => {
                         self.write_and_flush(JOIN_REQUIRES_NUMBER_LINE).await?;
                     }
-                    JoinArg::Invalid => {
+                    NumberArg::Invalid => {
                         self.write_and_flush(INVALID_CONFERENCE_NUMBER_LINE).await?;
                     }
-                }
-                continue;
-            }
-            if let Some(arg) = parse_read_command(trimmed) {
-                match arg {
-                    ReadArg::Number(n) => {
+                },
+                MenuCommand::Read(arg) => match arg {
+                    NumberArg::Number(n) => {
                         self.handle_read_mail(&mut session, n).await?;
                     }
-                    ReadArg::Missing => {
+                    NumberArg::Missing => {
                         self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
                     }
-                    ReadArg::Invalid => {
+                    NumberArg::Invalid => {
                         self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
                     }
+                },
+                MenuCommand::Scan(scan) => {
+                    self.handle_scan_mail(&mut session, scan).await?;
                 }
-                continue;
+                MenuCommand::Post(post) => {
+                    self.handle_post_mail(&mut session, post).await?;
+                }
+                MenuCommand::Unknown => {
+                    self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
+                }
             }
-            if let Some(scan) = parse_scan_command(trimmed) {
-                self.handle_scan_mail(&mut session, scan).await?;
-                continue;
-            }
-            if let Some(post) = parse_post_command(trimmed) {
-                self.handle_post_mail(&mut session, post).await?;
-                continue;
-            }
-            self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
         }
     }
 
@@ -545,306 +533,11 @@ where
         prompt: &[u8],
         echo: TerminalEcho,
     ) -> Result<TerminalRead, T::Error> {
-        self.terminal.write(prompt).await?;
-        self.terminal.flush().await?;
         let timeout = self.services.session_policy().input_timeout();
-        self.terminal.read_line(echo, timeout).await
+        crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
     }
 
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
-        self.terminal.write(bytes).await?;
-        self.terminal.flush().await
-    }
-}
-
-/// Recognises the Phase-4 `J` / `J <num>` menu command. Returns
-/// `None` for any other typed line so the menu loop can fall
-/// through to its existing dispatch (currently only `G`). Mirrors
-/// the legacy parsing in `amiexpress/express.e:25140` modulo the
-/// `getInverse` macro, which Phase 4 doesn't model yet.
-fn parse_join_command(line: &str) -> Option<JoinArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("J") {
-        return None;
-    }
-    let Some(arg) = tokens.next() else {
-        return Some(JoinArg::Missing);
-    };
-    if tokens.next().is_some() {
-        // Extra trailing tokens are treated as a malformed argument
-        // rather than silently ignored.
-        return Some(JoinArg::Invalid);
-    }
-    match arg.parse::<u32>() {
-        Ok(n) => Some(JoinArg::Number(n)),
-        Err(_) => Some(JoinArg::Invalid),
-    }
-}
-
-/// Parsed shape of an `R <number>` command (Slice 39). Returned by
-/// [`parse_read_command`].
-enum ReadArg {
-    /// `R <n>` where `<n>` parsed as a `u32`.
-    Number(u32),
-    /// `R` (or `R ` / `R\t`) with no number.
-    Missing,
-    /// `R <token>` where `<token>` could not be parsed as a `u32`.
-    Invalid,
-}
-
-/// Parsed shape of an `M` / `N` command (Slice 40). Returned by
-/// [`parse_scan_command`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScanArg {
-    /// `N` — scan from `last_scanned + 1`. Surfaces unread mail
-    /// the user has not yet been alerted to.
-    New,
-    /// `M` — scan from message 1. Lists every message visible to
-    /// the user in the current msgbase as the unread set.
-    All,
-}
-
-/// Recognises the Phase-6 `M` / `N` menu commands. Returns `None`
-/// for any other typed line, including the legacy `M` (toggle ANSI
-/// colour) and `N` (list new files) which the Rust port still
-/// owes a slice — Slice 40 routes `M` and `N` to mail-scan as the
-/// spec's `ScanMail` rule demands; the legacy mappings will be
-/// renamed if/when those features land.
-fn parse_scan_command(line: &str) -> Option<ScanArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if tokens.next().is_some() {
-        // `M ...` and `N ...` reject extra tokens; the simplified
-        // dispatcher does not yet accept a numeric `from_message`
-        // argument from the wire. Add as a future refinement.
-        return None;
-    }
-    if head.eq_ignore_ascii_case("M") {
-        Some(ScanArg::All)
-    } else if head.eq_ignore_ascii_case("N") {
-        Some(ScanArg::New)
-    } else {
-        None
-    }
-}
-
-/// Parsed shape of an `E` / `E <to>` command (Slice 42). Returned by
-/// [`parse_post_command`].
-enum PostArg {
-    /// `E <to>` where `<to>` is one-or-more tokens after the command
-    /// (kept verbatim — real-name conferences accept multi-word
-    /// handles like "John Smith").
-    To(String),
-    /// `E` with no inline recipient. The handler prompts for it.
-    Missing,
-}
-
-/// Recognises the Phase-7 `E` / `E <to>` menu command (Slice 42).
-/// Returns `None` for any other typed line. Mirrors the legacy
-/// `enterMSG` inline-recipient shortcut at
-/// `amiexpress/express.e:10765-10773`.
-fn parse_post_command(line: &str) -> Option<PostArg> {
-    let mut chars = line.chars();
-    let head = chars.next()?;
-    if !matches!(head, 'E' | 'e') {
-        return None;
-    }
-    let rest: String = chars.collect();
-    let trimmed = rest.trim();
-    if trimmed.is_empty() {
-        // Bare `E` (or `E ` / `E\t`): no inline recipient — the
-        // handler prompts. But reject anything else that starts with
-        // 'E' but has no whitespace separator, e.g. `EM`.
-        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-            return Some(PostArg::Missing);
-        }
-        return None;
-    }
-    if !rest.starts_with(char::is_whitespace) {
-        // `EM`, `Edit`, etc — not the `E` command.
-        return None;
-    }
-    Some(PostArg::To(trimmed.to_string()))
-}
-
-/// Recognises the Phase-6 `R` / `R <num>` menu command. Returns
-/// `None` for any other typed line. Mirrors the parameter shape of
-/// [`parse_join_command`]; the read sub-flow that accepts `+` / `-`
-/// step forms (`amiexpress/express.e:12002`) lands in a future
-/// slice that models the read-message navigation loop.
-fn parse_read_command(line: &str) -> Option<ReadArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("R") {
-        return None;
-    }
-    let Some(arg) = tokens.next() else {
-        return Some(ReadArg::Missing);
-    };
-    if tokens.next().is_some() {
-        return Some(ReadArg::Invalid);
-    }
-    match arg.parse::<u32>() {
-        Ok(n) => Some(ReadArg::Number(n)),
-        Err(_) => Some(ReadArg::Invalid),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_read_command_accepts_uppercase_and_lowercase() {
-        let matches = ["R 7", "r 7"];
-        for input in &matches {
-            match parse_read_command(input) {
-                Some(ReadArg::Number(7)) => {}
-                other => panic!("expected R 7 to parse as Number(7), got {other:?} for {input}"),
-            }
-        }
-    }
-
-    #[test]
-    fn parse_read_command_returns_missing_for_bare_r() {
-        match parse_read_command("R") {
-            Some(ReadArg::Missing) => {}
-            other => panic!("expected Missing, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_read_command_treats_non_numeric_arg_as_invalid() {
-        match parse_read_command("R foo") {
-            Some(ReadArg::Invalid) => {}
-            other => panic!("expected Invalid, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_read_command_rejects_extra_trailing_tokens() {
-        match parse_read_command("R 1 2") {
-            Some(ReadArg::Invalid) => {}
-            other => panic!("expected Invalid for extra tokens, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_read_command_returns_none_for_unrelated_commands() {
-        // `G`, `J 1`, etc. must fall through so the existing
-        // dispatch paths still match them.
-        assert!(parse_read_command("G").is_none());
-        assert!(parse_read_command("J 1").is_none());
-        assert!(parse_read_command("").is_none());
-        assert!(parse_read_command("Read 1").is_none());
-    }
-
-    #[test]
-    fn parse_scan_command_recognises_m_as_scan_all() {
-        assert_eq!(parse_scan_command("M"), Some(ScanArg::All));
-        assert_eq!(parse_scan_command("m"), Some(ScanArg::All));
-    }
-
-    #[test]
-    fn parse_scan_command_recognises_n_as_scan_new() {
-        assert_eq!(parse_scan_command("N"), Some(ScanArg::New));
-        assert_eq!(parse_scan_command("n"), Some(ScanArg::New));
-    }
-
-    #[test]
-    fn parse_scan_command_returns_none_for_unrelated_commands() {
-        assert!(parse_scan_command("G").is_none());
-        assert!(parse_scan_command("J 1").is_none());
-        assert!(parse_scan_command("R 1").is_none());
-        assert!(parse_scan_command("MS").is_none());
-        assert!(parse_scan_command("").is_none());
-    }
-
-    #[test]
-    fn parse_scan_command_rejects_extra_tokens() {
-        // Future enhancement: `M <from>` accepted at the wire.
-        // Until then, extra tokens make the command fall through.
-        assert!(parse_scan_command("M 1").is_none());
-        assert!(parse_scan_command("N 7").is_none());
-    }
-
-    #[test]
-    fn parse_read_command_zero_is_a_valid_number_to_parse_but_will_404_at_load_time() {
-        // `R 0` parses as u32(0). The mail store always uses
-        // 1-indexed numbering so a `load(0)` returns `None` and the
-        // dispatch surfaces `Message not found`. Pin the parse so a
-        // future regression that rejected `0` at parse time would
-        // observe.
-        match parse_read_command("R 0") {
-            Some(ReadArg::Number(0)) => {}
-            other => panic!("expected Number(0), got {other:?}"),
-        }
-    }
-
-    // `ReadArg` is a non-public enum without Debug; provide a manual
-    // impl for the test panic messages above. (Keeping the variant
-    // names off the production type avoids spreading derives that
-    // production callers don't need.)
-    impl std::fmt::Debug for ReadArg {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            match self {
-                Self::Number(n) => write!(f, "Number({n})"),
-                Self::Missing => write!(f, "Missing"),
-                Self::Invalid => write!(f, "Invalid"),
-            }
-        }
-    }
-
-    impl std::fmt::Debug for PostArg {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            match self {
-                Self::To(name) => write!(f, "To({name:?})"),
-                Self::Missing => write!(f, "Missing"),
-            }
-        }
-    }
-
-    #[test]
-    fn parse_post_command_recognises_bare_e_with_no_addressee() {
-        // Slice 42: typing `E` alone enters the line-mode editor;
-        // the handler prompts for the recipient interactively.
-        assert!(matches!(parse_post_command("E"), Some(PostArg::Missing)));
-        assert!(matches!(parse_post_command("e"), Some(PostArg::Missing)));
-    }
-
-    #[test]
-    fn parse_post_command_accepts_inline_addressee() {
-        // Slice 42: `E <handle>` skips the To: prompt and treats the
-        // argument as the recipient name. Matches the legacy
-        // `enterMSG` shortcut at `amiexpress/express.e:10765-10773`.
-        match parse_post_command("E bob") {
-            Some(PostArg::To(name)) if name == "bob" => {}
-            other => panic!("expected To(bob), got {other:?}"),
-        }
-        match parse_post_command("e Bob") {
-            Some(PostArg::To(name)) if name == "Bob" => {}
-            other => panic!("expected To(Bob), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_post_command_joins_multi_word_addressees() {
-        // Real names (`John Smith`) are valid handles in `RealName`
-        // conferences. The parser must keep every token after `E` so
-        // the resolver sees the full string.
-        match parse_post_command("E John Smith") {
-            Some(PostArg::To(name)) if name == "John Smith" => {}
-            other => panic!("expected To(John Smith), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parse_post_command_returns_none_for_unrelated_commands() {
-        assert!(parse_post_command("G").is_none());
-        assert!(parse_post_command("J 1").is_none());
-        assert!(parse_post_command("R 1").is_none());
-        assert!(parse_post_command("").is_none());
-        assert!(parse_post_command("EM").is_none());
+        crate::app::terminal::write_and_flush(self.terminal, bytes).await
     }
 }

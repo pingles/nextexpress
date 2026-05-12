@@ -191,10 +191,10 @@ mod tests {
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
     use crate::app::config::Config;
+    use crate::app::mail_stores::MailStores;
     use crate::app::services::{
         SharedCallerLog, SharedConferences, SharedHasher, SharedMailStores, SharedUserRepo,
     };
-    use crate::domain::mail_store::MailStores;
     use crate::domain::node::NodeStatus;
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::user::User;

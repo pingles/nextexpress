@@ -14,10 +14,6 @@ use crate::app::session_flow::{
     self, NewUserProfile, NewUserRegistrationFlow, NEW_USER_REGISTRATION_LITERAL,
 };
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::typed_session::{
-    LoggingOffSession, NewUserPasswordTransition, NewUserRegisteringSession,
-    NewUserRegistrationResult, OnboardedSession,
-};
 use crate::app::wire_text::{
     ANSI_PROMPT, EMAIL_PROMPT, HANDLE_TAKEN_LINE, IDLE_TIMEOUT_LINE, INVALID_LINE_LENGTH_LINE,
     LINE_LENGTH_PROMPT, LOCATION_PROMPT, LOGON_REJECTED_LINE, NEW_USER_EXCESSIVE_FAILURES_LINE,
@@ -25,6 +21,10 @@ use crate::app::wire_text::{
     PASSWORDS_DO_NOT_MATCH_LINE, PHONE_PROMPT, REGISTRATION_COMPLETE_LINE,
     REGISTRATION_HANDLE_PROMPT, REGISTRATION_PASSWORD_CONFIRM_PROMPT, REGISTRATION_PASSWORD_PROMPT,
     REGISTRATION_RETRIES_EXHAUSTED_LINE,
+};
+use crate::domain::session::typed::{
+    LoggingOffSession, NewUserPasswordTransition, NewUserRegisteringSession,
+    NewUserRegistrationResult, OnboardedSession,
 };
 use crate::domain::user_repository::NameLookupResult;
 
@@ -384,15 +384,12 @@ where
         prompt: &[u8],
         echo: TerminalEcho,
     ) -> Result<TerminalRead, T::Error> {
-        self.terminal.write(prompt).await?;
-        self.terminal.flush().await?;
         let timeout = self.services.session_policy().input_timeout();
-        self.terminal.read_line(echo, timeout).await
+        crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
     }
 
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
-        self.terminal.write(bytes).await?;
-        self.terminal.flush().await
+        crate::app::terminal::write_and_flush(self.terminal, bytes).await
     }
 }
 

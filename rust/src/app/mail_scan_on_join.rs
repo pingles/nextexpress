@@ -28,9 +28,9 @@ use std::time::SystemTime;
 
 use crate::app::services::AppServices;
 use crate::app::terminal::Terminal;
-use crate::app::typed_session::ScanOnJoin;
 use crate::app::wire_text::{render_scan_summary, MAIL_STORE_ERROR_LINE};
 use crate::domain::conference::MessageBaseRef;
+use crate::domain::session::typed::ScanOnJoin;
 
 /// Whether the auto-scan-on-join walks from message 1 (`ForceAll`) or
 /// from `pointers.last_scanned + 1` (`FollowPointer`)

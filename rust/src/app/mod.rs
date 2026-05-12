@@ -18,12 +18,13 @@ use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::adapters::telnet_listener::TelnetListener;
+use crate::app::mail_stores::MailStores;
 use crate::app::runtime::Runtime;
 use crate::app::services::{SharedConferences, SharedMailStores};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::conference_repository::ConferenceRepository;
-use crate::domain::mail_store::{MailStore, MailStores};
+use crate::domain::mail_store::MailStore;
 use crate::domain::password::PasswordHasher;
 use crate::domain::user_repository::UserRepository;
 
@@ -31,6 +32,8 @@ pub mod config;
 pub mod config_loader;
 pub mod login_flow;
 pub mod mail_scan_on_join;
+pub mod mail_stores;
+pub mod menu_command;
 pub mod menu_flow;
 pub mod node_pool;
 pub mod registration_flow;
@@ -42,7 +45,6 @@ pub mod session_driver;
 pub mod session_flow;
 pub mod session_presenter;
 pub mod terminal;
-pub mod typed_session;
 pub mod wire_text;
 
 /// Entry point invoked by the binary's `main`.

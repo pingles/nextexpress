@@ -2,7 +2,7 @@
 //!
 //! The set is exhaustive for the Phase 1 surface — each transition
 //! method on [`super::Session`] returns one of these. Once
-//! [`crate::app::typed_session`] phase wrappers cover a transition,
+//! [`crate::domain::session::typed`] phase wrappers cover a transition,
 //! the wrong-state variant becomes unreachable from the typed call
 //! path; the variant stays for domain-level callers (and tests) that
 //! drive `Session` directly.

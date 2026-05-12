@@ -104,7 +104,7 @@ impl FileMailStore {
         let json =
             serde_json::to_string_pretty(&payload).map_err(|source| MailStoreError::Serialise {
                 number: mail.number(),
-                source,
+                source: Box::new(source),
             })?;
         fs::write(path, json).map_err(MailStoreError::Io)
     }
@@ -137,7 +137,7 @@ impl MailStore for FileMailStore {
         let payload: MailPayload =
             serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
                 path: path.display().to_string(),
-                source,
+                source: Box::new(source),
             })?;
         payload
             .into_mail_checked(self.msgbase, number, &path)
@@ -181,7 +181,7 @@ fn scan_dir_for_highest(dir: &Path, msgbase: MessageBaseRef) -> Result<u32, Mail
         let payload: MailPayload =
             serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
                 path: path.display().to_string(),
-                source,
+                source: Box::new(source),
             })?;
         payload.check_consistency(msgbase, number, &path)?;
         highest = highest.max(number);
@@ -291,7 +291,7 @@ impl MailPayload {
             mail.mark_received(when)
                 .map_err(|source| MailStoreError::Malformed {
                     path: path.display().to_string(),
-                    source: serde_json::Error::io(std::io::Error::new(
+                    source: Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         format!("deleted mail has live received_at: {source}"),
                     )),

@@ -10,19 +10,22 @@ The implementation follows a ports-and-adapters direction:
 
 - `rust/src/domain/` holds core BBS concepts: `Session`, `User`, `Conference`,
   `Node`, `Mail`, `ReadPointers`, persistence ports (`UserRepository`,
-  `ConferenceRepository`, `MailStore`, `MailStores`), the messaging rules
-  (`read_mail`, `scan_mail`), password hashing, caller logs, and session
-  policy.
+  `ConferenceRepository`, `MailStore`), phase-typed session wrappers, the
+  messaging rules (`read_mail`, `scan_mail`, `post_mail`), password hashing,
+  caller logs, and session policy.
 - `rust/src/app/` is the application layer: configuration, runtime
-  composition, session orchestration, terminal/screen ports, typed session
-  wrappers, and use-case functions.
+  composition, session orchestration, terminal/screen ports, the app-level
+  `MailStores` registry service, menu-command parsing, shared terminal I/O
+  helpers, and use-case functions.
 - `rust/src/adapters/` holds concrete technology choices: telnet, file-backed
   conferences/screens, file-backed mail store (JSON per message), an in-memory
   mail-stores registry (`InMemoryMailStores`) the composition root populates
   with one `FileMailStore` per known `(conference, msgbase)` coordinate,
   in-memory users/logs, and PBKDF2 hashing.
-- `rust/tests/architecture.rs` guards the most important rule today: domain
-  code must not import `app` or `adapters`.
+- `rust/tests/architecture.rs` guards the most important rules today: domain
+  code must not import `app` or `adapters`, and it must not reference
+  runtime/adapter crates such as Tokio, serde_json, TOML, filesystem, or
+  networking APIs.
 
 ```mermaid
 flowchart LR
@@ -51,7 +54,7 @@ flowchart LR
     Driver --> Menu["MenuFlow"]
     Driver --> Presenter["SessionPresenter"]
 
-    Login --> Typed["typed_session"]
+    Login --> Typed["domain::session::typed"]
     Registration --> Typed
     Menu --> Typed
     Login --> Flow["session_flow (use cases)"]
@@ -63,7 +66,7 @@ flowchart LR
     AppRun --> MailRegistry["InMemoryMailStores (registry)"]
     MailRegistry --> FileMailStore["FileMailStore (per msgbase)"]
     Runtime --> MailRegistry
-    Services --> MailStoresPort["MailStores (port)"]
+    Services --> MailStoresPort["app::mail_stores::MailStores"]
     MailStoresPort --> MailPort["MailStore (port)"]
 
     AutoRejoin --> ScanOnJoin["mail_scan_on_join (Slice 41)"]
@@ -119,9 +122,9 @@ msgbase)` is the spec's black box; rows are lazily created on first
 
 Slices 39–41 wire the headline read flow. The domain rules stay pure;
 the app layer (`app::menu_flow` and `app::mail_scan_on_join`) is what
-resolves the per-msgbase `MailStore` handle through the `MailStores`
-port (`services.mail_stores().for_msgbase(...)`), locks it, and threads
-it into the rule:
+resolves the per-msgbase `MailStore` handle through the app-layer
+`MailStores` registry service (`services.mail_stores().for_msgbase(...)`),
+locks it, and threads it into the rule:
 - Slice 39 (`domain::read_mail::read_mail` + `can_read`): the rule
   itself takes an already-loaded `&mut Mail`. The `R <num>` menu glue
   in `menu_flow::handle_read_mail` does the `MailStore::load` →
@@ -143,9 +146,10 @@ it into the rule:
 Slice 41a wires the file-backed `MailStores` registry into the composition
 root: `app::run` walks the loaded conferences and opens one `FileMailStore`
 per `(conference, msgbase)` coordinate, registering them in an
-`InMemoryMailStores` registry served as the `MailStores` port through
-`AppServices`. Read pointers ride along with the bound user record and
-flush on logoff via the existing `save_bound_user` path.
+`InMemoryMailStores` registry served through `AppServices`. The registry and
+its `tokio::sync::Mutex` handle live in `app::mail_stores`; the domain sees
+only the single-base `MailStore` port. Read pointers ride along with the bound
+user record and flush on logoff via the existing `save_bound_user` path.
 
 Slice 42 opens Phase 7 (Messaging — write) with the single-addressee
 `PostMail` rule and the `E` / `E <to>` menu command:
@@ -195,6 +199,15 @@ repository port shape were sharpened in recent refactorings:
   `app::registration_flow::RegistrationFlow`, `app::menu_flow::MenuFlow`. The
   rendering helpers shared by the auto-rejoin and explicit-join paths live in
   `app::session_presenter`.
+- `domain::session::typed` is the single phase-typed API over `Session` for
+  the interactive driver. Mail-specific raw transition helpers on `Session`
+  are private implementation details used by these wrappers, so the app layer
+  cannot bypass the menu/onboarded phase guarantees.
+- `app::menu_command` owns effect-free parsing for `G`, `J`, `R`, `M`, `N`,
+  and `E` command lines. `MenuFlow` switches on the typed command and keeps
+  only the terminal/session/repository effects.
+- `app::terminal::{read_prompted, write_and_flush}` centralise the common
+  prompt/flush/read pattern shared by login, registration, and menu flows.
 - `UserRepository::allocate_slot_and_create` is the single atomic registration
   entry point. Slot allocation and insertion happen under one lock, with
   explicit `UserCreationError::{Build, DuplicateUser, DuplicateSlot}` variants.
@@ -290,32 +303,34 @@ Why this is better:
 - storage format decisions are made while the account model is still small
   enough to reshape.
 
-### 4. Strengthen architectural tests
+### 4. Extract menu use cases from effectful handlers
 
-`rust/tests/architecture.rs` catches direct `use crate::app` or
-`use crate::adapters` from domain files. That is useful, but narrow.
+`app::menu_command` now removes parsing pressure from `MenuFlow`, but
+`MenuFlow` still owns the full command effect for read, scan, post, and join:
+it resolves repositories, locks stores, calls typed session operations, and
+maps every outcome to wire text.
 
-Refactor toward tests that also assert:
+Refactor toward small app-level use cases such as:
 
-- domain code does not refer to forbidden modules through fully-qualified
-  paths;
-- adapters do not construct unrelated adapters as part of transport behavior;
-- composition-only code stays in the composition root;
-- domain modules remain free of Tokio, filesystem, and networking
-  dependencies.
+- `menu/read_mail.rs`: resolve store, load/read/save mail, return a renderable
+  outcome enum;
+- `menu/scan_mail.rs`: resolve store, scan, return summary data;
+- `menu/post_mail.rs`: collect already-entered fields, resolve recipient,
+  call the post rule, return a post outcome enum;
+- `menu/join.rs`: run explicit join plus scan-on-join orchestration.
 
 Why this is better:
 
-- architecture rules remain enforceable as the codebase grows;
-- future contributors get fast feedback when a dependency boundary drifts;
-- the intended ports-and-adapters design becomes executable documentation.
+- each command can be tested without a terminal loop;
+- `MenuFlow` becomes only prompt orchestration and wire rendering;
+- future commands do not make one menu module grow without bound.
 
 ## Suggested Order
 
 1. Decompose `Session` and `User` internally as the next feature slices touch
    those areas.
 2. Add a durable user repository before building more account/admin behavior.
-3. Strengthen architecture tests after the new boundaries exist.
+3. Extract menu use cases as the next messaging/admin commands land.
 
 ## Refactorings Not Worth Prioritising Yet
 

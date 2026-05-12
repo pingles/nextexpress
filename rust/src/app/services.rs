@@ -13,11 +13,11 @@
 
 use std::sync::Arc;
 
+use crate::app::mail_stores::MailStores;
 use crate::app::screens::ScreenRepository;
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::Conference;
-use crate::domain::mail_store::MailStores;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::SessionPolicy;
 use crate::domain::user_repository::UserRepository;

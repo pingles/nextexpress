@@ -15,7 +15,7 @@
 //!
 //! ## Phase types
 //! Each step of the workflow consumes and returns a phase wrapper
-//! from [`crate::app::typed_session`]. The wrong handle for a given
+//! from [`crate::domain::session::typed`]. The wrong handle for a given
 //! transition becomes unrepresentable at compile time; the driver no
 //! longer needs to assert "session is in X" after every call.
 
@@ -28,11 +28,11 @@ use crate::app::services::AppServices;
 use crate::app::session_flow;
 use crate::app::session_presenter::{format_auto_rejoin_line, render_name_type_promotion};
 use crate::app::terminal::Terminal;
-use crate::app::typed_session::{
+use crate::app::wire_text::{COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
+use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
     MenuSession, OnboardedSession,
 };
-use crate::app::wire_text::{COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
 use crate::domain::session::LogonChannel;
 
 /// App-layer session workflow over a terminal port.
@@ -244,10 +244,10 @@ mod tests {
     use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::mail_stores::MailStores;
     use crate::app::screens::{ScreenFuture, ScreenRepository};
     use crate::app::services::{AppServices, SharedMailStores};
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
-    use crate::domain::mail_store::MailStores;
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::{LogonChannel, SessionPolicy};
     use crate::domain::user::{RatioMode, User};

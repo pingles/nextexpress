@@ -7,7 +7,13 @@
 //! directory schema while replacing the Amiga-specific binary files
 //! with TOML, per `AGENTS.md`.
 
+use std::error::Error;
+
 use crate::domain::conference::{Conference, ConferenceError};
+
+/// Adapter-originated source error attached to
+/// [`ConferenceRepositoryError`] values.
+pub type ConferenceRepositorySourceError = Box<dyn Error + Send + Sync + 'static>;
 
 /// Errors returned by [`ConferenceRepository::load_all`]
 /// implementations.
@@ -23,7 +29,7 @@ pub enum ConferenceRepositoryError {
         path: String,
         /// Underlying TOML parser error.
         #[source]
-        source: toml::de::Error,
+        source: ConferenceRepositorySourceError,
     },
     /// A conference's TOML data violates a domain invariant from
     /// [`ConferenceError`] (e.g. `AtLeastOneMessageBase`).

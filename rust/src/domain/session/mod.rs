@@ -27,6 +27,7 @@ mod lockout;
 mod log_format;
 mod outcomes;
 mod transitions;
+pub(crate) mod typed;
 
 #[cfg(test)]
 use log_format::floor_to_day;
@@ -660,9 +661,8 @@ impl Session {
     /// Creates a fresh [`Session`] for `node_number`. Rejects when
     /// `existing_session_for_node` already holds an active session for
     /// that node — the spec's `OneActiveSessionPerNode` invariant. The
-    /// caller (typically the supervisor on top of
-    /// [`crate::app::node_pool::NodePool`]) is responsible for
-    /// ensuring the underlying node is in
+    /// caller (typically the application supervisor that owns the
+    /// node pool) is responsible for ensuring the underlying node is in
     /// [`crate::domain::node::NodeStatus::Connecting`] before
     /// invoking this rule (the pool's `allocate` does that
     /// atomically).
@@ -1042,13 +1042,9 @@ impl Session {
     ///
     /// # Panics
     /// Panics if the session is not in [`SessionState::Menu`] — the
-    /// typed wrapper [`crate::app::typed_session::MenuSession`] guarantees this,
+    /// typed wrapper [`crate::domain::session::typed::MenuSession`] guarantees this,
     /// so reaching the panic means the wrapper has been bypassed.
-    pub fn apply_read_mail(
-        &mut self,
-        mail: &mut Mail,
-        now: SystemTime,
-    ) -> Result<(), ReadMailError> {
+    fn apply_read_mail(&mut self, mail: &mut Mail, now: SystemTime) -> Result<(), ReadMailError> {
         assert!(
             matches!(self.state(), SessionState::Menu),
             "apply_read_mail requires Menu state, got {:?}",
@@ -1076,9 +1072,9 @@ impl Session {
     /// # Panics
     /// Panics if the session is not in [`SessionState::Onboarded`]
     /// or [`SessionState::Menu`] — the typed wrapper
-    /// [`crate::app::typed_session::MenuSession`] /
-    /// [`crate::app::typed_session::OnboardedSession`] guarantees this.
-    pub fn apply_scan_mail<S>(
+    /// [`crate::domain::session::typed::MenuSession`] /
+    /// [`crate::domain::session::typed::OnboardedSession`] guarantees this.
+    fn apply_scan_mail<S>(
         &mut self,
         store: &S,
         msgbase: MessageBaseRef,
@@ -1113,9 +1109,9 @@ impl Session {
     ///
     /// # Panics
     /// Panics if the session is not in [`SessionState::Menu`] — the
-    /// typed wrapper [`crate::app::typed_session::MenuSession`]
+    /// typed wrapper [`crate::domain::session::typed::MenuSession`]
     /// guarantees this.
-    pub fn apply_post_mail(
+    fn apply_post_mail(
         &mut self,
         msgbase: MessageBaseRef,
         store: &mut dyn MailStore,

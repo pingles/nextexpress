@@ -58,3 +58,35 @@ pub(crate) trait Terminal {
         timeout: Duration,
     ) -> TerminalFuture<'_, TerminalRead, Self::Error>;
 }
+
+/// Writes `prompt`, flushes it, then reads one terminal line using
+/// `echo` and `timeout`.
+///
+/// # Errors
+/// Returns the concrete terminal error if writing, flushing, or
+/// reading fails.
+pub(crate) async fn read_prompted<T>(
+    terminal: &mut T,
+    prompt: &[u8],
+    echo: TerminalEcho,
+    timeout: Duration,
+) -> Result<TerminalRead, T::Error>
+where
+    T: Terminal,
+{
+    terminal.write(prompt).await?;
+    terminal.flush().await?;
+    terminal.read_line(echo, timeout).await
+}
+
+/// Writes `bytes` and flushes the terminal.
+///
+/// # Errors
+/// Returns the concrete terminal error if writing or flushing fails.
+pub(crate) async fn write_and_flush<T>(terminal: &mut T, bytes: &[u8]) -> Result<(), T::Error>
+where
+    T: Terminal,
+{
+    terminal.write(bytes).await?;
+    terminal.flush().await
+}
