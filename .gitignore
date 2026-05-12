@@ -24,3 +24,4 @@ target
 #.idea/
 /.idea
 .claude/scheduled_tasks.lock
+/**/MsgBase
