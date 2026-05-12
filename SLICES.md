@@ -28,7 +28,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | 4 | [slices/phase4.md](slices/phase4.md) | 27–34, 34a | Conferences (read) | Done |
 | 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Skipped |
 | 6 | [slices/phase6.md](slices/phase6.md) | 37–41, 41a | Messaging (read) | Done |
-| 7 | [slices/phase7.md](slices/phase7.md) | 42–44 | Messaging (write) | Todo |
+| 7 | [slices/phase7.md](slices/phase7.md) | 42–44 | Messaging (write) | In progress |
 | 8 | [slices/phase8.md](slices/phase8.md) | 45–49 | Messaging (advanced) | Todo |
 | 9 | [slices/phase9.md](slices/phase9.md) | 50–52 | Files (browse and flag) | Todo |
 | 10 | [slices/phase10.md](slices/phase10.md) | 53–57 | Files (transfer) | Todo |
@@ -259,7 +259,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 40 | `ScanMail` + `M` / `N` menu commands | Done |
 | 41 | Auto mail scan on join | Done |
 | 41a | Phase 6 wire-and-smoke (mail store + read pointers in composition root) | Done |
-| 42 | `PostMail` rule (single-addressee, `E` command) | Todo |
+| 42 | `PostMail` rule (single-addressee, `E` command) | Done |
 | 43 | Broadcast addressing (ALL / EALL) | Todo |
 | 44 | `PostCommentToSysop` (`C` command) | Todo |
 | 45 | `ReplyToMail` | Todo |

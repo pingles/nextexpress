@@ -200,6 +200,7 @@ pub struct User {
     ratio_value: u32,
     memberships: Vec<ConferenceMembership>,
     last_joined: Option<MessageBaseRef>,
+    messages_posted: u32,
 }
 
 impl User {
@@ -259,6 +260,7 @@ impl User {
             ratio_value: 0,
             memberships: Vec::new(),
             last_joined: None,
+            messages_posted: 0,
         })
     }
 
@@ -328,6 +330,7 @@ impl User {
             ratio_value,
             memberships: Vec::new(),
             last_joined: None,
+            messages_posted: 0,
         })
     }
 
@@ -626,6 +629,14 @@ impl User {
         &self.memberships
     }
 
+    /// Returns a mutable slice over the user's per-conference
+    /// membership rows. Used by `messaging.allium:PostMail` (Slice 42)
+    /// to bump the per-membership `messages_posted` counter without
+    /// dropping the surrounding borrow on `self`.
+    pub fn memberships_mut(&mut self) -> &mut [ConferenceMembership] {
+        &mut self.memberships
+    }
+
     /// Adds a [`ConferenceMembership`] row, replacing any existing
     /// row for the same `conference_number` so the user record never
     /// carries two rows for the same conference. Used by
@@ -733,6 +744,19 @@ impl User {
         };
         membership.upsert_pointers(pointers);
         true
+    }
+
+    /// Returns the running count of messages this user has posted
+    /// across all conferences (spec: `core.allium:User.messages_posted`).
+    #[must_use]
+    pub fn messages_posted(&self) -> u32 {
+        self.messages_posted
+    }
+
+    /// Increments [`Self::messages_posted`] by one. Used by
+    /// `messaging.allium:PostMail` (Slice 42).
+    pub fn bump_messages_posted(&mut self) {
+        self.messages_posted = self.messages_posted.saturating_add(1);
     }
 
     /// Atomically replaces the user's stored credentials and clears
@@ -1294,6 +1318,33 @@ mod tests {
             .expect("present");
         assert_eq!(after.last_read(), 4);
         assert_eq!(after.last_scanned(), 4);
+    }
+
+    #[test]
+    fn new_user_starts_with_zero_messages_posted() {
+        // Spec core.allium:User.messages_posted is initialised to 0 by
+        // `session.allium:CompleteNewUserRegistration` (line 532). For
+        // legacy User::new construction the field defaults to 0 too —
+        // `messages_posted` is the spec's running counter, not state
+        // imported from elsewhere.
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert_eq!(user.messages_posted(), 0);
+    }
+
+    #[test]
+    fn register_new_user_starts_with_zero_messages_posted() {
+        let user = User::register_new(registration()).expect("valid");
+        assert_eq!(user.messages_posted(), 0);
+    }
+
+    #[test]
+    fn bump_messages_posted_increments_by_one() {
+        // Spec messaging.allium:PostMail (Slice 42) consequent:
+        //   session.user.messages_posted = session.user.messages_posted + 1
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.bump_messages_posted();
+        user.bump_messages_posted();
+        assert_eq!(user.messages_posted(), 2);
     }
 
     #[test]

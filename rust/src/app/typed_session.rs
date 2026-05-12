@@ -32,6 +32,7 @@ use std::time::SystemTime;
 use crate::domain::conference::{Conference, MessageBaseRef, NameType};
 use crate::domain::mail::Mail;
 use crate::domain::mail_store::MailStore;
+use crate::domain::post_mail::{PostMailDraft, PostMailError};
 use crate::domain::read_mail::ReadMailError;
 use crate::domain::scan_mail::{ScanMailError, ScanResult};
 use crate::domain::session::{
@@ -391,6 +392,23 @@ impl MenuSession {
         now: SystemTime,
     ) -> Result<(), ReadMailError> {
         self.session.apply_read_mail(mail, now)
+    }
+
+    /// Applies `messaging.allium:PostMail` (Slice 42, single-addressee
+    /// path) to the bound user, persisting the new mail via `store`
+    /// and bumping the user's and per-conference `messages_posted`
+    /// counters.
+    ///
+    /// # Errors
+    /// Returns the matching [`PostMailError`] variant when the rule
+    /// rejects the request.
+    pub(crate) fn post_mail(
+        &mut self,
+        msgbase: MessageBaseRef,
+        store: &mut dyn MailStore,
+        draft: PostMailDraft,
+    ) -> Result<Mail, PostMailError> {
+        self.session.apply_post_mail(msgbase, store, draft)
     }
 }
 

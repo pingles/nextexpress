@@ -15,14 +15,18 @@ use crate::app::typed_session::{
     ExplicitJoinTransition, LoggingOffSession, MenuSession, ScanOnJoin,
 };
 use crate::app::wire_text::{
-    render_mail_body, render_mail_header, render_scan_summary, DELETED_MESSAGE_LINE, GOODBYE_LINE,
-    IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE,
-    JOIN_REQUIRES_NUMBER_LINE, MAIL_STORE_ERROR_LINE, MENU_PROMPT, MESSAGE_NOT_FOUND_LINE,
-    NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE, NO_CONFERENCE_ACCESS_LINE, NO_MAIL_BASE_LINE,
-    READ_DENIED_LINE, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE,
+    render_mail_body, render_mail_header, render_post_success, render_scan_summary,
+    DELETED_MESSAGE_LINE, GOODBYE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
+    INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE, MAIL_STORE_ERROR_LINE, MENU_PROMPT,
+    MESSAGE_NOT_FOUND_LINE, NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE, NO_CONFERENCE_ACCESS_LINE,
+    NO_MAIL_BASE_LINE, POST_ABORTED_LINE, POST_ACCESS_DENIED_LINE, POST_BODY_PROMPT,
+    POST_PRIVATE_PROMPT, POST_RECIPIENT_NO_ACCESS_LINE, POST_SUBJECT_PROMPT, POST_TO_PROMPT,
+    POST_UNKNOWN_USER_LINE, READ_DENIED_LINE, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE,
 };
 use crate::domain::conference::MessageBaseRef;
+use crate::domain::post_mail::{PostMailDraft, PostMailError};
 use crate::domain::read_mail::ReadMailError;
+use crate::domain::user_repository::NameLookupResult;
 
 /// Parsed shape of a `J <number>` command. Returned by
 /// [`parse_join_command`].
@@ -137,6 +141,10 @@ where
             }
             if let Some(scan) = parse_scan_command(trimmed) {
                 self.handle_scan_mail(&mut session, scan).await?;
+                continue;
+            }
+            if let Some(post) = parse_post_command(trimmed) {
+                self.handle_post_mail(&mut session, post).await?;
                 continue;
             }
             self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
@@ -268,6 +276,210 @@ where
         self.terminal.write(&header).await?;
         self.terminal.write(&body).await?;
         self.terminal.flush().await?;
+        Ok(())
+    }
+
+    /// Reads a single non-empty trimmed line in response to `prompt`,
+    /// stamping the idle clock. Returns `None` (and writes the abort
+    /// notice) when the user submits an empty line, an EOF, or an
+    /// idle timeout — the post-mail composer treats these the same.
+    async fn read_required_line(
+        &mut self,
+        session: &mut MenuSession,
+        prompt: &[u8],
+    ) -> Result<Option<String>, T::Error> {
+        match self.read_prompted(prompt, TerminalEcho::Visible).await? {
+            TerminalRead::Line(line) => {
+                session.record_input(SystemTime::now());
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    self.write_and_flush(POST_ABORTED_LINE).await?;
+                    return Ok(None);
+                }
+                Ok(Some(trimmed.to_string()))
+            }
+            TerminalRead::Eof | TerminalRead::IdleTimedOut => {
+                self.write_and_flush(POST_ABORTED_LINE).await?;
+                Ok(None)
+            }
+        }
+    }
+
+    /// Drives the line-mode editor's body input loop. Returns the
+    /// concatenated body on `.`-on-its-own-line, and `None` (after
+    /// writing the abort notice) on `/A`, EOF, or idle timeout.
+    async fn read_post_body(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> Result<Option<String>, T::Error> {
+        self.write_and_flush(POST_BODY_PROMPT).await?;
+        let mut body = String::new();
+        loop {
+            match self.read_prompted(b"", TerminalEcho::Visible).await? {
+                TerminalRead::Line(line) => {
+                    session.record_input(SystemTime::now());
+                    let trimmed = line.trim();
+                    if trimmed.eq_ignore_ascii_case("/A") {
+                        self.write_and_flush(POST_ABORTED_LINE).await?;
+                        return Ok(None);
+                    }
+                    if trimmed == "." {
+                        return Ok(Some(body));
+                    }
+                    body.push_str(&line);
+                    body.push('\n');
+                }
+                TerminalRead::Eof | TerminalRead::IdleTimedOut => {
+                    self.write_and_flush(POST_ABORTED_LINE).await?;
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    /// Handles an `E` / `E <to>` command from the menu (Slice 42).
+    /// Drives the line-mode editor: prompts for the recipient (when
+    /// not supplied inline), subject, private flag and body, resolves
+    /// the addressee through the user repository, then calls the
+    /// `PostMail` rule via the typed session.
+    async fn handle_post_mail(
+        &mut self,
+        session: &mut MenuSession,
+        arg: PostArg,
+    ) -> Result<(), T::Error> {
+        let Some(visit_msgbase) = session
+            .current_msgbase()
+            .map(|(conf, mb)| MessageBaseRef::new(conf, mb))
+        else {
+            self.write_and_flush(NO_MAIL_BASE_LINE).await?;
+            return Ok(());
+        };
+
+        let Some(store) = self.services.mail_stores().for_msgbase(visit_msgbase) else {
+            self.write_and_flush(NO_MAIL_BASE_LINE).await?;
+            return Ok(());
+        };
+
+        // Step 1: collect the recipient name. `E <to>` provides it
+        // inline; bare `E` prompts. Empty recipient aborts in Slice 42
+        // — the ALL reroute lands in Slice 43.
+        let to_name = match arg {
+            PostArg::To(name) => name,
+            PostArg::Missing => match self.read_required_line(session, POST_TO_PROMPT).await? {
+                Some(name) => name,
+                None => return Ok(()),
+            },
+        };
+
+        // Step 2: resolve the addressee through the user repository
+        // and confirm they have a granted membership for the current
+        // conference.
+        let addressee = match self.services.user_repo().find_by_handle(&to_name) {
+            NameLookupResult::Found(user) => *user,
+            NameLookupResult::NotFound => {
+                self.write_and_flush(POST_UNKNOWN_USER_LINE).await?;
+                return Ok(());
+            }
+        };
+        let Some(conference) = self
+            .services
+            .conferences()
+            .iter()
+            .find(|c| c.number() == visit_msgbase.conference_number())
+        else {
+            self.write_and_flush(NO_MAIL_BASE_LINE).await?;
+            return Ok(());
+        };
+        if !addressee.has_membership(conference) {
+            self.write_and_flush(POST_RECIPIENT_NO_ACCESS_LINE).await?;
+            return Ok(());
+        }
+
+        // Step 3: subject prompt. Empty subject aborts (mirrors
+        // `amiexpress/express.e:10854-10857`).
+        let Some(subject) = self
+            .read_required_line(session, POST_SUBJECT_PROMPT)
+            .await?
+        else {
+            return Ok(());
+        };
+
+        // Step 4: private flag. Default is N if the user just hits CR.
+        let private = match self
+            .read_prompted(POST_PRIVATE_PROMPT, TerminalEcho::Visible)
+            .await?
+        {
+            TerminalRead::Line(line) => {
+                session.record_input(SystemTime::now());
+                matches!(line.trim().chars().next(), Some('y' | 'Y'))
+            }
+            TerminalRead::Eof | TerminalRead::IdleTimedOut => {
+                self.write_and_flush(POST_ABORTED_LINE).await?;
+                return Ok(());
+            }
+        };
+
+        // Step 5: body. Slice 42 ships a minimal line-mode editor —
+        // each line is read until the user types `.` on its own line,
+        // or `/A` to abort. The full editor (numbered line edits,
+        // `/S` save, quoting) arrives in Phase 8.
+        let Some(body) = self.read_post_body(session).await? else {
+            return Ok(());
+        };
+
+        // Step 6: post. Lock the msgbase, call the rule, render the
+        // outcome. The `display_name_of` black box currently honours
+        // only `NameType::Handle`; real-name / internet-name
+        // promotion lands with the user profile fields in a later
+        // slice.
+        let author_handle = session.user().handle().to_string();
+        let addressee_slot = addressee.slot_number();
+        let addressee_handle = addressee.handle().to_string();
+
+        let mut guard = store.lock().await;
+        let result = session.post_mail(
+            visit_msgbase,
+            &mut **guard,
+            PostMailDraft {
+                to_name: addressee_handle,
+                addressee_slot,
+                from_name: author_handle,
+                subject,
+                body,
+                private,
+                posted_at: SystemTime::now(),
+            },
+        );
+        drop(guard);
+
+        match result {
+            Ok(mail) => {
+                let line = render_post_success(mail.number());
+                self.write_and_flush(&line).await?;
+            }
+            Err(PostMailError::AccessDenied) => {
+                self.write_and_flush(POST_ACCESS_DENIED_LINE).await?;
+            }
+            Err(PostMailError::NoMembership) => {
+                // The poster's own membership is missing. The
+                // auto-rejoin would normally have caught this on
+                // logon, so reaching it here means the sysop revoked
+                // mid-session — same wire surface as
+                // POST_RECIPIENT_NO_ACCESS_LINE keeps the listener
+                // honest about why the post failed.
+                self.write_and_flush(POST_RECIPIENT_NO_ACCESS_LINE).await?;
+            }
+            Err(PostMailError::EmptyAddressee) => {
+                // Defensive: we've already gated empty recipients
+                // upstream. The rule's gate fires only if a future
+                // refactor lets an empty name slip past the editor.
+                self.write_and_flush(POST_ABORTED_LINE).await?;
+            }
+            Err(PostMailError::Store(err)) => {
+                eprintln!("E command: failed to persist mail: {err}");
+                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
+            }
+        }
         Ok(())
     }
 
@@ -417,6 +629,45 @@ fn parse_scan_command(line: &str) -> Option<ScanArg> {
     }
 }
 
+/// Parsed shape of an `E` / `E <to>` command (Slice 42). Returned by
+/// [`parse_post_command`].
+enum PostArg {
+    /// `E <to>` where `<to>` is one-or-more tokens after the command
+    /// (kept verbatim — real-name conferences accept multi-word
+    /// handles like "John Smith").
+    To(String),
+    /// `E` with no inline recipient. The handler prompts for it.
+    Missing,
+}
+
+/// Recognises the Phase-7 `E` / `E <to>` menu command (Slice 42).
+/// Returns `None` for any other typed line. Mirrors the legacy
+/// `enterMSG` inline-recipient shortcut at
+/// `amiexpress/express.e:10765-10773`.
+fn parse_post_command(line: &str) -> Option<PostArg> {
+    let mut chars = line.chars();
+    let head = chars.next()?;
+    if !matches!(head, 'E' | 'e') {
+        return None;
+    }
+    let rest: String = chars.collect();
+    let trimmed = rest.trim();
+    if trimmed.is_empty() {
+        // Bare `E` (or `E ` / `E\t`): no inline recipient — the
+        // handler prompts. But reject anything else that starts with
+        // 'E' but has no whitespace separator, e.g. `EM`.
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return Some(PostArg::Missing);
+        }
+        return None;
+    }
+    if !rest.starts_with(char::is_whitespace) {
+        // `EM`, `Edit`, etc — not the `E` command.
+        return None;
+    }
+    Some(PostArg::To(trimmed.to_string()))
+}
+
 /// Recognises the Phase-6 `R` / `R <num>` menu command. Returns
 /// `None` for any other typed line. Mirrors the parameter shape of
 /// [`parse_join_command`]; the read sub-flow that accepts `+` / `-`
@@ -543,5 +794,57 @@ mod tests {
                 Self::Invalid => write!(f, "Invalid"),
             }
         }
+    }
+
+    impl std::fmt::Debug for PostArg {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::To(name) => write!(f, "To({name:?})"),
+                Self::Missing => write!(f, "Missing"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_post_command_recognises_bare_e_with_no_addressee() {
+        // Slice 42: typing `E` alone enters the line-mode editor;
+        // the handler prompts for the recipient interactively.
+        assert!(matches!(parse_post_command("E"), Some(PostArg::Missing)));
+        assert!(matches!(parse_post_command("e"), Some(PostArg::Missing)));
+    }
+
+    #[test]
+    fn parse_post_command_accepts_inline_addressee() {
+        // Slice 42: `E <handle>` skips the To: prompt and treats the
+        // argument as the recipient name. Matches the legacy
+        // `enterMSG` shortcut at `amiexpress/express.e:10765-10773`.
+        match parse_post_command("E bob") {
+            Some(PostArg::To(name)) if name == "bob" => {}
+            other => panic!("expected To(bob), got {other:?}"),
+        }
+        match parse_post_command("e Bob") {
+            Some(PostArg::To(name)) if name == "Bob" => {}
+            other => panic!("expected To(Bob), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_post_command_joins_multi_word_addressees() {
+        // Real names (`John Smith`) are valid handles in `RealName`
+        // conferences. The parser must keep every token after `E` so
+        // the resolver sees the full string.
+        match parse_post_command("E John Smith") {
+            Some(PostArg::To(name)) if name == "John Smith" => {}
+            other => panic!("expected To(John Smith), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_post_command_returns_none_for_unrelated_commands() {
+        assert!(parse_post_command("G").is_none());
+        assert!(parse_post_command("J 1").is_none());
+        assert!(parse_post_command("R 1").is_none());
+        assert!(parse_post_command("").is_none());
+        assert!(parse_post_command("EM").is_none());
     }
 }

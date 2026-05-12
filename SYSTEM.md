@@ -69,11 +69,17 @@ flowchart LR
     AutoRejoin --> ScanOnJoin["mail_scan_on_join (Slice 41)"]
     Menu --> ScanOnJoin
     Menu --> ReadHandler["menu_flow::handle_read_mail / handle_scan_mail"]
+    Menu --> PostHandler["menu_flow::handle_post_mail (Slice 42)"]
     ReadHandler --> MailStoresPort
     ScanOnJoin --> MailStoresPort
+    PostHandler --> MailStoresPort
+    PostHandler --> UserRepo
     ReadHandler --> ReadMailRule["domain::read_mail"]
     ReadHandler --> ScanMailRule["domain::scan_mail"]
     ScanOnJoin --> ScanMailRule
+    PostHandler --> PostMailRule["domain::post_mail"]
+    PostMailRule --> Mail
+    PostMailRule --> MailPort
 
     Flow --> DomainSession["domain::Session"]
     Flow --> DomainUser["domain::User"]
@@ -140,6 +146,41 @@ per `(conference, msgbase)` coordinate, registering them in an
 `InMemoryMailStores` registry served as the `MailStores` port through
 `AppServices`. Read pointers ride along with the bound user record and
 flush on logoff via the existing `save_bound_user` path.
+
+Slice 42 opens Phase 7 (Messaging — write) with the single-addressee
+`PostMail` rule and the `E` / `E <to>` menu command:
+
+- `domain::post_mail::post_mail` is the pure rule. It takes the bound
+  `&mut User`, the visit's `MessageBaseRef`, an unlocked
+  `&mut dyn MailStore`, and a `PostMailDraft` whose `to_name` /
+  `from_name` / `addressee_slot` fields the caller has already resolved
+  (the spec's `lookup_user_by_name` and `display_name_of` black boxes
+  live in the app layer). The rule gates on
+  `has_access(EnterMessage)` and a granted `ConferenceMembership` for
+  the message base's conference, then asks the store to allocate the
+  next number and persist the new mail; on success it bumps both the
+  user-level `messages_posted` counter and the per-conference
+  membership counter, neither of which had been read before.
+- `User.messages_posted` and `ConferenceMembership.messages_posted`
+  (spec `core.allium`) are introduced in Slice 42; this is the first
+  rule that reads either, so per the schema-growth principle they
+  default to `0` on every construction path and Slice 42 wires the
+  single bump site.
+- The `E` / `E <to>` handler (`menu_flow::handle_post_mail`) drives a
+  minimal line-mode editor: To: (skipped when supplied inline),
+  Subject: (empty aborts), Private (y/N), then body lines terminated
+  by a single `.` on its own line (`/A` aborts). Recipient resolution
+  goes through the `UserRepository`'s `find_by_handle`; the resolved
+  user must have a granted membership for the current conference,
+  matching `amiexpress/express.e:10837-10840`. Slice 42 always uses
+  `BroadcastTo::None`; ALL / EALL fan-out lands with Slice 43, the
+  censored / private-to-sysop branch with Slice 47.
+- Display names are still rendered as the user's handle. The
+  `NameType::RealName` / `NameType::InternetName` branches of
+  `display_name_of(_, conference)` depend on `User.real_name` /
+  `User.internet_name` fields that no slice has yet introduced; the
+  conference's `accepted_name_type` is wired through every other
+  rendering path so the lookup is ready when those fields arrive.
 
 The transport adapter, runtime composition, session-driving sub-flows, and the
 repository port shape were sharpened in recent refactorings:

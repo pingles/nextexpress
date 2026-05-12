@@ -245,6 +245,7 @@ pub struct ConferenceMembership {
     conference_number: u32,
     granted: bool,
     pointers: Vec<ReadPointers>,
+    messages_posted: u32,
 }
 
 impl ConferenceMembership {
@@ -266,7 +267,22 @@ impl ConferenceMembership {
             conference_number,
             granted,
             pointers: Vec::new(),
+            messages_posted: 0,
         }
+    }
+
+    /// Returns the running count of messages this user has posted to
+    /// the conference (spec:
+    /// `core.allium:ConferenceMembership.messages_posted`).
+    #[must_use]
+    pub fn messages_posted(&self) -> u32 {
+        self.messages_posted
+    }
+
+    /// Increments [`Self::messages_posted`] by one. Used by
+    /// `messaging.allium:PostMail` (Slice 42).
+    pub fn bump_messages_posted(&mut self) {
+        self.messages_posted = self.messages_posted.saturating_add(1);
     }
 
     /// Returns the 1-indexed conference number this membership
@@ -623,5 +639,25 @@ mod tests {
         let mut m = ConferenceMembership::new(5, true);
         m.upsert_pointers(ReadPointers::fresh(2, std::time::SystemTime::UNIX_EPOCH));
         assert!(m.pointers_for_mut(99).is_none());
+    }
+
+    #[test]
+    fn new_membership_starts_with_zero_messages_posted() {
+        // Spec core.allium:ConferenceMembership.messages_posted is
+        // initialised to 0 by `session.allium:CompleteNewUserRegistration`
+        // (line 532) and `conferences.allium:SysopGrantsConferenceAccess`
+        // (line 269).
+        let m = ConferenceMembership::new(5, true);
+        assert_eq!(m.messages_posted(), 0);
+    }
+
+    #[test]
+    fn bump_messages_posted_increments_by_one() {
+        // Spec messaging.allium:PostMail (Slice 42) consequent:
+        //   membership.messages_posted = membership.messages_posted + 1
+        let mut m = ConferenceMembership::new(5, true);
+        m.bump_messages_posted();
+        m.bump_messages_posted();
+        assert_eq!(m.messages_posted(), 2);
     }
 }

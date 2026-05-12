@@ -16,6 +16,7 @@ use crate::domain::conference_visit::{
 };
 use crate::domain::mail::Mail;
 use crate::domain::mail_store::MailStore;
+use crate::domain::post_mail::{post_mail, PostMailDraft, PostMailError};
 use crate::domain::read_mail::{read_mail, ReadMailError};
 use crate::domain::scan_mail::{scan_mail, ScanMailError, ScanResult};
 use crate::domain::user::User;
@@ -1097,6 +1098,39 @@ impl Session {
             .user_mut()
             .expect("apply_scan_mail: state has a bound user");
         scan_mail(user, store, msgbase, from_message, now)
+    }
+
+    /// Applies `messaging.allium:PostMail` (Slice 42, single-addressee
+    /// path) to the session's bound user against `msgbase` and `store`.
+    ///
+    /// On success: the store has persisted the new [`Mail`], the bound
+    /// user's `messages_posted` counter has been bumped, and the
+    /// per-conference membership row has been updated.
+    ///
+    /// # Errors
+    /// Returns the matching [`PostMailError`] variant when a `requires`
+    /// gate fails or the store rejects the write.
+    ///
+    /// # Panics
+    /// Panics if the session is not in [`SessionState::Menu`] — the
+    /// typed wrapper [`crate::app::typed_session::MenuSession`]
+    /// guarantees this.
+    pub fn apply_post_mail(
+        &mut self,
+        msgbase: MessageBaseRef,
+        store: &mut dyn MailStore,
+        draft: PostMailDraft,
+    ) -> Result<Mail, PostMailError> {
+        assert!(
+            matches!(self.state(), SessionState::Menu),
+            "apply_post_mail requires Menu state, got {:?}",
+            self.state(),
+        );
+        let user = self
+            .phase
+            .user_mut()
+            .expect("apply_post_mail: Menu state always has a bound user");
+        post_mail(user, msgbase, store, draft)
     }
 
     /// Returns this session's conference-visit history (spec:

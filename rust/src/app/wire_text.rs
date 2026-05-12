@@ -200,6 +200,48 @@ pub(crate) const READ_DENIED_LINE: &[u8] = b"\r\nYou are not permitted to read t
 /// disk doesn't leak file paths to the user.
 pub(crate) const MAIL_STORE_ERROR_LINE: &[u8] = b"\r\nMessage base error. Notify the sysop.\r\n";
 
+/// Prompt shown when the `E` command needs the recipient handle.
+/// The legacy `enterMSG` uses the bare `To:` line that
+/// `msgToHeader` paints (`amiexpress/express.e:10778`).
+pub(crate) const POST_TO_PROMPT: &[u8] = b"\r\nTo: ";
+
+/// Prompt for the subject during line-mode mail composition.
+/// Simplified from `amiexpress/express.e:10847` (the legacy form
+/// adds an ANSI-coloured "(Blank)=abort?" hint).
+pub(crate) const POST_SUBJECT_PROMPT: &[u8] = b"Subject: ";
+
+/// Prompt asking whether the new mail should be private.
+/// Verbatim text from `amiexpress/express.e:10861`'s `Private` prompt
+/// modulo the colour escapes the legacy `yesNo` macro renders.
+pub(crate) const POST_PRIVATE_PROMPT: &[u8] = b"Private (y/N)? ";
+
+/// Instructions printed before the body input loop. Slice 42 uses a
+/// minimal line-mode editor — a full editor (`/S` save, `/A` abort,
+/// numbered line edits) arrives in Phase 8.
+pub(crate) const POST_BODY_PROMPT: &[u8] =
+    b"Enter your message. End with a single '.' on a line by itself; '/A' aborts.\r\n";
+
+/// Sent when the user aborts message composition (empty subject,
+/// `/A` body command, or `~` shortcut). The session returns to the
+/// menu prompt.
+pub(crate) const POST_ABORTED_LINE: &[u8] = b"\r\nMessage aborted.\r\n";
+
+/// Sent when the typed recipient can't be resolved against the user
+/// repository. Mirrors the legacy `User does not exist!!` notice
+/// (`amiexpress/express.e:10814`).
+pub(crate) const POST_UNKNOWN_USER_LINE: &[u8] = b"\r\nUnknown user.\r\n";
+
+/// Sent when the resolved recipient has no granted membership for
+/// the current conference. Mirrors `amiexpress/express.e:10838`.
+pub(crate) const POST_RECIPIENT_NO_ACCESS_LINE: &[u8] =
+    b"\r\nUser does not have access to this conference.\r\n";
+
+/// Sent when the user lacks `has_access(EnterMessage)`. The
+/// pending-validation tier denies this right (Slice 21), so this
+/// notice fires for not-yet-validated accounts.
+pub(crate) const POST_ACCESS_DENIED_LINE: &[u8] =
+    b"\r\nYou do not have permission to post messages.\r\n";
+
 /// Renders a [`Mail`]'s header block for the menu's `R` command.
 ///
 /// Mirrors the legacy `displayMessage` output at
@@ -324,6 +366,22 @@ pub(crate) fn render_mail_body(body: &str) -> Vec<u8> {
     if !body.ends_with('\n') {
         out.extend_from_slice(b"\r\n");
     }
+    out
+}
+
+/// Formats the post-success line shown after `messaging.allium:PostMail`
+/// (Slice 42). Mirrors the legacy `enterMSG` "Saving..." sequence at
+/// `amiexpress/express.e:10972-10976`, simplified to a single line so
+/// the menu loop can resume cleanly.
+///
+/// ```text
+///   Message #<n> saved.
+/// ```
+pub(crate) fn render_post_success(number: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(32);
+    out.extend_from_slice(b"\r\nMessage #");
+    out.extend_from_slice(number.to_string().as_bytes());
+    out.extend_from_slice(b" saved.\r\n");
     out
 }
 
@@ -573,6 +631,12 @@ mod tests {
             render_scan_summary(2, None),
             b"\r\nYou have 2 new messages.\r\n",
         );
+    }
+
+    #[test]
+    fn render_post_success_emits_message_number_and_terminator() {
+        // Pin the legacy-aligned save confirmation.
+        assert_eq!(render_post_success(7), b"\r\nMessage #7 saved.\r\n");
     }
 
     #[test]
