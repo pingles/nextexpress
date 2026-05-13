@@ -132,46 +132,7 @@ mod tests {
         user
     }
 
-    struct InMemoryStore {
-        msgbase: MessageBaseRef,
-        highest: u32,
-        mails: Vec<Mail>,
-    }
-
-    impl InMemoryStore {
-        fn new(msgbase: MessageBaseRef) -> Self {
-            Self {
-                msgbase,
-                highest: 0,
-                mails: Vec::new(),
-            }
-        }
-    }
-
-    impl MailStore for InMemoryStore {
-        fn highest_message(&self) -> u32 {
-            self.highest
-        }
-        fn msgbase(&self) -> MessageBaseRef {
-            self.msgbase
-        }
-        fn insert(&mut self, draft: MailDraft) -> Result<Mail, MailStoreError> {
-            let number = self.highest + 1;
-            let mail = Mail::from_draft(self.msgbase, number, draft);
-            self.mails.push(mail.clone());
-            self.highest = number;
-            Ok(mail)
-        }
-        fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError> {
-            Ok(self.mails.iter().find(|m| m.number() == number).cloned())
-        }
-        fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError> {
-            if let Some(existing) = self.mails.iter_mut().find(|m| m.number() == mail.number()) {
-                *existing = mail.clone();
-            }
-            Ok(())
-        }
-    }
+    use crate::domain::mail_store::test_support::InMemoryMailStore;
 
     fn sample_draft() -> CommentToSysopDraft {
         CommentToSysopDraft {
@@ -190,7 +151,7 @@ mod tests {
         // The store records the mail and counters bump as in PostMail.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
 
         let mail = post_comment_to_sysop(
             &mut user,
@@ -248,7 +209,7 @@ mod tests {
         assert!(!new_user.has_access(Right::EnterMessage));
 
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let mail = post_comment_to_sysop(
             &mut new_user,
             msgbase,
@@ -308,7 +269,7 @@ mod tests {
         )
         .expect("valid");
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let err = post_comment_to_sysop(
             &mut stranger,
             msgbase,
@@ -329,7 +290,7 @@ mod tests {
         // "public" comment to sysop.
         let mut user = make_user(7);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let mail = post_comment_to_sysop(
             &mut user,
             msgbase,

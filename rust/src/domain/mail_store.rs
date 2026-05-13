@@ -127,3 +127,59 @@ pub trait MailStore {
     /// write.
     fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError>;
 }
+
+/// In-memory [`MailStore`] for the messaging-rule tests.
+///
+/// Lives under `#[cfg(test)]` and is only intended for unit tests of
+/// [`crate::domain::post_mail`] and friends — the production
+/// adapters in [`crate::adapters`] are the file-backed implementations.
+///
+/// Mirrors `FileMailStore` semantics: monotonic numbers allocated at
+/// insert time, payload stored verbatim, [`MailStore::save`] replaces
+/// the matching entry. Three rule families used to copy-paste this
+/// type into their own test modules.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::{Mail, MailDraft, MailStore, MailStoreError, MessageBaseRef};
+
+    pub(crate) struct InMemoryMailStore {
+        msgbase: MessageBaseRef,
+        highest: u32,
+        mails: Vec<Mail>,
+    }
+
+    impl InMemoryMailStore {
+        pub(crate) fn new(msgbase: MessageBaseRef) -> Self {
+            Self {
+                msgbase,
+                highest: 0,
+                mails: Vec::new(),
+            }
+        }
+    }
+
+    impl MailStore for InMemoryMailStore {
+        fn highest_message(&self) -> u32 {
+            self.highest
+        }
+        fn msgbase(&self) -> MessageBaseRef {
+            self.msgbase
+        }
+        fn insert(&mut self, draft: MailDraft) -> Result<Mail, MailStoreError> {
+            let number = self.highest + 1;
+            let mail = Mail::from_draft(self.msgbase, number, draft);
+            self.mails.push(mail.clone());
+            self.highest = number;
+            Ok(mail)
+        }
+        fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError> {
+            Ok(self.mails.iter().find(|m| m.number() == number).cloned())
+        }
+        fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError> {
+            if let Some(existing) = self.mails.iter_mut().find(|m| m.number() == mail.number()) {
+                *existing = mail.clone();
+            }
+            Ok(())
+        }
+    }
+}

@@ -264,50 +264,7 @@ mod tests {
         user
     }
 
-    /// In-memory [`MailStore`] for testing the rule's contract with
-    /// the port. Mirrors `FileMailStore` semantics: monotonic numbers
-    /// allocated at insert time, payload stored verbatim, save
-    /// replaces.
-    struct InMemoryStore {
-        msgbase: MessageBaseRef,
-        highest: u32,
-        mails: Vec<Mail>,
-    }
-
-    impl InMemoryStore {
-        fn new(msgbase: MessageBaseRef) -> Self {
-            Self {
-                msgbase,
-                highest: 0,
-                mails: Vec::new(),
-            }
-        }
-    }
-
-    impl MailStore for InMemoryStore {
-        fn highest_message(&self) -> u32 {
-            self.highest
-        }
-        fn msgbase(&self) -> MessageBaseRef {
-            self.msgbase
-        }
-        fn insert(&mut self, draft: MailDraft) -> Result<Mail, MailStoreError> {
-            let number = self.highest + 1;
-            let mail = Mail::from_draft(self.msgbase, number, draft);
-            self.mails.push(mail.clone());
-            self.highest = number;
-            Ok(mail)
-        }
-        fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError> {
-            Ok(self.mails.iter().find(|m| m.number() == number).cloned())
-        }
-        fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError> {
-            if let Some(existing) = self.mails.iter_mut().find(|m| m.number() == mail.number()) {
-                *existing = mail.clone();
-            }
-            Ok(())
-        }
-    }
+    use crate::domain::mail_store::test_support::InMemoryMailStore;
 
     fn sample_draft() -> PostMailDraft {
         PostMailDraft {
@@ -328,7 +285,7 @@ mod tests {
         // + user.messages_posted += 1 + membership.messages_posted += 1.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
 
         let mail = post_mail(
             &mut user,
@@ -365,7 +322,7 @@ mod tests {
         // Spec visibility selector: `else if draft.private: private`.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let mut draft = sample_draft();
         draft.private = true;
 
@@ -385,7 +342,7 @@ mod tests {
         // Spec PostMail: next_number = visit.msgbase.highest_message + 1.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
 
         let first = post_mail(
             &mut user,
@@ -441,7 +398,7 @@ mod tests {
         .expect("valid");
         new_user.upsert_membership(ConferenceMembership::new(2, true));
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
 
         let err = post_mail(
             &mut new_user,
@@ -472,7 +429,7 @@ mod tests {
         )
         .expect("valid");
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
 
         let err = post_mail(
             &mut user,
@@ -505,7 +462,7 @@ mod tests {
         .expect("valid");
         user.upsert_membership(ConferenceMembership::new(2, false));
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
 
         let err = post_mail(
             &mut user,
@@ -527,7 +484,7 @@ mod tests {
         //   - per-user / per-membership counters still bump.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let draft = PostMailDraft {
             to_name: "ALL".to_string(),
             broadcast_to: BroadcastTo::All,
@@ -571,7 +528,7 @@ mod tests {
         // so the rule forces public.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let draft = PostMailDraft {
             to_name: "EALL".to_string(),
             broadcast_to: BroadcastTo::Eall,
@@ -602,7 +559,7 @@ mod tests {
         //   requires: draft.broadcast_to != all or addressing_allows(visit.msgbase, all)
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let draft = PostMailDraft {
             to_name: "ALL".to_string(),
             broadcast_to: BroadcastTo::All,
@@ -635,7 +592,7 @@ mod tests {
         // Spec: `IndividualOrAll` permits ALL but not EALL.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let draft = PostMailDraft {
             to_name: "EALL".to_string(),
             broadcast_to: BroadcastTo::Eall,
@@ -668,7 +625,7 @@ mod tests {
         // A draft that asks for ALL/EALL must not carry an addressee.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let draft = PostMailDraft {
             to_name: "ALL".to_string(),
             broadcast_to: BroadcastTo::All,
@@ -701,7 +658,7 @@ mod tests {
         // none).
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let draft = PostMailDraft {
             to_name: "bob".to_string(),
             broadcast_to: BroadcastTo::None,
@@ -735,7 +692,7 @@ mod tests {
         // mail.
         let mut user = make_user(2);
         let msgbase = MessageBaseRef::new(2, 1);
-        let mut store = InMemoryStore::new(msgbase);
+        let mut store = InMemoryMailStore::new(msgbase);
         let mut draft = sample_draft();
         draft.to_name.clear();
 
