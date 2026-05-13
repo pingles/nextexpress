@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, MessageBaseRef};
-use crate::domain::password::PasswordHashKind;
 use crate::domain::messaging::read_pointers::ReadPointers;
+use crate::domain::password::PasswordHashKind;
 
 /// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

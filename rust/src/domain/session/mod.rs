@@ -24,6 +24,7 @@ use crate::domain::messaging::scan_mail::{scan_mail, ScanMailError, ScanResult};
 use crate::domain::user::User;
 
 mod budget;
+mod conference_activity;
 mod errors;
 mod lockout;
 mod log_format;
@@ -33,6 +34,8 @@ pub(crate) mod typed;
 
 #[cfg(test)]
 mod tests;
+
+use conference_activity::ConferenceActivity;
 
 use log_format::{format_logoff_line, format_logon_line};
 use transitions::is_session_transition_allowed;
@@ -138,18 +141,10 @@ pub enum SessionState {
 pub struct Session {
     shared: SessionShared,
     phase: SessionPhase,
-    /// Per-session conference visits (spec:
-    /// `conferences.allium:ConferenceVisit`). The collection is held
-    /// at the session level rather than inside `SessionPhase` so it
-    /// survives `Onboarded -> Menu` transitions and the
-    /// `SessionsHaveAtMostOneOpenVisit` invariant remains visible to
-    /// future-phase rules.
-    visits: Vec<ConferenceVisit>,
-    /// In-progress conference-scan, when the user has typed `CS`
-    /// (`conferences.allium:ConferenceScan`, Slice 33). While set
-    /// the `ShowConferenceBulletin` rule (Slice 31) suppresses
-    /// bulletins on per-step joins.
-    scan: Option<ConferenceScan>,
+    /// Per-session conference state: visit history plus any
+    /// in-progress `CS` scan. Held outside [`SessionPhase`] so it
+    /// survives `Onboarded -> Menu` transitions.
+    activity: ConferenceActivity,
 }
 
 /// Session fields that are valid for every lifecycle phase.
@@ -372,8 +367,7 @@ impl Session {
                 display_name_type: NameType::Handle,
             },
             phase: SessionPhase::Connecting,
-            visits: Vec::new(),
-            scan: None,
+            activity: ConferenceActivity::new(),
         }
     }
 
@@ -1175,7 +1169,7 @@ impl Session {
     /// `SessionsHaveAtMostOneOpenVisit` invariant.
     #[must_use]
     pub fn visits(&self) -> &[ConferenceVisit] {
-        &self.visits
+        self.activity.visits()
     }
 
     /// Returns the visit currently open for this session, if any.
@@ -1183,7 +1177,7 @@ impl Session {
     /// with the bound user's `last_joined`.
     #[must_use]
     pub fn current_visit(&self) -> Option<&ConferenceVisit> {
-        self.visits.iter().find(|v| v.is_open())
+        self.activity.current_visit()
     }
 
     /// Resolves the auto-rejoin path of
@@ -1232,13 +1226,9 @@ impl Session {
                 let msgbase_number = msgbase.number();
                 let conference_name_type = conference.accepted_name_type();
                 user.record_join(conference, msgbase);
-                let show_bulletin = !self.shared.quick_logon && self.scan.is_none();
+                let show_bulletin = !self.shared.quick_logon && !self.activity.is_scanning();
                 let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
-                for visit in &mut self.visits {
-                    visit.close(now);
-                }
-                self.visits
-                    .push(ConferenceVisit::new(conference_number, msgbase_number, now));
+                self.activity.attach(conference_number, msgbase_number, now);
                 Ok(AutoRejoinOutcome::Joined {
                     conference_number,
                     msgbase_number,
@@ -1309,13 +1299,9 @@ impl Session {
                 let msgbase_number = msgbase.number();
                 let conference_name_type = conference.accepted_name_type();
                 user.record_join(conference, msgbase);
-                let show_bulletin = !self.shared.quick_logon && self.scan.is_none();
+                let show_bulletin = !self.shared.quick_logon && !self.activity.is_scanning();
                 let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
-                for visit in &mut self.visits {
-                    visit.close(now);
-                }
-                self.visits
-                    .push(ConferenceVisit::new(conference_number, msgbase_number, now));
+                self.activity.attach(conference_number, msgbase_number, now);
                 Ok(ExplicitJoinOutcome::Joined {
                     conference_number,
                     msgbase_number,
@@ -1331,7 +1317,7 @@ impl Session {
     /// (`conferences.allium:ConferenceScan`, Slice 33).
     #[must_use]
     pub fn conference_scan(&self) -> Option<&ConferenceScan> {
-        self.scan.as_ref()
+        self.activity.scan()
     }
 
     /// Starts a `CS` conference scan
@@ -1372,12 +1358,9 @@ impl Session {
         let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
         // The next call to step_conference_scan will resume from the
         // conference *after* this one.
-        self.scan = Some(ConferenceScan::new(Some(first_number), now));
-        for visit in &mut self.visits {
-            visit.close(now);
-        }
-        self.visits
-            .push(ConferenceVisit::new(first_number, msgbase_number, now));
+        self.activity
+            .set_scan(Some(ConferenceScan::new(Some(first_number), now)));
+        self.activity.attach(first_number, msgbase_number, now);
         Ok(ConferenceScanOutcome::Stepped {
             conference_number: first_number,
             msgbase_number,
@@ -1405,8 +1388,8 @@ impl Session {
         now: SystemTime,
     ) -> Result<ConferenceScanOutcome, AutoRejoinError> {
         let Some(current_number) = self
-            .scan
-            .as_ref()
+            .activity
+            .scan()
             .and_then(ConferenceScan::next_conference_number)
         else {
             return Err(AutoRejoinError::WrongState(self.state()));
@@ -1420,12 +1403,9 @@ impl Session {
             let conference_name_type = next.accepted_name_type();
             user.record_join(next, mb);
             let name_type_promoted_to = self.promote_display_name_type(conference_name_type);
-            self.scan = Some(ConferenceScan::new(Some(next_number), now));
-            for visit in &mut self.visits {
-                visit.close(now);
-            }
-            self.visits
-                .push(ConferenceVisit::new(next_number, msgbase_number, now));
+            self.activity
+                .set_scan(Some(ConferenceScan::new(Some(next_number), now)));
+            self.activity.attach(next_number, msgbase_number, now);
             Ok(ConferenceScanOutcome::Stepped {
                 conference_number: next_number,
                 msgbase_number,
@@ -1435,7 +1415,7 @@ impl Session {
             // FinishConferenceScan: clear the scan and re-attach to
             // the user's last_joined (which during the scan was
             // updated to the last visited conference).
-            self.scan = None;
+            self.activity.set_scan(None);
             let last = user.last_joined();
             Ok(ConferenceScanOutcome::Finished {
                 rejoined_conference: last.map(|r| r.conference_number()),

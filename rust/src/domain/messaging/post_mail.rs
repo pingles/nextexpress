@@ -20,7 +20,9 @@
 use std::time::SystemTime;
 
 use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
-use crate::domain::messaging::mail::{addressing_allows, BroadcastTo, Mail, MailDraft, MailVisibility};
+use crate::domain::messaging::mail::{
+    addressing_allows, BroadcastTo, Mail, MailDraft, MailVisibility,
+};
 use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 use crate::domain::user::{Right, User};
 
