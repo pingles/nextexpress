@@ -19,11 +19,9 @@
 
 use std::time::SystemTime;
 
-use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{
-    addressing_allows, AllowedAddressing, BroadcastTo, Mail, MailDraft, MailVisibility,
-};
-use crate::domain::mail_store::{MailStore, MailStoreError};
+use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
+use crate::domain::messaging::mail::{addressing_allows, BroadcastTo, Mail, MailDraft, MailVisibility};
+use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 use crate::domain::user::{Right, User};
 
 /// Caller-resolved fields for a post (spec:
@@ -238,7 +236,7 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
-    use crate::domain::mail::{Mail, MailDraft, MailVisibility};
+    use crate::domain::messaging::mail::{Mail, MailDraft, MailVisibility};
     use crate::domain::password::PasswordHashKind;
 
     fn t(secs: u64) -> SystemTime {
@@ -260,7 +258,7 @@ mod tests {
         user
     }
 
-    use crate::domain::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
 
     fn sample_draft() -> PostMailDraft {
         PostMailDraft {

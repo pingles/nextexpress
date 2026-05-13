@@ -279,12 +279,12 @@ pub(crate) const NO_SYSOP_LINE: &[u8] = b"\r\nNo sysop is configured on this BBS
 /// human-friendly `formatLongDateTime` format lands with the
 /// locale-aware formatter slice in Phase 13.
 ///
-/// [`Mail`]: crate::domain::mail::Mail
+/// [`Mail`]: crate::domain::messaging::mail::Mail
 pub(crate) fn render_mail_header(
-    mail: &crate::domain::mail::Mail,
+    mail: &crate::domain::messaging::mail::Mail,
     conference_name: &str,
 ) -> Vec<u8> {
-    use crate::domain::mail::{BroadcastTo, MailVisibility};
+    use crate::domain::messaging::mail::{BroadcastTo, MailVisibility};
     use time::OffsetDateTime;
     let mut out = Vec::with_capacity(256);
     let posted = OffsetDateTime::from(mail.posted_at());
@@ -541,7 +541,7 @@ mod tests {
         // Pin the legacy label block. The escape sequences and the
         // ordering of labels must match `amiexpress/express.e:8900-8938`.
         use crate::domain::conference::MessageBaseRef;
-        use crate::domain::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
+        use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
         let mail = Mail::new(NewMail {
             msgbase: MessageBaseRef::new(2, 1),
             number: 7,
@@ -593,7 +593,7 @@ mod tests {
         // `amiexpress/express.e:8923` — broadcast mail has
         // `Recv'd: N/A` because no single addressee owns it.
         use crate::domain::conference::MessageBaseRef;
-        use crate::domain::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
+        use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
         let mail = Mail::new(NewMail {
             msgbase: MessageBaseRef::new(2, 1),
             number: 1,
@@ -660,7 +660,7 @@ mod tests {
         // A read mail (with `received_at = Some`) shows the timestamp
         // rather than the literal "No".
         use crate::domain::conference::MessageBaseRef;
-        use crate::domain::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
+        use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
         use std::time::{Duration, SystemTime};
         let mut mail = Mail::new(NewMail {
             msgbase: MessageBaseRef::new(2, 1),

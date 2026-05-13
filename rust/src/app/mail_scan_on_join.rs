@@ -10,10 +10,10 @@
 //!
 //! The function:
 //! 1. Resolves the session's open visit's [`MessageBaseRef`];
-//! 2. Looks up the [`crate::domain::mail_store::MailStore`] handle
+//! 2. Looks up the [`crate::domain::messaging::mail_store::MailStore`] handle
 //!    for that coordinate from the [`AppServices`]'s mail-store
 //!    registry;
-//! 3. Locks the store, runs [`scan_mail`](crate::domain::scan_mail::scan_mail);
+//! 3. Locks the store, runs [`scan_mail`](crate::domain::messaging::scan_mail::scan_mail);
 //! 4. Renders the `SCREEN_MAILSCAN` asset when the scan surfaced
 //!    unread mail, then the textual summary line.
 //!

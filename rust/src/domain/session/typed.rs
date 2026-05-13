@@ -29,13 +29,15 @@
 
 use std::time::SystemTime;
 
-use crate::domain::conference::{Conference, MessageBaseRef, NameType};
-use crate::domain::mail::{AllScanScope, AllowedAddressing, Mail};
-use crate::domain::mail_store::MailStore;
-use crate::domain::post_comment_to_sysop::CommentToSysopDraft;
-use crate::domain::post_mail::{PostMailDraft, PostMailError};
-use crate::domain::read_mail::ReadMailError;
-use crate::domain::scan_mail::{ScanMailError, ScanResult};
+use crate::domain::conference::{
+    AllScanScope, AllowedAddressing, Conference, MessageBaseRef, NameType,
+};
+use crate::domain::messaging::mail::Mail;
+use crate::domain::messaging::mail_store::MailStore;
+use crate::domain::messaging::post_comment_to_sysop::CommentToSysopDraft;
+use crate::domain::messaging::post_mail::{PostMailDraft, PostMailError};
+use crate::domain::messaging::read_mail::ReadMailError;
+use crate::domain::messaging::scan_mail::{ScanMailError, ScanResult};
 use crate::domain::session::{
     AcceptConnectionError, AutoRejoinOutcome, ExplicitJoinOutcome, LogonChannel, Session,
     SessionState,
@@ -383,7 +385,7 @@ impl MenuSession {
     /// mail's `received_at` per the spec's `ensures` block.
     ///
     /// The caller is responsible for persisting the mutated `mail`
-    /// back to its [`crate::domain::mail_store::MailStore`]; the bound
+    /// back to its [`crate::domain::messaging::mail_store::MailStore`]; the bound
     /// user is flushed at logoff by the session flow.
     ///
     /// # Errors

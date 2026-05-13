@@ -52,9 +52,10 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use crate::domain::conference::{Conference, MessageBase, NameType};
+use crate::domain::conference::{
+    AllScanScope, AllowedAddressing, Conference, MessageBase, NameType,
+};
 use crate::domain::conference_repository::{ConferenceRepository, ConferenceRepositoryError};
-use crate::domain::mail::{AllScanScope, AllowedAddressing};
 
 /// Filename of the per-conference TOML configuration inside each
 /// `Conf<NN>` directory.

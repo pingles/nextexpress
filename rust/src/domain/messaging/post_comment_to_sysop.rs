@@ -16,10 +16,11 @@
 
 use std::time::SystemTime;
 
+use crate::domain::conference::AllowedAddressing;
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{AllowedAddressing, BroadcastTo, Mail};
-use crate::domain::mail_store::MailStore;
-use crate::domain::post_mail::{apply_post_mail, PostMailDraft, PostMailError};
+use crate::domain::messaging::mail::{BroadcastTo, Mail};
+use crate::domain::messaging::mail_store::MailStore;
+use crate::domain::messaging::post_mail::{apply_post_mail, PostMailDraft, PostMailError};
 use crate::domain::user::{Right, User};
 
 /// Caller-resolved fields for a comment-to-sysop post
@@ -51,7 +52,7 @@ pub struct CommentToSysopDraft {
 /// broadcast_to: none, to_name: "Sysop", private: true, subject,
 /// body })`. This implementation calls the shared
 /// [`apply_post_mail`] helper rather than recursing through
-/// [`crate::domain::post_mail::post_mail`] — the latter gates on
+/// [`crate::domain::messaging::post_mail::post_mail`] — the latter gates on
 /// [`Right::EnterMessage`], which a pending-validation new user
 /// (Slice 21) explicitly lacks even though they retain
 /// [`Right::CommentToSysop`].
@@ -109,8 +110,8 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
-    use crate::domain::mail::{Mail, MailDraft, MailVisibility};
-    use crate::domain::mail_store::MailStoreError;
+    use crate::domain::messaging::mail::{Mail, MailDraft, MailVisibility};
+    use crate::domain::messaging::mail_store::MailStoreError;
     use crate::domain::password::PasswordHashKind;
 
     fn t(secs: u64) -> SystemTime {
@@ -132,7 +133,7 @@ mod tests {
         user
     }
 
-    use crate::domain::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
 
     fn sample_draft() -> CommentToSysopDraft {
         CommentToSysopDraft {

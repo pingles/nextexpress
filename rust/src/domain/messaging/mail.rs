@@ -15,7 +15,7 @@
 
 use std::time::SystemTime;
 
-use crate::domain::conference::MessageBaseRef;
+use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
 
 /// Visibility of a [`Mail`] (spec: `messaging.allium:MailVisibility`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,38 +40,6 @@ pub enum BroadcastTo {
     All,
     /// "EALL" — everyone across all conferences (echo-all).
     Eall,
-}
-
-/// Which kinds of `to:` addresses a message base accepts when posting
-/// (spec: `messaging.allium:AllowedAddressing`). The legacy default
-/// permits both ALL and EALL alongside individual addressees; external
-/// bridges narrow this when they cannot fan out broadcasts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum AllowedAddressing {
-    /// `IndividualOnly` — the poster must address a specific user.
-    IndividualOnly,
-    /// `IndividualOrAll` — ALL is permitted; EALL is not.
-    IndividualOrAll,
-    /// `IndividualOrEall` — EALL is permitted; ALL is not.
-    IndividualOrEall,
-    /// `Any` — individual, ALL and EALL are all permitted (default).
-    #[default]
-    Any,
-}
-
-/// Whether the conference shows ALL-addressed messages to every member
-/// or only to users currently visiting (spec:
-/// `messaging.allium:AllScanScope`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum AllScanScope {
-    /// `Local` — ALL counts as "to me" only for the user currently
-    /// visiting this message base's conference.
-    Local,
-    /// `AllUsersInConf` — ALL is broadcast to every member of the
-    /// conference, regardless of which one they're currently in
-    /// (default; matches the legacy `searchNewMail` behaviour).
-    #[default]
-    AllUsersInConf,
 }
 
 /// True when a message base configured with `allowed` accepts a
@@ -400,6 +368,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::domain::conference::{AllScanScope, AllowedAddressing};
 
     fn t(secs: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(secs)

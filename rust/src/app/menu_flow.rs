@@ -22,10 +22,10 @@ use crate::app::wire_text::{
     POST_RECIPIENT_NO_ACCESS_LINE, POST_SUBJECT_PROMPT, POST_TO_PROMPT, POST_UNKNOWN_USER_LINE,
     READ_DENIED_LINE, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE,
 };
-use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{AllowedAddressing, BroadcastTo};
-use crate::domain::post_mail::{PostMailDraft, PostMailError};
-use crate::domain::read_mail::ReadMailError;
+use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
+use crate::domain::messaging::mail::BroadcastTo;
+use crate::domain::messaging::post_mail::{PostMailDraft, PostMailError};
+use crate::domain::messaging::read_mail::ReadMailError;
 use crate::domain::session::typed::{
     ExplicitJoinTransition, LoggingOffSession, MenuSession, ScanOnJoin,
 };
@@ -483,13 +483,13 @@ where
         self.render_post_result(result, "E").await
     }
 
-    /// Renders the outcome of a [`PostMail`](crate::domain::post_mail::post_mail)
+    /// Renders the outcome of a [`PostMail`](crate::domain::messaging::post_mail::post_mail)
     /// or `PostCommentToSysop` invocation to the terminal. Shared
     /// between the `E` and `C` handlers so a single edit moves both
     /// wire surfaces in lockstep.
     async fn render_post_result(
         &mut self,
-        result: Result<crate::domain::mail::Mail, PostMailError>,
+        result: Result<crate::domain::messaging::mail::Mail, PostMailError>,
         command_label: &str,
     ) -> Result<(), T::Error> {
         match result {
@@ -550,7 +550,7 @@ where
     fn msgbase_all_scan_scope(
         &self,
         visit_msgbase: MessageBaseRef,
-    ) -> Option<crate::domain::mail::AllScanScope> {
+    ) -> Option<crate::domain::conference::AllScanScope> {
         self.services
             .conferences()
             .iter()
@@ -688,7 +688,7 @@ where
             visit_msgbase,
             allowed_addressing,
             &mut **guard,
-            crate::domain::post_comment_to_sysop::CommentToSysopDraft {
+            crate::domain::messaging::post_comment_to_sysop::CommentToSysopDraft {
                 sysop_slot,
                 from_name,
                 subject,

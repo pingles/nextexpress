@@ -11,8 +11,44 @@
 //! storage). [`ConferenceMembership`]'s `pointers` collection arrives
 //! with Slice 38 (`ReadPointers`).
 
-use crate::domain::mail::{AllScanScope, AllowedAddressing};
-use crate::domain::read_pointers::ReadPointers;
+use crate::domain::messaging::read_pointers::ReadPointers;
+
+/// Which kinds of `to:` addresses a message base accepts when posting
+/// (spec: `messaging.allium:AllowedAddressing`). The legacy default
+/// permits both ALL and EALL alongside individual addressees; external
+/// bridges narrow this when they cannot fan out broadcasts.
+///
+/// Lives in `conference` rather than `mail` because it is per-msgbase
+/// configuration carried on [`MessageBase`], not a property of a
+/// [`crate::domain::messaging::mail::Mail`] in flight; keeping it here also breaks
+/// the import cycle between `conference` and `mail`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AllowedAddressing {
+    /// `IndividualOnly` — the poster must address a specific user.
+    IndividualOnly,
+    /// `IndividualOrAll` — ALL is permitted; EALL is not.
+    IndividualOrAll,
+    /// `IndividualOrEall` — EALL is permitted; ALL is not.
+    IndividualOrEall,
+    /// `Any` — individual, ALL and EALL are all permitted (default).
+    #[default]
+    Any,
+}
+
+/// Whether the conference shows ALL-addressed messages to every member
+/// or only to users currently visiting (spec:
+/// `messaging.allium:AllScanScope`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AllScanScope {
+    /// `Local` — ALL counts as "to me" only for the user currently
+    /// visiting this message base's conference.
+    Local,
+    /// `AllUsersInConf` — ALL is broadcast to every member of the
+    /// conference, regardless of which one they're currently in
+    /// (default; matches the legacy `searchNewMail` behaviour).
+    #[default]
+    AllUsersInConf,
+}
 
 /// How the user's display name is rendered when reading or posting
 /// messages in a given conference (spec: `core.allium:NameType`).
@@ -524,7 +560,6 @@ mod tests {
         // the conference. The defaults preserve legacy AmiExpress
         // behaviour where conferences with no `EXT-OUT` bridge permit
         // both ALL and EALL.
-        use crate::domain::mail::{AllScanScope, AllowedAddressing};
         let base = MessageBase::new(4, 2, "tech".to_string());
         assert_eq!(base.allowed_addressing(), AllowedAddressing::Any);
         assert_eq!(base.all_scan_scope(), AllScanScope::AllUsersInConf);
@@ -535,7 +570,6 @@ mod tests {
         // Sysops with an external bridge narrow `allowed_addressing` to
         // `IndividualOrAll` (no EALL fan-out) — the entity must round
         // trip the supplied values.
-        use crate::domain::mail::{AllScanScope, AllowedAddressing};
         let base = MessageBase::with_options(
             4,
             2,

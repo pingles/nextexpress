@@ -1906,7 +1906,7 @@ mod mail {
         // After the read, the bound user must carry an advanced read
         // pointer, and the addressed mail must hold a `received_at`.
         use crate::domain::conference::MessageBaseRef;
-        use crate::domain::mail::{BroadcastTo, MailVisibility, NewMail};
+        use crate::domain::messaging::mail::{BroadcastTo, MailVisibility, NewMail};
         let confs = vec![make_conf(2)];
         let mut s = session_at_onboarded_with(user_with_grants(&[2]));
         s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
@@ -1947,7 +1947,7 @@ mod mail {
         // the wrapper was bypassed — surface that as a panic with a
         // clear message rather than a silently incorrect mutation.
         use crate::domain::conference::MessageBaseRef;
-        use crate::domain::mail::{BroadcastTo, MailVisibility, NewMail};
+        use crate::domain::messaging::mail::{BroadcastTo, MailVisibility, NewMail};
         let mut s = new_session(LogonChannel::Remote);
         let mut mail = Mail::new(NewMail {
             msgbase: MessageBaseRef::new(2, 1),

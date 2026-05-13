@@ -1,6 +1,6 @@
 //! [`MailStore`] port (Phase 6, Slice 37).
 //!
-//! Abstracts persistence of [`Mail`][crate::domain::mail::Mail] within a
+//! Abstracts persistence of [`Mail`][crate::domain::messaging::mail::Mail] within a
 //! single message base. Concrete implementations live in
 //! [`crate::adapters`].
 //!
@@ -12,7 +12,7 @@
 use std::error::Error;
 
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{Mail, MailDraft};
+use crate::domain::messaging::mail::{Mail, MailDraft};
 
 /// Adapter-originated source error attached to domain-shaped
 /// persistence failures.

@@ -7,19 +7,20 @@
 use std::time::{Duration, SystemTime};
 
 use crate::domain::caller_log::CallerLog;
-use crate::domain::conference::Conference;
-use crate::domain::conference::MessageBaseRef;
-use crate::domain::conference::{first_accessible_conference, NameType};
+use crate::domain::conference::{
+    first_accessible_conference, AllScanScope, AllowedAddressing, Conference, MessageBaseRef,
+    NameType,
+};
 use crate::domain::conference_visit::{
     next_accessible_conference_after, primary_msgbase_of, resolve_auto_rejoin,
     resolve_explicit_join, ConferenceScan, ConferenceVisit, JoinResolution,
 };
-use crate::domain::mail::{AllScanScope, AllowedAddressing, Mail};
-use crate::domain::mail_store::MailStore;
-use crate::domain::post_comment_to_sysop::{post_comment_to_sysop, CommentToSysopDraft};
-use crate::domain::post_mail::{post_mail, PostMailDraft, PostMailError};
-use crate::domain::read_mail::{read_mail, ReadMailError};
-use crate::domain::scan_mail::{scan_mail, ScanMailError, ScanResult};
+use crate::domain::messaging::mail::Mail;
+use crate::domain::messaging::mail_store::MailStore;
+use crate::domain::messaging::post_comment_to_sysop::{post_comment_to_sysop, CommentToSysopDraft};
+use crate::domain::messaging::post_mail::{post_mail, PostMailDraft, PostMailError};
+use crate::domain::messaging::read_mail::{read_mail, ReadMailError};
+use crate::domain::messaging::scan_mail::{scan_mail, ScanMailError, ScanResult};
 use crate::domain::user::User;
 
 mod budget;
@@ -1031,7 +1032,7 @@ impl Session {
     /// Side-effects (per the spec's `ensures` block):
     /// - if `mail` is unread and the reader is the addressee, marks
     ///   `mail.received_at = now`;
-    /// - advances the user's [`ReadPointers`](crate::domain::read_pointers::ReadPointers)
+    /// - advances the user's [`ReadPointers`](crate::domain::messaging::read_pointers::ReadPointers)
     ///   row for `mail.msgbase` so `last_read >= mail.number`.
     ///
     /// The caller (the menu loop) is responsible for persisting both
@@ -1063,7 +1064,7 @@ impl Session {
     /// user, `msgbase` and `store` at `now`.
     ///
     /// Side effects (per the spec's `ensures` block) are documented
-    /// on [`crate::domain::scan_mail::scan_mail`]; this wrapper just
+    /// on [`crate::domain::messaging::scan_mail::scan_mail`]; this wrapper just
     /// gates on session state being [`SessionState::Onboarded`] or
     /// [`SessionState::Menu`] (the spec's `requires: session.state
     /// in {onboarded, menu}`).

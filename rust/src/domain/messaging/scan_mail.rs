@@ -23,7 +23,7 @@
 //!
 //! A message at [`Mail::number`] is *unread for `user`* when:
 //! - it is not [`MailVisibility::Deleted`];
-//! - [`can_read`](crate::domain::read_mail::can_read) returns `true`;
+//! - [`can_read`](crate::domain::messaging::read_mail::can_read) returns `true`;
 //! - **and** one of:
 //!   - the message is broadcast (`ALL` / `EALL`), or
 //!   - the message is addressed to `user` and its `received_at` is
@@ -32,16 +32,17 @@
 //! The legacy `searchNewMail` (`amiexpress/express.e:11475`) walks the
 //! same combination; this module preserves the wording for parity.
 //!
-//! [`MailStore`]: crate::domain::mail_store::MailStore
-//! [`Mail::number`]: crate::domain::mail::Mail::number
+//! [`MailStore`]: crate::domain::messaging::mail_store::MailStore
+//! [`Mail::number`]: crate::domain::messaging::mail::Mail::number
 
 use std::time::SystemTime;
 
+use crate::domain::conference::AllScanScope;
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{AllScanScope, BroadcastTo, Mail, MailVisibility};
-use crate::domain::mail_store::{MailStore, MailStoreError};
-use crate::domain::read_mail::can_read;
-use crate::domain::read_pointers::ReadPointers;
+use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
+use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
+use crate::domain::messaging::read_mail::can_read;
+use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::user::User;
 
 /// Result of a single-msgbase mail scan
@@ -296,7 +297,7 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
-    use crate::domain::mail::{MailDraft, NewMail};
+    use crate::domain::messaging::mail::{MailDraft, NewMail};
     use crate::domain::password::PasswordHashKind;
 
     fn t(secs: u64) -> SystemTime {

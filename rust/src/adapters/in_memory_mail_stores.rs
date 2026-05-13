@@ -68,8 +68,8 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::MessageBaseRef;
-    use crate::domain::mail::{Mail, MailDraft};
-    use crate::domain::mail_store::{MailStore, MailStoreError};
+    use crate::domain::messaging::mail::{Mail, MailDraft};
+    use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 
     /// Minimal in-process [`MailStore`] stub used by the registry's
     /// unit tests. Not a public API.

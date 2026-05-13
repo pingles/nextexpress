@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, MessageBaseRef};
 use crate::domain::password::PasswordHashKind;
-use crate::domain::read_pointers::ReadPointers;
+use crate::domain::messaging::read_pointers::ReadPointers;
 
 /// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -691,9 +691,9 @@ impl User {
     /// A revoked row (`granted = false`) returns `false` here, matching
     /// the spec's intent that revoking access immediately denies reads,
     /// scans and posts to that conference. Used by
-    /// [`crate::domain::read_mail::read_mail`],
-    /// [`crate::domain::scan_mail::scan_mail`] and
-    /// [`crate::domain::post_mail::post_mail`].
+    /// [`crate::domain::messaging::read_mail::read_mail`],
+    /// [`crate::domain::messaging::scan_mail::scan_mail`] and
+    /// [`crate::domain::messaging::post_mail::post_mail`].
     #[must_use]
     pub fn has_granted_membership_for(&self, conference_number: u32) -> bool {
         self.memberships

@@ -22,12 +22,12 @@
 //!   gate fires first, so [`can_read`] returning `false` for `Deleted`
 //!   is consistent with the rule and never reached on the happy path.
 //!
-//! [`MailStore`]: crate::domain::mail_store::MailStore
+//! [`MailStore`]: crate::domain::messaging::mail_store::MailStore
 
 use std::time::SystemTime;
 
-use crate::domain::mail::{Mail, MailVisibility};
-use crate::domain::read_pointers::ReadPointers;
+use crate::domain::messaging::mail::{Mail, MailVisibility};
+use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::user::{Right, User};
 
 /// Errors raised by [`read_mail`]. Each variant corresponds to one
@@ -144,7 +144,7 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::{ConferenceMembership, MessageBaseRef};
-    use crate::domain::mail::{BroadcastTo, NewMail};
+    use crate::domain::messaging::mail::{BroadcastTo, NewMail};
     use crate::domain::password::PasswordHashKind;
 
     fn t(secs: u64) -> SystemTime {

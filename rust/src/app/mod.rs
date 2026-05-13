@@ -24,7 +24,7 @@ use crate::app::services::{SharedConferences, SharedMailStores};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::conference_repository::ConferenceRepository;
-use crate::domain::mail_store::MailStore;
+use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::password::PasswordHasher;
 use crate::domain::user_repository::UserRepository;
 

@@ -16,8 +16,8 @@ use time::OffsetDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{BroadcastTo, Mail, MailDraft, MailVisibility, NewMail};
-use crate::domain::mail_store::{MailStore, MailStoreError};
+use crate::domain::messaging::mail::{BroadcastTo, Mail, MailDraft, MailVisibility, NewMail};
+use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 
 /// Width of the zero-padded number used as a message's on-disk
 /// filename. Chosen so the lexicographic `ls` order matches numeric
@@ -386,8 +386,8 @@ mod tests {
 
     use crate::adapters::file_mail_store::FileMailStore;
     use crate::domain::conference::MessageBaseRef;
-    use crate::domain::mail::{BroadcastTo, MailDraft, MailVisibility};
-    use crate::domain::mail_store::MailStore;
+    use crate::domain::messaging::mail::{BroadcastTo, MailDraft, MailVisibility};
+    use crate::domain::messaging::mail_store::MailStore;
 
     fn t(secs: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
@@ -667,7 +667,7 @@ mod tests {
     }
 
     // Bring MailStoreError into scope for the negative-path tests.
-    use crate::domain::mail_store::MailStoreError;
+    use crate::domain::messaging::mail_store::MailStoreError;
 
     #[test]
     fn load_surfaces_io_errors_other_than_not_found() {
@@ -876,7 +876,7 @@ mod tests {
         // Defence against a caller handing us a mail loaded from a
         // different msgbase: writing it under our directory would
         // silently break the on-disk MessageBaseRef coordinate.
-        use crate::domain::mail::{Mail, NewMail};
+        use crate::domain::messaging::mail::{Mail, NewMail};
         let dir = tempfile::tempdir().unwrap();
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();

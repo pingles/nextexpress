@@ -1,6 +1,6 @@
 //! Application-level registry for shared mail-store handles.
 //!
-//! [`MailStore`][crate::domain::mail_store::MailStore] is the domain
+//! [`MailStore`][crate::domain::messaging::mail_store::MailStore] is the domain
 //! persistence port for a single message base. The async mutex and
 //! registry used by the interactive runtime are application
 //! infrastructure: they coordinate concurrent menu tasks, but are not
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail_store::MailStore;
+use crate::domain::messaging::mail_store::MailStore;
 
 /// Thread-safe shared handle to a single-msgbase [`MailStore`]
 /// implementation, locked behind a [`tokio::sync::Mutex`] so the menu
