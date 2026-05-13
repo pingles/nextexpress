@@ -17,6 +17,104 @@ use crate::domain::password::PasswordHashKind;
 /// keeps the limit colocated with the [`User::line_length`] getter.
 pub const MAX_LINE_LENGTH: u32 = 255;
 
+/// Logon-counter and time-budget bookkeeping for a [`User`].
+///
+/// Bundles the six fields the time-budget rules
+/// (`session.allium:EnterMenu`, `InitialiseDailyBudget`,
+/// `UpdateTimeUsed`, `FinaliseLogoff`) read or mutate together.
+/// Owned privately by [`User`]; the user's public surface delegates to
+/// these accessors so callers don't change.
+#[derive(Debug, Clone)]
+struct UsageAccounting {
+    /// Number of completed logons recorded for this user.
+    times_called: u32,
+    /// Timestamp of the most recently completed logon, if any.
+    last_call: Option<SystemTime>,
+    /// Per-call wall-clock allowance.
+    time_limit_per_call: Duration,
+    /// Combined per-day allowance across all visits in one accounting day.
+    time_limit_per_day: Duration,
+    /// Wall-clock time burned through today.
+    time_used_today: Duration,
+    /// Number of completed logons recorded for this user in the current
+    /// accounting day.
+    times_called_today: u32,
+}
+
+impl UsageAccounting {
+    /// Constructs a freshly-zeroed accounting record.
+    fn new() -> Self {
+        Self {
+            times_called: 0,
+            last_call: None,
+            time_limit_per_call: Duration::ZERO,
+            time_limit_per_day: Duration::ZERO,
+            time_used_today: Duration::ZERO,
+            times_called_today: 0,
+        }
+    }
+
+    /// Constructs an accounting record with the spec's
+    /// `CompleteNewUserRegistration` defaults: 30-minute per-call /
+    /// 1-hour per-day allowances, `last_call = now`, counters zeroed.
+    fn for_fresh_registration(now: SystemTime) -> Self {
+        Self {
+            times_called: 0,
+            last_call: Some(now),
+            time_limit_per_call: Duration::from_secs(30 * 60),
+            time_limit_per_day: Duration::from_secs(60 * 60),
+            time_used_today: Duration::ZERO,
+            times_called_today: 0,
+        }
+    }
+
+    fn times_called(&self) -> u32 {
+        self.times_called
+    }
+    fn last_call(&self) -> Option<SystemTime> {
+        self.last_call
+    }
+    fn time_limit_per_call(&self) -> Duration {
+        self.time_limit_per_call
+    }
+    fn time_limit_per_day(&self) -> Duration {
+        self.time_limit_per_day
+    }
+    fn time_used_today(&self) -> Duration {
+        self.time_used_today
+    }
+    fn times_called_today(&self) -> u32 {
+        self.times_called_today
+    }
+
+    fn bump_times_called(&mut self) {
+        self.times_called = self.times_called.saturating_add(1);
+    }
+
+    fn record_last_call(&mut self, at: SystemTime) {
+        self.last_call = Some(at);
+    }
+
+    fn set_time_limits(&mut self, per_call: Duration, per_day: Duration) {
+        self.time_limit_per_call = per_call;
+        self.time_limit_per_day = per_day;
+    }
+
+    /// Resets the daily counters at the start of a new accounting day.
+    fn reset_daily_counters(&mut self) {
+        self.times_called_today = 0;
+        self.time_used_today = Duration::ZERO;
+    }
+
+    fn bump_times_called_today(&mut self) {
+        self.times_called_today = self.times_called_today.saturating_add(1);
+    }
+
+    fn add_time_used_today(&mut self, elapsed: Duration) {
+        self.time_used_today = self.time_used_today.saturating_add(elapsed);
+    }
+}
+
 /// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RatioMode {
@@ -187,12 +285,7 @@ pub struct User {
     access_level: u8,
     invalid_attempts: u32,
     account_lock: AccountLockState,
-    times_called: u32,
-    last_call: Option<SystemTime>,
-    time_limit_per_call: Duration,
-    time_limit_per_day: Duration,
-    time_used_today: Duration,
-    times_called_today: u32,
+    usage: UsageAccounting,
     password_reset: PasswordResetRequirement,
     validation_status: AccountValidationStatus,
     location: Option<String>,
@@ -247,12 +340,7 @@ impl User {
             access_level,
             invalid_attempts: 0,
             account_lock: AccountLockState::Unlocked,
-            times_called: 0,
-            last_call: None,
-            time_limit_per_call: Duration::ZERO,
-            time_limit_per_day: Duration::ZERO,
-            time_used_today: Duration::ZERO,
-            times_called_today: 0,
+            usage: UsageAccounting::new(),
             password_reset: PasswordResetRequirement::NotRequired,
             validation_status: AccountValidationStatus::Existing,
             location: None,
@@ -317,12 +405,7 @@ impl User {
             access_level: 2,
             invalid_attempts: 0,
             account_lock: AccountLockState::Unlocked,
-            times_called: 0,
-            last_call: Some(now),
-            time_limit_per_call: Duration::from_secs(30 * 60),
-            time_limit_per_day: Duration::from_secs(60 * 60),
-            time_used_today: Duration::ZERO,
-            times_called_today: 0,
+            usage: UsageAccounting::for_fresh_registration(now),
             password_reset: PasswordResetRequirement::NotRequired,
             validation_status: AccountValidationStatus::AwaitingSysopValidation,
             location,
@@ -431,53 +514,53 @@ impl User {
     /// Returns the number of completed logons recorded for this user.
     #[must_use]
     pub fn times_called(&self) -> u32 {
-        self.times_called
+        self.usage.times_called()
     }
 
     /// Returns the timestamp of the most recently completed logon, if
     /// any.
     #[must_use]
     pub fn last_call(&self) -> Option<SystemTime> {
-        self.last_call
+        self.usage.last_call()
     }
 
     /// Increments [`Self::times_called`] by one. Used by
     /// `session.allium:EnterMenu` (Slice 12).
     pub fn bump_times_called(&mut self) {
-        self.times_called = self.times_called.saturating_add(1);
+        self.usage.bump_times_called();
     }
 
     /// Updates [`Self::last_call`] to `at`. Used by
     /// `session.allium:FinaliseLogoff` (Slice 13).
     pub fn record_last_call(&mut self, at: SystemTime) {
-        self.last_call = Some(at);
+        self.usage.record_last_call(at);
     }
 
     /// Returns the per-call time allowance configured for this user.
     #[must_use]
     pub fn time_limit_per_call(&self) -> Duration {
-        self.time_limit_per_call
+        self.usage.time_limit_per_call()
     }
 
     /// Returns the per-day combined time allowance configured for this
     /// user.
     #[must_use]
     pub fn time_limit_per_day(&self) -> Duration {
-        self.time_limit_per_day
+        self.usage.time_limit_per_day()
     }
 
     /// Returns how much wall-clock time the user has burned through
     /// today, accumulated across calls in the current accounting day.
     #[must_use]
     pub fn time_used_today(&self) -> Duration {
-        self.time_used_today
+        self.usage.time_used_today()
     }
 
     /// Returns the number of completed logons recorded for this user
     /// in the current accounting day.
     #[must_use]
     pub fn times_called_today(&self) -> u32 {
-        self.times_called_today
+        self.usage.times_called_today()
     }
 
     /// Sets the per-call and per-day time allowances. Used by the
@@ -488,8 +571,7 @@ impl User {
     /// - `per_day`: combined allowance across all visits in one
     ///   accounting day.
     pub fn set_time_limits(&mut self, per_call: Duration, per_day: Duration) {
-        self.time_limit_per_call = per_call;
-        self.time_limit_per_day = per_day;
+        self.usage.set_time_limits(per_call, per_day);
     }
 
     /// Resets the daily counters at the start of a new accounting day.
@@ -499,20 +581,19 @@ impl User {
     /// cleared. Daily byte counters and chat-minute accounting land
     /// with the slices that introduce them.
     pub fn reset_daily_counters(&mut self) {
-        self.times_called_today = 0;
-        self.time_used_today = Duration::ZERO;
+        self.usage.reset_daily_counters();
     }
 
     /// Increments [`Self::times_called_today`] by one. Used by the
     /// same-day branch of `session.allium:InitialiseDailyBudget`.
     pub fn bump_times_called_today(&mut self) {
-        self.times_called_today = self.times_called_today.saturating_add(1);
+        self.usage.bump_times_called_today();
     }
 
     /// Adds `elapsed` to [`Self::time_used_today`]. Used by
     /// `session.allium:UpdateTimeUsed` (Slice 14).
     pub fn add_time_used_today(&mut self, elapsed: Duration) {
-        self.time_used_today = self.time_used_today.saturating_add(elapsed);
+        self.usage.add_time_used_today(elapsed);
     }
 
     /// Returns the timestamp the user's password hash was last
