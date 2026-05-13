@@ -7,20 +7,11 @@
 use std::time::{Duration, SystemTime};
 
 use crate::domain::caller_log::CallerLog;
-use crate::domain::conference::{
-    first_accessible_conference, AllScanScope, AllowedAddressing, Conference, MessageBaseRef,
-    NameType,
-};
+use crate::domain::conference::{first_accessible_conference, Conference, NameType};
 use crate::domain::conference_visit::{
     next_accessible_conference_after, primary_msgbase_of, resolve_auto_rejoin,
     resolve_explicit_join, ConferenceScan, ConferenceVisit, JoinResolution,
 };
-use crate::domain::messaging::mail::Mail;
-use crate::domain::messaging::mail_store::MailStore;
-use crate::domain::messaging::post_comment_to_sysop::{post_comment_to_sysop, CommentToSysopDraft};
-use crate::domain::messaging::post_mail::{post_mail, PostMailDraft, PostMailError};
-use crate::domain::messaging::read_mail::{read_mail, ReadMailError};
-use crate::domain::messaging::scan_mail::{scan_mail, ScanMailError, ScanResult};
 use crate::domain::user::User;
 
 mod budget;
@@ -38,7 +29,6 @@ mod tests;
 use conference_activity::ConferenceActivity;
 
 use log_format::{format_logoff_line, format_logon_line};
-use transitions::is_session_transition_allowed;
 
 /// Maximum number of unknown handle entries before a session is ended.
 const MAX_NAME_RETRIES: u32 = 5;
@@ -537,44 +527,6 @@ impl Session {
         self.state() != SessionState::Ended
     }
 
-    /// Attempts to transition the session to `target`.
-    ///
-    /// # Errors
-    /// Returns [`SessionTransitionError`] if the spec does not permit
-    /// the transition (Phase 1 subset of `session.allium:Session.state`).
-    fn transition_to(&mut self, target: SessionState) -> Result<(), SessionTransitionError> {
-        let from = self.state();
-        if !is_session_transition_allowed(from, target) {
-            return Err(SessionTransitionError { from, to: target });
-        }
-        self.transition_after_guard(target);
-        Ok(())
-    }
-
-    fn transition_after_guard(&mut self, target: SessionState) {
-        let from = self.state();
-        debug_assert!(
-            is_session_transition_allowed(from, target),
-            "guarded transition should be permitted"
-        );
-        match target {
-            SessionState::Connecting => self.phase = SessionPhase::Connecting,
-            SessionState::Identifying => {
-                self.phase = SessionPhase::Identifying {
-                    name_retry_count: 0,
-                };
-            }
-            SessionState::LoggingOff => self.move_to_logging_off(None),
-            SessionState::Ended => self.move_to_ended(None),
-            SessionState::Authenticating
-            | SessionState::NewUserRegistering
-            | SessionState::Onboarded
-            | SessionState::Menu => {
-                panic!("transition to {target:?} requires phase-specific payload");
-            }
-        }
-    }
-
     fn move_to_logging_off(&mut self, reason: Option<LogoffReason>) {
         let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
         let (user, authenticated_at, time_remaining) = match previous {
@@ -691,7 +643,17 @@ impl Session {
     /// Returns [`SessionTransitionError`] if the session is not in
     /// [`SessionState::Connecting`].
     pub fn prompt_for_name(&mut self) -> Result<(), SessionTransitionError> {
-        self.transition_to(SessionState::Identifying)
+        let from = self.state();
+        if from != SessionState::Connecting {
+            return Err(SessionTransitionError {
+                from,
+                to: SessionState::Identifying,
+            });
+        }
+        self.phase = SessionPhase::Identifying {
+            name_retry_count: 0,
+        };
+        Ok(())
     }
 
     /// Applies the successful branch of `session.allium:NameTyped`.
@@ -1018,147 +980,6 @@ impl Session {
             text: line,
             is_password_failure: false,
         })
-    }
-
-    /// Applies `messaging.allium:ReadMail` to the session's bound
-    /// user and `mail` at `now`.
-    ///
-    /// Side-effects (per the spec's `ensures` block):
-    /// - if `mail` is unread and the reader is the addressee, marks
-    ///   `mail.received_at = now`;
-    /// - advances the user's [`ReadPointers`](crate::domain::messaging::read_pointers::ReadPointers)
-    ///   row for `mail.msgbase` so `last_read >= mail.number`.
-    ///
-    /// The caller (the menu loop) is responsible for persisting both
-    /// `mail` and the bound user back to their respective stores; this
-    /// method only performs the in-memory mutation.
-    ///
-    /// # Errors
-    /// Returns the matching [`ReadMailError`] variant when any of
-    /// `ReadMail`'s `requires` clauses fail.
-    ///
-    /// # Panics
-    /// Panics if the session is not in [`SessionState::Menu`] — the
-    /// typed wrapper [`crate::domain::session::typed::MenuSession`] guarantees this,
-    /// so reaching the panic means the wrapper has been bypassed.
-    fn apply_read_mail(&mut self, mail: &mut Mail, now: SystemTime) -> Result<(), ReadMailError> {
-        assert!(
-            matches!(self.state(), SessionState::Menu),
-            "apply_read_mail requires Menu state, got {:?}",
-            self.state(),
-        );
-        let user = self
-            .phase
-            .user_mut()
-            .expect("apply_read_mail: Menu state always has a bound user");
-        read_mail(user, mail, now)
-    }
-
-    /// Applies `messaging.allium:ScanMail` to the session's bound
-    /// user, `msgbase` and `store` at `now`.
-    ///
-    /// Side effects (per the spec's `ensures` block) are documented
-    /// on [`crate::domain::messaging::scan_mail::scan_mail`]; this wrapper just
-    /// gates on session state being [`SessionState::Onboarded`] or
-    /// [`SessionState::Menu`] (the spec's `requires: session.state
-    /// in {onboarded, menu}`).
-    ///
-    /// # Errors
-    /// Returns the matching [`ScanMailError`] variant.
-    ///
-    /// # Panics
-    /// Panics if the session is not in [`SessionState::Onboarded`]
-    /// or [`SessionState::Menu`] — the typed wrapper
-    /// [`crate::domain::session::typed::MenuSession`] /
-    /// [`crate::domain::session::typed::OnboardedSession`] guarantees this.
-    fn apply_scan_mail<S>(
-        &mut self,
-        store: &S,
-        msgbase: MessageBaseRef,
-        scope: AllScanScope,
-        from_message: u32,
-        now: SystemTime,
-    ) -> Result<ScanResult, ScanMailError>
-    where
-        S: MailStore + ?Sized,
-    {
-        assert!(
-            matches!(self.state(), SessionState::Onboarded | SessionState::Menu),
-            "apply_scan_mail requires Onboarded or Menu state, got {:?}",
-            self.state(),
-        );
-        let user = self
-            .phase
-            .user_mut()
-            .expect("apply_scan_mail: state has a bound user");
-        scan_mail(user, store, msgbase, scope, from_message, now)
-    }
-
-    /// Applies `messaging.allium:PostMail` (Slice 42, single-addressee
-    /// path) to the session's bound user against `msgbase` and `store`.
-    ///
-    /// On success: the store has persisted the new [`Mail`], the bound
-    /// user's `messages_posted` counter has been bumped, and the
-    /// per-conference membership row has been updated.
-    ///
-    /// # Errors
-    /// Returns the matching [`PostMailError`] variant when a `requires`
-    /// gate fails or the store rejects the write.
-    ///
-    /// # Panics
-    /// Panics if the session is not in [`SessionState::Menu`] — the
-    /// typed wrapper [`crate::domain::session::typed::MenuSession`]
-    /// guarantees this.
-    fn apply_post_mail(
-        &mut self,
-        msgbase: MessageBaseRef,
-        allowed_addressing: AllowedAddressing,
-        store: &mut dyn MailStore,
-        draft: PostMailDraft,
-    ) -> Result<Mail, PostMailError> {
-        assert!(
-            matches!(self.state(), SessionState::Menu),
-            "apply_post_mail requires Menu state, got {:?}",
-            self.state(),
-        );
-        let user = self
-            .phase
-            .user_mut()
-            .expect("apply_post_mail: Menu state always has a bound user");
-        post_mail(user, msgbase, allowed_addressing, store, draft)
-    }
-
-    /// Applies `messaging.allium:PostCommentToSysop` (Slice 44) to the
-    /// bound user. Mirrors [`Self::apply_post_mail`] but routes through
-    /// the comment-to-sysop rule, which gates on
-    /// `Right::CommentToSysop` (not `EnterMessage`) so a pending-
-    /// validation new user can still leave operator feedback.
-    ///
-    /// # Errors
-    /// Returns the matching [`PostMailError`] variant when the rule
-    /// rejects the request or the store fails.
-    ///
-    /// # Panics
-    /// Panics if the session is not in [`SessionState::Menu`] — the
-    /// typed wrapper [`crate::domain::session::typed::MenuSession`]
-    /// guarantees this.
-    fn apply_post_comment_to_sysop(
-        &mut self,
-        msgbase: MessageBaseRef,
-        allowed_addressing: AllowedAddressing,
-        store: &mut dyn MailStore,
-        draft: CommentToSysopDraft,
-    ) -> Result<Mail, PostMailError> {
-        assert!(
-            matches!(self.state(), SessionState::Menu),
-            "apply_post_comment_to_sysop requires Menu state, got {:?}",
-            self.state(),
-        );
-        let user = self
-            .phase
-            .user_mut()
-            .expect("apply_post_comment_to_sysop: Menu state always has a bound user");
-        post_comment_to_sysop(user, msgbase, allowed_addressing, store, draft)
     }
 
     /// Returns this session's conference-visit history (spec:

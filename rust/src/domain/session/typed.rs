@@ -34,10 +34,14 @@ use crate::domain::conference::{
 };
 use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::mail_store::MailStore;
-use crate::domain::messaging::post_comment_to_sysop::CommentToSysopDraft;
-use crate::domain::messaging::post_mail::{PostMailDraft, PostMailError};
-use crate::domain::messaging::read_mail::ReadMailError;
-use crate::domain::messaging::scan_mail::{ScanMailError, ScanResult};
+use crate::domain::messaging::post_comment_to_sysop::{
+    post_comment_to_sysop as post_comment_to_sysop_rule, CommentToSysopDraft,
+};
+use crate::domain::messaging::post_mail::{
+    post_mail as post_mail_rule, PostMailDraft, PostMailError,
+};
+use crate::domain::messaging::read_mail::{read_mail as read_mail_rule, ReadMailError};
+use crate::domain::messaging::scan_mail::{scan_mail as scan_mail_rule, ScanMailError, ScanResult};
 use crate::domain::session::{
     AcceptConnectionError, AutoRejoinOutcome, ExplicitJoinOutcome, LogonChannel, Session,
     SessionState,
@@ -281,8 +285,12 @@ impl ScanOnJoin for OnboardedSession {
         from_message: u32,
         now: SystemTime,
     ) -> Result<ScanResult, ScanMailError> {
-        self.session
-            .apply_scan_mail(store, msgbase, scope, from_message, now)
+        let user = self
+            .session
+            .phase
+            .user_mut()
+            .expect("Onboarded session has a bound user");
+        scan_mail_rule(user, store, msgbase, scope, from_message, now)
     }
 }
 
@@ -396,7 +404,12 @@ impl MenuSession {
         mail: &mut Mail,
         now: SystemTime,
     ) -> Result<(), ReadMailError> {
-        self.session.apply_read_mail(mail, now)
+        let user = self
+            .session
+            .phase
+            .user_mut()
+            .expect("Menu session has a bound user");
+        read_mail_rule(user, mail, now)
     }
 
     /// Applies `messaging.allium:PostMail` (Slice 42, single-addressee
@@ -414,8 +427,12 @@ impl MenuSession {
         store: &mut dyn MailStore,
         draft: PostMailDraft,
     ) -> Result<Mail, PostMailError> {
-        self.session
-            .apply_post_mail(msgbase, allowed_addressing, store, draft)
+        let user = self
+            .session
+            .phase
+            .user_mut()
+            .expect("Menu session has a bound user");
+        post_mail_rule(user, msgbase, allowed_addressing, store, draft)
     }
 
     /// Applies `messaging.allium:PostCommentToSysop` (Slice 44) to the
@@ -433,8 +450,12 @@ impl MenuSession {
         store: &mut dyn MailStore,
         draft: CommentToSysopDraft,
     ) -> Result<Mail, PostMailError> {
-        self.session
-            .apply_post_comment_to_sysop(msgbase, allowed_addressing, store, draft)
+        let user = self
+            .session
+            .phase
+            .user_mut()
+            .expect("Menu session has a bound user");
+        post_comment_to_sysop_rule(user, msgbase, allowed_addressing, store, draft)
     }
 }
 
@@ -452,8 +473,12 @@ impl ScanOnJoin for MenuSession {
         from_message: u32,
         now: SystemTime,
     ) -> Result<ScanResult, ScanMailError> {
-        self.session
-            .apply_scan_mail(store, msgbase, scope, from_message, now)
+        let user = self
+            .session
+            .phase
+            .user_mut()
+            .expect("Menu session has a bound user");
+        scan_mail_rule(user, store, msgbase, scope, from_message, now)
     }
 }
 

@@ -4,6 +4,14 @@
 //! The table itself is the spec's transition list for the Phase 1
 //! subset; it lives here so the predicate stays adjacent to the error
 //! type that surfaces violations to callers.
+//!
+//! [`SessionTransitionError`] is used by the rule methods on
+//! [`super::Session`] (`prompt_for_name`, `user_requests_logoff`,
+//! `finalise_logoff`) to surface spec-violating attempts. The
+//! [`is_session_transition_allowed`] table itself is no longer
+//! consulted at runtime — every legitimate transition is performed by
+//! a domain rule that already encodes its own `requires:` clause; the
+//! table remains as test-time documentation of the spec.
 
 use super::SessionState;
 
@@ -35,6 +43,7 @@ pub struct SessionTransitionError {
 /// - `NewUserRegistering -> LoggingOff` lets the same idle / carrier
 ///   rules end an in-progress registration (Slice 19 brings the
 ///   state in; both rules' `requires:` lists already name it).
+#[cfg(test)]
 pub(super) fn is_session_transition_allowed(from: SessionState, to: SessionState) -> bool {
     use SessionState::{
         Authenticating, Connecting, Ended, Identifying, LoggingOff, Menu, NewUserRegistering,

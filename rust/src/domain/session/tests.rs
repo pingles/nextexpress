@@ -211,45 +211,14 @@ mod state_basics {
     }
 
     #[test]
-    fn carrier_drop_from_connecting_ends_session() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Ended).expect("allowed");
-    }
-
-    #[test]
-    fn carrier_drop_from_identifying_ends_session() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
-        s.transition_to(SessionState::Ended).expect("allowed");
-    }
-
-    #[test]
-    fn carrier_drop_from_authenticating_ends_session() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.prompt_for_name().unwrap();
-        s.record_identified_user("alice", alice()).unwrap();
-        s.transition_to(SessionState::Ended).expect("allowed");
-    }
-
-    #[test]
-    fn onboarded_can_short_circuit_to_logging_off() {
-        let mut s = new_session(LogonChannel::Remote);
-        s.prompt_for_name().unwrap();
-        s.record_identified_user("alice", alice()).unwrap();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
-        s.transition_to(SessionState::LoggingOff)
-            .expect("onboarded -> logging_off allowed");
-    }
-
-    #[test]
-    fn invalid_transitions_are_rejected() {
-        let mut s = new_session(LogonChannel::Remote);
-        let err = s
-            .transition_to(SessionState::Onboarded)
-            .expect_err("connecting -> onboarded not allowed");
-        assert_eq!(err.from, SessionState::Connecting);
-        assert_eq!(err.to, SessionState::Onboarded);
-        assert_eq!(s.state(), SessionState::Connecting);
+    fn invalid_transitions_are_rejected_by_the_spec_table() {
+        // `Connecting -> Onboarded` is not in the spec's permitted
+        // transition table — the helper rejects it directly.
+        use super::super::transitions::is_session_transition_allowed;
+        assert!(!is_session_transition_allowed(
+            SessionState::Connecting,
+            SessionState::Onboarded
+        ));
     }
 
     #[test]
@@ -316,8 +285,13 @@ mod state_basics {
 
     #[test]
     fn accept_connection_allows_when_existing_session_ended() {
+        // Drive the existing session through the legitimate rule chain
+        // to Ended (CarrierLost -> finalise_logoff) rather than via a
+        // raw transition.
         let mut existing = Session::new(3, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
-        existing.transition_to(SessionState::Ended).unwrap();
+        existing.apply_carrier_loss().unwrap();
+        existing.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(existing.state(), SessionState::Ended);
         Session::accept_connection(
             3,
             LogonChannel::Remote,
@@ -375,8 +349,11 @@ mod identification {
 
     #[test]
     fn prompt_for_name_rejects_outside_connecting() {
+        // A second prompt_for_name from Identifying must fail with
+        // `from = Identifying` — the rule's only legitimate firing
+        // is from Connecting.
         let mut s = new_session(LogonChannel::Remote);
-        s.transition_to(SessionState::Identifying).unwrap();
+        s.prompt_for_name().unwrap();
         let err = s
             .prompt_for_name()
             .expect_err("identifying -> identifying not allowed");
@@ -1897,22 +1874,28 @@ mod conferencing {
 mod mail {
     use std::time::{Duration, SystemTime};
 
+    use super::super::typed::MenuSession;
     use super::super::*;
-    use super::fixtures::{make_conf, new_session, session_at_onboarded_with, user_with_grants};
+    use super::fixtures::{make_conf, session_at_onboarded_with, user_with_grants};
 
     #[test]
-    fn apply_read_mail_from_menu_state_advances_pointer_and_marks_received() {
+    fn read_mail_from_menu_state_advances_pointer_and_marks_received() {
         // Build a Menu-state session for alice (slot 2 in `alice()`).
         // After the read, the bound user must carry an advanced read
         // pointer, and the addressed mail must hold a `received_at`.
+        // Routes through the typed `MenuSession` wrapper — the
+        // compile-time guarantee that `read_mail` is only callable
+        // from Menu replaces the old runtime assertion on
+        // `Session::apply_read_mail`.
         use crate::domain::conference::MessageBaseRef;
-        use crate::domain::messaging::mail::{BroadcastTo, MailVisibility, NewMail};
+        use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
         let confs = vec![make_conf(2)];
         let mut s = session_at_onboarded_with(user_with_grants(&[2]));
         s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
             .unwrap();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!(s.state(), SessionState::Menu);
+        let user_slot = s.user().unwrap().slot_number();
 
         let mut mail = Mail::new(NewMail {
             msgbase: MessageBaseRef::new(2, 1),
@@ -1924,44 +1907,20 @@ mod mail {
             subject: "Welcome".to_string(),
             posted_at: SystemTime::UNIX_EPOCH,
             author_slot: 1,
-            addressee_slot: Some(s.user().unwrap().slot_number()),
+            addressee_slot: Some(user_slot),
             body: "Hi alice".to_string(),
         });
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
-        s.apply_read_mail(&mut mail, now).expect("happy path");
+        let mut menu = MenuSession::from_session(s);
+        menu.read_mail(&mut mail, now).expect("happy path");
 
         assert_eq!(mail.received_at(), Some(now));
+        let s = menu.into_inner();
         let pointers = s
             .user()
             .unwrap()
             .read_pointers_for(MessageBaseRef::new(2, 1))
             .expect("created lazily by ReadMail");
         assert_eq!(pointers.last_read(), 3);
-    }
-
-    #[test]
-    #[should_panic(expected = "apply_read_mail requires Menu state")]
-    fn apply_read_mail_outside_menu_panics() {
-        // The typed wrapper guarantees we only call this from
-        // MenuSession, so reaching this assertion in production means
-        // the wrapper was bypassed — surface that as a panic with a
-        // clear message rather than a silently incorrect mutation.
-        use crate::domain::conference::MessageBaseRef;
-        use crate::domain::messaging::mail::{BroadcastTo, MailVisibility, NewMail};
-        let mut s = new_session(LogonChannel::Remote);
-        let mut mail = Mail::new(NewMail {
-            msgbase: MessageBaseRef::new(2, 1),
-            number: 1,
-            visibility: MailVisibility::Public,
-            from_name: "x".to_string(),
-            to_name: "y".to_string(),
-            broadcast_to: BroadcastTo::None,
-            subject: "x".to_string(),
-            posted_at: SystemTime::UNIX_EPOCH,
-            author_slot: 1,
-            addressee_slot: Some(2),
-            body: String::new(),
-        });
-        let _ = s.apply_read_mail(&mut mail, SystemTime::UNIX_EPOCH);
     }
 }
