@@ -146,12 +146,6 @@ async fn read_one(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Resu
 /// is left for a subsequent read; non-trailer bytes are stashed in
 /// `pushback` so they aren't lost.
 fn try_consume_cr_trailer(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Result<()> {
-    if let Some(b) = pushback.take() {
-        if b != b'\n' && b != 0 {
-            *pushback = Some(b);
-        }
-        return Ok(());
-    }
     let mut byte = [0u8; 1];
     match stream.try_read(&mut byte) {
         Ok(0) => {} // EOF

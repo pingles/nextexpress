@@ -707,6 +707,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn password_prompt_echoes_only_ascii_asterisk_bytes() {
+        let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
+
+        stream.write_all(b"secret").await.unwrap();
+        let echoed = drain_until(&mut stream, b"******").await;
+
+        assert_eq!(
+            echoed, b"******",
+            "masked password echo must contain only ASCII '*' bytes, got {echoed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn password_prompt_ignores_control_bytes_without_mask_echo() {
+        let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
+
+        stream.write_all(b"se\x01cret\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"Authenticated").await;
+
+        assert!(
+            contains(&buf, b"******\r\nAuthenticated"),
+            "control bytes should not be buffered or echoed as extra mask characters: {buf:?}"
+        );
+        assert!(
+            !contains(&buf, b"*******"),
+            "control bytes must not produce password mask output: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn backspace_at_name_prompt_emits_bs_space_bs() {
         // express.e:2304-2320 erases the previous character with the
         // classic '<BS><SPACE><BS>' triplet. We mirror that.
@@ -772,6 +810,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bare_lf_at_name_prompt_advances() {
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\n").await.unwrap();
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
+        assert!(
+            contains(&buf, PASSWORD_PROMPT),
+            "bare LF should advance to password prompt: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn queued_bytes_after_bare_cr_are_preserved_for_next_prompt() {
+        let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(b"alice\rsecret\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, b"Authenticated").await;
+        assert!(
+            contains(&buf, PASSWORD_PROMPT),
+            "password prompt should still be rendered: {buf:?}"
+        );
+        assert!(
+            contains(&buf, b"******\r\nAuthenticated"),
+            "queued password bytes after bare CR should be read intact: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn cr_nul_trailer_at_name_prompt_advances() {
         // Telnet's traditional newline per RFC 854 is CR+NUL — we
         // must accept that as a single line break.
@@ -806,6 +874,37 @@ mod tests {
         assert!(
             contains(between, b"\r\n"),
             "expected CRLF between echoed handle and Password prompt: {between:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn telnet_negotiation_is_stripped_from_name_input() {
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream.write_all(&[0xFF, 0xFB, 0x1F]).await.unwrap();
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
+        assert!(
+            contains(&buf, PASSWORD_PROMPT),
+            "IAC WILL negotiation should not become name input: {buf:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn telnet_subnegotiation_is_stripped_from_name_input() {
+        let addr = spawn_listener_with(repo_with_alice()).await;
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        stream
+            .write_all(&[0xFF, 0xFA, 0x18, b'X', 0xFF, 0xF0])
+            .await
+            .unwrap();
+        stream.write_all(b"alice\r\n").await.unwrap();
+        let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
+        assert!(
+            contains(&buf, PASSWORD_PROMPT),
+            "IAC SB subnegotiation should not become name input: {buf:?}"
         );
     }
 
