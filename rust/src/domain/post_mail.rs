@@ -20,26 +20,34 @@
 use std::time::SystemTime;
 
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{BroadcastTo, Mail, MailDraft, MailVisibility};
+use crate::domain::mail::{
+    addressing_allows, AllowedAddressing, BroadcastTo, Mail, MailDraft, MailVisibility,
+};
 use crate::domain::mail_store::{MailStore, MailStoreError};
 use crate::domain::user::{Right, User};
 
-/// Caller-resolved fields for a single-addressee post
-/// (spec: `messaging.allium:PostMail` consequent fields).
+/// Caller-resolved fields for a post (spec:
+/// `messaging.allium:PostMail` consequent fields).
 ///
 /// `to_name` and `from_name` are the display strings the caller has
 /// already resolved via the spec's `display_name_of(_, conference)`
 /// black box — the rule does not consult the conference catalogue.
 ///
 /// `addressee_slot` is the spec's `resolved_addressee` — the user
-/// repository looked the typed handle up before the rule fired.
+/// repository looked the typed handle up before the rule fired — and
+/// is `None` exactly when `broadcast_to` is ALL or EALL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostMailDraft {
-    /// Display name written to `Mail.to_name`.
+    /// Display name written to `Mail.to_name` (`"ALL"` / `"EALL"` for
+    /// broadcasts; the caller has already case-normalised these).
     pub to_name: String,
+    /// Broadcast discriminator on `to_name` (Slice 43). `None` for the
+    /// single-addressee path, `All` / `Eall` for broadcasts.
+    pub broadcast_to: BroadcastTo,
     /// Resolved addressee's stable slot number
-    /// (spec: `resolved_addressee != null`).
-    pub addressee_slot: u32,
+    /// (spec: `resolved_addressee != null`). Must be `Some(_)` when
+    /// [`Self::broadcast_to`] is `None` and `None` for broadcasts.
+    pub addressee_slot: Option<u32>,
     /// Author's display name in the current conference
     /// (spec: `Mail.from_name`, invariant `FromNameMatchesAuthor`).
     pub from_name: String,
@@ -50,9 +58,11 @@ pub struct PostMailDraft {
     /// User answered "yes" at the legacy `Private (y/n)?` prompt.
     ///
     /// Spec: visibility selector
-    /// (`if user.censored: private_to_sysop else if draft.private:
-    /// private else: public`). The censored branch is deferred to
-    /// Slice 47 — Slice 42 always reads `user.censored = false`.
+    /// (`if draft.broadcast_to = eall: public else if user.censored:
+    /// private_to_sysop else if draft.private: private else: public`).
+    /// The censored branch is deferred to Slice 47 — for non-EALL
+    /// drafts Slice 43 honours `private` directly; EALL forces public
+    /// regardless of this flag.
     pub private: bool,
     /// `now` recorded as `Mail.posted_at` (spec: `posted_at: now`).
     pub posted_at: SystemTime,
@@ -78,12 +88,22 @@ pub enum PostMailError {
     /// `messages_posted` bump.
     #[error("user has no membership for the message base's conference")]
     NoMembership,
-    /// The supplied draft has an empty `to_name`. The legacy code
-    /// reroutes empty `to_name` to ALL — that branch lands with
-    /// Slice 43. For now, refuse the empty case explicitly so it
-    /// doesn't silently persist a no-recipient message.
+    /// The supplied draft has an empty `to_name` and is not a
+    /// broadcast. The legacy code's empty-to-ALL reroute is the
+    /// caller's responsibility (the menu's `E` handler); this rule
+    /// refuses to silently persist a no-recipient message.
     #[error("recipient name is empty")]
     EmptyAddressee,
+    /// The supplied draft addresses ALL or EALL but the message base's
+    /// [`AllowedAddressing`] policy forbids that broadcast kind. Spec:
+    /// `requires: addressing_allows(visit.msgbase, broadcast)`.
+    #[error("message base does not accept this addressing kind")]
+    AddressingNotAllowed,
+    /// The draft's `broadcast_to` and `addressee_slot` disagree.
+    /// `BroadcastTo::None` requires `addressee_slot = Some(_)`; `All`
+    /// and `Eall` require `addressee_slot = None`.
+    #[error("broadcast_to and addressee_slot are inconsistent")]
+    AddresseeMismatch,
     /// The underlying [`MailStore`] rejected the insert.
     #[error("mail store rejected insert: {0}")]
     Store(#[from] MailStoreError),
@@ -116,14 +136,42 @@ pub enum PostMailError {
 pub fn post_mail(
     user: &mut User,
     msgbase: MessageBaseRef,
+    allowed_addressing: AllowedAddressing,
     store: &mut dyn MailStore,
     draft: PostMailDraft,
 ) -> Result<Mail, PostMailError> {
     if !user.has_access(Right::EnterMessage) {
         return Err(PostMailError::AccessDenied);
     }
+    apply_post_mail(user, msgbase, allowed_addressing, store, draft)
+}
+
+/// Shared post-mail body used by [`post_mail`] and the
+/// `PostCommentToSysop` rule (Slice 44). Performs every gate other than
+/// the per-rule access check, then persists the message and bumps the
+/// counters. The caller is responsible for verifying that the user has
+/// the appropriate [`Right`] (e.g. [`Right::EnterMessage`] or
+/// [`Right::CommentToSysop`]).
+///
+/// # Errors
+/// Same as [`post_mail`] modulo the access-check variant the caller
+/// fired before invoking this helper.
+pub(crate) fn apply_post_mail(
+    user: &mut User,
+    msgbase: MessageBaseRef,
+    allowed_addressing: AllowedAddressing,
+    store: &mut dyn MailStore,
+    draft: PostMailDraft,
+) -> Result<Mail, PostMailError> {
     if draft.to_name.is_empty() {
         return Err(PostMailError::EmptyAddressee);
+    }
+    match (draft.broadcast_to, draft.addressee_slot) {
+        (BroadcastTo::None, Some(_)) | (BroadcastTo::All | BroadcastTo::Eall, None) => {}
+        _ => return Err(PostMailError::AddresseeMismatch),
+    }
+    if !addressing_allows(allowed_addressing, draft.broadcast_to) {
+        return Err(PostMailError::AddressingNotAllowed);
     }
     if !user
         .memberships()
@@ -133,11 +181,14 @@ pub fn post_mail(
         return Err(PostMailError::NoMembership);
     }
 
-    // Slice 42 visibility selector: censored users land in Slice 47,
-    // so for now `user.censored` is implicitly false. Broadcast
-    // routing (ALL / EALL) lands in Slice 43; until then every post
-    // is `broadcast_to = none`.
-    let visibility = if draft.private {
+    // Spec visibility selector:
+    //   if draft.broadcast_to = eall: public
+    //   else if user.censored: private_to_sysop   (Slice 47)
+    //   else if draft.private: private
+    //   else: public
+    let visibility = if matches!(draft.broadcast_to, BroadcastTo::Eall) {
+        MailVisibility::Public
+    } else if draft.private {
         MailVisibility::Private
     } else {
         MailVisibility::Public
@@ -145,6 +196,7 @@ pub fn post_mail(
 
     let PostMailDraft {
         to_name,
+        broadcast_to,
         addressee_slot,
         from_name,
         subject,
@@ -157,11 +209,11 @@ pub fn post_mail(
         visibility,
         from_name,
         to_name,
-        broadcast_to: BroadcastTo::None,
+        broadcast_to,
         subject,
         posted_at,
         author_slot: user.slot_number(),
-        addressee_slot: Some(addressee_slot),
+        addressee_slot,
         body,
     };
 
@@ -260,7 +312,8 @@ mod tests {
     fn sample_draft() -> PostMailDraft {
         PostMailDraft {
             to_name: "bob".to_string(),
-            addressee_slot: 3,
+            broadcast_to: BroadcastTo::None,
+            addressee_slot: Some(3),
             from_name: "alice".to_string(),
             subject: "Hi".to_string(),
             body: "Hello, Bob.".to_string(),
@@ -277,7 +330,14 @@ mod tests {
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryStore::new(msgbase);
 
-        let mail = post_mail(&mut user, msgbase, &mut store, sample_draft()).expect("happy path");
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            sample_draft(),
+        )
+        .expect("happy path");
 
         assert_eq!(mail.number(), 1);
         assert_eq!(mail.author_slot(), 2);
@@ -309,7 +369,14 @@ mod tests {
         let mut draft = sample_draft();
         draft.private = true;
 
-        let mail = post_mail(&mut user, msgbase, &mut store, draft).expect("happy path");
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("happy path");
         assert_eq!(mail.visibility(), MailVisibility::Private);
     }
 
@@ -320,8 +387,22 @@ mod tests {
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryStore::new(msgbase);
 
-        let first = post_mail(&mut user, msgbase, &mut store, sample_draft()).unwrap();
-        let second = post_mail(&mut user, msgbase, &mut store, sample_draft()).unwrap();
+        let first = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            sample_draft(),
+        )
+        .unwrap();
+        let second = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            sample_draft(),
+        )
+        .unwrap();
         assert_eq!(first.number(), 1);
         assert_eq!(second.number(), 2);
         assert_eq!(store.highest_message(), 2);
@@ -362,8 +443,14 @@ mod tests {
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryStore::new(msgbase);
 
-        let err = post_mail(&mut new_user, msgbase, &mut store, sample_draft())
-            .expect_err("expect access denied for new user");
+        let err = post_mail(
+            &mut new_user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            sample_draft(),
+        )
+        .expect_err("expect access denied for new user");
         assert!(matches!(err, PostMailError::AccessDenied), "got {err:?}",);
         // No side-effects on rejection.
         assert_eq!(new_user.messages_posted(), 0);
@@ -387,8 +474,14 @@ mod tests {
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryStore::new(msgbase);
 
-        let err = post_mail(&mut user, msgbase, &mut store, sample_draft())
-            .expect_err("expect no membership");
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            sample_draft(),
+        )
+        .expect_err("expect no membership");
         assert!(matches!(err, PostMailError::NoMembership), "got {err:?}");
         assert_eq!(store.highest_message(), 0);
         assert_eq!(user.messages_posted(), 0);
@@ -414,9 +507,224 @@ mod tests {
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryStore::new(msgbase);
 
-        let err = post_mail(&mut user, msgbase, &mut store, sample_draft())
-            .expect_err("expect no membership for revoked row");
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            sample_draft(),
+        )
+        .expect_err("expect no membership for revoked row");
         assert!(matches!(err, PostMailError::NoMembership), "got {err:?}");
+    }
+
+    #[test]
+    fn broadcast_all_persists_with_no_addressee_when_msgbase_allows() {
+        // Spec messaging.allium:PostMail with `broadcast_to = all` and
+        // `addressing_allows(msgbase, all) = true`:
+        //   - `Mail.broadcast_to = all`
+        //   - `Mail.addressee = null`
+        //   - per-user / per-membership counters still bump.
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryStore::new(msgbase);
+        let draft = PostMailDraft {
+            to_name: "ALL".to_string(),
+            broadcast_to: BroadcastTo::All,
+            addressee_slot: None,
+            from_name: "alice".to_string(),
+            subject: "Notice".to_string(),
+            body: "Hi all.".to_string(),
+            private: false,
+            posted_at: t(100),
+        };
+
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("broadcast post should succeed on an Any base");
+
+        assert_eq!(mail.broadcast_to(), BroadcastTo::All);
+        assert_eq!(mail.addressee_slot(), None);
+        assert_eq!(mail.to_name(), "ALL");
+        assert_eq!(mail.visibility(), MailVisibility::Public);
+        assert_eq!(user.messages_posted(), 1);
+        assert_eq!(
+            user.memberships()
+                .iter()
+                .find(|m| m.conference_number() == 2)
+                .unwrap()
+                .messages_posted(),
+            1,
+        );
+    }
+
+    #[test]
+    fn broadcast_eall_forces_public_visibility_even_when_draft_private() {
+        // Spec messaging.allium:PostMail visibility selector:
+        //   if draft.broadcast_to = eall: public
+        // EALL is fan-out; private-EALL has no addressee to scope it to,
+        // so the rule forces public.
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryStore::new(msgbase);
+        let draft = PostMailDraft {
+            to_name: "EALL".to_string(),
+            broadcast_to: BroadcastTo::Eall,
+            addressee_slot: None,
+            from_name: "alice".to_string(),
+            subject: "Echo".to_string(),
+            body: "Hi everywhere.".to_string(),
+            private: true,
+            posted_at: t(100),
+        };
+
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("EALL on Any base");
+        assert_eq!(mail.visibility(), MailVisibility::Public);
+        assert_eq!(mail.broadcast_to(), BroadcastTo::Eall);
+        assert_eq!(mail.addressee_slot(), None);
+    }
+
+    #[test]
+    fn rejects_broadcast_all_when_base_forbids_it() {
+        // Spec messaging.allium:PostMail:
+        //   requires: draft.broadcast_to != all or addressing_allows(visit.msgbase, all)
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryStore::new(msgbase);
+        let draft = PostMailDraft {
+            to_name: "ALL".to_string(),
+            broadcast_to: BroadcastTo::All,
+            addressee_slot: None,
+            from_name: "alice".to_string(),
+            subject: "Notice".to_string(),
+            body: "Hi all.".to_string(),
+            private: false,
+            posted_at: t(100),
+        };
+
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::IndividualOnly,
+            &mut store,
+            draft,
+        )
+        .expect_err("ALL must be rejected when AllowedAddressing forbids it");
+        assert!(
+            matches!(err, PostMailError::AddressingNotAllowed),
+            "got {err:?}",
+        );
+        assert_eq!(store.highest_message(), 0);
+        assert_eq!(user.messages_posted(), 0);
+    }
+
+    #[test]
+    fn rejects_broadcast_eall_when_base_only_allows_all() {
+        // Spec: `IndividualOrAll` permits ALL but not EALL.
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryStore::new(msgbase);
+        let draft = PostMailDraft {
+            to_name: "EALL".to_string(),
+            broadcast_to: BroadcastTo::Eall,
+            addressee_slot: None,
+            from_name: "alice".to_string(),
+            subject: "Echo".to_string(),
+            body: "Across".to_string(),
+            private: false,
+            posted_at: t(100),
+        };
+
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::IndividualOrAll,
+            &mut store,
+            draft,
+        )
+        .expect_err("EALL must be rejected when only ALL is allowed");
+        assert!(
+            matches!(err, PostMailError::AddressingNotAllowed),
+            "got {err:?}",
+        );
+    }
+
+    #[test]
+    fn broadcast_draft_with_addressee_slot_is_rejected() {
+        // Spec messaging.allium:Mail constraint:
+        //   addressee: core/User? when broadcast_to = none
+        // A draft that asks for ALL/EALL must not carry an addressee.
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryStore::new(msgbase);
+        let draft = PostMailDraft {
+            to_name: "ALL".to_string(),
+            broadcast_to: BroadcastTo::All,
+            addressee_slot: Some(3),
+            from_name: "alice".to_string(),
+            subject: "Mixed".to_string(),
+            body: "Hi.".to_string(),
+            private: false,
+            posted_at: t(100),
+        };
+
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect_err("broadcast draft with addressee_slot is malformed");
+        assert!(
+            matches!(err, PostMailError::AddresseeMismatch),
+            "got {err:?}",
+        );
+    }
+
+    #[test]
+    fn individual_draft_without_addressee_slot_is_rejected() {
+        // The single-addressee path requires a resolved addressee
+        // (`requires: resolved_addressee != null` when broadcast_to =
+        // none).
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryStore::new(msgbase);
+        let draft = PostMailDraft {
+            to_name: "bob".to_string(),
+            broadcast_to: BroadcastTo::None,
+            addressee_slot: None,
+            from_name: "alice".to_string(),
+            subject: "Hi".to_string(),
+            body: "Hello, Bob.".to_string(),
+            private: false,
+            posted_at: t(100),
+        };
+
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect_err("individual post without addressee_slot is malformed");
+        assert!(
+            matches!(err, PostMailError::AddresseeMismatch),
+            "got {err:?}",
+        );
     }
 
     #[test]
@@ -431,8 +739,14 @@ mod tests {
         let mut draft = sample_draft();
         draft.to_name.clear();
 
-        let err =
-            post_mail(&mut user, msgbase, &mut store, draft).expect_err("expect EmptyAddressee");
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect_err("expect EmptyAddressee");
         assert!(matches!(err, PostMailError::EmptyAddressee), "got {err:?}",);
         assert_eq!(store.highest_message(), 0);
         assert_eq!(user.messages_posted(), 0);

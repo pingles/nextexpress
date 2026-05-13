@@ -11,6 +11,7 @@
 //! storage). [`ConferenceMembership`]'s `pointers` collection arrives
 //! with Slice 38 (`ReadPointers`).
 
+use crate::domain::mail::{AllScanScope, AllowedAddressing};
 use crate::domain::read_pointers::ReadPointers;
 
 /// How the user's display name is rendered when reading or posting
@@ -79,10 +80,13 @@ pub struct MessageBase {
     conference_number: u32,
     number: u32,
     name: String,
+    allowed_addressing: AllowedAddressing,
+    all_scan_scope: AllScanScope,
 }
 
 impl MessageBase {
-    /// Constructs a new [`MessageBase`].
+    /// Constructs a new [`MessageBase`] with default broadcast policy
+    /// (any addressing accepted, ALL scoped to every member).
     ///
     /// # Parameters
     /// - `conference_number`: the parent conference's 1-indexed
@@ -95,10 +99,33 @@ impl MessageBase {
     /// - `name`: human-readable label.
     #[must_use]
     pub fn new(conference_number: u32, number: u32, name: String) -> Self {
+        Self::with_options(
+            conference_number,
+            number,
+            name,
+            AllowedAddressing::default(),
+            AllScanScope::default(),
+        )
+    }
+
+    /// Constructs a new [`MessageBase`] with explicit
+    /// [`AllowedAddressing`] and [`AllScanScope`] policies (Slice 43).
+    /// Used by the conference loader when a sysop narrows the base's
+    /// broadcast policy.
+    #[must_use]
+    pub fn with_options(
+        conference_number: u32,
+        number: u32,
+        name: String,
+        allowed_addressing: AllowedAddressing,
+        all_scan_scope: AllScanScope,
+    ) -> Self {
         Self {
             conference_number,
             number,
             name,
+            allowed_addressing,
+            all_scan_scope,
         }
     }
 
@@ -118,6 +145,21 @@ impl MessageBase {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the kinds of `to:` addresses this base accepts at post
+    /// time (spec: `messaging.allium:MessageBase.allowed_addressing`).
+    #[must_use]
+    pub fn allowed_addressing(&self) -> AllowedAddressing {
+        self.allowed_addressing
+    }
+
+    /// Returns whether ALL-addressed mail is scoped to the current
+    /// visit only, or to every member (spec:
+    /// `messaging.allium:MessageBase.all_scan_scope`).
+    #[must_use]
+    pub fn all_scan_scope(&self) -> AllScanScope {
+        self.all_scan_scope
     }
 
     /// Returns a [`MessageBaseRef`] coordinate pair pointing at
@@ -473,6 +515,39 @@ mod tests {
         assert_eq!(base.conference_number(), 4);
         assert_eq!(base.number(), 2);
         assert_eq!(base.name(), "tech");
+    }
+
+    #[test]
+    fn message_base_defaults_to_permissive_addressing_and_broadcast_scope() {
+        // Spec messaging.allium: a freshly-constructed message base
+        // accepts any addressing and broadcasts ALL to every member of
+        // the conference. The defaults preserve legacy AmiExpress
+        // behaviour where conferences with no `EXT-OUT` bridge permit
+        // both ALL and EALL.
+        use crate::domain::mail::{AllScanScope, AllowedAddressing};
+        let base = MessageBase::new(4, 2, "tech".to_string());
+        assert_eq!(base.allowed_addressing(), AllowedAddressing::Any);
+        assert_eq!(base.all_scan_scope(), AllScanScope::AllUsersInConf);
+    }
+
+    #[test]
+    fn message_base_with_overrides_preserves_addressing_and_scope() {
+        // Sysops with an external bridge narrow `allowed_addressing` to
+        // `IndividualOrAll` (no EALL fan-out) — the entity must round
+        // trip the supplied values.
+        use crate::domain::mail::{AllScanScope, AllowedAddressing};
+        let base = MessageBase::with_options(
+            4,
+            2,
+            "tech".to_string(),
+            AllowedAddressing::IndividualOrAll,
+            AllScanScope::Local,
+        );
+        assert_eq!(
+            base.allowed_addressing(),
+            AllowedAddressing::IndividualOrAll
+        );
+        assert_eq!(base.all_scan_scope(), AllScanScope::Local);
     }
 
     #[test]

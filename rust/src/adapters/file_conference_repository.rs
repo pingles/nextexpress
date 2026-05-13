@@ -54,6 +54,7 @@ use serde::Deserialize;
 
 use crate::domain::conference::{Conference, MessageBase, NameType};
 use crate::domain::conference_repository::{ConferenceRepository, ConferenceRepositoryError};
+use crate::domain::mail::{AllScanScope, AllowedAddressing};
 
 /// Filename of the per-conference TOML configuration inside each
 /// `Conf<NN>` directory.
@@ -123,7 +124,15 @@ impl ConferenceRepository for FileConferenceRepository {
             let msgbases: Vec<MessageBase> = parsed
                 .msgbases
                 .into_iter()
-                .map(|m| MessageBase::new(parsed.number, m.number, m.name))
+                .map(|m| {
+                    MessageBase::with_options(
+                        parsed.number,
+                        m.number,
+                        m.name,
+                        m.allowed_addressing.into(),
+                        m.all_scan_scope.into(),
+                    )
+                })
                 .collect();
             let conference = Conference::with_name_type(
                 parsed.number,
@@ -182,6 +191,55 @@ impl From<NameTypeToml> for NameType {
 struct MessageBaseToml {
     number: u32,
     name: String,
+    /// `messaging.allium:MessageBase.allowed_addressing` (Slice 43).
+    /// Optional; defaults to [`AllowedAddressing::Any`] so existing
+    /// `conference.toml` files don't need to change.
+    #[serde(default)]
+    allowed_addressing: AllowedAddressingToml,
+    /// `messaging.allium:MessageBase.all_scan_scope` (Slice 43).
+    /// Optional; defaults to [`AllScanScope::AllUsersInConf`].
+    #[serde(default)]
+    all_scan_scope: AllScanScopeToml,
+}
+
+/// Mirror of [`AllowedAddressing`] with TOML-friendly snake-case names.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AllowedAddressingToml {
+    IndividualOnly,
+    IndividualOrAll,
+    IndividualOrEall,
+    #[default]
+    Any,
+}
+
+impl From<AllowedAddressingToml> for AllowedAddressing {
+    fn from(value: AllowedAddressingToml) -> Self {
+        match value {
+            AllowedAddressingToml::IndividualOnly => Self::IndividualOnly,
+            AllowedAddressingToml::IndividualOrAll => Self::IndividualOrAll,
+            AllowedAddressingToml::IndividualOrEall => Self::IndividualOrEall,
+            AllowedAddressingToml::Any => Self::Any,
+        }
+    }
+}
+
+/// Mirror of [`AllScanScope`] with TOML-friendly snake-case names.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AllScanScopeToml {
+    Local,
+    #[default]
+    AllUsersInConf,
+}
+
+impl From<AllScanScopeToml> for AllScanScope {
+    fn from(value: AllScanScopeToml) -> Self {
+        match value {
+            AllScanScopeToml::Local => Self::Local,
+            AllScanScopeToml::AllUsersInConf => Self::AllUsersInConf,
+        }
+    }
 }
 
 /// Parses a `Conf<NN>` directory name (e.g. `Conf01`, `Conf02`) and
@@ -560,6 +618,58 @@ mod tests {
         let confs = repo.load_all().expect("valid");
         assert_eq!(confs[0].accepted_name_type(), NameType::RealName);
         assert_eq!(confs[1].accepted_name_type(), NameType::InternetName);
+    }
+
+    #[test]
+    fn msgbase_broadcast_policy_defaults_when_omitted() {
+        // Slice 43: existing `conference.toml` files don't carry the
+        // broadcast policy fields — they must continue to load with
+        // the spec defaults (Any / AllUsersInConf).
+        let dir = tempfile::tempdir().unwrap();
+        write_conf(
+            dir.path(),
+            1,
+            r#"
+                number = 1
+                name = "Main"
+                [[msgbase]]
+                number = 1
+                name = "main"
+            "#,
+        );
+        let repo = FileConferenceRepository::new(dir.path().to_path_buf());
+        let confs = repo.load_all().expect("valid");
+        let msgbase = &confs[0].msgbases()[0];
+        assert_eq!(msgbase.allowed_addressing(), AllowedAddressing::Any);
+        assert_eq!(msgbase.all_scan_scope(), AllScanScope::AllUsersInConf);
+    }
+
+    #[test]
+    fn msgbase_broadcast_policy_round_trips_explicit_values() {
+        // Slice 43: a sysop narrows the policy via TOML to forbid EALL
+        // (mirroring an external-bridge base that cannot fan out).
+        let dir = tempfile::tempdir().unwrap();
+        write_conf(
+            dir.path(),
+            1,
+            r#"
+                number = 1
+                name = "Bridged"
+                [[msgbase]]
+                number = 1
+                name = "main"
+                allowed_addressing = "individual_or_all"
+                all_scan_scope = "local"
+            "#,
+        );
+        let repo = FileConferenceRepository::new(dir.path().to_path_buf());
+        let confs = repo.load_all().expect("valid");
+        let msgbase = &confs[0].msgbases()[0];
+        assert_eq!(
+            msgbase.allowed_addressing(),
+            AllowedAddressing::IndividualOrAll
+        );
+        assert_eq!(msgbase.all_scan_scope(), AllScanScope::Local);
     }
 
     #[test]

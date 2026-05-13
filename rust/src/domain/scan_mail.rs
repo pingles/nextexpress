@@ -38,7 +38,7 @@
 use std::time::SystemTime;
 
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::mail::{BroadcastTo, Mail, MailVisibility};
+use crate::domain::mail::{AllScanScope, BroadcastTo, Mail, MailVisibility};
 use crate::domain::mail_store::{MailStore, MailStoreError};
 use crate::domain::read_mail::can_read;
 use crate::domain::read_pointers::ReadPointers;
@@ -110,12 +110,13 @@ pub fn count_unread_for<S>(
     user: &User,
     store: &S,
     msgbase: MessageBaseRef,
+    scope: AllScanScope,
     from: u32,
 ) -> Result<u32, ScanMailError>
 where
     S: MailStore + ?Sized,
 {
-    let summary = walk(user, store, msgbase, from)?;
+    let summary = walk(user, store, msgbase, scope, from)?;
     Ok(summary.unread_count)
 }
 
@@ -129,12 +130,13 @@ pub fn first_unread_number_for<S>(
     user: &User,
     store: &S,
     msgbase: MessageBaseRef,
+    scope: AllScanScope,
     from: u32,
 ) -> Result<Option<u32>, ScanMailError>
 where
     S: MailStore + ?Sized,
 {
-    let summary = walk(user, store, msgbase, from)?;
+    let summary = walk(user, store, msgbase, scope, from)?;
     Ok(summary.first_unread_number)
 }
 
@@ -165,6 +167,7 @@ pub fn scan_mail<S>(
     user: &mut User,
     store: &S,
     msgbase: MessageBaseRef,
+    scope: AllScanScope,
     from_message: u32,
     now: SystemTime,
 ) -> Result<ScanResult, ScanMailError>
@@ -198,7 +201,7 @@ where
         last_scanned.saturating_add(1)
     };
 
-    let summary = walk(user, store, msgbase, from)?;
+    let summary = walk(user, store, msgbase, scope, from)?;
 
     let target_last_scanned = summary.highest_message.max(last_scanned);
     if let Some(existing) = user.read_pointers_for_mut(msgbase) {
@@ -224,6 +227,7 @@ fn walk<S>(
     user: &User,
     store: &S,
     msgbase: MessageBaseRef,
+    scope: AllScanScope,
     from: u32,
 ) -> Result<ScanResult, ScanMailError>
 where
@@ -249,7 +253,7 @@ where
     // mutation cannot drive the loop into infinite increment.
     for number in start..=highest {
         if let Some(mail) = store.load(number)? {
-            if is_unread_for(user, &mail) {
+            if is_unread_for(user, &mail, scope) {
                 count = count.saturating_add(1);
                 if first.is_none() {
                     first = Some(number);
@@ -267,7 +271,15 @@ where
 
 /// True when `mail` counts as *unread for `user`* under the spec's
 /// scan semantics. See the module-level "Unread semantics" doc.
-fn is_unread_for(user: &User, mail: &Mail) -> bool {
+///
+/// Slice 43 plumbs the per-msgbase [`AllScanScope`] through. Both
+/// `Local` and `AllUsersInConf` count broadcasts when the user has a
+/// granted membership for the parent conference (the caller guarantees
+/// this); the variant distinguishes only how this rule's caller
+/// surfaces cross-conference scans, which is deferred to a future
+/// slice.
+fn is_unread_for(user: &User, mail: &Mail, scope: AllScanScope) -> bool {
+    let _ = scope;
     if matches!(mail.visibility(), MailVisibility::Deleted) {
         return false;
     }
@@ -409,7 +421,15 @@ mod tests {
     fn scan_empty_store_reports_zero_unread() {
         let mut user = make_user(2);
         let store = StubStore::new(ref_2_1());
-        let result = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.unread_count, 0);
         assert_eq!(result.first_unread_number, None);
         assert_eq!(result.highest_message, 0);
@@ -428,7 +448,15 @@ mod tests {
         store.push(addressed(2));
         store.push(addressed(2));
         store.push(addressed(2));
-        let result = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.unread_count, 3);
         assert_eq!(result.first_unread_number, Some(1));
         assert_eq!(result.highest_message, 3);
@@ -440,7 +468,15 @@ mod tests {
         let mut store = StubStore::new(ref_2_1());
         store.push(addressed(3));
         store.push(addressed(4));
-        let result = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.unread_count, 0, "alice should see no mail");
         assert_eq!(result.first_unread_number, None);
     }
@@ -451,7 +487,15 @@ mod tests {
         let mut store = StubStore::new(ref_2_1());
         store.push(broadcast());
         store.push(addressed(2));
-        let result = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.unread_count, 2);
         assert_eq!(result.first_unread_number, Some(1));
     }
@@ -463,7 +507,15 @@ mod tests {
         store.push(addressed(2));
         store.push(addressed(2));
         store.mark_received(1, t(50));
-        let result = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.unread_count, 1);
         assert_eq!(result.first_unread_number, Some(2));
     }
@@ -476,7 +528,15 @@ mod tests {
         store.push(addressed(2));
         store.push(addressed(2));
         store.push(addressed(2));
-        scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         let p = user.read_pointers_for(ref_2_1()).expect("present");
         assert_eq!(p.last_scanned(), 3);
     }
@@ -489,13 +549,29 @@ mod tests {
         store.push(addressed(2));
         store.push(addressed(2));
         // First scan covers messages 1..=3 and leaves last_scanned=3.
-        scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         // Add two more messages.
         store.push(addressed(2));
         store.push(addressed(2));
         // Second scan with from_message=0 should resume from 4 (the
         // first message after the cached last_scanned).
-        let result = scan_mail(&mut user, &store, ref_2_1(), 0, t(200)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(200),
+        )
+        .unwrap();
         assert_eq!(result.from, 4);
         assert_eq!(result.unread_count, 2);
         assert_eq!(result.first_unread_number, Some(4));
@@ -510,7 +586,15 @@ mod tests {
         for _ in 0..5 {
             store.push(addressed(2));
         }
-        let result = scan_mail(&mut user, &store, ref_2_1(), 3, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            3,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.from, 3);
         assert_eq!(result.unread_count, 3);
         assert_eq!(result.first_unread_number, Some(3));
@@ -527,7 +611,15 @@ mod tests {
         let mut store = StubStore::new(ref_2_1());
         store.push(addressed(2));
         store.push(addressed(2));
-        let result = scan_mail(&mut user, &store, ref_2_1(), 10, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            10,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.from, 10);
         assert_eq!(result.unread_count, 0);
         assert_eq!(result.first_unread_number, None);
@@ -543,9 +635,25 @@ mod tests {
         for _ in 0..5 {
             store.push(addressed(2));
         }
-        scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         // last_scanned == 5. Re-scan from 1 to 5; pointer must stay at 5.
-        scan_mail(&mut user, &store, ref_2_1(), 1, t(200)).unwrap();
+        scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            1,
+            t(200),
+        )
+        .unwrap();
         let p = user.read_pointers_for(ref_2_1()).expect("present");
         assert_eq!(p.last_scanned(), 5);
     }
@@ -559,7 +667,15 @@ mod tests {
         store.mails[0]
             .transition_to(MailVisibility::Deleted)
             .unwrap();
-        let result = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         assert_eq!(result.unread_count, 1);
         assert_eq!(result.first_unread_number, Some(2));
     }
@@ -578,7 +694,15 @@ mod tests {
         .expect("valid");
         let mut store = StubStore::new(ref_2_1());
         store.push(broadcast());
-        let err = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).expect_err("no membership");
+        let err = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .expect_err("no membership");
         assert!(matches!(err, ScanMailError::NoMembership(2)));
     }
 
@@ -586,7 +710,15 @@ mod tests {
     fn scan_rejects_store_bound_to_a_different_msgbase() {
         let mut user = make_user(2);
         let store = StubStore::new(MessageBaseRef::new(9, 4));
-        let err = scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).expect_err("store mismatch");
+        let err = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .expect_err("store mismatch");
         assert!(matches!(err, ScanMailError::StoreMismatch { .. }));
     }
 
@@ -597,7 +729,8 @@ mod tests {
         store.push(addressed(2));
         store.push(broadcast());
         store.push(addressed(3));
-        let count = count_unread_for(&user, &store, ref_2_1(), 1).unwrap();
+        let count =
+            count_unread_for(&user, &store, ref_2_1(), AllScanScope::AllUsersInConf, 1).unwrap();
         assert_eq!(count, 2);
     }
 
@@ -606,7 +739,9 @@ mod tests {
         let user = make_user(2);
         let mut store = StubStore::new(ref_2_1());
         store.push(addressed(3));
-        let first = first_unread_number_for(&user, &store, ref_2_1(), 1).unwrap();
+        let first =
+            first_unread_number_for(&user, &store, ref_2_1(), AllScanScope::AllUsersInConf, 1)
+                .unwrap();
         assert_eq!(first, None);
     }
 
@@ -617,7 +752,9 @@ mod tests {
         store.push(addressed(3));
         store.push(addressed(2));
         store.push(addressed(2));
-        let first = first_unread_number_for(&user, &store, ref_2_1(), 1).unwrap();
+        let first =
+            first_unread_number_for(&user, &store, ref_2_1(), AllScanScope::AllUsersInConf, 1)
+                .unwrap();
         assert_eq!(first, Some(2));
     }
 
@@ -629,7 +766,8 @@ mod tests {
         store.push(addressed(2));
         store.push(addressed(2));
         // Skip the first two by passing from=3.
-        let count = count_unread_for(&user, &store, ref_2_1(), 3).unwrap();
+        let count =
+            count_unread_for(&user, &store, ref_2_1(), AllScanScope::AllUsersInConf, 3).unwrap();
         assert_eq!(count, 1);
     }
 
@@ -641,10 +779,26 @@ mod tests {
         let mut user = make_user(2);
         let mut store = StubStore::new(ref_2_1());
         store.push(addressed(2));
-        scan_mail(&mut user, &store, ref_2_1(), 0, t(100)).unwrap();
+        scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
         let after_first = user.read_pointers_for(ref_2_1()).unwrap().last_scanned();
         // Idempotent re-scan.
-        scan_mail(&mut user, &store, ref_2_1(), 0, t(200)).unwrap();
+        scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(200),
+        )
+        .unwrap();
         let after_second = user.read_pointers_for(ref_2_1()).unwrap().last_scanned();
         assert_eq!(after_first, after_second);
         assert_eq!(after_first, 1);

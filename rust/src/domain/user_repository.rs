@@ -86,6 +86,16 @@ pub trait UserRepository {
     /// - `typed`: handle exactly as the user typed it.
     fn find_by_handle(&self, typed: &str) -> NameLookupResult;
 
+    /// Returns the sysop record (slot 1; spec invariant
+    /// `User.is_sysop: slot_number = 1`), or
+    /// [`NameLookupResult::NotFound`] if no slot-1 user exists
+    /// (e.g. an empty fresh-install store).
+    ///
+    /// Used by Slice 44's `C` (comment to sysop) command to resolve
+    /// the addressee without leaning on the sysop's freely-renamable
+    /// handle.
+    fn find_sysop(&self) -> NameLookupResult;
+
     /// Persists a changed [`User`] record.
     ///
     /// # Errors

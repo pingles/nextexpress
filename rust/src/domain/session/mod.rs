@@ -14,8 +14,9 @@ use crate::domain::conference_visit::{
     next_accessible_conference_after, primary_msgbase_of, resolve_auto_rejoin,
     resolve_explicit_join, ConferenceScan, ConferenceVisit, JoinResolution,
 };
-use crate::domain::mail::Mail;
+use crate::domain::mail::{AllScanScope, AllowedAddressing, Mail};
 use crate::domain::mail_store::MailStore;
+use crate::domain::post_comment_to_sysop::{post_comment_to_sysop, CommentToSysopDraft};
 use crate::domain::post_mail::{post_mail, PostMailDraft, PostMailError};
 use crate::domain::read_mail::{read_mail, ReadMailError};
 use crate::domain::scan_mail::{scan_mail, ScanMailError, ScanResult};
@@ -1078,6 +1079,7 @@ impl Session {
         &mut self,
         store: &S,
         msgbase: MessageBaseRef,
+        scope: AllScanScope,
         from_message: u32,
         now: SystemTime,
     ) -> Result<ScanResult, ScanMailError>
@@ -1093,7 +1095,7 @@ impl Session {
             .phase
             .user_mut()
             .expect("apply_scan_mail: state has a bound user");
-        scan_mail(user, store, msgbase, from_message, now)
+        scan_mail(user, store, msgbase, scope, from_message, now)
     }
 
     /// Applies `messaging.allium:PostMail` (Slice 42, single-addressee
@@ -1114,6 +1116,7 @@ impl Session {
     fn apply_post_mail(
         &mut self,
         msgbase: MessageBaseRef,
+        allowed_addressing: AllowedAddressing,
         store: &mut dyn MailStore,
         draft: PostMailDraft,
     ) -> Result<Mail, PostMailError> {
@@ -1126,7 +1129,40 @@ impl Session {
             .phase
             .user_mut()
             .expect("apply_post_mail: Menu state always has a bound user");
-        post_mail(user, msgbase, store, draft)
+        post_mail(user, msgbase, allowed_addressing, store, draft)
+    }
+
+    /// Applies `messaging.allium:PostCommentToSysop` (Slice 44) to the
+    /// bound user. Mirrors [`Self::apply_post_mail`] but routes through
+    /// the comment-to-sysop rule, which gates on
+    /// `Right::CommentToSysop` (not `EnterMessage`) so a pending-
+    /// validation new user can still leave operator feedback.
+    ///
+    /// # Errors
+    /// Returns the matching [`PostMailError`] variant when the rule
+    /// rejects the request or the store fails.
+    ///
+    /// # Panics
+    /// Panics if the session is not in [`SessionState::Menu`] — the
+    /// typed wrapper [`crate::domain::session::typed::MenuSession`]
+    /// guarantees this.
+    fn apply_post_comment_to_sysop(
+        &mut self,
+        msgbase: MessageBaseRef,
+        allowed_addressing: AllowedAddressing,
+        store: &mut dyn MailStore,
+        draft: CommentToSysopDraft,
+    ) -> Result<Mail, PostMailError> {
+        assert!(
+            matches!(self.state(), SessionState::Menu),
+            "apply_post_comment_to_sysop requires Menu state, got {:?}",
+            self.state(),
+        );
+        let user = self
+            .phase
+            .user_mut()
+            .expect("apply_post_comment_to_sysop: Menu state always has a bound user");
+        post_comment_to_sysop(user, msgbase, allowed_addressing, store, draft)
     }
 
     /// Returns this session's conference-visit history (spec:

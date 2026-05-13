@@ -94,10 +94,27 @@ where
         return Ok(());
     };
 
+    // Slice 43: resolve the per-msgbase `AllScanScope` from the
+    // conference catalogue. Falls back to the spec default if the
+    // coordinate isn't registered — keeping the auto-scan robust to
+    // partially-loaded catalogues.
+    let scope = services
+        .conferences()
+        .iter()
+        .find(|c| c.number() == visit_msgbase.conference_number())
+        .and_then(|c| {
+            c.msgbases()
+                .iter()
+                .find(|m| m.number() == visit_msgbase.msgbase_number())
+        })
+        .map(crate::domain::conference::MessageBase::all_scan_scope)
+        .unwrap_or_default();
+
     let guard = store_handle.lock().await;
     let result = match session.scan_mail(
         &**guard,
         visit_msgbase,
+        scope,
         mode.as_from_message(),
         SystemTime::now(),
     ) {

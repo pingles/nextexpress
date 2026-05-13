@@ -856,6 +856,15 @@ mod tests {
             }
         }
 
+        fn find_sysop(&self) -> NameLookupResult {
+            let users = self.users.lock().unwrap();
+            if let Some(user) = users.iter().find(|u| u.is_sysop()) {
+                NameLookupResult::Found(Box::new(user.clone()))
+            } else {
+                NameLookupResult::NotFound
+            }
+        }
+
         fn save(&self, user: User) -> Result<(), UserRepositoryError> {
             let mut users = self.users.lock().unwrap();
             let Some(existing) = users.iter_mut().find(|u| u.handle() == user.handle()) else {

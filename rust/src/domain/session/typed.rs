@@ -30,8 +30,9 @@
 use std::time::SystemTime;
 
 use crate::domain::conference::{Conference, MessageBaseRef, NameType};
-use crate::domain::mail::Mail;
+use crate::domain::mail::{AllScanScope, AllowedAddressing, Mail};
 use crate::domain::mail_store::MailStore;
+use crate::domain::post_comment_to_sysop::CommentToSysopDraft;
 use crate::domain::post_mail::{PostMailDraft, PostMailError};
 use crate::domain::read_mail::ReadMailError;
 use crate::domain::scan_mail::{ScanMailError, ScanResult};
@@ -56,6 +57,7 @@ pub(crate) trait ScanOnJoin {
         &mut self,
         store: &dyn MailStore,
         msgbase: MessageBaseRef,
+        scope: AllScanScope,
         from_message: u32,
         now: SystemTime,
     ) -> Result<ScanResult, ScanMailError>;
@@ -273,11 +275,12 @@ impl ScanOnJoin for OnboardedSession {
         &mut self,
         store: &dyn MailStore,
         msgbase: MessageBaseRef,
+        scope: AllScanScope,
         from_message: u32,
         now: SystemTime,
     ) -> Result<ScanResult, ScanMailError> {
         self.session
-            .apply_scan_mail(store, msgbase, from_message, now)
+            .apply_scan_mail(store, msgbase, scope, from_message, now)
     }
 }
 
@@ -405,10 +408,31 @@ impl MenuSession {
     pub(crate) fn post_mail(
         &mut self,
         msgbase: MessageBaseRef,
+        allowed_addressing: AllowedAddressing,
         store: &mut dyn MailStore,
         draft: PostMailDraft,
     ) -> Result<Mail, PostMailError> {
-        self.session.apply_post_mail(msgbase, store, draft)
+        self.session
+            .apply_post_mail(msgbase, allowed_addressing, store, draft)
+    }
+
+    /// Applies `messaging.allium:PostCommentToSysop` (Slice 44) to the
+    /// bound user, persisting a private message addressed to the sysop
+    /// via `store` and bumping the user's and per-conference
+    /// `messages_posted` counters.
+    ///
+    /// # Errors
+    /// Returns the matching [`PostMailError`] variant when the rule
+    /// rejects the request.
+    pub(crate) fn post_comment_to_sysop(
+        &mut self,
+        msgbase: MessageBaseRef,
+        allowed_addressing: AllowedAddressing,
+        store: &mut dyn MailStore,
+        draft: CommentToSysopDraft,
+    ) -> Result<Mail, PostMailError> {
+        self.session
+            .apply_post_comment_to_sysop(msgbase, allowed_addressing, store, draft)
     }
 }
 
@@ -422,11 +446,12 @@ impl ScanOnJoin for MenuSession {
         &mut self,
         store: &dyn MailStore,
         msgbase: MessageBaseRef,
+        scope: AllScanScope,
         from_message: u32,
         now: SystemTime,
     ) -> Result<ScanResult, ScanMailError> {
         self.session
-            .apply_scan_mail(store, msgbase, from_message, now)
+            .apply_scan_mail(store, msgbase, scope, from_message, now)
     }
 }
 

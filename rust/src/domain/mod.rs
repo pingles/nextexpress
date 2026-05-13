@@ -13,6 +13,7 @@ pub mod mail;
 pub mod mail_store;
 pub mod node;
 pub mod password;
+pub mod post_comment_to_sysop;
 pub mod post_mail;
 pub mod read_mail;
 pub mod read_pointers;

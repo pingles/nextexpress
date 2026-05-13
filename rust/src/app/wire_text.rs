@@ -242,6 +242,22 @@ pub(crate) const POST_RECIPIENT_NO_ACCESS_LINE: &[u8] =
 pub(crate) const POST_ACCESS_DENIED_LINE: &[u8] =
     b"\r\nYou do not have permission to post messages.\r\n";
 
+/// Sent when the user addresses ALL or EALL but the current message
+/// base's [`AllowedAddressing`] policy refuses that broadcast kind
+/// (Slice 43).
+///
+/// Mirrors the spirit of the legacy `enterMSG` "Echo To All" gate at
+/// `amiexpress/express.e:10802` which checks the tooltype-driven
+/// `ALLOW_ALL` flag.
+pub(crate) const POST_ADDRESSING_NOT_ALLOWED_LINE: &[u8] =
+    b"\r\nThis message base does not accept that addressee.\r\n";
+
+/// Sent when the `C` (comment to sysop) command can't resolve a slot-1
+/// sysop user (e.g. a fresh installation that never seeded one). The
+/// legacy BBS always has a sysop on disk; this notice surfaces the
+/// misconfiguration so the operator can run the seed.
+pub(crate) const NO_SYSOP_LINE: &[u8] = b"\r\nNo sysop is configured on this BBS.\r\n";
+
 /// Renders a [`Mail`]'s header block for the menu's `R` command.
 ///
 /// Mirrors the legacy `displayMessage` output at

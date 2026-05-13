@@ -11,8 +11,9 @@ The implementation follows a ports-and-adapters direction:
 - `rust/src/domain/` holds core BBS concepts: `Session`, `User`, `Conference`,
   `Node`, `Mail`, `ReadPointers`, persistence ports (`UserRepository`,
   `ConferenceRepository`, `MailStore`), phase-typed session wrappers, the
-  messaging rules (`read_mail`, `scan_mail`, `post_mail`), password hashing,
-  caller logs, and session policy.
+  messaging rules (`read_mail`, `scan_mail`, `post_mail`,
+  `post_comment_to_sysop`), password hashing, caller logs, and session
+  policy.
 - `rust/src/app/` is the application layer: configuration, runtime
   composition, session orchestration, terminal/screen ports, the app-level
   `MailStores` registry service, menu-command parsing, shared terminal I/O
@@ -72,15 +73,20 @@ flowchart LR
     AutoRejoin --> ScanOnJoin["mail_scan_on_join (Slice 41)"]
     Menu --> ScanOnJoin
     Menu --> ReadHandler["menu_flow::handle_read_mail / handle_scan_mail"]
-    Menu --> PostHandler["menu_flow::handle_post_mail (Slice 42)"]
+    Menu --> PostHandler["menu_flow::handle_post_mail (Slice 42/43)"]
+    Menu --> CommentHandler["menu_flow::handle_comment_to_sysop (Slice 44)"]
     ReadHandler --> MailStoresPort
     ScanOnJoin --> MailStoresPort
     PostHandler --> MailStoresPort
     PostHandler --> UserRepo
+    CommentHandler --> MailStoresPort
+    CommentHandler --> UserRepo
     ReadHandler --> ReadMailRule["domain::read_mail"]
     ReadHandler --> ScanMailRule["domain::scan_mail"]
     ScanOnJoin --> ScanMailRule
     PostHandler --> PostMailRule["domain::post_mail"]
+    CommentHandler --> CommentRule["domain::post_comment_to_sysop"]
+    CommentRule --> PostMailRule
     PostMailRule --> Mail
     PostMailRule --> MailPort
 
@@ -150,6 +156,41 @@ per `(conference, msgbase)` coordinate, registering them in an
 its `tokio::sync::Mutex` handle live in `app::mail_stores`; the domain sees
 only the single-base `MailStore` port. Read pointers ride along with the bound
 user record and flush on logoff via the existing `save_bound_user` path.
+
+Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
+
+- `messaging.allium:AllowedAddressing` and `AllScanScope` (Slice 43)
+  land as fields on `domain::conference::MessageBase`, exposed via the
+  `[[msgbase]]` keys `allowed_addressing` and `all_scan_scope` in
+  `conference.toml`. Both default to the permissive legacy behaviour
+  (`Any` / `AllUsersInConf`) so existing files continue to load
+  unchanged. The pure helper `domain::mail::addressing_allows` is the
+  spec's black box; `domain::post_mail` enforces it at post time and
+  the `E` handler in `app::menu_flow` normalises empty / `ALL` / `EALL`
+  recipients before the rule sees them.
+- `domain::scan_mail` and the explicit/auto join helper in
+  `app::mail_scan_on_join` thread the per-msgbase `AllScanScope`
+  through the rule's signature. Single-msgbase scans treat both modes
+  identically (broadcasts always count for the visiting member); the
+  semantic split lands when cross-conference scanning arrives in a
+  future slice. The toggle is plumbed in now so adapters and the spec
+  agree on the read path.
+- `messaging.allium:PostCommentToSysop` (Slice 44) lives in
+  `domain::post_comment_to_sysop` and reuses the shared
+  `post_mail::apply_post_mail` helper so the `C` (comment to sysop)
+  command can fire even for users in the pending-validation tier (who
+  hold `Right::CommentToSysop` but not `Right::EnterMessage`). The
+  recipient is resolved through a new `UserRepository::find_sysop`
+  port, defaulting to the spec's `is_sysop: slot_number = 1`
+  invariant; the resulting mail is always `visibility = Private` and
+  addressed to handle `"Sysop"` per the spec.
+- Slice 44a's wire-and-smoke test
+  (`rust/tests/phase7_smoke.rs::binary_walks_phase7_broadcast_and_comment_to_sysop_over_telnet`)
+  drives the compiled binary against a `Conf01/` whose msgbase forbids
+  EALL, exercising the `E ALL`, refused `E EALL`, and `C` flows
+  end-to-end and reading the resulting mail back to confirm the
+  legacy ANSI render shows `Recv'd: N/A` for broadcasts and
+  `Status: Private Message` / `To: Sysop` for the comment.
 
 Slice 42 opens Phase 7 (Messaging — write) with the single-addressee
 `PostMail` rule and the `E` / `E <to>` menu command:

@@ -42,6 +42,60 @@ pub enum BroadcastTo {
     Eall,
 }
 
+/// Which kinds of `to:` addresses a message base accepts when posting
+/// (spec: `messaging.allium:AllowedAddressing`). The legacy default
+/// permits both ALL and EALL alongside individual addressees; external
+/// bridges narrow this when they cannot fan out broadcasts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AllowedAddressing {
+    /// `IndividualOnly` — the poster must address a specific user.
+    IndividualOnly,
+    /// `IndividualOrAll` — ALL is permitted; EALL is not.
+    IndividualOrAll,
+    /// `IndividualOrEall` — EALL is permitted; ALL is not.
+    IndividualOrEall,
+    /// `Any` — individual, ALL and EALL are all permitted (default).
+    #[default]
+    Any,
+}
+
+/// Whether the conference shows ALL-addressed messages to every member
+/// or only to users currently visiting (spec:
+/// `messaging.allium:AllScanScope`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AllScanScope {
+    /// `Local` — ALL counts as "to me" only for the user currently
+    /// visiting this message base's conference.
+    Local,
+    /// `AllUsersInConf` — ALL is broadcast to every member of the
+    /// conference, regardless of which one they're currently in
+    /// (default; matches the legacy `searchNewMail` behaviour).
+    #[default]
+    AllUsersInConf,
+}
+
+/// True when a message base configured with `allowed` accepts a
+/// post addressed with `broadcast` (spec:
+/// `messaging.allium:addressing_allows`).
+///
+/// Individual addressees (`BroadcastTo::None`) are always permitted —
+/// no `AllowedAddressing` variant forbids per-user mail. The ALL and
+/// EALL branches gate against the variant.
+#[must_use]
+pub fn addressing_allows(allowed: AllowedAddressing, broadcast: BroadcastTo) -> bool {
+    match broadcast {
+        BroadcastTo::None => true,
+        BroadcastTo::All => matches!(
+            allowed,
+            AllowedAddressing::IndividualOrAll | AllowedAddressing::Any
+        ),
+        BroadcastTo::Eall => matches!(
+            allowed,
+            AllowedAddressing::IndividualOrEall | AllowedAddressing::Any
+        ),
+    }
+}
+
 /// Caller-supplied payload for posting a new message
 /// (spec: `messaging.allium:PostMail` consequent fields, minus the
 /// store-assigned `number` and the parent `msgbase`).
@@ -496,6 +550,84 @@ mod tests {
             None,
             "received_at must be cleared when message becomes deleted",
         );
+    }
+
+    #[test]
+    fn addressing_allows_individual_always_permitted() {
+        // Spec: a per-user addressee never depends on AllowedAddressing.
+        for allowed in [
+            AllowedAddressing::IndividualOnly,
+            AllowedAddressing::IndividualOrAll,
+            AllowedAddressing::IndividualOrEall,
+            AllowedAddressing::Any,
+        ] {
+            assert!(
+                addressing_allows(allowed, BroadcastTo::None),
+                "individual should be allowed under {allowed:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn addressing_allows_all_only_when_variant_permits() {
+        // Spec messaging.allium:AllowedAddressing —
+        //   IndividualOrAll / Any permit ALL; the other two forbid it.
+        assert!(!addressing_allows(
+            AllowedAddressing::IndividualOnly,
+            BroadcastTo::All
+        ));
+        assert!(addressing_allows(
+            AllowedAddressing::IndividualOrAll,
+            BroadcastTo::All
+        ));
+        assert!(!addressing_allows(
+            AllowedAddressing::IndividualOrEall,
+            BroadcastTo::All
+        ));
+        assert!(addressing_allows(AllowedAddressing::Any, BroadcastTo::All));
+    }
+
+    #[test]
+    fn addressing_allows_eall_only_when_variant_permits() {
+        // Spec messaging.allium:AllowedAddressing —
+        //   IndividualOrEall / Any permit EALL; the other two forbid it.
+        assert!(!addressing_allows(
+            AllowedAddressing::IndividualOnly,
+            BroadcastTo::Eall
+        ));
+        assert!(!addressing_allows(
+            AllowedAddressing::IndividualOrAll,
+            BroadcastTo::Eall
+        ));
+        assert!(addressing_allows(
+            AllowedAddressing::IndividualOrEall,
+            BroadcastTo::Eall
+        ));
+        assert!(addressing_allows(AllowedAddressing::Any, BroadcastTo::Eall));
+    }
+
+    #[test]
+    fn allowed_addressing_default_permits_everything() {
+        // Default matches the legacy `enterMSG` behaviour where bare
+        // conferences accepted both broadcasts; sysops narrow it only
+        // when bridging to an external system.
+        assert_eq!(AllowedAddressing::default(), AllowedAddressing::Any);
+        assert!(addressing_allows(
+            AllowedAddressing::default(),
+            BroadcastTo::All
+        ));
+        assert!(addressing_allows(
+            AllowedAddressing::default(),
+            BroadcastTo::Eall
+        ));
+    }
+
+    #[test]
+    fn all_scan_scope_default_is_all_users_in_conf() {
+        // The legacy `searchNewMail` always counted ALL toward every
+        // member's unread tally — broadcast == "to me" regardless of
+        // visit state.
+        assert_eq!(AllScanScope::default(), AllScanScope::AllUsersInConf);
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub(crate) enum MenuCommand {
     Scan(ScanArg),
     /// `E` / `E <to>`: enter a message.
     Post(PostArg),
+    /// `C`: comment to sysop (Slice 44).
+    CommentToSysop,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -60,6 +62,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     let trimmed = line.trim();
     if trimmed.eq_ignore_ascii_case("G") {
         return MenuCommand::Logoff;
+    }
+    if trimmed.eq_ignore_ascii_case("C") {
+        return MenuCommand::CommentToSysop;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -229,5 +234,21 @@ mod tests {
         assert_eq!(parse_menu_command("Read 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("MS"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("EM"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_comment_to_sysop_command() {
+        // Slice 44: bare `C` (case-insensitive) routes to
+        // `messaging.allium:PostCommentToSysop`.
+        assert_eq!(parse_menu_command("C"), MenuCommand::CommentToSysop);
+        assert_eq!(parse_menu_command("c"), MenuCommand::CommentToSysop);
+    }
+
+    #[test]
+    fn comment_command_rejects_extra_tokens() {
+        // `C anything` is not a comment-to-sysop — the legacy command
+        // takes no arguments and lands the user straight in the
+        // editor.
+        assert_eq!(parse_menu_command("C foo"), MenuCommand::Unknown);
     }
 }

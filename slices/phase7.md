@@ -31,3 +31,21 @@ table and asset inventory.
   - Used by Slice 16's "leave a comment on the way out" exit path.
 - **Out of Scope**
   - Out-of-band sysop notification (email, paging — separate adapter).
+
+## Slice 44a — Phase 7 wire-and-smoke
+- **In Scope**
+  - End-to-end binary smoke test exercising the Phase 7 capabilities through
+    the compiled `nextexpress` binary over telnet, verifying the headline
+    write flow lands a user-visible feature:
+      - posting an `ALL`-addressed message via `E ALL`, with `Recv'd: N/A`
+        rendered for the saved mail;
+      - rejecting `EALL` on a message base configured with
+        `allowed_addressing = individual_or_all`;
+      - using the `C` command to leave a comment for the sysop and reading
+        it back as a private message addressed to `Sysop`.
+  - Confirms the composition root threads the per-msgbase
+    `AllowedAddressing` / `AllScanScope` toggles from `conference.toml`
+    through to the rule.
+- **Out of Scope**
+  - EALL fan-out across conferences (Slice 43 keeps this lazy at scan time).
+  - Sysop out-of-band notification (Slice 44's Out of Scope still holds).
