@@ -11,6 +11,12 @@ use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, M
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
 
+/// Maximum value the user-typed `line_length` registration field
+/// accepts. The legacy `AmiExpress` display routines store line length
+/// in a single byte, so values above `255` are rejected; the constant
+/// keeps the limit colocated with the [`User::line_length`] getter.
+pub const MAX_LINE_LENGTH: u32 = 255;
+
 /// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RatioMode {

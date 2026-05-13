@@ -64,6 +64,25 @@ pub enum FinaliseLogoffFlowError {
 /// repository adapters stay pure storage.
 pub const NEW_USER_REGISTRATION_LITERAL: &str = "NEW";
 
+/// Returns `true` when `typed` is acceptable as a new user's handle
+/// during the registration sub-flow: non-empty after trimming, not the
+/// reserved [`NEW_USER_REGISTRATION_LITERAL`], and not already taken
+/// in `repo`.
+///
+/// Centralises the three checks the registration driver used to do
+/// inline: the empty / reserved gates are format rules and the
+/// repository lookup is a uniqueness query — composing them here
+/// keeps the driver flow free of domain logic.
+pub fn is_handle_available_for_registration<R>(repo: &R, typed: &str) -> bool
+where
+    R: UserRepository + ?Sized,
+{
+    let trimmed = typed.trim();
+    !trimmed.is_empty()
+        && trimmed != NEW_USER_REGISTRATION_LITERAL
+        && matches!(repo.find_by_handle(trimmed), NameLookupResult::NotFound)
+}
+
 /// Handles `session.allium:NameTyped`.
 ///
 /// Resolves `typed` to one of three branches:

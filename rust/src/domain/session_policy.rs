@@ -24,6 +24,11 @@ const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
 /// Slice 17). Five minutes.
 const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// Default maximum handle attempts during the new-user registration
+/// sub-flow before the session bails. Mirrors the legacy `AmiExpress`
+/// `doNewUser` retry budget at `amiexpress/express.e:30150`.
+const DEFAULT_MAX_REGISTRATION_HANDLE_ATTEMPTS: u32 = 5;
+
 /// Policy decision after a password failure has been recorded on a
 /// session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +53,7 @@ pub struct SessionPolicy {
     min_password_categories: u32,
     input_timeout: Duration,
     treat_timeout_as_logoff: bool,
+    max_registration_handle_attempts: u32,
 }
 
 impl SessionPolicy {
@@ -73,6 +79,7 @@ impl SessionPolicy {
             min_password_categories: 0,
             input_timeout: DEFAULT_INPUT_TIMEOUT,
             treat_timeout_as_logoff: false,
+            max_registration_handle_attempts: DEFAULT_MAX_REGISTRATION_HANDLE_ATTEMPTS,
         }
     }
 
@@ -168,6 +175,24 @@ impl SessionPolicy {
     #[must_use]
     pub fn treat_timeout_as_logoff(&self) -> bool {
         self.treat_timeout_as_logoff
+    }
+
+    /// Returns a copy of `self` with
+    /// [`Self::max_registration_handle_attempts`] replaced by
+    /// `attempts`.
+    #[must_use]
+    pub fn with_max_registration_handle_attempts(mut self, attempts: u32) -> Self {
+        self.max_registration_handle_attempts = attempts;
+        self
+    }
+
+    /// Maximum number of consecutive unavailable / invalid handles a
+    /// user may type during the new-user registration sub-flow before
+    /// the session bails. Mirrors the legacy `AmiExpress` `doNewUser`
+    /// retry budget at `amiexpress/express.e:30150`.
+    #[must_use]
+    pub fn max_registration_handle_attempts(&self) -> u32 {
+        self.max_registration_handle_attempts
     }
 
     /// Decides what should happen after a password failure has been

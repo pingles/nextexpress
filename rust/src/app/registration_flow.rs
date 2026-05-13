@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 use crate::app::services::AppServices;
 use crate::app::session_flow::{
-    self, NewUserProfile, NewUserRegistrationFlow, NEW_USER_REGISTRATION_LITERAL,
+    self, is_handle_available_for_registration, NewUserProfile, NewUserRegistrationFlow,
 };
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
@@ -26,12 +26,7 @@ use crate::domain::session::typed::{
     LoggingOffSession, NewUserPasswordTransition, NewUserRegisteringSession,
     NewUserRegistrationResult, OnboardedSession,
 };
-use crate::domain::user_repository::NameLookupResult;
-
-/// Maximum handle attempts during registration before the session
-/// bails. Mirrors the original `AmiExpress` `doNewUser` retry budget
-/// at `amiexpress/express.e:30150`.
-const MAX_REGISTRATION_HANDLE_ATTEMPTS: u32 = 5;
+use crate::domain::user::MAX_LINE_LENGTH;
 
 /// Outcome reported by [`RegistrationFlow::run`]. Mirrors the two
 /// terminal branches of `session.allium:CompleteNewUserRegistration`
@@ -181,9 +176,13 @@ where
         &mut self,
         mut session: NewUserRegisteringSession,
     ) -> Result<ReadField<String>, T::Error> {
+        let max_attempts = self
+            .services
+            .session_policy()
+            .max_registration_handle_attempts();
         let mut attempts: u32 = 0;
         loop {
-            if attempts >= MAX_REGISTRATION_HANDLE_ATTEMPTS {
+            if attempts >= max_attempts {
                 self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
                     .await?;
                 return Ok(ReadField::LoggingOff(
@@ -200,15 +199,8 @@ where
                 }
                 other => return self.handle_interrupt(session, other).await,
             };
-            let trimmed = typed.trim();
-            let available = !trimmed.is_empty()
-                && trimmed != NEW_USER_REGISTRATION_LITERAL
-                && matches!(
-                    self.services.user_repo().find_by_handle(trimmed),
-                    NameLookupResult::NotFound
-                );
-            if available {
-                return Ok(ReadField::Got(session, trimmed.to_string()));
+            if is_handle_available_for_registration(self.services.user_repo(), &typed) {
+                return Ok(ReadField::Got(session, typed.trim().to_string()));
             }
             self.terminal.write(HANDLE_TAKEN_LINE).await?;
             attempts += 1;
@@ -292,7 +284,9 @@ where
                 return Ok(ReadField::Got(session, 0));
             }
             match trimmed.parse::<u32>() {
-                Ok(value) if value <= 255 => return Ok(ReadField::Got(session, value)),
+                Ok(value) if value <= MAX_LINE_LENGTH => {
+                    return Ok(ReadField::Got(session, value));
+                }
                 _ => {
                     self.terminal.write(INVALID_LINE_LENGTH_LINE).await?;
                 }
