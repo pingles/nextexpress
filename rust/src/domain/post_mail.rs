@@ -173,11 +173,7 @@ pub(crate) fn apply_post_mail(
     if !addressing_allows(allowed_addressing, draft.broadcast_to) {
         return Err(PostMailError::AddressingNotAllowed);
     }
-    if !user
-        .memberships()
-        .iter()
-        .any(|m| m.conference_number() == msgbase.conference_number() && m.is_granted())
-    {
+    if !user.has_granted_membership_for(msgbase.conference_number()) {
         return Err(PostMailError::NoMembership);
     }
 

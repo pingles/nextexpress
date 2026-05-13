@@ -682,6 +682,25 @@ impl User {
         crate::domain::conference::has_membership(&self.memberships, conference)
     }
 
+    /// Returns `true` when the user holds a granted membership row for
+    /// `conference_number` — the messaging-rule analogue of
+    /// [`Self::has_membership`] that takes the bare conference number
+    /// (as carried on a [`MessageBaseRef`]) instead of the full
+    /// [`Conference`] catalogue entry.
+    ///
+    /// A revoked row (`granted = false`) returns `false` here, matching
+    /// the spec's intent that revoking access immediately denies reads,
+    /// scans and posts to that conference. Used by
+    /// [`crate::domain::read_mail::read_mail`],
+    /// [`crate::domain::scan_mail::scan_mail`] and
+    /// [`crate::domain::post_mail::post_mail`].
+    #[must_use]
+    pub fn has_granted_membership_for(&self, conference_number: u32) -> bool {
+        self.memberships
+            .iter()
+            .any(|m| m.conference_number() == conference_number && m.is_granted())
+    }
+
     /// Returns the user's last-joined (conference, msgbase) pair, if
     /// any. Mirrors the `last_joined_conference` /
     /// `last_joined_msgbase` pair on `core.allium:User`. They are

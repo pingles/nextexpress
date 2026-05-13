@@ -184,11 +184,7 @@ where
         });
     }
 
-    if !user
-        .memberships()
-        .iter()
-        .any(|m| m.conference_number() == msgbase.conference_number())
-    {
+    if !user.has_granted_membership_for(msgbase.conference_number()) {
         return Err(ScanMailError::NoMembership(msgbase.conference_number()));
     }
 
@@ -703,6 +699,36 @@ mod tests {
             t(100),
         )
         .expect_err("no membership");
+        assert!(matches!(err, ScanMailError::NoMembership(2)));
+    }
+
+    #[test]
+    fn scan_rejects_when_users_membership_for_conference_has_been_revoked() {
+        // A revoked membership row (`granted = false`) must not allow a
+        // scan. Before the fix the rule accepted any row whose
+        // `conference_number` matched, ignoring `is_granted()`.
+        let mut user = User::new(
+            5,
+            "revoked".to_string(),
+            PasswordHashKind::Pbkdf210000,
+            "hash".to_string(),
+            Some("salt".to_string()),
+            SystemTime::UNIX_EPOCH,
+            100,
+        )
+        .expect("valid");
+        user.upsert_membership(ConferenceMembership::new(2, false));
+        let mut store = StubStore::new(ref_2_1());
+        store.push(broadcast());
+        let err = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .expect_err("revoked membership must not allow a scan");
         assert!(matches!(err, ScanMailError::NoMembership(2)));
     }
 
