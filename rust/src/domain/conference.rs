@@ -297,6 +297,15 @@ impl Conference {
         &self.msgbases
     }
 
+    /// Returns the [`MessageBase`] with the supplied 1-indexed number,
+    /// or `None` when this conference has no base with that number.
+    /// Shared by every callsite that previously walked
+    /// `c.msgbases().iter().find(|m| m.number() == ...)`.
+    #[must_use]
+    pub fn find_msgbase(&self, msgbase_number: u32) -> Option<&MessageBase> {
+        self.msgbases.iter().find(|m| m.number() == msgbase_number)
+    }
+
     /// Returns the [`NameType`] this conference expects for posters'
     /// display names (spec: `core.allium:Conference.accepted_name_type`).
     #[must_use]
@@ -450,6 +459,19 @@ pub fn has_membership(memberships: &[ConferenceMembership], conference: &Confere
     memberships
         .iter()
         .any(|m| m.conference_number == conference.number && m.granted)
+}
+
+/// Returns the [`MessageBase`] in `catalogue` matching `coord`, or
+/// `None` when the coordinate is not registered. Shared by every
+/// callsite that previously composed `c.iter().find(...)` and
+/// `c.msgbases().iter().find(...)` to resolve per-msgbase policy
+/// (e.g. `AllowedAddressing`, `AllScanScope`).
+#[must_use]
+pub fn find_msgbase_in(catalogue: &[Conference], coord: MessageBaseRef) -> Option<&MessageBase> {
+    catalogue
+        .iter()
+        .find(|c| c.number() == coord.conference_number())
+        .and_then(|c| c.find_msgbase(coord.msgbase_number()))
 }
 
 /// Errors returned by [`Conference::new`].

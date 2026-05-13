@@ -98,15 +98,7 @@ where
     // conference catalogue. Falls back to the spec default if the
     // coordinate isn't registered — keeping the auto-scan robust to
     // partially-loaded catalogues.
-    let scope = services
-        .conferences()
-        .iter()
-        .find(|c| c.number() == visit_msgbase.conference_number())
-        .and_then(|c| {
-            c.msgbases()
-                .iter()
-                .find(|m| m.number() == visit_msgbase.msgbase_number())
-        })
+    let scope = crate::domain::conference::find_msgbase_in(services.conferences(), visit_msgbase)
         .map(crate::domain::conference::MessageBase::all_scan_scope)
         .unwrap_or_default();
 
