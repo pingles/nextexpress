@@ -238,7 +238,7 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
-    use crate::domain::messaging::mail::{Mail, MailDraft, MailVisibility};
+    use crate::domain::messaging::mail::MailVisibility;
     use crate::domain::password::PasswordHashKind;
 
     fn t(secs: u64) -> SystemTime {
