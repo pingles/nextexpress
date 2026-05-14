@@ -16,12 +16,15 @@
 --     - Sysop upload (puts files anywhere on the system)
 --     - File maintenance (delete, move between conferences)
 --     - Background file checking (asynchronous integrity check after upload)
+--     - User-entered upload descriptions written to file listings
+--     - Internal FILE_ID.DIZ metadata capture as a NextExpress extension
 --     - Free downloads (some conferences/areas don't charge ratio)
 --     - Credit accounts (paid users skip ratio enforcement)
 --
 --   Excludes:
 --     - Wire protocols (Zmodem, Xmodem, Hydra, FTP, HTTP) — see protocol library
---     - File-id.diz extraction details (deferred to upload-handler library)
+--     - Legacy external EXAMINE/file-DIZ door execution
+--     - FILE_ID.DIZ extraction mechanics (archive parsing, encoding detection)
 --     - Disk-space-check details (a hardware concern)
 --     - Anti-virus scanning (configurable hook, not domain)
 
@@ -70,6 +73,14 @@ enum TransferOutcome {
     failed_ratio
 }
 
+-- Where the file area's display description came from.
+enum FileDescriptionSource {
+    none
+    uploader_supplied       -- legacy: typed by the uploading user
+    sysop_supplied          -- legacy: supplied during sysop upload/import
+    internal_file_id_diz    -- NextExpress extension; not the legacy door processor
+}
+
 ------------------------------------------------------------
 -- Entities and Variants
 ------------------------------------------------------------
@@ -80,7 +91,11 @@ entity File {
     name: String                   -- 12-char filename in the legacy code
     size: core/Bytes
     status: FileStatus
-    description: String
+    description: String            -- listing text: first DIR line plus continuation text
+    description_source: FileDescriptionSource
+    description_private_to_sysop: Boolean -- legacy: first description line begins with "/"
+    file_id_diz: String?           -- NextExpress extension: extracted archive description
+    file_id_diz_path: String?      -- NextExpress extension: path/name inside the archive
     uploaded_by: core/User?        -- null for sysop-imported
     uploaded_at: Timestamp
     last_downloaded_at: Timestamp?
@@ -285,6 +300,10 @@ rule BeginUpload {
         size: { count: 0 },
         status: in_playpen,
         description: "",
+        description_source: none,
+        description_private_to_sysop: false,
+        file_id_diz: null,
+        file_id_diz_path: null,
         uploaded_by: session.user,
         uploaded_at: now,
         download_count: 0
@@ -301,11 +320,29 @@ rule BeginUpload {
     )
 }
 
+-- AmiExpress asks for a file listing description when a user uploads. In
+-- batch upload this can be collected before transfer; otherwise the upload
+-- flow prompts after the file lands if no descriptor exists. A blank first
+-- line is not accepted. A first line beginning with "/" marks the upload as
+-- private to the sysop and it is moved to the held/private area.
+rule UploadDescriptionEntered {
+    when: UploadDescriptionEntered(file, description)
+    requires: file.status = in_playpen
+    requires: description != ""
+    requires: upload_description_line_count(description) <= max_upload_description_lines()
+    requires: upload_description_lines_fit_listing(description)
+
+    ensures: file.description = description
+    ensures: file.description_source = uploader_supplied
+    ensures: file.description_private_to_sysop = upload_description_is_private(description)
+}
+
 -- An upload completed.
 rule CompleteUpload {
     when: TransferEnded(transfer, outcome, bytes_transferred, cps)
     requires: transfer.direction = upload
     requires: transfer.finished_at = null
+    requires: outcome != completed or transfer.file.description != ""
 
     ensures: transfer.finished_at = now
     ensures: transfer.outcome = outcome
@@ -325,9 +362,10 @@ rule CompleteUpload {
                     membership.files_uploaded = membership.files_uploaded + 1
 
             -- Move file out of playpen. If hold-for-review is configured for
-            -- this area, the file lands in held_for_review; otherwise it
+            -- this area, or if the user marked the description private with
+            -- a leading "/", the file lands in held_for_review; otherwise it
             -- becomes available immediately.
-            if requires_review(transfer.file.area):
+            if transfer.file.description_private_to_sysop or requires_review(transfer.file.area):
                 transfer.file.status = held_for_review
             else:
                 transfer.file.status = available
@@ -339,6 +377,27 @@ rule CompleteUpload {
         else:
             -- Failed upload: drop the playpen entry.
             transfer.file.status = removed
+}
+
+-- NextExpress extension: the upload handler found FILE_ID.DIZ (or equivalent
+-- archive description) after the bytes landed. AmiExpress delegated this to a
+-- configurable external EXAMINE/file-DIZ door; NextExpress extracts it
+-- internally. The spec records the durable metadata; archive parsing, encoding
+-- detection and validation are adapter concerns.
+rule FileIdDizExtracted {
+    when: FileIdDizExtracted(file, diz_text, diz_path)
+    requires: file.status in {in_playpen, held_for_review, available}
+
+    ensures: file.file_id_diz = diz_text
+    ensures: file.file_id_diz_path = diz_path
+
+    -- Internal DIZ extraction may provide the listing text when the legacy
+    -- uploader/sysop description flow has not already supplied one.
+    ensures:
+        if file.description = "":
+            file.description = diz_text
+            file.description_source = internal_file_id_diz
+            file.description_private_to_sysop = false
 }
 
 -- Background file check for an uploaded file. Triggered after the upload
@@ -379,6 +438,10 @@ rule SysopUploadFile {
         size: size,
         status: available,
         description: description,
+        description_source: sysop_supplied,
+        description_private_to_sysop: false,
+        file_id_diz: null,
+        file_id_diz_path: null,
         uploaded_by: null,
         uploaded_at: now,
         download_count: 0
@@ -484,6 +547,20 @@ invariant DailyDownloadsLeQuota {
 
 -- True if uploads to this area need sysop review.
 -- requires_review(file_area)
+
+-- Maximum description lines accepted for an uploaded file listing.
+-- Legacy: max_desclines.
+-- max_upload_description_lines()
+
+-- Count display lines in an upload description.
+-- upload_description_line_count(description)
+
+-- True when each upload description line fits the legacy DIR listing prompt.
+-- Legacy accepts 44 characters per entered description line.
+-- upload_description_lines_fit_listing(description)
+
+-- True when the first upload description line starts with "/".
+-- upload_description_is_private(description)
 
 -- Bonus session time granted for an upload, computed from bytes and CPS.
 -- The legacy formula is "(bytes / 2 + 60) seconds".

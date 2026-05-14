@@ -7,7 +7,8 @@ defines the behaviour this design supports.
 ## Scope
 
 This document covers durable storage and search for the `File`, `Transfer`,
-and `FlaggedFile` entities, plus the access patterns the rules in
+and `FlaggedFile` entities, file metadata (`FILE_ID.DIZ`, archive
+comments, content kind, hashes), plus the access patterns the rules in
 `files.allium` impose. It does **not** cover:
 
 - Wire protocols for the actual byte transfer (Zmodem, Xmodem, etc.) —
@@ -31,6 +32,21 @@ What matters for storage design is the **row count** behind those bytes:
 
 Worst case is ~50K rows of `File`. `Transfer` grows with usage but is
 append-mostly and rarely participates in search.
+
+Concrete seed data still fits that shape:
+
+| Corpus | Files | Bytes | Avg file size |
+|---|---:|---:|---:|
+| ASCII/ANSI art | ~6,000 | ~400 MB | ~67 KB |
+| BBS archives | ~20,000 | ~1 GB | ~50 KB |
+| Combined | ~26,000 | ~1.4 GB | ~54 KB |
+
+The added constraint is **metadata extraction**, not file count. SQLite
+stores file metadata, including the display description and `FILE_ID.DIZ`
+content when present. It does not store cached raw text files or cached
+ASCII/ANSI render payloads. Rendering a text/art file opens the original
+blob from the blob store; at ~67 KB per art file this is acceptable and
+lets the OS page cache do the hot-path work.
 
 ## Decisions
 
@@ -85,11 +101,36 @@ same user from all passing the same stale pre-flight check.
   dedicated writer connection. With WAL, readers proceed in parallel.
 - One connection per task; never share a connection across awaits.
 
+### Metadata and DIZ extraction
+
+Original file bytes remain in the blob store whether they are archives,
+plain text, ANSI art, or binary files. SQLite stores metadata extracted
+once during ingest/upload:
+
+- `files.description` — short listing text used by directory/list views.
+- `file_metadata.file_id_diz` — `FILE_ID.DIZ`, archive comment, or
+  equivalent descriptive metadata.
+- `file_metadata.content_kind` — `archive`, `text`, `ansi_art`, or
+  `binary`.
+- `file_metadata.blob_key`, hashes and format details needed to find and
+  verify the original blob.
+- lightweight text/art metadata such as encoding, line count, and ANSI
+  detection.
+
+`FILE_ID.DIZ` is treated as metadata because it describes the archive. Full
+text/art file contents are not metadata and are not cached in SQLite.
+Preview/render paths open the blob store object directly.
+
+Ingest and upload handlers own extraction. Updating a file's description
+or DIZ metadata happens in the same writer transaction as the metadata
+change and refreshes the FTS row.
+
 ### FTS5 with the trigram tokenizer for search
 
 The legacy `Z` (zippy) command is substring search across file
-descriptions in one or more areas. SQLite's FTS5 with the **`trigram`
-tokenizer** gives us substring `MATCH` queries directly:
+descriptions in one or more areas. NextExpress extends the search corpus
+to include `FILE_ID.DIZ` / archive-comment metadata. SQLite's FTS5 with
+the **`trigram` tokenizer** gives us substring `MATCH` queries directly:
 
 ```sql
 SELECT f.id
@@ -100,9 +141,11 @@ WHERE files_fts MATCH ?
 ```
 
 Substring "graph" decomposes into trigrams `gra`, `rap`, `aph`; FTS5
-intersects the posting lists and verifies candidates. Index size is on
-the order of 1.5× the description text (~6 MB for 20K descriptions).
-Search times for our scale are sub-millisecond to a few ms.
+intersects the posting lists and verifies candidates. Index size scales
+with description plus DIZ metadata, not with the 1.4 GB of original blobs.
+At ~26K rows, DIZ/comment search remains comfortably inside SQLite's
+expected scale. Full text/art file search is out of v1 unless measurement
+says the extra content index is worth it.
 
 ### `FlaggedFile` is per-session, in-memory only
 
@@ -126,6 +169,7 @@ CREATE TABLE files (
     size_bytes      INTEGER NOT NULL CHECK (size_bytes >= 0),
     status          TEXT    NOT NULL,         -- FileStatus enum
     description     TEXT    NOT NULL DEFAULT '',
+    description_source TEXT NOT NULL DEFAULT 'none',
     uploaded_by     INTEGER REFERENCES users(id),
     uploaded_at     INTEGER NOT NULL,         -- epoch seconds
     last_downloaded_at INTEGER,
@@ -137,26 +181,66 @@ CREATE INDEX idx_files_area_uploaded_at  ON files (area_id, uploaded_at DESC);
 CREATE INDEX idx_files_status_pending    ON files (status)
     WHERE status IN ('held_for_review', 'quarantined', 'in_playpen');
 
--- Trigram FTS for the zippy search.
-CREATE VIRTUAL TABLE files_fts USING fts5 (
-    description,
-    content      = 'files',
-    content_rowid = 'id',
-    tokenize     = 'trigram'
+CREATE TABLE file_metadata (
+    file_id          INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+    blob_key         TEXT    NOT NULL,
+    sha256           TEXT    NOT NULL,
+    content_kind     TEXT    NOT NULL, -- 'archive' | 'text' | 'ansi_art' | 'binary'
+    archive_format   TEXT,
+    file_id_diz      TEXT,
+    file_id_diz_path TEXT,
+    file_id_diz_crc32 TEXT,
+    text_encoding    TEXT,
+    ansi_detected    INTEGER NOT NULL DEFAULT 0,
+    line_count       INTEGER,
+    metadata_extracted_at INTEGER
 );
 
--- Keep FTS in sync with the canonical table.
+-- Contentless trigram FTS for zippy / DIZ metadata search. The FTS table
+-- stores index postings, not raw file text or cached render payloads.
+CREATE VIRTUAL TABLE files_fts USING fts5 (
+    description,
+    file_id_diz,
+    content='',
+    contentless_delete=1,
+    tokenize='trigram'
+);
+
+-- Keep FTS in sync with file descriptions and DIZ metadata. Implementations
+-- may use DELETE+INSERT or INSERT OR REPLACE depending on the SQLite version.
 CREATE TRIGGER files_ai AFTER INSERT ON files BEGIN
-    INSERT INTO files_fts(rowid, description) VALUES (new.id, new.description);
+    INSERT INTO files_fts(rowid, description, file_id_diz)
+    VALUES (new.id, new.description, '');
+END;
+CREATE TRIGGER files_au_desc AFTER UPDATE OF description ON files BEGIN
+    DELETE FROM files_fts WHERE rowid = old.id;
+    INSERT INTO files_fts(rowid, description, file_id_diz)
+    VALUES (
+        new.id,
+        new.description,
+        COALESCE((SELECT file_id_diz FROM file_metadata WHERE file_id = new.id), '')
+    );
 END;
 CREATE TRIGGER files_ad AFTER DELETE ON files BEGIN
-    INSERT INTO files_fts(files_fts, rowid, description)
-    VALUES ('delete', old.id, old.description);
+    DELETE FROM files_fts WHERE rowid = old.id;
 END;
-CREATE TRIGGER files_au AFTER UPDATE OF description ON files BEGIN
-    INSERT INTO files_fts(files_fts, rowid, description)
-    VALUES ('delete', old.id, old.description);
-    INSERT INTO files_fts(rowid, description) VALUES (new.id, new.description);
+CREATE TRIGGER file_metadata_ai AFTER INSERT ON file_metadata BEGIN
+    DELETE FROM files_fts WHERE rowid = new.file_id;
+    INSERT INTO files_fts(rowid, description, file_id_diz)
+    VALUES (
+        new.file_id,
+        COALESCE((SELECT description FROM files WHERE id = new.file_id), ''),
+        COALESCE(new.file_id_diz, '')
+    );
+END;
+CREATE TRIGGER file_metadata_au_diz AFTER UPDATE OF file_id_diz ON file_metadata BEGIN
+    DELETE FROM files_fts WHERE rowid = new.file_id;
+    INSERT INTO files_fts(rowid, description, file_id_diz)
+    VALUES (
+        new.file_id,
+        COALESCE((SELECT description FROM files WHERE id = new.file_id), ''),
+        COALESCE(new.file_id_diz, '')
+    );
 END;
 
 CREATE TABLE transfers (
@@ -189,7 +273,8 @@ CREATE INDEX idx_transfers_user_day ON transfers (user_id, accounting_day, direc
 |---|---|---|
 | `FlagFile` | lookup by `(area_id, name)` | `UNIQUE (area_id, name)` |
 | `displayFileList` | list by area, often "since X" | `idx_files_area_uploaded_at` |
-| `zippy` substring search | `files_fts MATCH ?` filtered by area set | trigram FTS |
+| `zippy` substring search | `files_fts MATCH ?` over description + DIZ metadata | trigram FTS |
+| ASCII/ANSI preview | lookup `blob_key`, open original blob | `file_metadata` PK + blob store |
 | `CheckDownloadEligibility` | sum `size_bytes` for ≤1000 ids | PK lookups; small N |
 | Strict daily byte cap | reserve billable bytes before transfer | writer transaction + user PK |
 | `BeginDownload` / `BeginUpload` | insert `transfers`, lookup `files` row | PK + writer connection |
@@ -240,19 +325,23 @@ domain/files/
 adapters/files/
   sqlite_files.rs    — rusqlite + FTS5 trigram implementation
   fs_blob_store.rs   — blob read/write/move/delete on disk
+  file_metadata.rs   — DIZ/comment extraction + content metadata
   legacy_dir.rs      — read-only ingest of AmiExpress DIR text files
 ```
 
 The `FileRepository` port stays narrow: methods named after the rules
 that need them (`find_in_area`, `list_new_since`, `search_descriptions`,
-`list_by_status`), not generic CRUD. Adapter is free to add indexes for
-the queries the domain actually uses.
+`find_metadata`, `list_by_status`), not generic CRUD. Adapter is free to
+add indexes for the queries the domain actually uses.
 
 ## Things to nail down
 
 - **Round-tripping the legacy DIR text format.** Does the port need to
   *write* DIR files for backward compatibility, or only *read* them as a
   one-shot ingest? Affects whether `legacy_dir.rs` needs a serialiser.
+- **Full-text search scope.** v1 indexes short descriptions plus
+  `FILE_ID.DIZ` / archive-comment metadata. Decide later whether full
+  text/art file search is worth a separate content index.
 - **`Transfer` retention.** The table grows unboundedly across years.
   Add a retention policy (or partition column) up front rather than
   after we hit 10M rows. If old transfer rows are pruned, persist a
