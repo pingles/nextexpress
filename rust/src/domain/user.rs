@@ -1,8 +1,10 @@
 //! [`User`] entity (spec: `core.allium:User`).
 //!
-//! Phase 1 holds only the fields the sign-in / log-off loop actually
-//! reads. Lockout, time accounting, ratios and conference state arrive
-//! in later slices that introduce the rules reading them.
+//! `User` remains the aggregate root. Internally, related state is
+//! grouped into private value objects (`Credentials`, `AccountStatus`,
+//! `UsageAccounting`, `Profile`, `RatioPolicy`, and
+//! `ConferenceAccess`) so invariants live near the data they protect
+//! while the public user API stays stable for rules and adapters.
 
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
@@ -234,6 +236,81 @@ impl From<bool> for PasswordResetRequirement {
     }
 }
 
+/// Stored password material and reset policy for a [`User`].
+#[derive(Debug, Clone)]
+struct Credentials {
+    /// Algorithm used to verify the stored password hash.
+    hash_kind: PasswordHashKind,
+    /// Opaque stored password hash.
+    hash: String,
+    /// Salt the hash was bound to, if the algorithm uses one.
+    salt: Option<String>,
+    /// Timestamp when the credential triple was last rotated.
+    last_updated: SystemTime,
+    /// Whether the next logon must force a password change.
+    reset: PasswordResetRequirement,
+}
+
+impl Credentials {
+    /// Constructs a stored credential set, enforcing the spec's
+    /// `SaltMatchesAlgorithm` invariant.
+    fn new(
+        hash_kind: PasswordHashKind,
+        hash: String,
+        salt: Option<String>,
+        last_updated: SystemTime,
+    ) -> Result<Self, UserError> {
+        if requires_salt(hash_kind) && salt.is_none() {
+            return Err(UserError::SaltRequired);
+        }
+        Ok(Self {
+            hash_kind,
+            hash,
+            salt,
+            last_updated,
+            reset: PasswordResetRequirement::NotRequired,
+        })
+    }
+
+    fn hash_kind(&self) -> PasswordHashKind {
+        self.hash_kind
+    }
+
+    fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    fn salt(&self) -> Option<&str> {
+        self.salt.as_deref()
+    }
+
+    fn last_updated(&self) -> SystemTime {
+        self.last_updated
+    }
+
+    fn reset_required(&self) -> bool {
+        self.reset.is_required()
+    }
+
+    fn set_reset_required(&mut self, value: bool) {
+        self.reset = PasswordResetRequirement::from(value);
+    }
+
+    fn record_change(
+        &mut self,
+        hash: String,
+        salt: Option<String>,
+        kind: PasswordHashKind,
+        at: SystemTime,
+    ) {
+        self.hash = hash;
+        self.salt = salt;
+        self.hash_kind = kind;
+        self.last_updated = at;
+        self.reset = PasswordResetRequirement::NotRequired;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AccountValidationStatus {
     Existing,
@@ -243,6 +320,75 @@ enum AccountValidationStatus {
 impl AccountValidationStatus {
     fn is_new_user(self) -> bool {
         matches!(self, Self::AwaitingSysopValidation)
+    }
+}
+
+/// Access tier, lockout counters, and validation status for a [`User`].
+#[derive(Debug, Clone)]
+struct AccountStatus {
+    /// `0..=255` access tier (`0` = locked out).
+    access_level: u8,
+    /// Recent invalid password attempts.
+    invalid_attempts: u32,
+    /// Independent account-lock flag set by lockout rules/admin tools.
+    lock: AccountLockState,
+    /// Whether the account is awaiting sysop validation.
+    validation: AccountValidationStatus,
+}
+
+impl AccountStatus {
+    /// Constructs account status for an existing user loaded from
+    /// configuration or storage.
+    fn existing(access_level: u8) -> Self {
+        Self {
+            access_level,
+            invalid_attempts: 0,
+            lock: AccountLockState::Unlocked,
+            validation: AccountValidationStatus::Existing,
+        }
+    }
+
+    /// Constructs the spec defaults for a freshly registered user.
+    fn awaiting_validation() -> Self {
+        Self {
+            access_level: 2,
+            invalid_attempts: 0,
+            lock: AccountLockState::Unlocked,
+            validation: AccountValidationStatus::AwaitingSysopValidation,
+        }
+    }
+
+    fn invalid_attempts(&self) -> u32 {
+        self.invalid_attempts
+    }
+
+    fn is_account_locked(&self) -> bool {
+        self.lock.is_locked()
+    }
+
+    fn access_level(&self) -> u8 {
+        self.access_level
+    }
+
+    fn is_locked_out(&self) -> bool {
+        self.access_level <= 1 || self.is_account_locked()
+    }
+
+    fn bump_invalid_attempts(&mut self) {
+        self.invalid_attempts = self.invalid_attempts.saturating_add(1);
+    }
+
+    fn clear_invalid_attempts(&mut self) {
+        self.invalid_attempts = 0;
+    }
+
+    fn lock_account(&mut self) {
+        self.lock = AccountLockState::Locked;
+        self.invalid_attempts = 0;
+    }
+
+    fn is_new_user(&self) -> bool {
+        self.validation.is_new_user()
     }
 }
 
@@ -268,6 +414,228 @@ impl From<bool> for AnsiColourPreference {
     }
 }
 
+/// User-entered profile data and presentation preferences.
+#[derive(Debug, Clone)]
+struct Profile {
+    /// Free-text "City, State" location.
+    location: Option<String>,
+    /// Phone number on file.
+    phone_number: Option<String>,
+    /// Email address on file.
+    email: Option<String>,
+    /// Preferred terminal width (`0` = auto).
+    line_length: u32,
+    /// Whether the user wants ANSI colour output.
+    ansi_colour: AnsiColourPreference,
+    /// Timestamp the account was first created.
+    account_created: SystemTime,
+    /// User preference flags.
+    flags: BTreeSet<UserFlag>,
+}
+
+impl Profile {
+    /// Constructs the profile defaults for an existing account.
+    fn existing(account_created: SystemTime) -> Self {
+        Self {
+            location: None,
+            phone_number: None,
+            email: None,
+            line_length: 0,
+            ansi_colour: AnsiColourPreference::Disabled,
+            account_created,
+            flags: BTreeSet::new(),
+        }
+    }
+
+    /// Constructs a profile from the registration form fields.
+    fn registered(
+        location: Option<String>,
+        phone_number: Option<String>,
+        email: Option<String>,
+        line_length: u32,
+        ansi_colour: bool,
+        account_created: SystemTime,
+        flags: BTreeSet<UserFlag>,
+    ) -> Self {
+        Self {
+            location,
+            phone_number,
+            email,
+            line_length,
+            ansi_colour: AnsiColourPreference::from(ansi_colour),
+            account_created,
+            flags,
+        }
+    }
+
+    fn location(&self) -> Option<&str> {
+        self.location.as_deref()
+    }
+
+    fn phone_number(&self) -> Option<&str> {
+        self.phone_number.as_deref()
+    }
+
+    fn email(&self) -> Option<&str> {
+        self.email.as_deref()
+    }
+
+    fn line_length(&self) -> u32 {
+        self.line_length
+    }
+
+    fn ansi_colour(&self) -> bool {
+        self.ansi_colour.enabled()
+    }
+
+    fn account_created(&self) -> SystemTime {
+        self.account_created
+    }
+
+    fn flags(&self) -> &BTreeSet<UserFlag> {
+        &self.flags
+    }
+}
+
+/// Ratio enforcement settings for a [`User`].
+#[derive(Debug, Clone)]
+struct RatioPolicy {
+    /// Active ratio enforcement mode.
+    mode: RatioMode,
+    /// Ratio threshold (`0` means infinite for an enabled mode).
+    value: u32,
+}
+
+impl RatioPolicy {
+    /// Constructs a disabled ratio policy.
+    fn disabled() -> Self {
+        Self {
+            mode: RatioMode::Disabled,
+            value: 0,
+        }
+    }
+
+    /// Constructs a ratio policy from registration/default config.
+    fn new(mode: RatioMode, value: u32) -> Self {
+        Self { mode, value }
+    }
+
+    fn mode(&self) -> RatioMode {
+        self.mode
+    }
+
+    fn value(&self) -> u32 {
+        self.value
+    }
+}
+
+/// Conference memberships, current position, and messaging counters.
+#[derive(Debug, Clone)]
+struct ConferenceAccess {
+    /// Per-conference membership rows.
+    memberships: Vec<ConferenceMembership>,
+    /// Last joined `(conference, msgbase)` pair.
+    last_joined: Option<MessageBaseRef>,
+    /// Running count of posted messages across all conferences.
+    messages_posted: u32,
+}
+
+impl ConferenceAccess {
+    /// Constructs an empty conference-access record.
+    fn new() -> Self {
+        Self {
+            memberships: Vec::new(),
+            last_joined: None,
+            messages_posted: 0,
+        }
+    }
+
+    fn memberships(&self) -> &[ConferenceMembership] {
+        &self.memberships
+    }
+
+    fn memberships_mut(&mut self) -> &mut [ConferenceMembership] {
+        &mut self.memberships
+    }
+
+    fn upsert_membership(&mut self, membership: ConferenceMembership) {
+        if let Some(existing) = self
+            .memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == membership.conference_number())
+        {
+            *existing = membership;
+        } else {
+            self.memberships.push(membership);
+        }
+    }
+
+    fn set_membership_granted(&mut self, conference_number: u32, granted: bool) -> bool {
+        if let Some(existing) = self
+            .memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == conference_number)
+        {
+            existing.set_granted(granted);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn has_membership(&self, conference: &Conference) -> bool {
+        crate::domain::conference::has_membership(&self.memberships, conference)
+    }
+
+    fn has_granted_membership_for(&self, conference_number: u32) -> bool {
+        self.memberships
+            .iter()
+            .any(|m| m.conference_number() == conference_number && m.is_granted())
+    }
+
+    fn last_joined(&self) -> Option<MessageBaseRef> {
+        self.last_joined
+    }
+
+    fn record_join(&mut self, conference: &Conference, msgbase: &MessageBase) {
+        self.last_joined = Some(MessageBaseRef::new(conference.number(), msgbase.number()));
+    }
+
+    fn read_pointers_for(&self, msgbase: MessageBaseRef) -> Option<&ReadPointers> {
+        self.memberships
+            .iter()
+            .find(|m| m.conference_number() == msgbase.conference_number())
+            .and_then(|m| m.pointers_for(msgbase.msgbase_number()))
+    }
+
+    fn read_pointers_for_mut(&mut self, msgbase: MessageBaseRef) -> Option<&mut ReadPointers> {
+        self.memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == msgbase.conference_number())
+            .and_then(|m| m.pointers_for_mut(msgbase.msgbase_number()))
+    }
+
+    fn upsert_read_pointers(&mut self, pointers: ReadPointers, conference_number: u32) -> bool {
+        let Some(membership) = self
+            .memberships
+            .iter_mut()
+            .find(|m| m.conference_number() == conference_number)
+        else {
+            return false;
+        };
+        membership.upsert_pointers(pointers);
+        true
+    }
+
+    fn messages_posted(&self) -> u32 {
+        self.messages_posted
+    }
+
+    fn bump_messages_posted(&mut self) {
+        self.messages_posted = self.messages_posted.saturating_add(1);
+    }
+}
+
 /// A registered BBS user.
 ///
 /// Construct via [`User::new`], which enforces the
@@ -278,28 +646,12 @@ impl From<bool> for AnsiColourPreference {
 pub struct User {
     slot_number: u32,
     handle: String,
-    password_hash_kind: PasswordHashKind,
-    password_hash: String,
-    password_salt: Option<String>,
-    password_last_updated: SystemTime,
-    access_level: u8,
-    invalid_attempts: u32,
-    account_lock: AccountLockState,
+    credentials: Credentials,
+    account: AccountStatus,
     usage: UsageAccounting,
-    password_reset: PasswordResetRequirement,
-    validation_status: AccountValidationStatus,
-    location: Option<String>,
-    phone_number: Option<String>,
-    email: Option<String>,
-    line_length: u32,
-    ansi_colour: AnsiColourPreference,
-    account_created: SystemTime,
-    flags: BTreeSet<UserFlag>,
-    ratio_mode: RatioMode,
-    ratio_value: u32,
-    memberships: Vec<ConferenceMembership>,
-    last_joined: Option<MessageBaseRef>,
-    messages_posted: u32,
+    profile: Profile,
+    ratio: RatioPolicy,
+    conferences: ConferenceAccess,
 }
 
 impl User {
@@ -327,34 +679,21 @@ impl User {
         password_last_updated: SystemTime,
         access_level: u8,
     ) -> Result<Self, UserError> {
-        if requires_salt(password_hash_kind) && password_salt.is_none() {
-            return Err(UserError::SaltRequired);
-        }
-        Ok(Self {
-            slot_number,
-            handle,
+        let credentials = Credentials::new(
             password_hash_kind,
             password_hash,
             password_salt,
             password_last_updated,
-            access_level,
-            invalid_attempts: 0,
-            account_lock: AccountLockState::Unlocked,
+        )?;
+        Ok(Self {
+            slot_number,
+            handle,
+            credentials,
+            account: AccountStatus::existing(access_level),
             usage: UsageAccounting::new(),
-            password_reset: PasswordResetRequirement::NotRequired,
-            validation_status: AccountValidationStatus::Existing,
-            location: None,
-            phone_number: None,
-            email: None,
-            line_length: 0,
-            ansi_colour: AnsiColourPreference::Disabled,
-            account_created: password_last_updated,
-            flags: BTreeSet::new(),
-            ratio_mode: RatioMode::Disabled,
-            ratio_value: 0,
-            memberships: Vec::new(),
-            last_joined: None,
-            messages_posted: 0,
+            profile: Profile::existing(password_last_updated),
+            ratio: RatioPolicy::disabled(),
+            conferences: ConferenceAccess::new(),
         })
     }
 
@@ -392,34 +731,24 @@ impl User {
             ratio_value,
             now,
         } = profile;
-        if requires_salt(password_hash_kind) && password_salt.is_none() {
-            return Err(UserError::SaltRequired);
-        }
+        let credentials = Credentials::new(password_hash_kind, password_hash, password_salt, now)?;
         Ok(Self {
             slot_number,
             handle,
-            password_hash_kind,
-            password_hash,
-            password_salt,
-            password_last_updated: now,
-            access_level: 2,
-            invalid_attempts: 0,
-            account_lock: AccountLockState::Unlocked,
+            credentials,
+            account: AccountStatus::awaiting_validation(),
             usage: UsageAccounting::for_fresh_registration(now),
-            password_reset: PasswordResetRequirement::NotRequired,
-            validation_status: AccountValidationStatus::AwaitingSysopValidation,
-            location,
-            phone_number,
-            email,
-            line_length,
-            ansi_colour: AnsiColourPreference::from(ansi_colour),
-            account_created: now,
-            flags,
-            ratio_mode,
-            ratio_value,
-            memberships: Vec::new(),
-            last_joined: None,
-            messages_posted: 0,
+            profile: Profile::registered(
+                location,
+                phone_number,
+                email,
+                line_length,
+                ansi_colour,
+                now,
+                flags,
+            ),
+            ratio: RatioPolicy::new(ratio_mode, ratio_value),
+            conferences: ConferenceAccess::new(),
         })
     }
 
@@ -445,39 +774,39 @@ impl User {
     /// Returns the algorithm used to verify the stored password hash.
     #[must_use]
     pub fn password_hash_kind(&self) -> PasswordHashKind {
-        self.password_hash_kind
+        self.credentials.hash_kind()
     }
 
     /// Returns the opaque stored password hash.
     #[must_use]
     pub fn password_hash(&self) -> &str {
-        &self.password_hash
+        self.credentials.hash()
     }
 
     /// Returns the salt the stored password hash was bound to, if the
     /// algorithm uses one.
     #[must_use]
     pub fn password_salt(&self) -> Option<&str> {
-        self.password_salt.as_deref()
+        self.credentials.salt()
     }
 
     /// Returns the number of recent invalid password attempts. Cleared
     /// to zero when the account is locked or a successful login lands.
     #[must_use]
     pub fn invalid_attempts(&self) -> u32 {
-        self.invalid_attempts
+        self.account.invalid_attempts()
     }
 
     /// Returns whether the account is currently locked out.
     #[must_use]
     pub fn is_account_locked(&self) -> bool {
-        self.account_lock.is_locked()
+        self.account.is_account_locked()
     }
 
     /// Returns the user's access tier (`0..=255`).
     #[must_use]
     pub fn access_level(&self) -> u8 {
-        self.access_level
+        self.account.access_level()
     }
 
     /// Spec-derived predicate (`core.allium:User.is_locked_out`,
@@ -489,26 +818,25 @@ impl User {
     /// independently set `account_locked` flag, qualifies.
     #[must_use]
     pub fn is_locked_out(&self) -> bool {
-        self.access_level <= 1 || self.is_account_locked()
+        self.account.is_locked_out()
     }
 
     /// Increments [`Self::invalid_attempts`] by one. Used by
     /// `session.allium:VerifyPassword` (Slice 11) when a candidate
     /// fails to match.
     pub fn bump_invalid_attempts(&mut self) {
-        self.invalid_attempts = self.invalid_attempts.saturating_add(1);
+        self.account.bump_invalid_attempts();
     }
 
     /// Resets [`Self::invalid_attempts`] to zero.
     pub fn clear_invalid_attempts(&mut self) {
-        self.invalid_attempts = 0;
+        self.account.clear_invalid_attempts();
     }
 
     /// Marks the account as locked and resets `invalid_attempts` to
     /// preserve the spec's `LockoutClearsAttempts` invariant.
     pub fn lock_account(&mut self) {
-        self.account_lock = AccountLockState::Locked;
-        self.invalid_attempts = 0;
+        self.account.lock_account();
     }
 
     /// Returns the number of completed logons recorded for this user.
@@ -601,7 +929,7 @@ impl User {
     /// expiry against `core/config.password_expiry_days` (Slice 15).
     #[must_use]
     pub fn password_last_updated(&self) -> SystemTime {
-        self.password_last_updated
+        self.credentials.last_updated()
     }
 
     /// Returns whether the next logon must force the user through the
@@ -610,14 +938,14 @@ impl User {
     /// `CompletePasswordReset`.
     #[must_use]
     pub fn force_password_reset(&self) -> bool {
-        self.password_reset.is_required()
+        self.credentials.reset_required()
     }
 
     /// Sets [`Self::force_password_reset`]. Used by
     /// `session.allium:ForcePasswordReset` (Slice 15) and by sysop
     /// admin tooling.
     pub fn set_force_password_reset(&mut self, value: bool) {
-        self.password_reset = PasswordResetRequirement::from(value);
+        self.credentials.set_reset_required(value);
     }
 
     /// Returns whether this account is awaiting sysop validation
@@ -627,7 +955,7 @@ impl User {
     /// Phase 5.
     #[must_use]
     pub fn is_new_user(&self) -> bool {
-        self.validation_status.is_new_user()
+        self.account.is_new_user()
     }
 
     /// Returns whether this user has the given access [`Right`]
@@ -655,50 +983,50 @@ impl User {
     /// Returns the user's free-text "City, State" location, if any.
     #[must_use]
     pub fn location(&self) -> Option<&str> {
-        self.location.as_deref()
+        self.profile.location()
     }
 
     /// Returns the user's phone number on file, if any.
     #[must_use]
     pub fn phone_number(&self) -> Option<&str> {
-        self.phone_number.as_deref()
+        self.profile.phone_number()
     }
 
     /// Returns the user's email address on file, if any.
     #[must_use]
     pub fn email(&self) -> Option<&str> {
-        self.email.as_deref()
+        self.profile.email()
     }
 
     /// Returns the user's preferred terminal width (`0` = auto).
     #[must_use]
     pub fn line_length(&self) -> u32 {
-        self.line_length
+        self.profile.line_length()
     }
 
     /// Returns whether the user wants ANSI colour output.
     #[must_use]
     pub fn ansi_colour(&self) -> bool {
-        self.ansi_colour.enabled()
+        self.profile.ansi_colour()
     }
 
     /// Returns the timestamp the account was first created.
     #[must_use]
     pub fn account_created(&self) -> SystemTime {
-        self.account_created
+        self.profile.account_created()
     }
 
     /// Returns the user's preference flags
     /// (`core.allium:User.flags`).
     #[must_use]
     pub fn flags(&self) -> &BTreeSet<UserFlag> {
-        &self.flags
+        self.profile.flags()
     }
 
     /// Returns the ratio enforcement mode in effect for this user.
     #[must_use]
     pub fn ratio_mode(&self) -> RatioMode {
-        self.ratio_mode
+        self.ratio.mode()
     }
 
     /// Returns the configured ratio threshold (e.g. `3` = three
@@ -706,14 +1034,14 @@ impl User {
     /// infinite.
     #[must_use]
     pub fn ratio_value(&self) -> u32 {
-        self.ratio_value
+        self.ratio.value()
     }
 
     /// Returns the user's per-conference membership rows
     /// (`core.allium:User.memberships`).
     #[must_use]
     pub fn memberships(&self) -> &[ConferenceMembership] {
-        &self.memberships
+        self.conferences.memberships()
     }
 
     /// Returns a mutable slice over the user's per-conference
@@ -721,7 +1049,7 @@ impl User {
     /// to bump the per-membership `messages_posted` counter without
     /// dropping the surrounding borrow on `self`.
     pub fn memberships_mut(&mut self) -> &mut [ConferenceMembership] {
-        &mut self.memberships
+        self.conferences.memberships_mut()
     }
 
     /// Adds a [`ConferenceMembership`] row, replacing any existing
@@ -730,15 +1058,7 @@ impl User {
     /// `conferences.allium:SysopGrantsConferenceAccess`'s "create new
     /// row" branch and by adapters seeding a user record.
     pub fn upsert_membership(&mut self, membership: ConferenceMembership) {
-        if let Some(existing) = self
-            .memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == membership.conference_number())
-        {
-            *existing = membership;
-        } else {
-            self.memberships.push(membership);
-        }
+        self.conferences.upsert_membership(membership);
     }
 
     /// Toggles the `granted` flag on the membership for
@@ -750,23 +1070,15 @@ impl User {
     /// caller can decide whether to create one (grant) or surface an
     /// error (revoke).
     pub fn set_membership_granted(&mut self, conference_number: u32, granted: bool) -> bool {
-        if let Some(existing) = self
-            .memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == conference_number)
-        {
-            existing.set_granted(granted);
-            true
-        } else {
-            false
-        }
+        self.conferences
+            .set_membership_granted(conference_number, granted)
     }
 
     /// Returns `true` when the user has a granted membership for
     /// `conference` (spec: `conferences.allium:has_membership`).
     #[must_use]
     pub fn has_membership(&self, conference: &Conference) -> bool {
-        crate::domain::conference::has_membership(&self.memberships, conference)
+        self.conferences.has_membership(conference)
     }
 
     /// Returns `true` when the user holds a granted membership row for
@@ -783,9 +1095,8 @@ impl User {
     /// [`crate::domain::messaging::post_mail::post_mail`].
     #[must_use]
     pub fn has_granted_membership_for(&self, conference_number: u32) -> bool {
-        self.memberships
-            .iter()
-            .any(|m| m.conference_number() == conference_number && m.is_granted())
+        self.conferences
+            .has_granted_membership_for(conference_number)
     }
 
     /// Returns the user's last-joined (conference, msgbase) pair, if
@@ -796,13 +1107,13 @@ impl User {
     /// be violated by setting one without the other.
     #[must_use]
     pub fn last_joined(&self) -> Option<MessageBaseRef> {
-        self.last_joined
+        self.conferences.last_joined()
     }
 
     /// Records that the user joined `msgbase` inside `conference`.
     /// Used by `conferences.allium:JoinConference` (Slice 30).
     pub fn record_join(&mut self, conference: &Conference, msgbase: &MessageBase) {
-        self.last_joined = Some(MessageBaseRef::new(conference.number(), msgbase.number()));
+        self.conferences.record_join(conference, msgbase);
     }
 
     /// Returns the [`ReadPointers`] row this user holds for `msgbase`,
@@ -817,20 +1128,14 @@ impl User {
     /// equivalently — they lazily create a fresh row before mutating.
     #[must_use]
     pub fn read_pointers_for(&self, msgbase: MessageBaseRef) -> Option<&ReadPointers> {
-        self.memberships
-            .iter()
-            .find(|m| m.conference_number() == msgbase.conference_number())
-            .and_then(|m| m.pointers_for(msgbase.msgbase_number()))
+        self.conferences.read_pointers_for(msgbase)
     }
 
     /// Returns a mutable reference to the [`ReadPointers`] row for
     /// `msgbase`, if any. Same lookup semantics as
     /// [`Self::read_pointers_for`].
     pub fn read_pointers_for_mut(&mut self, msgbase: MessageBaseRef) -> Option<&mut ReadPointers> {
-        self.memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == msgbase.conference_number())
-            .and_then(|m| m.pointers_for_mut(msgbase.msgbase_number()))
+        self.conferences.read_pointers_for_mut(msgbase)
     }
 
     /// Inserts or replaces a [`ReadPointers`] row for `msgbase` on the
@@ -841,28 +1146,21 @@ impl User {
     /// which case the caller should refuse the operation — the spec's
     /// `read_message` precondition implies the user has access).
     pub fn upsert_read_pointers(&mut self, pointers: ReadPointers, conference_number: u32) -> bool {
-        let Some(membership) = self
-            .memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == conference_number)
-        else {
-            return false;
-        };
-        membership.upsert_pointers(pointers);
-        true
+        self.conferences
+            .upsert_read_pointers(pointers, conference_number)
     }
 
     /// Returns the running count of messages this user has posted
     /// across all conferences (spec: `core.allium:User.messages_posted`).
     #[must_use]
     pub fn messages_posted(&self) -> u32 {
-        self.messages_posted
+        self.conferences.messages_posted()
     }
 
     /// Increments [`Self::messages_posted`] by one. Used by
     /// `messaging.allium:PostMail` (Slice 42).
     pub fn bump_messages_posted(&mut self) {
-        self.messages_posted = self.messages_posted.saturating_add(1);
+        self.conferences.bump_messages_posted();
     }
 
     /// Atomically replaces the user's stored credentials and clears
@@ -888,11 +1186,7 @@ impl User {
         kind: PasswordHashKind,
         at: SystemTime,
     ) {
-        self.password_hash = hash;
-        self.password_salt = salt;
-        self.password_hash_kind = kind;
-        self.password_last_updated = at;
-        self.password_reset = PasswordResetRequirement::NotRequired;
+        self.credentials.record_change(hash, salt, kind, at);
     }
 }
 
@@ -1189,6 +1483,19 @@ mod tests {
         assert_eq!(user.ratio_mode(), RatioMode::ByFiles);
         assert_eq!(user.ratio_value(), 3);
         assert!(user.flags().is_empty());
+    }
+
+    #[test]
+    fn register_new_preserves_profile_flags() {
+        let mut profile = registration();
+        profile.flags.insert(UserFlag::ShowNewUserMessage);
+        profile.flags.insert(UserFlag::EditorPrompts);
+
+        let user = User::register_new(profile).expect("valid");
+
+        assert_eq!(user.flags().len(), 2);
+        assert!(user.flags().contains(&UserFlag::ShowNewUserMessage));
+        assert!(user.flags().contains(&UserFlag::EditorPrompts));
     }
 
     #[test]

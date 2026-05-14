@@ -261,12 +261,18 @@ repository port shape were sharpened in recent refactorings:
   `conferencing`, `budget`, `lockout`, `conference_activity`, `log_format`,
   `outcomes`, `errors`, and `transitions`. `domain/session/mod.rs` now holds
   the state shape, shared accessors, core phase moves, and public re-exports.
+- `domain::User` remains the aggregate root, but its internal state is grouped
+  into private value objects: `Credentials`, `AccountStatus`,
+  `UsageAccounting`, `Profile`, `RatioPolicy`, and `ConferenceAccess`. The
+  public `User` API still exposes the spec-oriented accessors used by rules
+  and adapters.
 
 The remaining concentration-of-responsibility hotspots are:
 
-- `domain/user.rs` is the user aggregate, but it is accumulating credentials,
-  lockout, time accounting, profile data, access rights, ratios, and
-  conference membership state.
+- `domain/user.rs` is still a large file because the aggregate, its private
+  value objects, and its tests live together. That is acceptable while storage
+  design is settling, but the value objects can move into `domain/user/*`
+  modules if the file becomes painful to review.
 - `domain/session/tests.rs` remains a large cross-capability test module. It
   is grouped internally, but future session changes may benefit from moving
   tests closer to the capability modules they exercise.
@@ -277,31 +283,7 @@ The remaining concentration-of-responsibility hotspots are:
 
 ## Recommended Refactorings
 
-### 1. Break `User` into internal value objects
-
-`domain::User` is becoming a broad aggregate. It currently holds identity,
-credentials, lockout state, access tier, contact profile, terminal
-preferences, time accounting, ratio settings, conference memberships, and
-last-joined state.
-
-Keep `User` as the aggregate root, but internally group data and behavior into
-small value objects:
-
-- `Credentials`: hash kind, hash, salt, last updated, password-reset flag.
-- `AccountStatus`: access level, lock state, validation status, invalid
-  attempts.
-- `UsageAccounting`: calls, last call, daily counters, time limits.
-- `Profile`: location, phone, email, line length, ANSI preference, flags.
-- `ConferenceAccess`: memberships and last joined message base.
-- `RatioPolicy`: mode and value.
-
-Why this is better:
-
-- future file/message/ratio/admin slices will not all edit one large struct;
-- invariants can live near the data they protect;
-- persistence adapters get clearer mapping boundaries.
-
-### 2. Introduce a real user-store adapter before more account features
+### 1. Introduce a real user-store adapter before more account features
 
 The runtime currently always seeds an in-memory sysop and warns that
 production needs a real user store. That is fine for early slices, but account
@@ -324,7 +306,7 @@ Why this is better:
 - storage format decisions are made while the account model is still small
   enough to reshape.
 
-### 3. Finish the smaller `Session` cleanup opportunistically
+### 2. Finish the smaller `Session` cleanup opportunistically
 
 The high-value `Session` capability split is done. The remaining work is lower
 priority and should ride along with future slices that already touch the area:
@@ -337,7 +319,7 @@ priority and should ride along with future slices that already touch the area:
   services unless a new Allium slice has behavior that does not naturally
   belong to one session.
 
-### 4. Extract menu use cases from effectful handlers
+### 3. Extract menu use cases from effectful handlers
 
 `app::menu_command` now removes parsing pressure from `MenuFlow`, but
 `MenuFlow` still owns the full command effect for read, scan, post, and join:
@@ -361,12 +343,10 @@ Why this is better:
 
 ## Suggested Order
 
-1. Break `User` internally as the next account, ratio, file, or admin slices
-   touch those fields.
-2. Add a durable user repository before building more account/admin behavior.
-3. Finish the smaller `Session` state/test cleanup only when future session
+1. Add a durable user repository before building more account/admin behavior.
+2. Finish the smaller `Session` state/test cleanup only when future session
    slices make the current layout painful.
-4. Extract menu use cases as the next messaging/admin commands land.
+3. Extract menu use cases as the next messaging/admin commands land.
 
 ## Refactorings Not Worth Prioritising Yet
 
