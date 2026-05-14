@@ -46,16 +46,16 @@ Same posture as [FILES.md](./FILES.md):
 ### No in-memory user cache in v1
 
 The user-storage access pattern is dominated by a session reading and
-writing **its own** user record. This is not a high-concurrency hot
-path:
+issuing narrow updates against its associated user id. This is not a
+high-concurrency hot path:
 
 - Login: one lookup by handle, one password verify. Once per session.
 - Per-session reads: fields like `ratio_mode`, `time_remaining_today`,
   `daily_byte_limit`. SQLite point lookups at 10–50 µs apiece are well
   below the latency floor of a telnet round-trip.
 - Per-session writes: counter bumps on download completion, time used
-  on tick, `last_call`/`times_called` at session end. All single-row
-  updates against the writer connection.
+  on tick, `last_call`/`times_called` at session end. These are narrow
+  single-row updates against the writer connection.
 
 Cross-session reads (sysop "list users", "who has access to X") are rare
 and tolerate millisecond latency.
@@ -64,6 +64,29 @@ A `DashMap`-of-`UserCell` layer on top would buy nothing measurable at
 this scale and would introduce cache coherency questions (sysop edits
 during an active session, multi-node logins for the same user). Don't
 build it speculatively.
+
+### Multiple sessions per user are supported
+
+Future FTPD support makes same-user concurrency a normal case: a user may
+have an interactive BBS session and one or more FTP transfer sessions
+open at the same time. Storage must therefore treat the session's `User`
+value as a snapshot for presentation and local policy decisions, not as an
+owned record that can be saved wholesale.
+
+The adapter exposes command-style writes:
+
+- **Additive counters** use deltas (`SET col = col + ?`) for byte totals,
+  time used, call counts, message counts, and membership accounting.
+- **Monotonic pointers/timestamps** use guarded writes such as
+  `MAX(existing, new)` where moving backwards would be wrong.
+- **Security and authorisation fields** are immediate authoritative
+  writes and are re-read before security-sensitive operations.
+- **Preferences** are field patches. Last-writer-wins is acceptable for
+  cosmetic fields, but broad whole-row session saves are forbidden.
+
+This keeps concurrent sessions commutative where possible. SQLite's
+single writer serialises the commands; the command shape ensures the
+later command composes with the earlier one instead of overwriting it.
 
 ### Write policy by field
 
@@ -75,16 +98,19 @@ and deferred write paths so the domain can choose:
 | `password_hash`, `password_hash_kind`, `password_salt`, `password_last_updated` | Immediate, `synchronous = FULL` for this commit | Security boundary; must survive crash |
 | `account_locked`, `invalid_attempts`, `force_password_reset` | Immediate | Lockout policy depends on durability |
 | `access_level`, `is_new_user`, `censored` | Immediate | Authorisation decisions |
-| `bytes_downloaded_total`, `daily_bytes_downloaded` | On `CompleteDownload` | Ratio enforcement on next login depends on it |
-| `bytes_uploaded_total` | On `CompleteUpload` | Same |
-| `time_used_today`, `time_remaining_today` | On session tick or end-of-session | Cheap, but not security-critical |
-| `last_call`, `times_called`, `times_called_today` | End-of-session | One write per session is enough |
-| Display prefs (`expert_mode`, `line_length`, `ansi_colour`, `flags`, …) | End-of-session | Cosmetic |
+| `bytes_downloaded_total`, `daily_bytes_downloaded` | Additive delta from completed transfer | Ratio enforcement and FTPD concurrency |
+| `daily_bytes_reserved` | Reserve/release around in-flight downloads | Strict daily caps across concurrent sessions |
+| `bytes_uploaded_total` | Additive delta from completed transfer | Same |
+| `time_used_today` | Add elapsed delta on tick or end-of-session | Concurrent sessions compose |
+| `times_called`, `times_called_today` | Additive delta at logon/menu entry | One increment per successful call |
+| `last_call` | Monotonic `MAX(last_call, at)` at logoff | Older session ending late must not move it backwards |
+| Display prefs (`expert_mode`, `line_length`, `ansi_colour`, `flags`, …) | End-of-session patch | Cosmetic; last writer wins unless versioning is needed |
 | `last_joined_conference`, `last_joined_msgbase` | End-of-session | Restored on next login |
 
 A small in-process **session-end flush queue** batches the deferred
-writes into one transaction at logoff. Crash before flush loses at most
-one session's cosmetic state.
+writes into one transaction at logoff. The queue stores patches and
+deltas, never a full `User` snapshot. Crash before flush loses at most
+one session's cosmetic state and unflushed time delta.
 
 ### Login lookup goes through SQLite, not a cached index
 
@@ -137,6 +163,7 @@ CREATE TABLE users (
     time_limit_per_call_secs    INTEGER NOT NULL DEFAULT 0,
     time_limit_per_day_secs     INTEGER NOT NULL DEFAULT 0,
     time_used_today_secs        INTEGER NOT NULL DEFAULT 0,
+    daily_accounting_day        INTEGER NOT NULL DEFAULT 0,
     times_called                INTEGER NOT NULL DEFAULT 0,
     times_called_today          INTEGER NOT NULL DEFAULT 0,
     last_call                   INTEGER,
@@ -146,6 +173,7 @@ CREATE TABLE users (
     bytes_uploaded_total        INTEGER NOT NULL DEFAULT 0,
     daily_byte_limit            INTEGER NOT NULL DEFAULT 0,
     daily_bytes_downloaded      INTEGER NOT NULL DEFAULT 0,
+    daily_bytes_reserved        INTEGER NOT NULL DEFAULT 0,
 
     messages_posted             INTEGER NOT NULL DEFAULT 0,
 
@@ -160,6 +188,7 @@ CREATE TABLE users (
     ansi_colour                 INTEGER NOT NULL DEFAULT 1,
     preferred_protocol          TEXT    NOT NULL DEFAULT 'zmodem',
     flags                       INTEGER NOT NULL DEFAULT 0,  -- bitmask of UserFlag
+    preferences_version         INTEGER NOT NULL DEFAULT 0,
 
     -- Embedded credit account (nullable group).
     credit_days                 INTEGER,
@@ -219,27 +248,38 @@ CREATE INDEX idx_user_events_user_at ON user_events (user_id, at DESC);
 | Login (handle → user) | `SELECT … WHERE handle_folded = ?` | `UNIQUE (handle_folded)` |
 | Sysop reference by slot | `SELECT … WHERE slot_number = ?` | `idx_users_slot` |
 | Per-session reads | `SELECT … WHERE id = ?` | PK |
-| Counter updates | `UPDATE users SET … WHERE id = ?` | PK |
+| Counter updates | `UPDATE users SET col = col + ? WHERE id = ?` | PK |
+| Daily byte reservation | guarded `UPDATE ... SET daily_bytes_reserved = daily_bytes_reserved + ?` | PK |
 | Sysop list users | paginated `SELECT … ORDER BY slot_number` | full scan or `idx_users_slot` |
-| Daily reset | `UPDATE users SET daily_bytes_downloaded = 0, time_used_today_secs = 0, times_called_today = 0` | full scan, runs once per user on first login of day |
+| Daily reset | guarded reset by `daily_accounting_day` | PK per user, idempotent |
 | Membership lookup for ratios / accounting | `SELECT … WHERE user_id = ? AND conference_id = ?` | `UNIQUE (user_id, conference_id)` |
 | Mail scan | `SELECT … WHERE membership_id = ? AND msgbase_id = ?` | `UNIQUE (membership_id, msgbase_id)` |
 | Audit lookup for an account | `SELECT … FROM user_events WHERE user_id = ? ORDER BY at DESC` | `idx_user_events_user_at` |
 
 ## Concurrency
 
-- **One session per user is the common case.** Per-session reads and
-  writes against the writer connection serialise naturally.
-- **Two sessions for the same user is allowed by the spec.** Both go
-  through the same writer connection; SQLite serialises writes, so
-  byte-counter updates from concurrent downloads compose correctly
-  (each is `UPDATE … SET col = col + ?`). Reads see a consistent
-  snapshot per transaction.
+- **Multiple sessions for the same user are supported.** This includes an
+  interactive session plus future FTP sessions. Per-session reads may use
+  a snapshot, but persistent writes must be deltas or field patches.
+- **Whole-user session saves are forbidden.** A session must not write a
+  hydrated `User` back to SQLite at logoff. That would let an older
+  session overwrite a newer session's counters, sysop edits, or FTP
+  accounting.
+- **Additive updates compose.** Byte totals, time used, call counts,
+  message counts, and membership counters use `UPDATE … SET col = col + ?`.
+  SQLite serialises the writer transactions; the arithmetic is
+  commutative across sessions.
+- **Daily reset is guarded.** The reset uses `daily_accounting_day` so two
+  sessions crossing the same day boundary cannot both reset counters after
+  the other has started adding usage.
+- **Strict daily byte limits use reservations.** A transfer reserves
+  billable bytes before it starts and releases or converts the reservation
+  at completion. Without this, parallel FTP transfers could all pass the
+  same stale eligibility check.
 - **Sysop edits during an active session** land in SQLite immediately.
-  The owning session reads the new values on its next query — no
-  invalidation protocol needed because there is no cache to invalidate.
-- **Daily reset** is one `UPDATE` against all users. Cheap, runs in a
-  single writer transaction.
+  Security-sensitive operations re-read current authorisation state before
+  acting; no invalidation protocol is needed because there is no cache to
+  invalidate.
 
 ## Adapter layout
 
@@ -257,20 +297,23 @@ SQLite implementation is the production adapter. The
 `UserRepository` port grows methods that reflect the write-policy
 distinction:
 
-- `save_security_state(&User)` — immediate, `synchronous = FULL`
-- `save_session_counters(&User)` — immediate, normal sync
-- `save_session_end(&User)` — batched at logoff
+- `save_security_state(SecurityPatch)` — immediate, `synchronous = FULL`
+- `reset_daily_if_needed(user_id, accounting_day)` — guarded/idempotent
+- `record_logon(user_id, session_id, at, accounting_day)` — additive call counters
+- `add_time_used(user_id, session_id, elapsed)` — additive time delta
+- `reserve_daily_download_bytes(user_id, transfer_id, accounting_day, bytes)` — guarded reservation
+- `release_daily_download_reservation(user_id, transfer_id, bytes)` — additive negative reservation
+- `apply_transfer_accounting(delta)` — additive projection update from one completed transfer
+- `advance_read_pointer(user_id, msgbase_id, pointer)` — monotonic pointer update
+- `save_preferences_patch(user_id, patch)` — field patch, optionally version checked
 - `find_by_handle(&str)`, `find_by_id(UserId)`, `find_by_slot(u32)`,
   `list(...)` — reads
 
 ## Things to nail down
 
-- **Concurrent same-user logins.** Spec doesn't forbid them. Decide
-  whether to refuse the second login, displace the first, or allow
-  both. Allowing both is straightforward at the storage layer (writes
-  serialise), but has user-visible implications (whose `last_call`
-  wins? do byte counters race?). Default suggestion: allow, document,
-  let counter `UPDATE … SET col = col + ?` handle the arithmetic.
+- **Preference conflict UX.** Last-writer-wins is safe for cosmetic
+  preferences, but the sysop editor may want optimistic version checks so
+  it can warn before overwriting an active session's preference patch.
 - **Audit log retention.** `user_events` will grow without bound. Add a
   rolling window (e.g. 1 year) or let the sysop prune.
 - **Schema migrations.** Pick an approach now (`refinery`, hand-rolled

@@ -92,10 +92,11 @@ descriptions in one or more areas. SQLite's FTS5 with the **`trigram`
 tokenizer** gives us substring `MATCH` queries directly:
 
 ```sql
-SELECT file_id
+SELECT f.id
 FROM files_fts
+JOIN files AS f ON f.id = files_fts.rowid
 WHERE files_fts MATCH ?
-  AND area_id IN (...);
+  AND f.area_id IN (...);
 ```
 
 Substring "graph" decomposes into trigrams `gra`, `rap`, `aph`; FTS5
@@ -174,8 +175,7 @@ CREATE TABLE transfers (
     reserved_billable_bytes INTEGER NOT NULL DEFAULT 0,
     cps             INTEGER NOT NULL DEFAULT 0,
     outcome         TEXT,                     -- TransferOutcome enum, null until finished
-    is_free_download INTEGER NOT NULL DEFAULT 0,
-    accounting_applied INTEGER NOT NULL DEFAULT 0
+    is_free_download INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_transfers_user_started ON transfers (user_id, started_at DESC);
@@ -255,7 +255,9 @@ the queries the domain actually uses.
   one-shot ingest? Affects whether `legacy_dir.rs` needs a serialiser.
 - **`Transfer` retention.** The table grows unboundedly across years.
   Add a retention policy (or partition column) up front rather than
-  after we hit 10M rows.
+  after we hit 10M rows. If old transfer rows are pruned, persist a
+  compacted baseline so user and membership projections can still be
+  audited or rebuilt.
 - **Open question from the spec:** `FlaggedFile` is per-session today
   but the legacy code persists it across sessions for the same user.
   If we follow the legacy behaviour, flagged files become a small
