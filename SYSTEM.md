@@ -246,7 +246,11 @@ repository port shape were sharpened in recent refactorings:
   cannot bypass the menu/onboarded phase guarantees.
 - `app::menu_command` owns effect-free parsing for `G`, `J`, `R`, `M`, `N`,
   and `E` command lines. `MenuFlow` switches on the typed command and keeps
-  only the terminal/session/repository effects.
+  the terminal prompt/render loop.
+- `app::menu::{read_mail, scan_mail, post_mail, join}` owns the terminal-free
+  command use cases for the menu. These modules resolve repositories/stores,
+  call the typed session/domain rules, and return renderable outcome enums.
+  `MenuFlow` now collects prompts and maps those outcomes to wire text.
 - `app::terminal::{read_prompted, write_and_flush}` centralise the common
   prompt/flush/read pattern shared by login, registration, and menu flows.
 - `UserRepository::allocate_slot_and_create` is the single atomic registration
@@ -319,34 +323,13 @@ priority and should ride along with future slices that already touch the area:
   services unless a new Allium slice has behavior that does not naturally
   belong to one session.
 
-### 3. Extract menu use cases from effectful handlers
-
-`app::menu_command` now removes parsing pressure from `MenuFlow`, but
-`MenuFlow` still owns the full command effect for read, scan, post, and join:
-it resolves repositories, locks stores, calls typed session operations, and
-maps every outcome to wire text.
-
-Refactor toward small app-level use cases such as:
-
-- `menu/read_mail.rs`: resolve store, load/read/save mail, return a renderable
-  outcome enum;
-- `menu/scan_mail.rs`: resolve store, scan, return summary data;
-- `menu/post_mail.rs`: collect already-entered fields, resolve recipient,
-  call the post rule, return a post outcome enum;
-- `menu/join.rs`: run explicit join plus scan-on-join orchestration.
-
-Why this is better:
-
-- each command can be tested without a terminal loop;
-- `MenuFlow` becomes only prompt orchestration and wire rendering;
-- future commands do not make one menu module grow without bound.
-
 ## Suggested Order
 
 1. Add a durable user repository before building more account/admin behavior.
 2. Finish the smaller `Session` state/test cleanup only when future session
    slices make the current layout painful.
-3. Extract menu use cases as the next messaging/admin commands land.
+3. Keep new menu commands following the `app::menu` use-case pattern rather
+   than adding store/repository effects back into `MenuFlow`.
 
 ## Refactorings Not Worth Prioritising Yet
 

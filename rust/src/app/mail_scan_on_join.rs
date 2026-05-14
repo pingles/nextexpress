@@ -26,10 +26,10 @@
 
 use std::time::SystemTime;
 
+use crate::app::menu::scan_mail::{scan_mail, ScanMailOutcome};
 use crate::app::services::AppServices;
 use crate::app::terminal::Terminal;
 use crate::app::wire_text::{render_scan_summary, MAIL_STORE_ERROR_LINE};
-use crate::domain::conference::MessageBaseRef;
 use crate::domain::session::typed::ScanOnJoin;
 
 /// Whether the auto-scan-on-join walks from message 1 (`ForceAll`) or
@@ -78,58 +78,34 @@ where
     T: Terminal,
     S: ScanOnJoin,
 {
-    let Some(visit_msgbase) = session
-        .current_msgbase()
-        .map(|(conf, mb)| MessageBaseRef::new(conf, mb))
-    else {
-        // No open visit — nothing to scan. Defensive only; both
-        // call-sites only invoke this after a successful join.
-        return Ok(());
-    };
-
-    let Some(store_handle) = services.mail_stores().for_msgbase(visit_msgbase) else {
-        // No store registered for this conference. The spec doesn't
-        // mandate a notice here — the auto-scan is silent when there's
-        // nothing to scan. Slice 41a's smoke test pins this contract.
-        return Ok(());
-    };
-
-    // Slice 43: resolve the per-msgbase `AllScanScope` from the
-    // conference catalogue. Falls back to the spec default if the
-    // coordinate isn't registered — keeping the auto-scan robust to
-    // partially-loaded catalogues.
-    let scope = crate::domain::conference::find_msgbase_in(services.conferences(), visit_msgbase)
-        .map(crate::domain::conference::MessageBase::all_scan_scope)
-        .unwrap_or_default();
-
-    let guard = store_handle.lock().await;
-    let result = match session.scan_mail(
-        &**guard,
-        visit_msgbase,
-        scope,
+    match scan_mail(
+        session,
+        services.mail_stores(),
+        services.conferences(),
         mode.as_from_message(),
         SystemTime::now(),
-    ) {
-        Ok(r) => r,
-        Err(err) => {
+    )
+    .await
+    {
+        // No open visit / missing store is silent for auto-scan-on-join.
+        ScanMailOutcome::NoOpenMsgbase | ScanMailOutcome::NoStore => Ok(()),
+        ScanMailOutcome::StoreError(err) => {
             eprintln!("scan_mail_on_join failed: {err}");
             terminal.write(MAIL_STORE_ERROR_LINE).await?;
             terminal.flush().await?;
-            return Ok(());
+            Ok(())
         }
-    };
-    // Release the lock before rendering — we don't need the store
-    // any more in this function.
-    drop(guard);
-
-    if result.unread_count > 0 {
-        let screen = services.screens().mailscan_screen().await;
-        terminal.write(&screen).await?;
+        ScanMailOutcome::Scanned(result) => {
+            if result.unread_count > 0 {
+                let screen = services.screens().mailscan_screen().await;
+                terminal.write(&screen).await?;
+            }
+            let summary = render_scan_summary(result.unread_count, result.first_unread_number);
+            terminal.write(&summary).await?;
+            terminal.flush().await?;
+            Ok(())
+        }
     }
-    let summary = render_scan_summary(result.unread_count, result.first_unread_number);
-    terminal.write(&summary).await?;
-    terminal.flush().await?;
-    Ok(())
 }
 
 #[cfg(test)]

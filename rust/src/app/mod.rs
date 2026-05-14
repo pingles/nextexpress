@@ -33,6 +33,7 @@ pub mod config_loader;
 pub mod login_flow;
 pub mod mail_scan_on_join;
 pub mod mail_stores;
+pub(crate) mod menu;
 pub mod menu_command;
 pub mod menu_flow;
 pub mod node_pool;
