@@ -256,48 +256,28 @@ repository port shape were sharpened in recent refactorings:
   (`NEW_USER_REGISTRATION_LITERAL` in `app::session_flow`). `UserRepository`
   is pure storage and returns only `NameLookupResult::Found` /
   `NotFound`.
+- `domain::Session` remains the aggregate root, but its rule surface is now
+  split by capability: `identity`, `registration`, `lifecycle`,
+  `conferencing`, `budget`, `lockout`, `conference_activity`, `log_format`,
+  `outcomes`, `errors`, and `transitions`. `domain/session/mod.rs` now holds
+  the state shape, shared accessors, core phase moves, and public re-exports.
 
-The remaining concentration-of-responsibility hotspots are the two domain
-aggregates:
+The remaining concentration-of-responsibility hotspots are:
 
-- `domain/session/mod.rs` is the central session aggregate and still contains
-  lifecycle, authentication, registration, time budget, conference join/scan,
-  caller-log formatting hooks, and a large test body. Helper submodules
-  (`budget`, `lockout`, `outcomes`, `errors`, `transitions`, `log_format`)
-  already exist, but the main module still carries many feature areas
-  directly.
 - `domain/user.rs` is the user aggregate, but it is accumulating credentials,
   lockout, time accounting, profile data, access rights, ratios, and
   conference membership state.
+- `domain/session/tests.rs` remains a large cross-capability test module. It
+  is grouped internally, but future session changes may benefit from moving
+  tests closer to the capability modules they exercise.
+- `domain/session/mod.rs` still owns `Session`, `SessionShared`,
+  `SessionPhase`, and the core phase-move helpers. That is acceptable after
+  the capability split, but a `session/state.rs` extraction would be a natural
+  next cleanup if state-shape changes become frequent.
 
 ## Recommended Refactorings
 
-### 1. Decompose the `Session` aggregate by capability
-
-`domain::Session` is the right aggregate root, but `domain/session/mod.rs` is
-now too broad. Some helper modules already exist (`budget`, `lockout`,
-`outcomes`, `errors`, `transitions`), but the main module still carries many
-feature areas directly.
-
-Refactor toward modules such as:
-
-- `session/state.rs`: `Session`, `SessionShared`, `SessionPhase`, core
-  transition helpers.
-- `session/identity.rs`: name prompt and unknown-name rules.
-- `session/registration.rs`: new-user gate and completion.
-- `session/authentication.rs`: password match/mismatch and reset entry points.
-- `session/activity.rs`: idle timeout, carrier loss, budget ticking.
-- `session/conferencing.rs`: auto-join, explicit join, conference scan.
-- `session/logging.rs`: logon/logoff line formatting.
-
-Why this is better:
-
-- new Allium slices have an obvious home;
-- tests can sit near the capability they prove;
-- reviewing changes becomes less risky because unrelated session behavior is
-  physically separated.
-
-### 2. Break `User` into internal value objects
+### 1. Break `User` into internal value objects
 
 `domain::User` is becoming a broad aggregate. It currently holds identity,
 credentials, lockout state, access tier, contact profile, terminal
@@ -321,7 +301,7 @@ Why this is better:
 - invariants can live near the data they protect;
 - persistence adapters get clearer mapping boundaries.
 
-### 3. Introduce a real user-store adapter before more account features
+### 2. Introduce a real user-store adapter before more account features
 
 The runtime currently always seeds an in-memory sysop and warns that
 production needs a real user store. That is fine for early slices, but account
@@ -343,6 +323,19 @@ Why this is better:
 - registration and lockout semantics become meaningful operationally;
 - storage format decisions are made while the account model is still small
   enough to reshape.
+
+### 3. Finish the smaller `Session` cleanup opportunistically
+
+The high-value `Session` capability split is done. The remaining work is lower
+priority and should ride along with future slices that already touch the area:
+
+- Move `Session`, `SessionShared`, `SessionPhase`, and core phase-move helpers
+  into `session/state.rs` if `mod.rs` starts accumulating state-specific churn.
+- Split `domain/session/tests.rs` into capability-local test modules once
+  editing the monolithic test file becomes a real review burden.
+- Keep `Session` as the aggregate root; avoid introducing extra domain
+  services unless a new Allium slice has behavior that does not naturally
+  belong to one session.
 
 ### 4. Extract menu use cases from effectful handlers
 
@@ -368,10 +361,12 @@ Why this is better:
 
 ## Suggested Order
 
-1. Decompose `Session` and `User` internally as the next feature slices touch
-   those areas.
+1. Break `User` internally as the next account, ratio, file, or admin slices
+   touch those fields.
 2. Add a durable user repository before building more account/admin behavior.
-3. Extract menu use cases as the next messaging/admin commands land.
+3. Finish the smaller `Session` state/test cleanup only when future session
+   slices make the current layout painful.
+4. Extract menu use cases as the next messaging/admin commands land.
 
 ## Refactorings Not Worth Prioritising Yet
 

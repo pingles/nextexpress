@@ -10,6 +10,7 @@ mod fixtures {
     use std::time::{Duration, SystemTime};
 
     use super::super::*;
+    use crate::domain::conference::{Conference, NameType};
     use crate::domain::password::PasswordHashKind;
 
     pub(super) const DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
