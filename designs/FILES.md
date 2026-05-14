@@ -45,6 +45,38 @@ append-mostly and rarely participates in search.
   surfaces as latency, not errors.
 - **Prepared statements** for the hot queries.
 
+### `Transfer` is the accounting ledger
+
+`Transfer` rows are the durable facts for upload/download accounting and
+the U/D log. User, conference-membership, and file counters are cached
+projections maintained for fast legacy-style displays and eligibility
+checks; if a projection disagrees with completed transfers, the transfer
+ledger wins and the projection can be rebuilt.
+
+The storage adapter therefore treats transfer completion as an idempotent
+writer transaction:
+
+1. claim the unfinished transfer row (`finished_at IS NULL`);
+2. write `finished_at`, `outcome`, `bytes_transferred`, and `cps`;
+3. for billable completed transfers, apply additive deltas to projections
+   (`SET bytes_downloaded_total = bytes_downloaded_total + ?`, etc.);
+4. commit the transfer and projection changes together.
+
+Retrying completion for the same `transfer_id` must not apply accounting a
+second time. The unfinished-row claim is the idempotency guard.
+
+Denormalise accounting context onto the transfer row at start/completion:
+`conference_id`, `area_id`, `accounting_day`, `is_free_download`, and
+`billable_bytes`. Audit queries and projection rebuilds should not change
+meaning if a file later moves area or a conference's free-download setting
+changes.
+
+For strict daily byte caps, download start reserves billable bytes with a
+guarded writer transaction. Failed/cancelled transfers release the
+reservation; completed transfers convert the reservation into
+`daily_bytes_downloaded`. This prevents concurrent FTP transfers for the
+same user from all passing the same stale pre-flight check.
+
 ### Connection strategy
 
 - An async-friendly pool such as `tokio-rusqlite` (worker thread per
@@ -131,17 +163,24 @@ CREATE TABLE transfers (
     session_id      INTEGER NOT NULL,
     user_id         INTEGER NOT NULL REFERENCES users(id),
     file_id         INTEGER NOT NULL REFERENCES files(id),
+    conference_id   INTEGER NOT NULL REFERENCES conferences(id),
+    area_id         INTEGER NOT NULL REFERENCES file_areas(id),
     direction       TEXT    NOT NULL,         -- 'upload' | 'download'
+    accounting_day  INTEGER NOT NULL,         -- daily-reset bucket
     started_at      INTEGER NOT NULL,
     finished_at     INTEGER,
     bytes_transferred INTEGER NOT NULL DEFAULT 0,
+    billable_bytes  INTEGER NOT NULL DEFAULT 0,
+    reserved_billable_bytes INTEGER NOT NULL DEFAULT 0,
     cps             INTEGER NOT NULL DEFAULT 0,
     outcome         TEXT,                     -- TransferOutcome enum, null until finished
-    is_free_download INTEGER NOT NULL DEFAULT 0
+    is_free_download INTEGER NOT NULL DEFAULT 0,
+    accounting_applied INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_transfers_user_started ON transfers (user_id, started_at DESC);
 CREATE INDEX idx_transfers_file_started ON transfers (file_id, started_at DESC);
+CREATE INDEX idx_transfers_user_day ON transfers (user_id, accounting_day, direction, outcome);
 ```
 
 ## Access patterns and how they map
@@ -152,12 +191,14 @@ CREATE INDEX idx_transfers_file_started ON transfers (file_id, started_at DESC);
 | `displayFileList` | list by area, often "since X" | `idx_files_area_uploaded_at` |
 | `zippy` substring search | `files_fts MATCH ?` filtered by area set | trigram FTS |
 | `CheckDownloadEligibility` | sum `size_bytes` for ≤1000 ids | PK lookups; small N |
+| Strict daily byte cap | reserve billable bytes before transfer | writer transaction + user PK |
 | `BeginDownload` / `BeginUpload` | insert `transfers`, lookup `files` row | PK + writer connection |
-| `CompleteDownload` | update file counters + insert nothing new | PK |
-| `CompleteUpload` | update file row + counters | PK |
+| `CompleteDownload` | finish transfer once + additive projection updates | transfer PK + user/file PK |
+| `CompleteUpload` | finish transfer once + additive projection updates | transfer PK + user/file PK |
 | Sysop "held files" | list by status | `idx_files_status_pending` |
 | `MoveFile`, `DeleteFile`, `AdmitHeldFile` | single-row update | PK |
 | User U/D log | history by user | `idx_transfers_user_started` |
+| Rebuild user byte totals | `SUM(billable_bytes)` for completed transfers | `idx_transfers_user_day` / user scan |
 
 ## Concurrency
 
@@ -169,6 +210,18 @@ For 32+ concurrent BBS users:
 - **Writes serialize through the single writer connection.** At BBS
   cadence (transfer completions, status changes, occasional admin) this
   is far below SQLite's write throughput.
+- **Same-user sessions compose through deltas.** Interactive BBS sessions
+  and future FTP sessions may share a `user_id`. Transfer completion never
+  writes a stale `User` snapshot back to SQLite; it applies additive
+  deltas derived from one completed transfer.
+- **Transfer completion is idempotent.** The writer transaction only
+  applies accounting if it can claim an unfinished transfer row. Replayed
+  completion calls return the already-recorded outcome without charging a
+  second time.
+- **Strict quota checks reserve capacity.** If a daily byte limit must be
+  enforced across concurrent sessions, `BeginDownload` reserves billable
+  bytes in the writer transaction. Without that reservation, limits are
+  advisory under parallel FTP transfers.
 - **`FlaggedFile` writes never hit SQLite** — they're per-session in
   memory, so the most frequent in-session "write" doesn't touch the
   database at all.
