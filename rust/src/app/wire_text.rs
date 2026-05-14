@@ -66,10 +66,15 @@ pub(crate) const MENU_PROMPT: &[u8] = b"Command: ";
 /// `AmiExpress` line mirrors the original BBS's banner verbatim
 /// (`amiexpress/express.e:25690`, modulo the legacy file's mojibake of
 /// the © glyph).
+///
+/// The `NextExpress` version slot carries the short git SHA the
+/// `build.rs` script captures into `NEXTEXPRESS_GIT_SHA` — pinning the
+/// running binary to a specific source commit beats `Cargo.toml`'s
+/// long-lived `0.1.0` placeholder for a project that ships continuously.
 pub(crate) const COPYRIGHT_LINES: &[u8] = concat!(
-    "NextExpress ",
-    env!("CARGO_PKG_VERSION"),
-    " Copyright \u{00A9}2026\r\n",
+    "NextExpress (",
+    env!("NEXTEXPRESS_GIT_SHA"),
+    ") Copyright \u{00A9}2026\r\n",
     "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
 )
 .as_bytes();
@@ -463,6 +468,27 @@ pub(crate) fn explicit_join_line(conference_name: &str, msgbase_name: Option<&st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copyright_lines_wrap_build_git_sha_in_parens() {
+        // The banner shown on connect must reflect the source commit
+        // the binary was built from. `build.rs` captures
+        // `git rev-parse --short HEAD` into `NEXTEXPRESS_GIT_SHA`; the
+        // wire format wraps it in parentheses (`NextExpress (sha)
+        // Copyright ©…`) so the build identifier is visually distinct
+        // from the product name.
+        let sha = env!("NEXTEXPRESS_GIT_SHA");
+        assert!(
+            !sha.is_empty(),
+            "build script must capture a non-empty git SHA",
+        );
+        let copyright = std::str::from_utf8(COPYRIGHT_LINES).expect("utf8 copyright");
+        let needle = format!("NextExpress ({sha}) Copyright");
+        assert!(
+            copyright.contains(&needle),
+            "expected `{needle}` in copyright lines: {copyright:?}",
+        );
+    }
 
     #[test]
     fn auto_rejoin_line_single_msgbase_matches_legacy_format() {

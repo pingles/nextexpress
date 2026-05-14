@@ -71,11 +71,21 @@ pub async fn main() -> ExitCode {
     }
 }
 
+/// Returns the startup banner line written to the server log on
+/// process start. The short git SHA — captured by `build.rs` into
+/// `NEXTEXPRESS_GIT_SHA` — is wrapped in parentheses so operators can
+/// match a running process back to a specific source commit, mirroring
+/// the wire-format banner in [`wire_text::COPYRIGHT_LINES`].
+fn startup_version_line() -> String {
+    format!("NextExpress ({}) starting", env!("NEXTEXPRESS_GIT_SHA"))
+}
+
 /// Runs the BBS: load config, seed users, bind, accept forever.
 ///
 /// Split out from [`main`] so failure paths are testable without
 /// binding a real socket.
 async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    println!("{}", startup_version_line());
     let config_path: Option<PathBuf> = args.first().map(|s| Path::new(s).to_path_buf());
     let config = config_loader::load_config(config_path.as_deref())?;
 
@@ -168,6 +178,25 @@ fn open_mail_stores(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_version_line_wraps_git_sha_in_parens() {
+        // The server log must record the build's source commit on
+        // process start so operators can correlate a running process
+        // with a specific commit. `build.rs` captures the short SHA
+        // into `NEXTEXPRESS_GIT_SHA`.
+        let sha = env!("NEXTEXPRESS_GIT_SHA");
+        let line = startup_version_line();
+        let needle = format!("({sha})");
+        assert!(
+            line.contains(&needle),
+            "expected `{needle}` in startup version line: {line:?}",
+        );
+        assert!(
+            line.starts_with("NextExpress"),
+            "startup line must lead with the product name: {line:?}",
+        );
+    }
 
     #[tokio::test]
     async fn run_fails_when_config_path_is_unreadable() {

@@ -636,12 +636,15 @@ mod tests {
 
     #[tokio::test]
     async fn connection_displays_nextexpress_copyright_line() {
+        // The version slot in the banner is the short git SHA the
+        // `build.rs` script captures at compile time — see
+        // `app::wire_text::COPYRIGHT_LINES`.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let buf = drain_until(&mut stream, b"Enter your Name: ").await;
         let needle = format!(
-            "NextExpress {} Copyright \u{00A9}2026\r\n",
-            env!("CARGO_PKG_VERSION")
+            "NextExpress ({}) Copyright \u{00A9}2026\r\n",
+            env!("NEXTEXPRESS_GIT_SHA")
         );
         assert!(
             contains(&buf, needle.as_bytes()),

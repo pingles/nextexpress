@@ -27,6 +27,12 @@ The implementation follows a ports-and-adapters direction:
   code must not import `app` or `adapters`, and it must not reference
   runtime/adapter crates such as Tokio, serde_json, TOML, filesystem, or
   networking APIs.
+- `rust/build.rs` captures the short git SHA (`git rev-parse --short HEAD`)
+  into the `NEXTEXPRESS_GIT_SHA` compile-time env var so both the connect
+  banner in `app::wire_text::COPYRIGHT_LINES` (`NextExpress (<sha>)
+  Copyright ©…`) and the startup log line emitted by `app::run` pin the
+  binary to a source commit. The build script falls back to `unknown` when
+  no working tree is available.
 
 ```mermaid
 flowchart LR
