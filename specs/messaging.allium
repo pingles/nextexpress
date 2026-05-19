@@ -153,6 +153,21 @@ value MailForwardRequest {
     additional_note: String?
 }
 
+-- One row in a mail-scan listing. Mirrors the columns the legacy
+-- `searchNewMail` prints when invoked outside an auto-rejoin (Type /
+-- From / Subject / Msg). Carries enough header information that the
+-- presentation layer can render the table without re-reading the
+-- message bodies; the rule that produces these never opens the body.
+value MailScanRow {
+    msgbase: core/MessageBase           -- which base the row came from
+    number: Integer                     -- mail number within that base
+    visibility: MailVisibility          -- public / private / private_to_sysop
+    from_name: String                   -- as rendered by the conf's name-type
+    to_name: String                     -- handle, ALL or EALL
+    broadcast_to: BroadcastTo
+    subject: String
+}
+
 ------------------------------------------------------------
 -- Rules
 ------------------------------------------------------------
@@ -385,8 +400,18 @@ rule EditMailHeader {
 }
 
 -- Mail scan: find unread messages addressed to the current user (or ALL,
--- or EALL) within a single message base. Triggered on join, or by the
--- M / N menu commands. The user may then walk into the listing.
+-- or EALL) within a single message base. Triggered on join, by the
+-- standalone M / N menu commands, and (per-base) by the multi-conf
+-- ScanAllMail rule that backs the legacy `MS` command.
+--
+-- The listing is the load-bearing output for the M / N / MS user
+-- surface: it is the table the legacy `searchNewMail` prints
+-- (Type / From / Subject / Msg) and the data structure the
+-- presentation layer iterates to render that table. `unread_count`
+-- and `first_unread_number` are derived projections kept for
+-- backward compatibility — auto-scan-on-join uses them to print
+-- "Found Mail!" and to seed the walk-forward cursor without
+-- iterating the listing.
 rule ScanMail {
     when: MailScanRequested(session, conference, msgbase, from_message)
     requires: session.state in {onboarded, menu}
@@ -395,13 +420,58 @@ rule ScanMail {
     let pointers = read_pointers_for(session.user, msgbase)
     let from = if from_message > 0: from_message else: pointers.last_scanned + 1
 
+    -- Unread mail (in `from..=msgbase.highest_message`) addressed to
+    -- the current user, ordered by message number. Filters mirror the
+    -- legacy `searchNewMail` body at `amiexpress/express.e:11706`:
+    -- not deleted, addressee matches the user (or EALL, or ALL when
+    -- the user's mail-scan flags include all-conf), `received_at`
+    -- still null.
+    let listing = unread_rows_for(session.user, msgbase, from)
+
     ensures: MailScanCompleted(
         session: session,
         msgbase: msgbase,
-        unread_count: count_unread_for(session.user, msgbase, from),
-        first_unread_number: first_unread_number_for(session.user, msgbase, from)
+        listing: listing,
+        unread_count: length_of(listing),
+        first_unread_number: if length_of(listing) > 0: first_of(listing).number else: 0
     )
     ensures: pointers.last_scanned = max_of(pointers.last_scanned, msgbase.highest_message)
+}
+
+-- Standalone MS command: walk every conference the user has access to,
+-- run ScanMail per (conference, msgbase), surface a single combined
+-- listing.
+--
+-- Mirrors the legacy `internalCommandMS` at `amiexpress/express.e:25250`,
+-- which loops `joinConf(..., FORCE_MAILSCAN_ALL)` over each accessible
+-- conference. The rule itself does no novel state mutation — all
+-- effects (pointer advances, listing rows) come from the per-base
+-- `ScanMail` it dispatches — but capturing it as a named rule keeps
+-- the user-facing command visible in the spec catalogue and gives
+-- tests a single contract to assert against.
+rule ScanAllMail {
+    when: ScanAllMailRequested(session)
+    requires: session.state = menu
+    requires: session.user != null
+
+    -- Every (conference, msgbase) the user has a granted membership
+    -- to. Iteration order matches the legacy: conferences ascending,
+    -- bases within a conf ascending.
+    let targets = accessible_msgbases_for(session.user)
+
+    ensures:
+        for target in targets:
+            MailScanRequested(
+                session: session,
+                conference: target.conference,
+                msgbase: target,
+                from_message: 0
+            )
+
+    ensures: ScanAllMailCompleted(
+        session: session,
+        combined_listing: concat_listings_for(session, targets)
+    )
 }
 
 -- Attach a file to a message during composition. Two paths exist:

@@ -270,6 +270,8 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 49 | `DeleteMail`, `MoveMail`, `EditMailHeader` | Done |
 | 49a | Phase 8 wire-and-smoke — user-facing reply / forward | Done |
 | 49b | Phase 8 wire-and-smoke — sysop kill / move / edit-header | Done |
+| 49c | `ScanMail` listing rows (extend `MailScanCompleted` with the per-mail `MailScanRow` listing that the legacy `searchNewMail` prints) | Todo |
+| 49d | `ScanAllMail` rule + `MS` menu command (multi-conference walk; combined listing) | Todo |
 | 50 | `Bytes` value type + `FileArea` + `File` entities | Todo |
 | 51 | `FlagFile` / `UnflagFile` | Todo |
 | 52 | `A` (edit file flags) + `Z` (zippy search) commands | Todo |
