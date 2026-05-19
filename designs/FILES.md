@@ -121,9 +121,60 @@ once during ingest/upload:
 text/art file contents are not metadata and are not cached in SQLite.
 Preview/render paths open the blob store object directly.
 
-Ingest and upload handlers own extraction. Updating a file's description
-or DIZ metadata happens in the same writer transaction as the metadata
-change and refreshes the FTS row.
+Per `specs/files.allium`, file visibility does not wait on DIZ extraction.
+`CompleteUpload` moves the file to `held_for_review` or `available` based on
+policy, and the `FileIdDizExtracted` rule can fire later against any of
+`in_playpen`, `held_for_review`, or `available`. Updating a file's
+description or DIZ metadata happens in a writer transaction that also
+refreshes the FTS row.
+
+### Extraction execution and safety budgets
+
+Extraction is CPU-bound work over untrusted input. It must not block the
+session loop, must not starve other users, and must not let a hostile
+upload wedge the box. The cost varies sharply by container format:
+
+| Format | Single-entry DIZ extraction cost |
+|---|---|
+| ZIP | Central directory at EOF → seek, decompress one entry. Bounded. |
+| LHA / LZH / ARJ / ZOO / ARC | Sequential headers with size fields → walk and decompress one entry. Cheap. |
+| TAR (plain) | Scan 512-byte headers, copy DIZ bytes. Uncompressed; fast. |
+| TAR.GZ / TAR.BZ2 / TAR.XZ | Stream compression over the whole tar — must decompress from byte 0 until DIZ is found. Can stop early; worst case scans the lot. |
+| LZX, DMS, ADF, other disk images | Treat as full-decompression cost. |
+
+For the LHA/ZIP/ARJ files that dominate the seed corpus this is
+milliseconds; a large `.tar.gz` with DIZ at the end can take seconds.
+Hostile inputs (zip bombs, malformed headers that loop forever) need a
+hard ceiling regardless of format.
+
+Decisions:
+
+- **Off the session thread.** Extraction runs inside `spawn_blocking` (or
+  a dedicated rayon pool) so decompression does not stall the Tokio
+  reactor serving other users. Cheap per-extraction overhead is fine at
+  BBS cadence; the goal is isolation, not throughput.
+- **Bounded extraction worker pool.** Cap concurrent extractions below CPU
+  count, sized independently of the connection pool. One adversarial
+  upload cannot saturate the host.
+- **Hard per-job budgets**, enforced inside the worker:
+  - wall-clock timeout (e.g. ~30 s archives, ~5 s text/art);
+  - decompressed-bytes ceiling — abort on suspicious compression ratios
+    rather than streaming gigabytes for one DIZ;
+  - DIZ payload cap of a few KB; truncate rather than grow unbounded.
+- **Best-effort, not gating.** A timeout, abort, or absent DIZ does not
+  fail the upload and does not block the status transition that
+  `CompleteUpload` performs. The file keeps whatever status it landed in;
+  `file_id_diz` stays NULL and `description_source` reflects whichever
+  non-DIZ source supplied the description (or `none` if none did).
+- **Same writer transaction on success.** When extraction does yield a
+  DIZ, the update to `file_metadata.file_id_diz` (and the listing
+  description, if it was empty) refreshes FTS atomically — readers never
+  see a half-applied row.
+
+This puts DIZ extraction in the same operational neighbourhood as the
+spec's `BackgroundCheck` rule: async work that follows upload completion,
+runs under bounded resources, and updates the file row through the same
+writer connection as everything else.
 
 ### FTS5 with the trigram tokenizer for search
 
@@ -310,6 +361,12 @@ For 32+ concurrent BBS users:
 - **`FlaggedFile` writes never hit SQLite** — they're per-session in
   memory, so the most frequent in-session "write" doesn't touch the
   database at all.
+- **Extraction runs on a separate worker pool.** DIZ extraction and any
+  future archive/AV checks live on a bounded `spawn_blocking` (or rayon)
+  pool sized below CPU count and independent of the connection pool. One
+  pathological `.tar.gz` cannot stall the Tokio reactor or starve other
+  users; per-job timeouts and decompressed-byte ceilings cap the worst
+  case.
 - **Long-running read transactions are forbidden.** A reader that holds
   a transaction open across user input pins WAL growth. Read, materialise
   the result, release.
@@ -351,6 +408,16 @@ add indexes for the queries the domain actually uses.
   but the legacy code persists it across sessions for the same user.
   If we follow the legacy behaviour, flagged files become a small
   durable table rather than session-only memory.
+- **Extraction retry policy.** When DIZ extraction times out or aborts on
+  budget exhaustion, do we leave the file with `file_id_diz = NULL`
+  forever, expose a sysop-triggered re-extract, or schedule a single
+  bounded retry? "Never retry" is the simplest default and matches
+  best-effort semantics; revisit if operational logs show otherwise.
+- **Worker pool sharing.** DIZ extraction and the spec's `BackgroundCheck`
+  (AV / archive validation) have similar shapes: bounded, untrusted,
+  CPU-bound. Decide whether they share one extraction worker pool or run
+  on separate pools with their own budgets — sharing is simpler; splitting
+  prevents a slow AV scan from delaying DIZ visibility.
 
 ## Future optimisations (not for v1)
 
