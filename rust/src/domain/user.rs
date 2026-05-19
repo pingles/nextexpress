@@ -63,8 +63,8 @@ impl UsageAccounting {
         Self {
             times_called: 0,
             last_call: Some(now),
-            time_limit_per_call: Duration::from_secs(30 * 60),
-            time_limit_per_day: Duration::from_secs(60 * 60),
+            time_limit_per_call: Duration::from_mins(30),
+            time_limit_per_day: Duration::from_hours(1),
             time_used_today: Duration::ZERO,
             times_called_today: 0,
         }
@@ -1337,16 +1337,16 @@ mod tests {
     #[test]
     fn set_time_limits_updates_both_caps() {
         let mut user = make_user(2, Some("salt".to_string())).unwrap();
-        user.set_time_limits(Duration::from_secs(60), Duration::from_secs(3_600));
-        assert_eq!(user.time_limit_per_call(), Duration::from_secs(60));
-        assert_eq!(user.time_limit_per_day(), Duration::from_secs(3_600));
+        user.set_time_limits(Duration::from_mins(1), Duration::from_hours(1));
+        assert_eq!(user.time_limit_per_call(), Duration::from_mins(1));
+        assert_eq!(user.time_limit_per_day(), Duration::from_hours(1));
     }
 
     #[test]
     fn reset_daily_counters_clears_today_counters() {
         let mut user = make_user(2, Some("salt".to_string())).unwrap();
         user.bump_times_called_today();
-        user.add_time_used_today(Duration::from_secs(120));
+        user.add_time_used_today(Duration::from_mins(2));
         user.reset_daily_counters();
         assert_eq!(user.times_called_today(), 0);
         assert_eq!(user.time_used_today(), Duration::ZERO);
@@ -1475,8 +1475,8 @@ mod tests {
         assert_eq!(user.times_called(), 0);
         assert_eq!(user.times_called_today(), 0);
         assert_eq!(user.time_used_today(), Duration::ZERO);
-        assert_eq!(user.time_limit_per_call(), Duration::from_secs(30 * 60));
-        assert_eq!(user.time_limit_per_day(), Duration::from_secs(60 * 60));
+        assert_eq!(user.time_limit_per_call(), Duration::from_mins(30));
+        assert_eq!(user.time_limit_per_day(), Duration::from_hours(1));
         assert_eq!(user.last_call(), Some(now));
         assert_eq!(user.account_created(), now);
         assert_eq!(user.password_last_updated(), now);

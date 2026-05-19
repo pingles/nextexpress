@@ -13,7 +13,7 @@ mod fixtures {
     use crate::domain::conference::{Conference, NameType};
     use crate::domain::password::PasswordHashKind;
 
-    pub(super) const DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
+    pub(super) const DAILY_RESET_OFFSET: Duration = Duration::from_hours(6);
 
     pub(super) fn alice() -> User {
         User::new(
@@ -306,7 +306,7 @@ mod state_basics {
     #[test]
     fn record_input_updates_last_input_at() {
         let mut s = new_session(LogonChannel::Remote);
-        let later = SystemTime::UNIX_EPOCH + Duration::from_secs(60);
+        let later = SystemTime::UNIX_EPOCH + Duration::from_mins(1);
         s.record_input(later);
         assert_eq!(s.last_input_at(), later);
     }
@@ -588,7 +588,7 @@ mod new_user_registration {
         assert_eq!(s.state(), SessionState::Onboarded);
         assert_eq!(s.authenticated_at(), Some(now));
         assert_eq!(s.user().map(User::handle), Some("newbie"));
-        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+        assert_eq!(s.time_remaining(), Duration::from_mins(30));
     }
 
     #[test]
@@ -651,7 +651,7 @@ mod authentication {
     #[test]
     fn verify_password_match_advances_to_onboarded() {
         let mut s = authenticated_session();
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(60);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_mins(1);
         let (outcome, rejection) =
             apply_password_match(&mut s, SessionPolicy::default(), now).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::Authenticated);
@@ -674,10 +674,10 @@ mod authentication {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         let mut user = alice();
-        user.set_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        user.set_time_limits(Duration::from_mins(30), Duration::from_hours(1));
         s.record_identified_user("alice", user).unwrap();
         apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
-        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+        assert_eq!(s.time_remaining(), Duration::from_mins(30));
     }
 
     #[test]
@@ -783,7 +783,7 @@ mod lifecycle {
     fn enter_menu_advances_state_and_logs() {
         let mut s = authenticated_session();
         apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(120);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_mins(2);
         let entry = s.enter_menu(now).unwrap();
         assert_eq!(s.state(), SessionState::Menu);
         assert_eq!(s.user().unwrap().times_called(), 1);
@@ -833,7 +833,7 @@ mod lifecycle {
     fn finalise_logoff_updates_user_and_logs_goodbye() {
         let mut s = session_at_menu();
         s.user_requests_logoff().unwrap();
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(300);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_mins(5);
         let entry = s.finalise_logoff(now).unwrap();
         assert_eq!(s.state(), SessionState::Ended);
         assert_eq!(s.logoff_at(), Some(now));
@@ -866,64 +866,59 @@ mod time_budget {
     #[test]
     fn floor_to_day_buckets_into_24h_groups_offset_by_six_hours() {
         // Six hours past UNIX_EPOCH is the start of "day 0".
-        let day_zero = UNIX_EPOCH + Duration::from_secs(6 * 3_600);
+        let day_zero = UNIX_EPOCH + Duration::from_hours(6);
         assert_eq!(floor_to_day(day_zero, DAILY_RESET_OFFSET), 0);
         let just_before = day_zero - Duration::from_secs(1);
         assert_eq!(floor_to_day(just_before, DAILY_RESET_OFFSET), -1);
-        let later_same_day = day_zero + Duration::from_secs(20 * 3_600);
+        let later_same_day = day_zero + Duration::from_hours(20);
         assert_eq!(floor_to_day(later_same_day, DAILY_RESET_OFFSET), 0);
-        let next_day = day_zero + Duration::from_secs(24 * 3_600);
+        let next_day = day_zero + Duration::from_hours(24);
         assert_eq!(floor_to_day(next_day, DAILY_RESET_OFFSET), 1);
     }
 
     #[test]
     fn initialise_daily_budget_first_call_treats_as_new_day() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
-            Duration::from_secs(30 * 60),
-            Duration::from_secs(60 * 60),
+            Duration::from_mins(30),
+            Duration::from_hours(1),
         ));
         initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         assert_eq!(s.user().unwrap().times_called_today(), 0);
         assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
-        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+        assert_eq!(s.time_remaining(), Duration::from_mins(30));
     }
 
     #[test]
     fn initialise_daily_budget_same_day_bumps_times_called_today() {
-        let mut user =
-            user_with_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
-        let earlier_today = UNIX_EPOCH + Duration::from_secs(7 * 3_600);
+        let mut user = user_with_time_limits(Duration::from_mins(30), Duration::from_hours(1));
+        let earlier_today = UNIX_EPOCH + Duration::from_hours(7);
         user.record_last_call(earlier_today);
-        user.add_time_used_today(Duration::from_secs(120));
+        user.add_time_used_today(Duration::from_mins(2));
         user.bump_times_called_today();
         let mut s = session_at_onboarded_with(user);
 
-        let later_today = UNIX_EPOCH + Duration::from_secs(20 * 3_600);
+        let later_today = UNIX_EPOCH + Duration::from_hours(20);
         initialise_daily_budget(&mut s, later_today, DAILY_RESET_OFFSET).unwrap();
         assert_eq!(s.user().unwrap().times_called_today(), 2);
-        assert_eq!(
-            s.user().unwrap().time_used_today(),
-            Duration::from_secs(120)
-        );
-        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::from_mins(2));
+        assert_eq!(s.time_remaining(), Duration::from_mins(30));
     }
 
     #[test]
     fn initialise_daily_budget_new_day_after_previous_day_resets() {
-        let mut user =
-            user_with_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
-        let yesterday = UNIX_EPOCH + Duration::from_secs(10 * 3_600);
+        let mut user = user_with_time_limits(Duration::from_mins(30), Duration::from_hours(1));
+        let yesterday = UNIX_EPOCH + Duration::from_hours(10);
         user.record_last_call(yesterday);
-        user.add_time_used_today(Duration::from_secs(900));
+        user.add_time_used_today(Duration::from_mins(15));
         user.bump_times_called_today();
         user.bump_times_called_today();
         let mut s = session_at_onboarded_with(user);
 
-        let today = UNIX_EPOCH + Duration::from_secs(36 * 3_600);
+        let today = UNIX_EPOCH + Duration::from_hours(36);
         initialise_daily_budget(&mut s, today, DAILY_RESET_OFFSET).unwrap();
         assert_eq!(s.user().unwrap().times_called_today(), 0);
         assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
-        assert_eq!(s.time_remaining(), Duration::from_secs(30 * 60));
+        assert_eq!(s.time_remaining(), Duration::from_mins(30));
     }
 
     #[test]
@@ -937,21 +932,21 @@ mod time_budget {
     #[test]
     fn tick_minute_decrements_remaining_and_accumulates_used() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
-            Duration::from_secs(5 * 60),
-            Duration::from_secs(60 * 60),
+            Duration::from_mins(5),
+            Duration::from_hours(1),
         ));
         initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         let outcome = tick_minute(&mut s).unwrap();
         assert_eq!(outcome, TickMinuteOutcome::Continued);
-        assert_eq!(s.time_remaining(), Duration::from_secs(4 * 60));
-        assert_eq!(s.user().unwrap().time_used_today(), Duration::from_secs(60));
+        assert_eq!(s.time_remaining(), Duration::from_mins(4));
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::from_mins(1));
     }
 
     #[test]
     fn tick_minute_in_menu_state_works_too() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
-            Duration::from_secs(5 * 60),
-            Duration::from_secs(60 * 60),
+            Duration::from_mins(5),
+            Duration::from_hours(1),
         ));
         initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
@@ -963,8 +958,8 @@ mod time_budget {
     #[test]
     fn tick_minute_at_zero_logs_off_with_out_of_time() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
-            Duration::from_secs(60),
-            Duration::from_secs(60 * 60),
+            Duration::from_mins(1),
+            Duration::from_hours(1),
         ));
         initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         let outcome = tick_minute(&mut s).unwrap();
@@ -985,7 +980,7 @@ mod time_budget {
     fn tick_minute_saturates_does_not_underflow() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
             Duration::ZERO,
-            Duration::from_secs(60 * 60),
+            Duration::from_hours(1),
         ));
         initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         let outcome = tick_minute(&mut s).unwrap();
@@ -996,8 +991,8 @@ mod time_budget {
     #[test]
     fn finalise_logoff_after_out_of_time_logs_reason() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
-            Duration::from_secs(60),
-            Duration::from_secs(60 * 60),
+            Duration::from_mins(1),
+            Duration::from_hours(1),
         ));
         initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
         tick_minute(&mut s).unwrap();
@@ -1020,7 +1015,7 @@ mod password_reset {
     fn force_password_reset_sets_flag_when_expiry_elapsed() {
         let user = alice();
         let mut s = session_at_onboarded_with(user.clone());
-        let now = UNIX_EPOCH + Duration::from_secs(10 * 86_400);
+        let now = UNIX_EPOCH + Duration::from_hours(240);
         force_password_reset_if_due(&mut s, 7, now).unwrap();
         assert!(s.user().unwrap().force_password_reset());
         assert!(!user.force_password_reset());
@@ -1029,7 +1024,7 @@ mod password_reset {
     #[test]
     fn force_password_reset_keeps_flag_when_expiry_not_elapsed() {
         let mut s = session_at_onboarded_with(alice());
-        let now = UNIX_EPOCH + Duration::from_secs(3 * 86_400);
+        let now = UNIX_EPOCH + Duration::from_hours(72);
         force_password_reset_if_due(&mut s, 7, now).unwrap();
         assert!(!s.user().unwrap().force_password_reset());
     }
@@ -1037,7 +1032,7 @@ mod password_reset {
     #[test]
     fn force_password_reset_disabled_at_zero_days() {
         let mut s = session_at_onboarded_with(alice());
-        let now = UNIX_EPOCH + Duration::from_secs(1_000 * 86_400);
+        let now = UNIX_EPOCH + Duration::from_hours(24_000);
         force_password_reset_if_due(&mut s, 0, now).unwrap();
         assert!(!s.user().unwrap().force_password_reset());
     }
@@ -1056,7 +1051,7 @@ mod password_reset {
         let mut user = alice();
         user.lock_account();
         let mut s = session_at_onboarded_with(user);
-        let now = UNIX_EPOCH + Duration::from_secs(1_000 * 86_400);
+        let now = UNIX_EPOCH + Duration::from_hours(24_000);
         force_password_reset_if_due(&mut s, 7, now).unwrap();
         assert!(!s.user().unwrap().force_password_reset());
     }
@@ -1072,12 +1067,12 @@ mod password_reset {
     #[test]
     fn apply_password_match_fires_force_password_reset_when_expired() {
         let mut user = alice();
-        user.set_time_limits(Duration::from_secs(60), Duration::from_secs(60));
+        user.set_time_limits(Duration::from_mins(1), Duration::from_mins(1));
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
         let policy = SessionPolicy::default().with_password_expiry_days(1);
-        let now = UNIX_EPOCH + Duration::from_secs(7 * 86_400);
+        let now = UNIX_EPOCH + Duration::from_hours(168);
         apply_password_match(&mut s, policy, now).unwrap();
         assert!(s.user().unwrap().force_password_reset());
     }
@@ -1233,7 +1228,7 @@ mod access_rejection {
     #[test]
     fn apply_password_match_short_circuits_other_rules_when_rejected() {
         let mut user = alice();
-        user.set_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        user.set_time_limits(Duration::from_mins(30), Duration::from_hours(1));
         user.lock_account();
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();

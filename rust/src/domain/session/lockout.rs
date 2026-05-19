@@ -146,8 +146,7 @@ pub fn force_password_reset_if_due(
     let expired = password_expiry_days > 0
         && now
             .duration_since(user.password_last_updated())
-            .map(|d| d > Duration::from_secs(u64::from(password_expiry_days) * 86_400))
-            .unwrap_or(false);
+            .is_ok_and(|d| d > Duration::from_secs(u64::from(password_expiry_days) * 86_400));
     if expired || already_flagged {
         user.set_force_password_reset(true);
     }

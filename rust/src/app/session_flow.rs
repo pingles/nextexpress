@@ -1240,8 +1240,7 @@ mod tests {
     #[test]
     fn verify_password_success_initialises_daily_budget() {
         let mut alice_with_limits = alice();
-        alice_with_limits
-            .set_time_limits(Duration::from_secs(30 * 60), Duration::from_secs(60 * 60));
+        alice_with_limits.set_time_limits(Duration::from_mins(30), Duration::from_hours(1));
         let repo = TestRepo::new(vec![alice_with_limits.clone()]);
         let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
         session.prompt_for_name().unwrap();
@@ -1261,7 +1260,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(session.time_remaining(), Duration::from_secs(30 * 60));
+        assert_eq!(session.time_remaining(), Duration::from_mins(30));
         // First-call-after-epoch: new-day branch zeroes today counters.
         assert_eq!(session.user().unwrap().times_called_today(), 0);
         assert_eq!(repo.find_saved("alice").times_called_today(), 0);
@@ -1470,7 +1469,7 @@ mod tests {
         assert_eq!(session.user().unwrap().slot_number(), 1);
         assert_eq!(session.user().unwrap().access_level(), 2);
         assert_eq!(session.user().unwrap().ratio_mode(), RatioMode::ByFiles);
-        assert_eq!(session.time_remaining(), Duration::from_secs(30 * 60));
+        assert_eq!(session.time_remaining(), Duration::from_mins(30));
 
         // Repository carries the new account.
         match repo.find_by_handle("newbie") {

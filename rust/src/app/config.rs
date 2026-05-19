@@ -27,11 +27,11 @@ const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
 /// over (`core.allium:config.daily_reset_offset`). Mirrors the legacy
 /// `AmiExpress` constant `21600` seconds (six hours) at
 /// `amiexpress/express.e:529`.
-const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
+const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_hours(6);
 
 /// Default per-input idle timeout
 /// (`core.allium:config.input_timeout`, Slice 17). Five minutes.
-const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// Runtime configuration of the BBS.
 ///
@@ -272,7 +272,7 @@ mod tests {
     fn default_daily_reset_offset_is_six_hours() {
         assert_eq!(
             Config::default().daily_reset_offset,
-            Duration::from_secs(6 * 3_600)
+            Duration::from_hours(6)
         );
     }
 
@@ -287,17 +287,14 @@ mod tests {
 
     #[test]
     fn parse_duration_minutes() {
-        assert_eq!(
-            parse_duration_string("5m").unwrap(),
-            Duration::from_secs(300)
-        );
+        assert_eq!(parse_duration_string("5m").unwrap(), Duration::from_mins(5));
     }
 
     #[test]
     fn parse_duration_hours() {
         assert_eq!(
             parse_duration_string("6h").unwrap(),
-            Duration::from_secs(6 * 3_600)
+            Duration::from_hours(6)
         );
     }
 
@@ -305,7 +302,7 @@ mod tests {
     fn parse_duration_days() {
         assert_eq!(
             parse_duration_string("2d").unwrap(),
-            Duration::from_secs(2 * 86_400)
+            Duration::from_hours(48)
         );
     }
 
@@ -345,12 +342,12 @@ mod tests {
     #[test]
     fn session_policy_threads_configured_daily_reset_offset() {
         let config = Config {
-            daily_reset_offset: Duration::from_secs(7_200),
+            daily_reset_offset: Duration::from_hours(2),
             ..Config::default()
         };
         assert_eq!(
             config.session_policy().daily_reset_offset(),
-            Duration::from_secs(7_200)
+            Duration::from_hours(2)
         );
     }
 
@@ -378,11 +375,11 @@ mod tests {
         assert_eq!(config.max_nodes, 8);
         assert_eq!(config.bbs_path, PathBuf::from("/srv/bbs"));
         assert_eq!(config.max_password_failures, 5);
-        assert_eq!(config.daily_reset_offset, Duration::from_secs(3 * 3_600));
+        assert_eq!(config.daily_reset_offset, Duration::from_hours(3));
         assert_eq!(config.password_expiry_days, 90);
         assert_eq!(config.min_password_length, 8);
         assert_eq!(config.min_password_categories, 3);
-        assert_eq!(config.input_timeout, Duration::from_secs(120));
+        assert_eq!(config.input_timeout, Duration::from_mins(2));
         assert!(config.treat_timeout_as_logoff);
         assert_eq!(config.default_ratio_mode, RatioMode::ByBytes);
         assert_eq!(config.default_ratio_value, 5);
@@ -451,7 +448,7 @@ mod tests {
 
     #[test]
     fn default_input_timeout_is_five_minutes() {
-        assert_eq!(Config::default().input_timeout, Duration::from_secs(5 * 60));
+        assert_eq!(Config::default().input_timeout, Duration::from_mins(5));
     }
 
     #[test]

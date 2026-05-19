@@ -102,13 +102,13 @@ pub(crate) async fn read_telnet_line(
                 stream.write_all(b"\r\n").await?;
                 return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
             }
-            0x08 | 0x7F => {
+            0x08 | 0x7F
                 // Backspace / DEL: drop the previous byte if any and
                 // erase one column on the user's terminal with the
                 // classic <BS><SPACE><BS> triplet.
-                if buf.pop().is_some() {
-                    stream.write_all(b"\x08 \x08").await?;
-                }
+                if buf.pop().is_some() =>
+            {
+                stream.write_all(b"\x08 \x08").await?;
             }
             b if b >= 0x20 => {
                 buf.push(b);

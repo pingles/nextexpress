@@ -404,7 +404,7 @@ mod tests {
             sample_draft(),
         )
         .expect_err("expect access denied for new user");
-        assert!(matches!(err, PostMailError::AccessDenied), "got {err:?}",);
+        assert!(matches!(err, PostMailError::AccessDenied), "got {err:?}");
         // No side-effects on rejection.
         assert_eq!(new_user.messages_posted(), 0);
         assert_eq!(store.highest_message(), 0);
@@ -700,7 +700,7 @@ mod tests {
             draft,
         )
         .expect_err("expect EmptyAddressee");
-        assert!(matches!(err, PostMailError::EmptyAddressee), "got {err:?}",);
+        assert!(matches!(err, PostMailError::EmptyAddressee), "got {err:?}");
         assert_eq!(store.highest_message(), 0);
         assert_eq!(user.messages_posted(), 0);
     }

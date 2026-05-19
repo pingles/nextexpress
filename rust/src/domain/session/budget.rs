@@ -83,8 +83,8 @@ pub fn tick_minute(session: &mut Session) -> Result<TickMinuteOutcome, TickMinut
             time_remaining,
             ..
         } => {
-            user.add_time_used_today(Duration::from_secs(60));
-            *time_remaining = time_remaining.saturating_sub(Duration::from_secs(60));
+            user.add_time_used_today(Duration::from_mins(1));
+            *time_remaining = time_remaining.saturating_sub(Duration::from_mins(1));
             time_remaining.is_zero()
         }
         _ => return Err(TickMinuteError::WrongState(session.state())),

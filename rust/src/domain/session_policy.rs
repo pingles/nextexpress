@@ -18,11 +18,11 @@ const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
 /// Default offset past midnight UTC used by [`SessionPolicy::new`].
 /// Mirrors the legacy `AmiExpress` constant `21600` seconds (six hours)
 /// at `amiexpress/express.e:529`.
-const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_secs(6 * 3_600);
+const DEFAULT_DAILY_RESET_OFFSET: Duration = Duration::from_hours(6);
 
 /// Default per-input idle timeout (`core.allium:config.input_timeout`,
 /// Slice 17). Five minutes.
-const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const DEFAULT_INPUT_TIMEOUT: Duration = Duration::from_mins(5);
 
 /// Default maximum handle attempts during the new-user registration
 /// sub-flow before the session bails. Mirrors the legacy `AmiExpress`
