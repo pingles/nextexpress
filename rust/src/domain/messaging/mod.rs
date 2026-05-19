@@ -15,9 +15,12 @@
 //! [`crate::adapters`] or [`crate::app`].
 
 pub mod attach_file_to_mail;
+pub mod delete_mail;
+pub mod edit_mail_header;
 pub mod forward_mail;
 pub mod mail;
 pub mod mail_store;
+pub mod move_mail;
 pub mod post_comment_to_sysop;
 pub mod post_mail;
 pub mod read_mail;

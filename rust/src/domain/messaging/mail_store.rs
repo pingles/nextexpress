@@ -126,6 +126,34 @@ pub trait MailStore {
     /// [`MailStoreError::Io`] when the underlying storage rejects the
     /// write.
     fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError>;
+
+    /// Returns the lowest message number that is *not*
+    /// soft-deleted (spec:
+    /// `core.allium:MessageBase.lowest_undeleted_message`). Returns
+    /// [`Self::highest_message`] + 1 when every persisted mail is
+    /// deleted (or the store is empty) — the conventional
+    /// "no more readable mail" sentinel.
+    ///
+    /// The default impl walks `1..=highest_message()` calling
+    /// [`Self::load`] on each entry. Adapters may override with a
+    /// cheaper implementation when persistent state allows it.
+    ///
+    /// # Errors
+    /// Propagates any [`MailStoreError`] raised by the underlying
+    /// scan.
+    fn lowest_undeleted_message(&self) -> u32 {
+        use crate::domain::messaging::mail::MailVisibility;
+        let highest = self.highest_message();
+        for number in 1..=highest {
+            match self.load(number) {
+                Ok(Some(mail)) if !matches!(mail.visibility(), MailVisibility::Deleted) => {
+                    return number;
+                }
+                _ => {}
+            }
+        }
+        highest.saturating_add(1)
+    }
 }
 
 /// In-memory [`MailStore`] for the messaging-rule tests.

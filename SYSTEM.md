@@ -222,6 +222,24 @@ Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
   Forwarding attachments is deferred to Slice 48. No menu wiring
   ships here — the `F` prompt arrives with Phase 8's wire-and-smoke
   closer.
+- Slice 49 closes Phase 8's domain rules with three sysop /
+  privileged mail mutations:
+  - `messaging.allium:DeleteMail` in `domain::delete_mail`. Soft-
+    deletes a mail (visibility → Deleted, attachments cleared)
+    after gating on `sysop ∨ access_level ≥ 210 ∨ author ∨ addressee`.
+    `MailStore::lowest_undeleted_message` is a derived getter
+    (default impl walks `1..=highest_message` looking for the
+    first non-Deleted row) so the spec's bump consequent is
+    automatically honoured.
+  - `messaging.allium:EditMailHeader` in `domain::edit_mail_header`.
+    Sysop / access-≥210 rewrite of `subject` and/or
+    `(to_name, addressee_slot)` — callers pre-resolve the slot via
+    `lookup_user_by_name`. New `Mail::set_subject` and
+    `Mail::set_addressee` mutators ship here.
+  - `messaging.allium:MoveMail` in `domain::move_mail`. Atomic
+    create-new-in-target + soft-delete-old, preserving every
+    header field (visibility, `received_at`, attachments). Gates
+    on `sysop ∨ MessageEdit` and rejects same-msgbase moves.
 - `messaging.allium:AttachFileToMail` (Slice 48) lives in
   `domain::attach_file_to_mail` and appends a
   `messaging.allium:MailAttachment` row (`file_name`,

@@ -295,6 +295,31 @@ impl Mail {
         self.attachments.push(attachment);
     }
 
+    /// Drops every attachment row (spec
+    /// `messaging.allium:DeleteMail`'s `for a in mail.attachments:
+    /// not exists a` consequent).
+    pub fn clear_attachments(&mut self) {
+        self.attachments.clear();
+    }
+
+    /// Rewrites the [`subject`](Self::subject) (spec
+    /// `messaging.allium:EditMailHeader`'s `mail.subject =
+    /// new_subject` consequent).
+    pub fn set_subject(&mut self, subject: String) {
+        self.subject = subject;
+    }
+
+    /// Rewrites the [`to_name`](Self::to_name) and
+    /// [`addressee_slot`](Self::addressee_slot) (spec
+    /// `messaging.allium:EditMailHeader`'s `mail.to_name =
+    /// new_to_name` / `mail.addressee = lookup_user_by_name(...)`
+    /// consequents). The caller has already resolved the slot via
+    /// the conference's `accepted_name_type`.
+    pub fn set_addressee(&mut self, to_name: String, addressee_slot: Option<u32>) {
+        self.to_name = to_name;
+        self.addressee_slot = addressee_slot;
+    }
+
     /// Returns the message's number within its base.
     #[must_use]
     pub fn number(&self) -> u32 {
