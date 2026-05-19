@@ -205,7 +205,7 @@ where
     /// stamping the idle clock. Returns `None` (and writes the abort
     /// notice) when the user submits an empty line, an EOF, or an
     /// idle timeout — the post-mail composer treats these the same.
-    async fn read_required_line(
+    pub(super) async fn read_required_line(
         &mut self,
         session: &mut MenuSession,
         prompt: &[u8],
@@ -251,7 +251,7 @@ where
     /// Drives the line-mode editor's body input loop. Returns the
     /// concatenated body on `.`-on-its-own-line, and `None` (after
     /// writing the abort notice) on `/A`, EOF, or idle timeout.
-    async fn read_post_body(
+    pub(super) async fn read_post_body(
         &mut self,
         session: &mut MenuSession,
     ) -> Result<Option<String>, T::Error> {

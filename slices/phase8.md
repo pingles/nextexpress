@@ -41,19 +41,30 @@ table and asset inventory.
 - **Out of Scope**
   - Bulk delete / archive.
 
-## Slice 49a — Phase 8 wire-and-smoke
+## Slice 49a — Phase 8 wire-and-smoke (user-facing reply / forward)
 - **In Scope**
-  - Menu wiring for the post-read `R` (reply) and `F` (forward)
-    prompts that drive Slices 45 / 46 end-to-end through the
-    compiled binary.
-  - Sysop menu wiring for the destructive `K` (kill / delete),
-    `FM` (move) and `EH` (edit-header) commands that drive Slice
-    49 end-to-end.
+  - Menu wiring for `RP <num>` (reply) and `FW <num>` (forward)
+    top-level commands that drive Slices 45 / 46 end-to-end
+    through the compiled binary. The legacy `R` / `F` single-letter
+    sub-prompts after reading a message remain a UX improvement
+    for a later slice; the two-letter form sidesteps the conflict
+    with `R` (read) and `F` (file listing, when it lands).
   - A `phase8_smoke.rs` integration test that spawns the binary
-    over telnet, posts an original message, replies to it, forwards
-    it, deletes it, and confirms the listing changes the sysop
-    sees.
+    over telnet, posts an original message, replies to it, and
+    forwards it, then reads the resulting mail back to confirm.
 - **Out of Scope**
-  - Attachment wire-transfer flows (those land with Phase 10's
-    Zmodem adapter — Slice 48 only carries the domain entity and
-    metadata bind, not bytes on the wire).
+  - Sysop destructive ops (Slice 49b).
+  - Quoting prior body / forward attachments (Slice 48 only models
+    the metadata; wire transfer is Phase 10).
+
+## Slice 49b — Phase 8 wire-and-smoke (sysop K / Move / EH)
+- **In Scope**
+  - Sysop menu wiring for the destructive `K` (kill / delete),
+    move (cross-base) and edit-header commands that drive Slice
+    49's three domain rules end-to-end. Command letters chosen to
+    avoid the legacy `FM` (file maintenance) collision.
+  - Extension of `phase8_smoke.rs` with a sysop session that
+    deletes a mail, moves one across message bases, and rewrites
+    the header of a third.
+- **Out of Scope**
+  - Bulk delete / archive.

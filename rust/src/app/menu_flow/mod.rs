@@ -15,7 +15,9 @@
 mod join;
 mod post_mail;
 mod read_mail;
+mod reply_forward;
 mod scan_mail;
+mod sysop_admin;
 
 use std::time::SystemTime;
 
@@ -125,6 +127,21 @@ where
                 }
                 MenuCommand::CommentToSysop => {
                     self.handle_comment_to_sysop(&mut session).await?;
+                }
+                MenuCommand::Reply(arg) => {
+                    self.handle_reply(&mut session, arg).await?;
+                }
+                MenuCommand::Forward(arg) => {
+                    self.handle_forward(&mut session, arg).await?;
+                }
+                MenuCommand::Kill(arg) => {
+                    self.handle_kill(&mut session, arg).await?;
+                }
+                MenuCommand::Move(arg) => {
+                    self.handle_move_mail(&mut session, arg).await?;
+                }
+                MenuCommand::EditHeader(arg) => {
+                    self.handle_edit_header(&mut session, arg).await?;
                 }
                 MenuCommand::Unknown => {
                     self.terminal.write(UNKNOWN_COMMAND_LINE).await?;

@@ -222,6 +222,17 @@ Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
   Forwarding attachments is deferred to Slice 48. No menu wiring
   ships here — the `F` prompt arrives with Phase 8's wire-and-smoke
   closer.
+- Slices 49a / 49b close Phase 8 by wiring the messaging-advanced
+  domain rules through the menu and proving the binary delivers
+  them. 49a exposes user-facing `RP <num>` (reply) and `FW <num>`
+  (forward) commands that route through `app::menu::reply_forward`
+  and `app::menu_flow::reply_forward`. 49b adds the sysop
+  destructive ops — `K <num>` (delete with `y/N` confirm), `MV
+  <num>` (move with target conference/msgbase prompts) and `EH
+  <num>` (header edit with blank-keeps-current prompts for subject
+  and addressee) — under `app::menu::sysop_admin` and
+  `app::menu_flow::sysop_admin`. `tests/phase8_smoke.rs` covers
+  both surfaces end-to-end over telnet.
 - Slice 49 closes Phase 8's domain rules with three sysop /
   privileged mail mutations:
   - `messaging.allium:DeleteMail` in `domain::delete_mail`. Soft-
