@@ -10,5 +10,6 @@ pub mod in_memory_caller_log;
 pub mod in_memory_mail_stores;
 pub mod in_memory_user_repository;
 pub mod pbkdf2_password_hasher;
+pub mod sqlite_user_repository;
 pub(crate) mod telnet_line;
 pub mod telnet_listener;

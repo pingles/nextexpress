@@ -41,7 +41,7 @@ flowchart LR
     AppRun --> Config["Config + config_loader"]
     AppRun --> Seed["seed (sysop bootstrap)"]
     AppRun --> ConfRepo["FileConferenceRepository"]
-    AppRun --> UserRepo["InMemoryUserRepository"]
+    AppRun --> UserRepo["UserRepository (In-Memory or SQLite, selected by config.user_storage)"]
     AppRun --> Hasher["Pbkdf2PasswordHasher"]
     AppRun --> CallerLog["InMemoryCallerLog"]
     AppRun --> Runtime["app::runtime::Runtime"]
@@ -375,26 +375,32 @@ The remaining concentration-of-responsibility hotspots are:
 
 ### 1. Introduce a real user-store adapter before more account features
 
-The runtime currently always seeds an in-memory sysop and warns that
-production needs a real user store. That is fine for early slices, but account
-features such as registration, lockout, password reset, ratios, and conference
-membership become hard to reason about when all state is process-local.
+The runtime now ships both adapters: `InMemoryUserRepository` remains the
+default for `cargo run` against a fresh tree, but `config.user_storage =
+"<path>.db"` switches the composition root to `SqliteUserRepository`
+(`adapters/sqlite_user_repository.rs`). Schema layout follows
+`designs/USERS.md`: a `users` table for single-valued fields, plus
+`conference_memberships` and `read_pointers` tables for the per-user
+collections; round-tripping happens through the domain's `PersistedUser`
+snapshot (`domain/user.rs`).
 
-Refactor toward:
+The bootstrap rule is now: seed the default sysop only when the chosen
+store is empty (`SqliteUserRepository::is_empty`), so restarting against
+an existing database preserves the on-disk state. Tests continue to use
+the in-memory adapter; the only test that exercises the SQLite path is
+`tests/sqlite_user_storage_smoke.rs`, which spins up a tempdir, boots
+the binary twice against the same `users.db`, and lets `tempfile`'s
+Drop guard delete the file when the test finishes.
 
-- a file-backed `UserRepository` before expanding user/account workflows much
-  further;
-- a bootstrap step that creates the default sysop only when the configured
-  store is empty;
-- migration-friendly serialization around the smaller `User` value objects
-  above.
+Future work owed to the design but not in v1:
 
-Why this is better:
-
-- user-facing behavior survives process restart;
-- registration and lockout semantics become meaningful operationally;
-- storage format decisions are made while the account model is still small
-  enough to reshape.
+- command-style writes (additive counter updates, daily-byte
+  reservations, security-state flushes with `synchronous = FULL`);
+- a one-shot migration tool that imports the legacy on-disk `user`,
+  `userKeys`, `userMisc` files;
+- per-field write policy on the `UserRepository` port so the
+  session-end flush queue and the immediate security-state path stop
+  sharing the same `save(User)` entry.
 
 ### 2. Finish the smaller `Session` cleanup opportunistically
 

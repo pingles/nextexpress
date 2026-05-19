@@ -125,6 +125,15 @@ pub struct Config {
     /// default `3` — matches the legacy hard-coded budget at
     /// `amiexpress/express.e:30037-30042`).
     pub max_new_user_password_attempts: u32,
+    /// Path to a `SQLite` database file backing the durable user store
+    /// (see [`designs/USERS.md`](../../../../designs/USERS.md)).
+    ///
+    /// `None` selects the in-memory adapter, which is the right choice
+    /// for tests and the default for fresh installs that haven't picked
+    /// a storage location yet. `Some(path)` switches the binary to a
+    /// file-backed [`crate::adapters::sqlite_user_repository::SqliteUserRepository`]
+    /// rooted at `path` — the file is created on first run.
+    pub user_storage: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -145,6 +154,7 @@ impl Default for Config {
             allow_new_users: true,
             new_user_password: None,
             max_new_user_password_attempts: 3,
+            user_storage: None,
         }
     }
 }
@@ -251,6 +261,8 @@ impl Config {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
 
     #[test]
@@ -369,6 +381,7 @@ mod tests {
             allow_new_users = false
             new_user_password = "letmein"
             max_new_user_password_attempts = 5
+            user_storage = "/srv/bbs/users.db"
         "#;
         let config = Config::from_toml_str(toml).expect("parse");
         assert_eq!(config.port, 9999);
@@ -386,6 +399,18 @@ mod tests {
         assert!(!config.allow_new_users);
         assert_eq!(config.new_user_password.as_deref(), Some("letmein"));
         assert_eq!(config.max_new_user_password_attempts, 5);
+        assert_eq!(
+            config.user_storage.as_deref(),
+            Some(Path::new("/srv/bbs/users.db"))
+        );
+    }
+
+    #[test]
+    fn default_user_storage_is_in_memory() {
+        // None signals the in-memory adapter — the right choice for
+        // tests and for a fresh install that hasn't yet picked a
+        // storage location.
+        assert!(Config::default().user_storage.is_none());
     }
 
     #[test]
@@ -444,6 +469,7 @@ mod tests {
             config.max_new_user_password_attempts,
             defaults.max_new_user_password_attempts
         );
+        assert_eq!(config.user_storage, defaults.user_storage);
     }
 
     #[test]

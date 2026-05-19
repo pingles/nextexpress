@@ -767,6 +767,105 @@ impl User {
         })
     }
 
+    /// Reconstructs a [`User`] from a [`PersistedUser`] snapshot read
+    /// from durable storage (e.g. the `SQLite` adapter).
+    ///
+    /// Mirrors the field assignments performed by [`User::new`] and
+    /// [`User::register_new`] but threads every persisted counter and
+    /// preference verbatim. The `SaltMatchesAlgorithm` invariant is
+    /// enforced here too: PBKDF2 records must carry a salt.
+    ///
+    /// # Errors
+    /// Returns [`UserError::SaltRequired`] when `state.password_hash_kind`
+    /// is a PBKDF2 variant and `state.password_salt` is `None`.
+    pub fn from_persisted(state: PersistedUser) -> Result<Self, UserError> {
+        let PersistedUser {
+            slot_number,
+            handle,
+            password_hash_kind,
+            password_hash,
+            password_salt,
+            password_last_updated,
+            force_password_reset,
+            access_level,
+            invalid_attempts,
+            account_locked,
+            is_new_user,
+            censored,
+            times_called,
+            times_called_today,
+            last_call,
+            time_limit_per_call,
+            time_limit_per_day,
+            time_used_today,
+            location,
+            phone_number,
+            email,
+            line_length,
+            ansi_colour,
+            account_created,
+            flags,
+            ratio_mode,
+            ratio_value,
+            memberships,
+            last_joined,
+            messages_posted,
+        } = state;
+        let mut credentials = Credentials::new(
+            password_hash_kind,
+            password_hash,
+            password_salt,
+            password_last_updated,
+        )?;
+        credentials.set_reset_required(force_password_reset);
+        let mut account = if is_new_user {
+            AccountStatus::awaiting_validation()
+        } else {
+            AccountStatus::existing(access_level)
+        };
+        // `awaiting_validation` hard-codes access_level = 2; respect the
+        // persisted value so sysop edits and tier changes round-trip.
+        account.access_level = access_level;
+        account.invalid_attempts = invalid_attempts;
+        if account_locked {
+            account.lock = AccountLockState::Locked;
+        }
+        account.censored = censored;
+        let usage = UsageAccounting {
+            times_called,
+            last_call,
+            time_limit_per_call,
+            time_limit_per_day,
+            time_used_today,
+            times_called_today,
+        };
+        let profile = Profile::registered(
+            location,
+            phone_number,
+            email,
+            line_length,
+            ansi_colour,
+            account_created,
+            flags,
+        );
+        let ratio = RatioPolicy::new(ratio_mode, ratio_value);
+        let conferences = ConferenceAccess {
+            memberships,
+            last_joined,
+            messages_posted,
+        };
+        Ok(Self {
+            slot_number,
+            handle,
+            credentials,
+            account,
+            usage,
+            profile,
+            ratio,
+            conferences,
+        })
+    }
+
     /// Returns `true` when this user is the sysop (slot `1`).
     #[must_use]
     pub fn is_sysop(&self) -> bool {
@@ -1194,6 +1293,50 @@ impl User {
         self.conferences.bump_messages_posted();
     }
 
+    /// Returns a [`PersistedUser`] snapshot of every field the durable
+    /// store is expected to persist.
+    ///
+    /// Symmetric with [`User::from_persisted`]: round-tripping a
+    /// `User` through `to_persisted` → `from_persisted` reproduces the
+    /// same observable state. Adapters use this to project a `User`
+    /// onto their schema without sprinkling individual getter calls
+    /// through the write path.
+    #[must_use]
+    pub fn to_persisted(&self) -> PersistedUser {
+        PersistedUser {
+            slot_number: self.slot_number,
+            handle: self.handle.clone(),
+            password_hash_kind: self.credentials.hash_kind,
+            password_hash: self.credentials.hash.clone(),
+            password_salt: self.credentials.salt.clone(),
+            password_last_updated: self.credentials.last_updated,
+            force_password_reset: self.credentials.reset.is_required(),
+            access_level: self.account.access_level,
+            invalid_attempts: self.account.invalid_attempts,
+            account_locked: self.account.is_account_locked(),
+            is_new_user: self.account.is_new_user(),
+            censored: self.account.censored,
+            times_called: self.usage.times_called,
+            times_called_today: self.usage.times_called_today,
+            last_call: self.usage.last_call,
+            time_limit_per_call: self.usage.time_limit_per_call,
+            time_limit_per_day: self.usage.time_limit_per_day,
+            time_used_today: self.usage.time_used_today,
+            location: self.profile.location.clone(),
+            phone_number: self.profile.phone_number.clone(),
+            email: self.profile.email.clone(),
+            line_length: self.profile.line_length,
+            ansi_colour: self.profile.ansi_colour.enabled(),
+            account_created: self.profile.account_created,
+            flags: self.profile.flags.clone(),
+            ratio_mode: self.ratio.mode,
+            ratio_value: self.ratio.value,
+            memberships: self.conferences.memberships.clone(),
+            last_joined: self.conferences.last_joined,
+            messages_posted: self.conferences.messages_posted,
+        }
+    }
+
     /// Atomically replaces the user's stored credentials and clears
     /// [`Self::force_password_reset`].
     ///
@@ -1266,7 +1409,88 @@ pub struct NewUserRegistration {
     pub now: SystemTime,
 }
 
-/// Errors returned by [`User::new`].
+/// Complete snapshot of a [`User`]'s persistent state as read from
+/// durable storage.
+///
+/// Sibling to [`NewUserRegistration`]: where that bundles fresh-account
+/// fields, this bundles every piece of state the BBS persists for an
+/// already-existing account. A storage adapter (e.g.
+/// [`crate::adapters::sqlite_user_repository::SqliteUserRepository`])
+/// reads its columns into a [`PersistedUser`] and constructs a
+/// [`User`] via [`User::from_persisted`].
+#[derive(Debug, Clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "this struct mirrors a row of boolean columns persisted in the user store; \
+              compressing them into enums would obscure the schema mapping"
+)]
+pub struct PersistedUser {
+    /// Stable account id; `1` is the sysop.
+    pub slot_number: u32,
+    /// Unique login name.
+    pub handle: String,
+    /// Algorithm used to verify the stored password hash.
+    pub password_hash_kind: PasswordHashKind,
+    /// Opaque stored password hash.
+    pub password_hash: String,
+    /// Salt the hash was bound to (`None` for hash kinds that don't
+    /// take one).
+    pub password_salt: Option<String>,
+    /// Timestamp when the credential triple was last rotated.
+    pub password_last_updated: SystemTime,
+    /// Whether the next logon must force a password change.
+    pub force_password_reset: bool,
+    /// `0..=255` access tier (`0` = locked out).
+    pub access_level: u8,
+    /// Recent invalid password attempts.
+    pub invalid_attempts: u32,
+    /// Independent account-lock flag set by lockout rules/admin tools.
+    pub account_locked: bool,
+    /// Whether the account is awaiting sysop validation.
+    pub is_new_user: bool,
+    /// Whether the user's posts are silently downgraded to
+    /// `private_to_sysop`.
+    pub censored: bool,
+    /// Number of completed logons recorded for this user.
+    pub times_called: u32,
+    /// Number of completed logons in the current accounting day.
+    pub times_called_today: u32,
+    /// Timestamp of the most recently completed logon, if any.
+    pub last_call: Option<SystemTime>,
+    /// Per-call wall-clock allowance.
+    pub time_limit_per_call: Duration,
+    /// Combined per-day allowance.
+    pub time_limit_per_day: Duration,
+    /// Wall-clock time used today.
+    pub time_used_today: Duration,
+    /// Free-text "City, State" location.
+    pub location: Option<String>,
+    /// Phone number.
+    pub phone_number: Option<String>,
+    /// Email address.
+    pub email: Option<String>,
+    /// Preferred terminal width (`0` = auto).
+    pub line_length: u32,
+    /// Whether the user wants ANSI colour output.
+    pub ansi_colour: bool,
+    /// Timestamp the account was first created.
+    pub account_created: SystemTime,
+    /// User preference flags.
+    pub flags: BTreeSet<UserFlag>,
+    /// Ratio enforcement mode in effect for this user.
+    pub ratio_mode: RatioMode,
+    /// Ratio threshold (`0` with non-disabled mode = infinite).
+    pub ratio_value: u32,
+    /// Per-conference membership rows (already including any read
+    /// pointer rows).
+    pub memberships: Vec<ConferenceMembership>,
+    /// Last joined `(conference, msgbase)` pair, if any.
+    pub last_joined: Option<MessageBaseRef>,
+    /// Running count of posted messages across all conferences.
+    pub messages_posted: u32,
+}
+
+/// Errors returned by [`User::new`] and [`User::from_persisted`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UserError {
     /// The chosen [`PasswordHashKind`] requires a non-null salt
@@ -1807,6 +2031,94 @@ mod tests {
         user.bump_messages_posted();
         user.bump_messages_posted();
         assert_eq!(user.messages_posted(), 2);
+    }
+
+    #[test]
+    fn to_persisted_then_from_persisted_round_trips_an_existing_user() {
+        // The SQLite adapter projects a User onto columns via
+        // `to_persisted`, then reconstitutes it via `from_persisted`.
+        // Round-tripping must preserve every observable field.
+        let mut user = User::register_new(registration()).expect("valid");
+        user.bump_invalid_attempts();
+        user.bump_invalid_attempts();
+        user.bump_times_called();
+        user.bump_times_called_today();
+        user.add_time_used_today(Duration::from_secs(45));
+        user.set_force_password_reset(true);
+        user.set_censored(true);
+        user.bump_messages_posted();
+        user.upsert_membership(ConferenceMembership::new(1, true));
+        user.upsert_membership(ConferenceMembership::new(2, false));
+        let mb = MessageBase::new(1, 1, "main".to_string());
+        user.record_join(&make_conf(1), &mb);
+        user.upsert_read_pointers(
+            ReadPointers::new(1, 3, 5, SystemTime::UNIX_EPOCH + Duration::from_secs(200))
+                .expect("valid pointers"),
+            1,
+        );
+
+        let snapshot = user.to_persisted();
+        let restored = User::from_persisted(snapshot).expect("restore");
+
+        assert_eq!(restored.slot_number(), user.slot_number());
+        assert_eq!(restored.handle(), user.handle());
+        assert_eq!(restored.password_hash_kind(), user.password_hash_kind());
+        assert_eq!(restored.password_hash(), user.password_hash());
+        assert_eq!(restored.password_salt(), user.password_salt());
+        assert_eq!(
+            restored.password_last_updated(),
+            user.password_last_updated()
+        );
+        assert_eq!(restored.force_password_reset(), user.force_password_reset());
+        assert_eq!(restored.access_level(), user.access_level());
+        assert_eq!(restored.invalid_attempts(), user.invalid_attempts());
+        assert_eq!(restored.is_account_locked(), user.is_account_locked());
+        assert_eq!(restored.is_new_user(), user.is_new_user());
+        assert_eq!(restored.is_censored(), user.is_censored());
+        assert_eq!(restored.times_called(), user.times_called());
+        assert_eq!(restored.times_called_today(), user.times_called_today());
+        assert_eq!(restored.last_call(), user.last_call());
+        assert_eq!(restored.time_limit_per_call(), user.time_limit_per_call());
+        assert_eq!(restored.time_limit_per_day(), user.time_limit_per_day());
+        assert_eq!(restored.time_used_today(), user.time_used_today());
+        assert_eq!(restored.location(), user.location());
+        assert_eq!(restored.phone_number(), user.phone_number());
+        assert_eq!(restored.email(), user.email());
+        assert_eq!(restored.line_length(), user.line_length());
+        assert_eq!(restored.ansi_colour(), user.ansi_colour());
+        assert_eq!(restored.account_created(), user.account_created());
+        assert_eq!(restored.flags(), user.flags());
+        assert_eq!(restored.ratio_mode(), user.ratio_mode());
+        assert_eq!(restored.ratio_value(), user.ratio_value());
+        assert_eq!(restored.messages_posted(), user.messages_posted());
+        assert_eq!(restored.last_joined(), user.last_joined());
+        assert_eq!(restored.memberships().len(), user.memberships().len());
+    }
+
+    #[test]
+    fn from_persisted_preserves_locked_account_state_and_attempts() {
+        // The lockout-clears-attempts invariant applies to in-flight
+        // mutation; restoration must preserve the values exactly as
+        // stored (sysop edits to invalid_attempts on a locked account
+        // are otherwise unrecoverable across restarts).
+        let user = User::register_new(registration()).expect("valid");
+        let mut snapshot = user.to_persisted();
+        snapshot.account_locked = true;
+        snapshot.invalid_attempts = 7;
+        let restored = User::from_persisted(snapshot).expect("restore");
+        assert!(restored.is_account_locked());
+        assert_eq!(restored.invalid_attempts(), 7);
+    }
+
+    #[test]
+    fn from_persisted_rejects_pbkdf2_without_salt() {
+        let user = User::register_new(registration()).expect("valid");
+        let mut snapshot = user.to_persisted();
+        snapshot.password_salt = None;
+        assert_eq!(
+            User::from_persisted(snapshot).expect_err("missing salt"),
+            UserError::SaltRequired
+        );
     }
 
     #[test]

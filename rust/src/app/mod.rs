@@ -17,6 +17,7 @@ use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
 use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+use crate::adapters::sqlite_user_repository::SqliteUserRepository;
 use crate::adapters::telnet_listener::TelnetListener;
 use crate::app::mail_stores::MailStores;
 use crate::app::runtime::Runtime;
@@ -101,14 +102,7 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
         );
     }
 
-    let mut seeded = seed::default_sysop(hasher.as_ref())?;
-    seed::grant_all_memberships(&mut seeded, &conferences);
-    eprintln!(
-        "WARNING: seeded default sysop credentials (handle=sysop, password=sysop). \
-         Configure a real user store before production use."
-    );
-    let repo: Arc<dyn UserRepository + Send + Sync> =
-        Arc::new(InMemoryUserRepository::new(vec![seeded]));
+    let repo = open_user_repository(&config, hasher.as_ref(), &conferences)?;
     let log: Arc<dyn CallerLogAppender + Send + Sync> = Arc::new(InMemoryCallerLog::new());
 
     // Slice 41a: open one FileMailStore per known (conference,
@@ -124,6 +118,47 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
     println!("Listening on {}", listener.local_addr()?);
     listener.run().await?;
     Ok(())
+}
+
+/// Constructs the configured [`UserRepository`] adapter and seeds the
+/// default sysop when the store is empty.
+///
+/// `None` for `config.user_storage` selects the in-memory adapter and
+/// always seeds (single-process, throwaway data). `Some(path)` opens a
+/// `SQLite` database at that path (created on first run) and only seeds
+/// when the `users` table is empty — preserving prior data on restart.
+fn open_user_repository(
+    config: &crate::app::config::Config,
+    hasher: &(dyn PasswordHasher + Send + Sync),
+    conferences: &[Conference],
+) -> Result<Arc<dyn UserRepository + Send + Sync>, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(path) = config.user_storage.as_deref() {
+        let repo = SqliteUserRepository::open(path)?;
+        if repo.is_empty()? {
+            let mut seeded = seed::default_sysop(hasher)?;
+            seed::grant_all_memberships(&mut seeded, conferences);
+            repo.insert_seed(&seeded)?;
+            eprintln!(
+                "WARNING: seeded default sysop credentials \
+                 (handle=sysop, password=sysop) into {}. Change the \
+                 sysop password before production use.",
+                path.display()
+            );
+        } else {
+            eprintln!("Loaded user database from {}.", path.display());
+        }
+        return Ok(Arc::new(repo));
+    }
+
+    let mut seeded = seed::default_sysop(hasher)?;
+    seed::grant_all_memberships(&mut seeded, conferences);
+    eprintln!(
+        "WARNING: using in-memory user store with seeded default sysop \
+         credentials (handle=sysop, password=sysop). User data will be \
+         lost on shutdown — set `user_storage` in config to point at a \
+         SQLite file for durable storage."
+    );
+    Ok(Arc::new(InMemoryUserRepository::new(vec![seeded])))
 }
 
 /// Loads the conference catalogue from `bbs_path` (Slice 34a).
