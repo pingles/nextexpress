@@ -12,8 +12,8 @@ The implementation follows a ports-and-adapters direction:
   `Node`, `Mail`, `ReadPointers`, persistence ports (`UserRepository`,
   `ConferenceRepository`, `MailStore`), phase-typed session wrappers, the
   messaging rules (`read_mail`, `scan_mail`, `post_mail`,
-  `post_comment_to_sysop`), password hashing, caller logs, and session
-  policy.
+  `post_comment_to_sysop`, `reply_to_mail`), password hashing, caller logs, and
+  session policy.
 - `rust/src/app/` is the application layer: configuration, runtime
   composition, session orchestration, terminal/screen ports, the app-level
   `MailStores` registry service, menu-command parsing, shared terminal I/O
@@ -197,6 +197,18 @@ Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
   end-to-end and reading the resulting mail back to confirm the
   legacy ANSI render shows `Recv'd: N/A` for broadcasts and
   `Status: Private Message` / `To: Sysop` for the comment.
+- `messaging.allium:ReplyToMail` (Slice 45) lives in
+  `domain::reply_to_mail` and is a thin shim over `post_mail`: it
+  derives the addressee from the source mail (`source.from_name` and
+  `source.author_slot` by default, `"ALL"` / `BroadcastTo::All` when
+  the source was an ALL broadcast and the caller's
+  `reply_keeps_broadcast` flag is set) and then delegates to
+  `post_mail` for the actual persistence and counter bumps. The
+  rule's own `requires: source.visibility != deleted` surfaces as
+  `ReplyToMailError::SourceDeleted`; every other gate bubbles up
+  through `ReplyToMailError::Post(PostMailError)`. No menu wiring
+  ships with this slice — the post-read `R` prompt arrives with a
+  later application-layer slice.
 
 Slice 42 opens Phase 7 (Messaging — write) with the single-addressee
 `PostMail` rule and the `E` / `E <to>` menu command:

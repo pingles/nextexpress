@@ -20,4 +20,5 @@ pub mod post_comment_to_sysop;
 pub mod post_mail;
 pub mod read_mail;
 pub mod read_pointers;
+pub mod reply_to_mail;
 pub mod scan_mail;
