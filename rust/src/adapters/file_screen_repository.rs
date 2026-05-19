@@ -57,6 +57,14 @@ const FALLBACK_INTERNETNAMES: &[u8] =
 /// auto-scan-on-join summary when the user has unread mail.
 const FALLBACK_MAILSCAN: &[u8] = b"\r\n*** New mail in this conference ***\r\n";
 
+/// Built-in fallback for `Screens/LOGOFF.txt`
+/// (`amiexpress/express.e:6554, :8187`). The legacy screen is
+/// sysop-supplied so there is no canonical text to fall back to;
+/// callers already write a dedicated `Goodbye!` line after the
+/// screen, so the fallback is empty — an absent asset means "no
+/// pre-goodbye splash."
+const FALLBACK_LOGOFF: &[u8] = b"";
+
 /// Lower bound for the security-level menu walk, mirroring the
 /// `minLevel := 5` default in `amiexpress/express.e:6246`
 /// (findSecurityScreen).
@@ -79,6 +87,7 @@ pub struct FileScreenRepository {
     realnames: Mutex<Option<Vec<u8>>>,
     internetnames: Mutex<Option<Vec<u8>>>,
     mailscan: Mutex<Option<Vec<u8>>>,
+    logoff: Mutex<Option<Vec<u8>>>,
 }
 
 impl FileScreenRepository {
@@ -96,6 +105,7 @@ impl FileScreenRepository {
             realnames: Mutex::new(None),
             internetnames: Mutex::new(None),
             mailscan: Mutex::new(None),
+            logoff: Mutex::new(None),
         }
     }
 
@@ -246,6 +256,11 @@ impl FileScreenRepository {
         self.cached_file(&self.mailscan, &path, FALLBACK_MAILSCAN)
             .await
     }
+
+    async fn logoff_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("Screens").join("LOGOFF.txt");
+        self.cached_file(&self.logoff, &path, FALLBACK_LOGOFF).await
+    }
 }
 
 impl ScreenRepository for FileScreenRepository {
@@ -286,6 +301,10 @@ impl ScreenRepository for FileScreenRepository {
 
     fn mailscan_screen(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.mailscan_bytes().await })
+    }
+
+    fn logoff_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.logoff_bytes().await })
     }
 }
 
@@ -591,6 +610,42 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let repo = FileScreenRepository::new(dir.path().to_path_buf());
         assert_eq!(repo.joinconf_screen().await, FALLBACK_JOINCONF);
+    }
+
+    #[tokio::test]
+    async fn logoff_screen_returns_empty_fallback_when_asset_is_missing() {
+        // Legacy SCREEN_LOGOFF is sysop-supplied. Absent file means
+        // no pre-goodbye splash — caller writes the dedicated
+        // Goodbye! line afterwards regardless.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.logoff_screen().await, FALLBACK_LOGOFF);
+        assert!(repo.logoff_screen().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn logoff_screen_loads_from_disk_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("LOGOFF.txt"),
+            b"SEE YOU NEXT TIME\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.logoff_screen().await, b"SEE YOU NEXT TIME\r\n");
+    }
+
+    #[tokio::test]
+    async fn logoff_screen_is_cached_after_first_load() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        let path = dir.path().join("Screens").join("LOGOFF.txt");
+        std::fs::write(&path, b"FIRST\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.logoff_screen().await, b"FIRST\r\n");
+        std::fs::write(&path, b"SECOND\n").unwrap();
+        assert_eq!(repo.logoff_screen().await, b"FIRST\r\n");
     }
 
     #[tokio::test]

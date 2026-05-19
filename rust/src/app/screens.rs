@@ -87,4 +87,23 @@ pub trait ScreenRepository {
     /// least one unread message — gives the sysop a hook for a
     /// "you've got new mail" splash.
     fn mailscan_screen(&self) -> ScreenFuture<'_>;
+
+    /// Returns the `SCREEN_LOGOFF` asset
+    /// (`Screens/LOGOFF.txt`, `amiexpress/express.e:6554`, displayed at
+    /// `:8187`). Rendered on a normal user-requested logoff
+    /// (`G` menu command), immediately before the
+    /// [`crate::app::wire_text::GOODBYE_LINE`].
+    ///
+    /// The legacy gates rendering on `logonType != LOGON_TYPE_SYSOP`
+    /// and `ftpConn = FALSE`; `NextExpress` has neither sysop direct
+    /// logon nor an FTP channel yet, so every normal logoff gets the
+    /// screen. Idle timeout / account lock / carrier loss exits emit
+    /// their dedicated goodbye lines (`IDLE_TIMEOUT_LINE`,
+    /// `ACCOUNT_LOCKED_LINE`, etc.) and skip the screen — matching
+    /// the legacy which only invokes `displayScreen(SCREEN_LOGOFF)`
+    /// from the clean-logoff path.
+    ///
+    /// Returns empty bytes when the asset is absent so the caller can
+    /// write the result unconditionally and skip silently.
+    fn logoff_screen(&self) -> ScreenFuture<'_>;
 }

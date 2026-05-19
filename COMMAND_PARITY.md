@@ -21,7 +21,7 @@ Notation:
 
 | # | Command (form) | AmiExpress experience (source) | Our experience | Verdict / what to change |
 |---|---|---|---|---|
-| 1 | `G` (logoff) | `internalCommandG` (`express.e:25047`) optionally prompts to confirm flagged-file abandonment; sets `REQ_STATE_LOGOFF`; the listener emits SCREEN_LOGOFF then `Goodbye!\r\n\r\n` (`express.e:17792, 20231`). | `Goodbye!\r\n` (`GOODBYE_LINE`). No flagged-file confirm (no files yet), no SCREEN_LOGOFF, single trailing CRLF. | **Minor.** Add a second trailing `\r\n`. SCREEN_LOGOFF lands when screen assets per phase exist; flagged-file confirm needs Phase 9. |
+| 1 | `G` (logoff) | `internalCommandG` (`express.e:25047`) optionally prompts to confirm flagged-file abandonment; sets `REQ_STATE_LOGOFF`; the listener emits SCREEN_LOGOFF then `Goodbye!\r\n\r\n` (`express.e:17792, 20231`). | SCREEN_LOGOFF (`Screens/LOGOFF.txt`) rendered when present, then `Goodbye!\r\n` (`GOODBYE_LINE`). No flagged-file confirm (no files yet); single trailing CRLF. | **Minor.** Add a second trailing `\r\n` to match. Flagged-file confirm needs Phase 9. SCREEN_LOGOFF wiring ✓ (`ScreenRepository::logoff_screen`, written from the menu-loop Logoff branch before the Goodbye line; absent asset = silent skip, matching the spirit of the legacy `displayScreen` gate). |
 | 2 | `J` (no arg) | Displays SCREEN_JOINCONF asset, then prompts `Conference Number (1-N): ` via `lineInput` (`express.e:25143-25151`). Blank input returns to menu silently. | Rejects: `\r\nUsage: J <conference-number>\r\n`. | **Significant gap.** Legacy is *interactive*. New slice: implement the no-arg `J` prompt sub-flow (mirror `lineInput` contract: blank = abort to menu). |
 | 3 | `J <invalid token>` | Legacy `Val()` parses non-numeric as `0`, then the prompt re-asks; never surfaces "invalid". | `\r\nInvalid conference number.\r\n`. | Conditioned on (2): silently fall through to the prompt instead of emitting a notice. |
 | 4 | `J <num>` no access | `\b\nYou do not have access to the requested conference\b\n\b\n` (`express.e:25157`). | `\r\nYou do not have access to the requested conference\r\n\r\n` (`NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE`). | ✓ Matches verbatim. |
@@ -62,7 +62,7 @@ Notation:
 
 ## 3. Summary
 
-- **Verbatim matches:** auto-rejoin, explicit join, J no-access, deleted-message read.
+- **Verbatim matches:** auto-rejoin, explicit join, J no-access, deleted-message read, SCREEN_LOGOFF rendering on G.
 - **Drift to fix verbatim (text-only, easy):** unknown user (17), recipient no-access (18), Goodbye trailing CRLF (1), Subject prompt's ANSI (15).
 - **Behaviour mismatches (semantic, harder):** Private default (16), Subject blank silent vs notice (15), unknown command silent vs notice (27), `J` / `R` no-arg interactive prompts (2, 7).
 - **Major missing surface:** R sub-prompt (7, 8) — the legacy's *primary* mail UI and the natural home for K/MV/EH/FW/RP. **Slice candidate.**

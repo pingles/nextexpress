@@ -89,6 +89,17 @@ where
             match parse_menu_command(trimmed) {
                 MenuCommand::Logoff => {
                     let logging_off = session.user_requests_logoff();
+                    // SCREEN_LOGOFF (amiexpress/express.e:6554,
+                    // displayed at :8187): sysop-supplied pre-goodbye
+                    // splash. The adapter returns empty bytes when the
+                    // asset is absent, so this is a no-op on a fresh
+                    // install. Idle-timeout / account-lock / carrier
+                    // exits use their dedicated goodbye lines and
+                    // never reach this branch — matching the legacy.
+                    let logoff_screen = self.services.screens().logoff_screen().await;
+                    if !logoff_screen.is_empty() {
+                        self.terminal.write(&logoff_screen).await?;
+                    }
                     self.write_and_flush(GOODBYE_LINE).await?;
                     return Ok(logging_off);
                 }

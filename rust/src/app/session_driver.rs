@@ -344,6 +344,10 @@ mod tests {
         fn mailscan_screen(&self) -> ScreenFuture<'_> {
             bytes(b"MAILSCAN\r\n")
         }
+
+        fn logoff_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"LOGOFF SCREEN\r\n")
+        }
     }
 
     fn bytes(value: &'static [u8]) -> ScreenFuture<'static> {
@@ -421,7 +425,21 @@ mod tests {
             .windows(b"Authenticated".len())
             .any(|w| w == b"Authenticated"));
         assert!(output.windows(b"MENU".len()).any(|w| w == b"MENU"));
-        assert!(output.windows(b"Goodbye".len()).any(|w| w == b"Goodbye"));
+        // SCREEN_LOGOFF is rendered before the Goodbye line on a user-
+        // requested logoff (G command). The StaticScreens mock returns
+        // "LOGOFF SCREEN\r\n"; assert it lands and precedes "Goodbye".
+        let logoff_screen_pos = output
+            .windows(b"LOGOFF SCREEN".len())
+            .position(|w| w == b"LOGOFF SCREEN")
+            .expect("SCREEN_LOGOFF should be rendered before goodbye");
+        let goodbye_pos = output
+            .windows(b"Goodbye".len())
+            .position(|w| w == b"Goodbye")
+            .expect("goodbye should be rendered");
+        assert!(
+            logoff_screen_pos < goodbye_pos,
+            "SCREEN_LOGOFF must precede the Goodbye line"
+        );
         assert_eq!(
             terminal.echo_modes,
             vec![

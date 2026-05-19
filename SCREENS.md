@@ -419,14 +419,21 @@ NextExpress yet are listed at the end with their expected slice.
 - **Allium rule:** `session.allium:FinaliseLogoff` (presentation
   consequent; see `@guidance`).
 - **Display semantics:** pure-cosmetic; not rendered for FTP
-  channels (`is_remote = ftp`) or for sysop console.
-- **Built-in fall-back:** `Goodbye!\r\n` (see
-  `rust/src/adapters/telnet_listener.rs::GOODBYE_LINE`). For non-clean
-  exits the adapter writes the relevant goodbye line in lieu of the
-  screen: `Idle timeout. Goodbye.\r\n`, `Account locked. Goodbye.\r\n`,
-  `Too many password failures. Goodbye.\r\n`, etc. Carrier-loss exits
-  write nothing — the connection is already gone.
-- **Source:** `amiexpress/express.e:8187`.
+  channels (`is_remote = ftp`) or for sysop console. Loaded from
+  `Screens/LOGOFF.txt` by `ScreenRepository::logoff_screen` and
+  written by the menu-loop Logoff branch immediately before the
+  `GOODBYE_LINE` (`rust/src/app/menu_flow/mod.rs`). Absent asset =
+  silent skip.
+- **Built-in fall-back:** *empty bytes* for the screen (the asset is
+  sysop-supplied; no canonical text). The dedicated `Goodbye!\r\n`
+  line (`rust/src/app/wire_text.rs::GOODBYE_LINE`) is always written
+  afterwards. For non-clean exits the adapter writes a dedicated
+  goodbye line *in lieu of* the screen + Goodbye sequence:
+  `Idle timeout. Goodbye.\r\n`, `Account locked. Goodbye.\r\n`,
+  `Too many password failures. Goodbye.\r\n`, etc. Carrier-loss
+  exits write nothing — the connection is already gone.
+- **Source:** `amiexpress/express.e:8187` (display call),
+  `amiexpress/express.e:6554` (path resolution).
 
 ---
 
@@ -465,4 +472,4 @@ reflects the spec.
 | REALNAMES | not yet | `PostMail` precondition | Phase 7 |
 | INTERNETNAMES | not yet | `PostMail` precondition | Phase 7 |
 | LANGUAGES | not yet | (future.md) | — |
-| LOGOFF | adapter has fall-back line ("Goodbye!") | `FinaliseLogoff` | 13 |
+| LOGOFF | implemented (loads `Screens/LOGOFF.txt`; empty-fallback skip) | `FinaliseLogoff` | 13 |
