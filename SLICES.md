@@ -264,7 +264,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 44 | `PostCommentToSysop` (`C` command) | Done |
 | 44a | Phase 7 wire-and-smoke (ALL / EALL + comment-to-sysop end-to-end) | Done |
 | 45 | `ReplyToMail` | Done |
-| 46 | `ForwardMail` | Todo |
+| 46 | `ForwardMail` | Done |
 | 47 | Censored users + private / private-to-sysop | Todo |
 | 48 | `MailAttachment` + `AttachFileToMail` | Todo |
 | 49 | `DeleteMail`, `MoveMail`, `EditMailHeader` | Todo |

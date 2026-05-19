@@ -12,8 +12,8 @@ The implementation follows a ports-and-adapters direction:
   `Node`, `Mail`, `ReadPointers`, persistence ports (`UserRepository`,
   `ConferenceRepository`, `MailStore`), phase-typed session wrappers, the
   messaging rules (`read_mail`, `scan_mail`, `post_mail`,
-  `post_comment_to_sysop`, `reply_to_mail`), password hashing, caller logs, and
-  session policy.
+  `post_comment_to_sysop`, `reply_to_mail`, `forward_mail`), password hashing,
+  caller logs, and session policy.
 - `rust/src/app/` is the application layer: configuration, runtime
   composition, session orchestration, terminal/screen ports, the app-level
   `MailStores` registry service, menu-command parsing, shared terminal I/O
@@ -209,6 +209,19 @@ Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
   through `ReplyToMailError::Post(PostMailError)`. No menu wiring
   ships with this slice — the post-read `R` prompt arrives with a
   later application-layer slice.
+- `messaging.allium:ForwardMail` (Slice 46) lives in
+  `domain::forward_mail` and composes a new `Fwd: <subject>` mail in
+  the same msgbase by prepending the spec's
+  `forward_header_for(source)` block (`From:` / `Date:` / `Subject:`,
+  date in RFC3339) to the original body, optionally followed by a
+  `--`-separated note, then delegates to `post_mail`. Visibility
+  carries from the source per the spec's `private: source.visibility
+  != public` selector. The rule's `requires: not source.is_deleted`
+  surfaces as `ForwardMailError::SourceDeleted`; underlying PostMail
+  gates bubble up through `ForwardMailError::Post(PostMailError)`.
+  Forwarding attachments is deferred to Slice 48. No menu wiring
+  ships here — the `F` prompt arrives with Phase 8's wire-and-smoke
+  closer.
 
 Slice 42 opens Phase 7 (Messaging — write) with the single-addressee
 `PostMail` rule and the `E` / `E <to>` menu command:
