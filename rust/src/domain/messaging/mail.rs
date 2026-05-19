@@ -30,6 +30,33 @@ pub enum MailVisibility {
     Deleted,
 }
 
+impl MailVisibility {
+    /// Single-character glyph used by the mail listing screen
+    /// (spec `messaging.allium:MailVisibility` comment: "the sysop
+    /// sees the same letter glyph in lower case on the listing
+    /// screen"). Slice 47 introduces the lowercase `p` variant for
+    /// censored mail.
+    ///
+    /// - [`Public`] → `' '` (unmarked — the default).
+    /// - [`Private`] → `'P'`.
+    /// - [`PrivateToSysop`] → `'p'` (lowercase; spec wording).
+    /// - [`Deleted`] → `'D'` (defensive; ordinary readers never see deleted mail).
+    ///
+    /// [`Public`]: MailVisibility::Public
+    /// [`Private`]: MailVisibility::Private
+    /// [`PrivateToSysop`]: MailVisibility::PrivateToSysop
+    /// [`Deleted`]: MailVisibility::Deleted
+    #[must_use]
+    pub fn status_glyph(self) -> char {
+        match self {
+            MailVisibility::Public => ' ',
+            MailVisibility::Private => 'P',
+            MailVisibility::PrivateToSysop => 'p',
+            MailVisibility::Deleted => 'D',
+        }
+    }
+}
+
 /// Special addressees that aren't user handles (spec:
 /// `messaging.allium:BroadcastTo`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -617,5 +644,15 @@ mod tests {
         );
         // visibility unchanged after a rejected transition
         assert_eq!(mail.visibility(), MailVisibility::Deleted);
+    }
+
+    #[test]
+    fn status_glyph_uses_lowercase_for_sysop_only_mail() {
+        // Spec `MailVisibility` (Slice 47): the sysop sees the same
+        // letter glyph in lower case for censored mail.
+        assert_eq!(MailVisibility::Public.status_glyph(), ' ');
+        assert_eq!(MailVisibility::Private.status_glyph(), 'P');
+        assert_eq!(MailVisibility::PrivateToSysop.status_glyph(), 'p');
+        assert_eq!(MailVisibility::Deleted.status_glyph(), 'D');
     }
 }

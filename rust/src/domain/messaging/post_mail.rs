@@ -179,11 +179,13 @@ pub(crate) fn apply_post_mail(
 
     // Spec visibility selector:
     //   if draft.broadcast_to = eall: public
-    //   else if user.censored: private_to_sysop   (Slice 47)
+    //   else if user.censored: private_to_sysop
     //   else if draft.private: private
     //   else: public
     let visibility = if matches!(draft.broadcast_to, BroadcastTo::Eall) {
         MailVisibility::Public
+    } else if user.is_censored() {
+        MailVisibility::PrivateToSysop
     } else if draft.private {
         MailVisibility::Private
     } else {
@@ -331,6 +333,79 @@ mod tests {
         )
         .expect("happy path");
         assert_eq!(mail.visibility(), MailVisibility::Private);
+    }
+
+    #[test]
+    fn censored_user_post_persists_as_private_to_sysop_even_when_draft_is_public() {
+        // Spec visibility selector (Slice 47): `else if user.censored:
+        // private_to_sysop`. A censored user's public-intent post is
+        // silently downgraded so only the sysop sees it.
+        let mut user = make_user(2);
+        user.set_censored(true);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let mut draft = sample_draft();
+        draft.private = false;
+
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("censored post still persists");
+        assert_eq!(mail.visibility(), MailVisibility::PrivateToSysop);
+    }
+
+    #[test]
+    fn censored_user_post_persists_as_private_to_sysop_even_when_draft_is_private() {
+        // Spec selector: `private_to_sysop` overrides
+        // `draft.private = true` (the censored branch sits before
+        // the private branch). Pins the ordering so a future
+        // refactor can't silently demote sysop-only down to private.
+        let mut user = make_user(2);
+        user.set_censored(true);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let mut draft = sample_draft();
+        draft.private = true;
+
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("censored post still persists");
+        assert_eq!(mail.visibility(), MailVisibility::PrivateToSysop);
+    }
+
+    #[test]
+    fn censored_user_eall_post_stays_public() {
+        // Spec selector: `if draft.broadcast_to = eall: public`
+        // takes precedence over the censored branch. An echo-all
+        // post must always be visible to every conference, even
+        // for a censored author.
+        let mut user = make_user(2);
+        user.set_censored(true);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let mut draft = sample_draft();
+        draft.to_name = "EALL".to_string();
+        draft.broadcast_to = BroadcastTo::Eall;
+        draft.addressee_slot = None;
+
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("censored EALL still public");
+        assert_eq!(mail.visibility(), MailVisibility::Public);
     }
 
     #[test]

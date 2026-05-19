@@ -334,6 +334,11 @@ struct AccountStatus {
     lock: AccountLockState,
     /// Whether the account is awaiting sysop validation.
     validation: AccountValidationStatus,
+    /// `core.allium:User.censored` — when true the user's posts are
+    /// silently downgraded to `private_to_sysop` (`messaging.allium`
+    /// visibility selector, Slice 47). Defaults to false; sysop
+    /// admin tools that flip the flag are out of scope for Slice 47.
+    censored: bool,
 }
 
 impl AccountStatus {
@@ -345,6 +350,7 @@ impl AccountStatus {
             invalid_attempts: 0,
             lock: AccountLockState::Unlocked,
             validation: AccountValidationStatus::Existing,
+            censored: false,
         }
     }
 
@@ -355,7 +361,16 @@ impl AccountStatus {
             invalid_attempts: 0,
             lock: AccountLockState::Unlocked,
             validation: AccountValidationStatus::AwaitingSysopValidation,
+            censored: false,
         }
+    }
+
+    fn is_censored(&self) -> bool {
+        self.censored
+    }
+
+    fn set_censored(&mut self, value: bool) {
+        self.censored = value;
     }
 
     fn invalid_attempts(&self) -> u32 {
@@ -948,6 +963,22 @@ impl User {
         self.credentials.set_reset_required(value);
     }
 
+    /// Returns whether this user is censored
+    /// (`core.allium:User.censored`, Slice 47). Read by
+    /// `messaging.allium:PostMail`'s visibility selector to force
+    /// posts to `private_to_sysop`.
+    #[must_use]
+    pub fn is_censored(&self) -> bool {
+        self.account.is_censored()
+    }
+
+    /// Sets the user's [`Self::is_censored`] flag. The sysop rule
+    /// that flips this in-band lands with Slice 49; in the meantime
+    /// the setter is used by storage loading and by tests.
+    pub fn set_censored(&mut self, value: bool) {
+        self.account.set_censored(value);
+    }
+
     /// Returns whether this account is awaiting sysop validation
     /// (`core.allium:User.is_new_user`). Set by
     /// `session.allium:CompleteNewUserRegistration` (Slice 20);
@@ -1366,6 +1397,24 @@ mod tests {
         user.add_time_used_today(Duration::from_secs(30));
         user.add_time_used_today(Duration::from_secs(45));
         assert_eq!(user.time_used_today(), Duration::from_secs(75));
+    }
+
+    #[test]
+    fn newly_constructed_user_is_not_censored_by_default() {
+        // Spec `core.allium:User.censored: Boolean` defaults to false
+        // until a sysop flips it (Slice 49). The flag exists on every
+        // user record from Slice 47 onwards.
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(!user.is_censored());
+    }
+
+    #[test]
+    fn set_censored_round_trips() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.set_censored(true);
+        assert!(user.is_censored());
+        user.set_censored(false);
+        assert!(!user.is_censored());
     }
 
     #[test]

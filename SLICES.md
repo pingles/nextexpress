@@ -265,7 +265,7 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 44a | Phase 7 wire-and-smoke (ALL / EALL + comment-to-sysop end-to-end) | Done |
 | 45 | `ReplyToMail` | Done |
 | 46 | `ForwardMail` | Done |
-| 47 | Censored users + private / private-to-sysop | Todo |
+| 47 | Censored users + private / private-to-sysop | Done |
 | 48 | `MailAttachment` + `AttachFileToMail` | Todo |
 | 49 | `DeleteMail`, `MoveMail`, `EditMailHeader` | Todo |
 | 50 | `Bytes` value type + `FileArea` + `File` entities | Todo |

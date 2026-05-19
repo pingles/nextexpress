@@ -222,6 +222,19 @@ Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
   Forwarding attachments is deferred to Slice 48. No menu wiring
   ships here — the `F` prompt arrives with Phase 8's wire-and-smoke
   closer.
+- Slice 47 wires the `core.allium:User.censored` flag into
+  `domain::user::User` (default false; `User::is_censored` /
+  `User::set_censored` accessors) and the `messaging.allium:PostMail`
+  visibility selector: a censored author's post is silently
+  downgraded to `PrivateToSysop`, even when `draft.private = false`
+  and even when `draft.private = true`. The `EALL → Public` branch
+  still takes precedence, so an echo-all post by a censored user
+  remains visible to the network. The `MailVisibility::status_glyph`
+  helper returns the listing-screen glyph (`'P'` / `'p'` for
+  Private / PrivateToSysop — same letter, different case — `' '`
+  for Public, `'D'` for Deleted) ready for the listing renderer
+  that lands with a later Phase-8 slice. The sysop rule that flips
+  `censored` in-band is deferred to Slice 49.
 
 Slice 42 opens Phase 7 (Messaging — write) with the single-addressee
 `PostMail` rule and the `E` / `E <to>` menu command:
