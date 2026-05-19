@@ -5,6 +5,7 @@
 //! Domain types and rules grow slice-by-slice as the Allium specs in
 //! `specs/` demand them.
 
+pub mod bytes;
 pub mod caller_log;
 pub mod conference;
 pub mod conference_repository;

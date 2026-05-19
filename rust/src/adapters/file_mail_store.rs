@@ -16,7 +16,9 @@ use time::OffsetDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::domain::conference::MessageBaseRef;
-use crate::domain::messaging::mail::{BroadcastTo, Mail, MailDraft, MailVisibility, NewMail};
+use crate::domain::messaging::mail::{
+    BroadcastTo, Mail, MailAttachment, MailDraft, MailVisibility, NewMail,
+};
 use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 
 /// Width of the zero-padded number used as a message's on-disk
@@ -229,6 +231,18 @@ struct MailPayload {
     author_slot: u32,
     addressee_slot: Option<u32>,
     body: String,
+    /// Per-mail attachment manifest
+    /// (spec: `messaging.allium:Mail.attachments`, Slice 48).
+    /// Defaults to empty so payloads written before Slice 48 still
+    /// load unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<AttachmentPayload>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AttachmentPayload {
+    file_name: String,
+    file_size: u64,
 }
 
 impl MailPayload {
@@ -297,6 +311,12 @@ impl MailPayload {
                     )),
                 })?;
         }
+        for attachment in self.attachments {
+            mail.push_attachment(MailAttachment::new(
+                attachment.file_name,
+                crate::domain::bytes::Bytes::new(attachment.file_size),
+            ));
+        }
         Ok(mail)
     }
 }
@@ -317,6 +337,14 @@ impl From<&Mail> for MailPayload {
             author_slot: mail.author_slot(),
             addressee_slot: mail.addressee_slot(),
             body: mail.body().to_string(),
+            attachments: mail
+                .attachments()
+                .iter()
+                .map(|attachment| AttachmentPayload {
+                    file_name: attachment.file_name().to_string(),
+                    file_size: attachment.file_size().count(),
+                })
+                .collect(),
         }
     }
 }
@@ -386,7 +414,7 @@ mod tests {
 
     use crate::adapters::file_mail_store::FileMailStore;
     use crate::domain::conference::MessageBaseRef;
-    use crate::domain::messaging::mail::{BroadcastTo, MailDraft, MailVisibility};
+    use crate::domain::messaging::mail::{BroadcastTo, MailAttachment, MailDraft, MailVisibility};
     use crate::domain::messaging::mail_store::MailStore;
 
     fn t(secs: u64) -> SystemTime {
@@ -869,6 +897,63 @@ mod tests {
         let reopened = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
         let loaded = reopened.load(mail.number()).unwrap().expect("present");
         assert_eq!(loaded.received_at(), Some(t(500)));
+    }
+
+    #[test]
+    fn save_persists_attachments_so_reload_returns_them() {
+        // Slice 48: AttachFileToMail appends MailAttachment rows
+        // onto an existing mail. Each row must survive a reload —
+        // otherwise the spec's `Mail.attachments` collection would
+        // silently drop on every roundtrip.
+        use crate::domain::bytes::Bytes;
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        let mut mail = store.insert(sample_draft()).expect("insert");
+        mail.push_attachment(MailAttachment::new("a.txt".to_string(), Bytes::new(123)));
+        mail.push_attachment(MailAttachment::new(
+            "b.bin".to_string(),
+            Bytes::new(999_999),
+        ));
+        store.save(&mail).expect("save");
+
+        let reopened = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        let loaded = reopened.load(mail.number()).unwrap().expect("present");
+        let attachments = loaded.attachments();
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].file_name(), "a.txt");
+        assert_eq!(attachments[0].file_size(), Bytes::new(123));
+        assert_eq!(attachments[1].file_name(), "b.bin");
+        assert_eq!(attachments[1].file_size(), Bytes::new(999_999));
+    }
+
+    #[test]
+    fn payload_without_attachments_field_loads_as_empty() {
+        // Pre-Slice-48 mail JSON files (and minimal hand-edited
+        // ones) omit the `attachments` array entirely. The default
+        // serde annotation must accept that and yield an empty
+        // attachments list rather than a parse error.
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let raw = r#"{
+            "conference_number": 2,
+            "msgbase_number": 1,
+            "number": 1,
+            "visibility": "public",
+            "from_name": "alice",
+            "to_name": "bob",
+            "broadcast_to": "none",
+            "subject": "subj",
+            "posted_at": "1970-01-01T00:00:01Z",
+            "author_slot": 2,
+            "addressee_slot": 3,
+            "body": "hi"
+        }"#;
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join("0000001.json"), raw).unwrap();
+        let store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        let loaded = store.load(1).unwrap().expect("present");
+        assert!(loaded.attachments().is_empty());
     }
 
     #[test]

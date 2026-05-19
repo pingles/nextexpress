@@ -40,3 +40,20 @@ table and asset inventory.
   - `messaging.allium:EditMailHeader` — sysop-only subject / addressee rewrite.
 - **Out of Scope**
   - Bulk delete / archive.
+
+## Slice 49a — Phase 8 wire-and-smoke
+- **In Scope**
+  - Menu wiring for the post-read `R` (reply) and `F` (forward)
+    prompts that drive Slices 45 / 46 end-to-end through the
+    compiled binary.
+  - Sysop menu wiring for the destructive `K` (kill / delete),
+    `FM` (move) and `EH` (edit-header) commands that drive Slice
+    49 end-to-end.
+  - A `phase8_smoke.rs` integration test that spawns the binary
+    over telnet, posts an original message, replies to it, forwards
+    it, deletes it, and confirms the listing changes the sysop
+    sees.
+- **Out of Scope**
+  - Attachment wire-transfer flows (those land with Phase 10's
+    Zmodem adapter — Slice 48 only carries the domain entity and
+    metadata bind, not bytes on the wire).

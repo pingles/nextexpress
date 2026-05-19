@@ -222,6 +222,19 @@ Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
   Forwarding attachments is deferred to Slice 48. No menu wiring
   ships here — the `F` prompt arrives with Phase 8's wire-and-smoke
   closer.
+- `messaging.allium:AttachFileToMail` (Slice 48) lives in
+  `domain::attach_file_to_mail` and appends a
+  `messaging.allium:MailAttachment` row (`file_name`,
+  `file_size: core.allium:Bytes`) onto an existing `Mail`. The new
+  `core::bytes::Bytes` value type ships here (a `u64`-backed
+  newtype; Slice 50 expands its API). The rule's gates surface as
+  `AttachFileToMailError::{NotAuthorOrSysop,Deleted,AccessDenied}`.
+  The `FileMailStore` JSON payload now carries an optional
+  `attachments` array (`serde(default, skip_serializing_if = Vec::is_empty)`)
+  so pre-Slice-48 files load unchanged and post-Slice-48 mail
+  round-trips its manifest. Wire transfer of the underlying file
+  bytes is Phase 10's job — Slice 48 only models the metadata
+  binding.
 - Slice 47 wires the `core.allium:User.censored` flag into
   `domain::user::User` (default false; `User::is_censored` /
   `User::set_censored` accessors) and the `messaging.allium:PostMail`

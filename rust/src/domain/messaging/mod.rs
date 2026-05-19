@@ -14,6 +14,7 @@
 //! module remains pure domain code and must not depend on
 //! [`crate::adapters`] or [`crate::app`].
 
+pub mod attach_file_to_mail;
 pub mod forward_mail;
 pub mod mail;
 pub mod mail_store;

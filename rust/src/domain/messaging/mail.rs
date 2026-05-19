@@ -15,6 +15,7 @@
 
 use std::time::SystemTime;
 
+use crate::domain::bytes::Bytes;
 use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
 
 /// Visibility of a [`Mail`] (spec: `messaging.allium:MailVisibility`).
@@ -160,6 +161,43 @@ pub struct NewMail {
     pub body: String,
 }
 
+/// A file attached to a [`Mail`] (spec:
+/// `messaging.allium:MailAttachment`).
+///
+/// The attached file itself lives outside the spec (in the file
+/// area, Phase 9). The attachment row is just the
+/// `(file_name, file_size)` pair tagged onto the host mail —
+/// Slice 48 only models the metadata; the wire transfer that
+/// materialises the file is Phase 10's job.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailAttachment {
+    file_name: String,
+    file_size: Bytes,
+}
+
+impl MailAttachment {
+    /// Constructs a [`MailAttachment`] from its file name and size.
+    #[must_use]
+    pub fn new(file_name: String, file_size: Bytes) -> Self {
+        Self {
+            file_name,
+            file_size,
+        }
+    }
+
+    /// Returns the attached file's name as it lives in the file area.
+    #[must_use]
+    pub fn file_name(&self) -> &str {
+        &self.file_name
+    }
+
+    /// Returns the attached file's [`Bytes`] size.
+    #[must_use]
+    pub fn file_size(&self) -> Bytes {
+        self.file_size
+    }
+}
+
 /// A persistent mail message (spec: `messaging.allium:Mail`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mail {
@@ -175,6 +213,7 @@ pub struct Mail {
     author_slot: u32,
     addressee_slot: Option<u32>,
     body: String,
+    attachments: Vec<MailAttachment>,
 }
 
 impl Mail {
@@ -232,6 +271,7 @@ impl Mail {
             author_slot,
             addressee_slot,
             body,
+            attachments: Vec::new(),
         }
     }
 
@@ -239,6 +279,20 @@ impl Mail {
     #[must_use]
     pub fn msgbase(&self) -> MessageBaseRef {
         self.msgbase
+    }
+
+    /// Returns the message's attachments (spec:
+    /// `messaging.allium:Mail.attachments`). Slice 48 only adds
+    /// the metadata rows; the wire transfer lands with Phase 10.
+    #[must_use]
+    pub fn attachments(&self) -> &[MailAttachment] {
+        &self.attachments
+    }
+
+    /// Appends an attachment row to this mail (spec:
+    /// `messaging.allium:MailAttachment.created`).
+    pub fn push_attachment(&mut self, attachment: MailAttachment) {
+        self.attachments.push(attachment);
     }
 
     /// Returns the message's number within its base.

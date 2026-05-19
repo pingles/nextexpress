@@ -29,7 +29,7 @@ This file is the small, always-loaded index. Per-slice **In Scope** /
 | 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Skipped |
 | 6 | [slices/phase6.md](slices/phase6.md) | 37–41, 41a | Messaging (read) | Done |
 | 7 | [slices/phase7.md](slices/phase7.md) | 42–44, 44a | Messaging (write) | Done |
-| 8 | [slices/phase8.md](slices/phase8.md) | 45–49 | Messaging (advanced) | Todo |
+| 8 | [slices/phase8.md](slices/phase8.md) | 45–49, 49a | Messaging (advanced) | Todo |
 | 9 | [slices/phase9.md](slices/phase9.md) | 50–52 | Files (browse and flag) | Todo |
 | 10 | [slices/phase10.md](slices/phase10.md) | 53–57 | Files (transfer) | Todo |
 | 11 | [slices/phase11.md](slices/phase11.md) | 58–60 | Files (admin) | Todo |
@@ -266,8 +266,9 @@ in Phase 1 is a planning bug being fixed by Slice 13a below.
 | 45 | `ReplyToMail` | Done |
 | 46 | `ForwardMail` | Done |
 | 47 | Censored users + private / private-to-sysop | Done |
-| 48 | `MailAttachment` + `AttachFileToMail` | Todo |
+| 48 | `MailAttachment` + `AttachFileToMail` | Done |
 | 49 | `DeleteMail`, `MoveMail`, `EditMailHeader` | Todo |
+| 49a | Phase 8 wire-and-smoke (reply / forward / delete end-to-end) | Todo |
 | 50 | `Bytes` value type + `FileArea` + `File` entities | Todo |
 | 51 | `FlagFile` / `UnflagFile` | Todo |
 | 52 | `A` (edit file flags) + `Z` (zippy search) commands | Todo |
