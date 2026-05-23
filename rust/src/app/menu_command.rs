@@ -29,6 +29,10 @@ pub(crate) enum MenuCommand {
     Move(NumberArg),
     /// `EH <num>`: edit the header of message `<num>` (Slice 49b).
     EditHeader(NumberArg),
+    /// `T`: print the current date and time (Tier A quickwin A1).
+    /// Mirrors `internalCommandT()` at
+    /// `amiexpress/express.e:25622-25644`.
+    ShowTime,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -75,6 +79,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("C") {
         return MenuCommand::CommentToSysop;
+    }
+    if trimmed.eq_ignore_ascii_case("T") {
+        return MenuCommand::ShowTime;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -350,5 +357,21 @@ mod tests {
         // takes no arguments and lands the user straight in the
         // editor.
         assert_eq!(parse_menu_command("C foo"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_show_time_command() {
+        // Tier A quickwin A1: a bare `T` (case-insensitive) routes to
+        // `internalCommandT()` at `amiexpress/express.e:25622-25644`.
+        assert_eq!(parse_menu_command("T"), MenuCommand::ShowTime);
+        assert_eq!(parse_menu_command("t"), MenuCommand::ShowTime);
+    }
+
+    #[test]
+    fn show_time_rejects_extra_tokens() {
+        // `T anything` is not the show-time command — the legacy
+        // command takes no arguments.
+        assert_eq!(parse_menu_command("T 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("T now"), MenuCommand::Unknown);
     }
 }

@@ -25,12 +25,22 @@ use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    GOODBYE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE,
-    JOIN_REQUIRES_NUMBER_LINE, MENU_PROMPT, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE,
+    render_time_line, GOODBYE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
+    INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE, MENU_PROMPT, READ_REQUIRES_NUMBER_LINE,
+    UNKNOWN_COMMAND_LINE,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
 use self::join::ExplicitJoinResult;
+
+/// Internal control-flow signal returned by
+/// [`MenuFlow::dispatch`]: either the loop continues with the supplied
+/// live [`MenuSession`], or it terminates with the supplied
+/// [`LoggingOffSession`].
+enum DispatchOutcome {
+    Continue(MenuSession),
+    LogoffComplete(LoggingOffSession),
+}
 
 /// Menu sub-flow.
 pub(crate) struct MenuFlow<'a, T>
@@ -86,79 +96,70 @@ where
                 }
             };
             let trimmed = line.trim();
-            match parse_menu_command(trimmed) {
-                MenuCommand::Logoff => {
-                    let logging_off = session.user_requests_logoff();
-                    // SCREEN_LOGOFF (amiexpress/express.e:6554,
-                    // displayed at :8187): sysop-supplied pre-goodbye
-                    // splash. The adapter returns empty bytes when the
-                    // asset is absent, so this is a no-op on a fresh
-                    // install. Idle-timeout / account-lock / carrier
-                    // exits use their dedicated goodbye lines and
-                    // never reach this branch — matching the legacy.
-                    let logoff_screen = self.services.screens().logoff_screen().await;
-                    if !logoff_screen.is_empty() {
-                        self.terminal.write(&logoff_screen).await?;
-                    }
-                    self.write_and_flush(GOODBYE_LINE).await?;
-                    return Ok(logging_off);
-                }
-                MenuCommand::Join(arg) => match arg {
-                    NumberArg::Number(n) => {
-                        session = match self.handle_explicit_join(session, n).await? {
-                            ExplicitJoinResult::Joined(menu) => menu,
-                            ExplicitJoinResult::NoAccess(logging_off) => {
-                                return Ok(logging_off);
-                            }
-                        };
-                    }
-                    NumberArg::Missing => {
-                        self.write_and_flush(JOIN_REQUIRES_NUMBER_LINE).await?;
-                    }
-                    NumberArg::Invalid => {
-                        self.write_and_flush(INVALID_CONFERENCE_NUMBER_LINE).await?;
-                    }
-                },
-                MenuCommand::Read(arg) => match arg {
-                    NumberArg::Number(n) => {
-                        self.handle_read_mail(&mut session, n).await?;
-                    }
-                    NumberArg::Missing => {
-                        self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
-                    }
-                    NumberArg::Invalid => {
-                        self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-                    }
-                },
-                MenuCommand::Scan(scan) => {
-                    self.handle_scan_mail(&mut session, scan).await?;
-                }
-                MenuCommand::Post(post) => {
-                    self.handle_post_mail(&mut session, post).await?;
-                }
-                MenuCommand::CommentToSysop => {
-                    self.handle_comment_to_sysop(&mut session).await?;
-                }
-                MenuCommand::Reply(arg) => {
-                    self.handle_reply(&mut session, arg).await?;
-                }
-                MenuCommand::Forward(arg) => {
-                    self.handle_forward(&mut session, arg).await?;
-                }
-                MenuCommand::Kill(arg) => {
-                    self.handle_kill(&mut session, arg).await?;
-                }
-                MenuCommand::Move(arg) => {
-                    self.handle_move_mail(&mut session, arg).await?;
-                }
-                MenuCommand::EditHeader(arg) => {
-                    self.handle_edit_header(&mut session, arg).await?;
-                }
-                MenuCommand::Unknown => {
-                    self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
-                }
+            match self.dispatch(session, parse_menu_command(trimmed)).await? {
+                DispatchOutcome::Continue(next) => session = next,
+                DispatchOutcome::LogoffComplete(logoff) => return Ok(logoff),
             }
         }
+    }
+
+    /// Routes one parsed command to the matching handler. Returns
+    /// either the live [`MenuSession`] (loop continues) or the
+    /// [`LoggingOffSession`] terminal value (loop exits).
+    async fn dispatch(
+        &mut self,
+        mut session: MenuSession,
+        command: MenuCommand,
+    ) -> Result<DispatchOutcome, T::Error> {
+        match command {
+            MenuCommand::Logoff => {
+                let logging_off = session.user_requests_logoff();
+                // SCREEN_LOGOFF (amiexpress/express.e:6554, displayed
+                // at :8187): sysop-supplied pre-goodbye splash. The
+                // adapter returns empty bytes when the asset is
+                // absent, so this is a no-op on a fresh install.
+                // Idle-timeout / account-lock / carrier exits use
+                // their dedicated goodbye lines and never reach this
+                // branch — matching the legacy.
+                let logoff_screen = self.services.screens().logoff_screen().await;
+                if !logoff_screen.is_empty() {
+                    self.terminal.write(&logoff_screen).await?;
+                }
+                self.write_and_flush(GOODBYE_LINE).await?;
+                return Ok(DispatchOutcome::LogoffComplete(logging_off));
+            }
+            MenuCommand::Join(arg) => match arg {
+                NumberArg::Number(n) => {
+                    session = match self.handle_explicit_join(session, n).await? {
+                        ExplicitJoinResult::Joined(menu) => menu,
+                        ExplicitJoinResult::NoAccess(logging_off) => {
+                            return Ok(DispatchOutcome::LogoffComplete(logging_off));
+                        }
+                    };
+                }
+                NumberArg::Missing => self.write_and_flush(JOIN_REQUIRES_NUMBER_LINE).await?,
+                NumberArg::Invalid => self.write_and_flush(INVALID_CONFERENCE_NUMBER_LINE).await?,
+            },
+            MenuCommand::Read(arg) => match arg {
+                NumberArg::Number(n) => self.handle_read_mail(&mut session, n).await?,
+                NumberArg::Missing => self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?,
+                NumberArg::Invalid => self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?,
+            },
+            MenuCommand::Scan(scan) => self.handle_scan_mail(&mut session, scan).await?,
+            MenuCommand::Post(post) => self.handle_post_mail(&mut session, post).await?,
+            MenuCommand::CommentToSysop => self.handle_comment_to_sysop(&mut session).await?,
+            MenuCommand::Reply(arg) => self.handle_reply(&mut session, arg).await?,
+            MenuCommand::Forward(arg) => self.handle_forward(&mut session, arg).await?,
+            MenuCommand::Kill(arg) => self.handle_kill(&mut session, arg).await?,
+            MenuCommand::Move(arg) => self.handle_move_mail(&mut session, arg).await?,
+            MenuCommand::EditHeader(arg) => self.handle_edit_header(&mut session, arg).await?,
+            MenuCommand::ShowTime => {
+                self.write_and_flush(&render_time_line(SystemTime::now()))
+                    .await?;
+            }
+            MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
+        }
+        Ok(DispatchOutcome::Continue(session))
     }
 
     async fn read_prompted(

@@ -470,6 +470,45 @@ pub(crate) fn render_post_success(number: u32) -> Vec<u8> {
     out
 }
 
+/// Formats the response to the `T` menu command (Tier A — quickwin):
+/// the legacy "It is " prefix followed by date and time, wrapped in
+/// CRLFs. Mirrors `internalCommandT()` at
+/// `amiexpress/express.e:25622-25644`.
+///
+/// The legacy uses `AmigaOS`'s `DateToStr` with `FORMAT_USA`, which
+/// produces a two-digit-year `MM-DD-YY` date and `HH:MM:SS` time.
+/// Time is rendered in UTC; the legacy used the Amiga's local
+/// `DateStamp()`, but `NextExpress` doesn't yet have a per-deployment
+/// timezone setting — landing local-offset support is a future
+/// refinement, not a parity break in the visible literal.
+pub(crate) fn render_time_line(at: std::time::SystemTime) -> Vec<u8> {
+    use time::OffsetDateTime;
+    let now = OffsetDateTime::from(at);
+    let mut out = Vec::with_capacity(40);
+    out.extend_from_slice(b"\r\nIt is ");
+    // amiexpress/express.e:25636-25640 — `It is <date> <time>`.
+    write_two_digits(&mut out, now.month() as u8);
+    out.push(b'-');
+    write_two_digits(&mut out, now.day());
+    out.push(b'-');
+    // year().rem_euclid(100) is in 0..=99, fits in u8.
+    let yy = u8::try_from(now.year().rem_euclid(100)).expect("year mod 100 in 0..=99");
+    write_two_digits(&mut out, yy);
+    out.push(b' ');
+    write_two_digits(&mut out, now.hour());
+    out.push(b':');
+    write_two_digits(&mut out, now.minute());
+    out.push(b':');
+    write_two_digits(&mut out, now.second());
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
+fn write_two_digits(out: &mut Vec<u8>, value: u8) {
+    out.push(b'0' + (value / 10) % 10);
+    out.push(b'0' + value % 10);
+}
+
 /// Formats the auto-rejoin announcement (Slice 30 / Slice 34a).
 /// Mirrors the legacy `joinConf` output at
 /// `amiexpress/express.e:5071-5073`:
@@ -743,6 +782,39 @@ mod tests {
     fn render_post_success_emits_message_number_and_terminator() {
         // Pin the legacy-aligned save confirmation.
         assert_eq!(render_post_success(7), b"\r\nMessage #7 saved.\r\n");
+    }
+
+    #[test]
+    fn render_time_line_emits_legacy_it_is_prefix_and_us_format() {
+        // Pin the legacy `It is <MM-DD-YY> <HH:MM:SS>` wire format
+        // (`amiexpress/express.e:25636-25640`, FORMAT_USA). 1970-01-02
+        // 03:04:05 UTC is the chosen fixed instant so all fields are
+        // distinct two-digit numbers — any swap of fields shows up
+        // immediately in the assertion.
+        use std::time::{Duration, UNIX_EPOCH};
+        let at = UNIX_EPOCH + Duration::from_secs(86_400 + 3 * 3600 + 4 * 60 + 5);
+        assert_eq!(render_time_line(at), b"\r\nIt is 01-02-70 03:04:05\r\n");
+    }
+
+    #[test]
+    fn render_time_line_zero_pads_single_digit_fields() {
+        // FORMAT_USA pads every numeric field to two digits; a leading
+        // zero is required for `09` and the like.
+        use std::time::{Duration, UNIX_EPOCH};
+        // 1970-01-01 00:00:00 UTC — every field is `00`.
+        let at = UNIX_EPOCH + Duration::from_secs(0);
+        assert_eq!(render_time_line(at), b"\r\nIt is 01-01-70 00:00:00\r\n");
+    }
+
+    #[test]
+    fn render_time_line_uses_two_digit_year_wrap_after_2000() {
+        // FORMAT_USA on AmigaOS produces a two-digit year; 2001 must
+        // render as `01`, not `2001`. The Unix billennium (1e9 seconds
+        // past the epoch) is 2001-09-09 01:46:40 UTC — a widely-known
+        // reference instant.
+        use std::time::{Duration, UNIX_EPOCH};
+        let at = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        assert_eq!(render_time_line(at), b"\r\nIt is 09-09-01 01:46:40\r\n");
     }
 
     #[test]
