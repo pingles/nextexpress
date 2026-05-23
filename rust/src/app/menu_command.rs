@@ -33,6 +33,10 @@ pub(crate) enum MenuCommand {
     /// Mirrors `internalCommandT()` at
     /// `amiexpress/express.e:25622-25644`.
     ShowTime,
+    /// `VER`: print the version banner (Tier A quickwin A2).
+    /// Mirrors `internalCommandVER()` at
+    /// `amiexpress/express.e:25688-25698`.
+    ShowVersion,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -82,6 +86,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("T") {
         return MenuCommand::ShowTime;
+    }
+    if trimmed.eq_ignore_ascii_case("VER") {
+        return MenuCommand::ShowVersion;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -373,5 +380,32 @@ mod tests {
         // command takes no arguments.
         assert_eq!(parse_menu_command("T 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("T now"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_show_version_command() {
+        // Tier A quickwin A2: `VER` (case-insensitive) routes to
+        // `internalCommandVER()` at `amiexpress/express.e:25688-25698`.
+        assert_eq!(parse_menu_command("VER"), MenuCommand::ShowVersion);
+        assert_eq!(parse_menu_command("ver"), MenuCommand::ShowVersion);
+        assert_eq!(parse_menu_command("Ver"), MenuCommand::ShowVersion);
+    }
+
+    #[test]
+    fn show_version_rejects_extra_tokens() {
+        // `VER` takes no arguments in the legacy.
+        assert_eq!(parse_menu_command("VER 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("VER full"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn show_version_does_not_collide_with_single_letter_v_commands() {
+        // The future `V` (view file, Slice D-T6) and `VS` / `VO`
+        // commands share a `V` prefix with `VER`. The current parser
+        // only knows `VER`; bare `V` and `VO` must fall through to
+        // Unknown so future slices can bind them without ambiguity.
+        assert_eq!(parse_menu_command("V"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("VO"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("VS"), MenuCommand::Unknown);
     }
 }

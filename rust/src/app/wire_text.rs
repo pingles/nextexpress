@@ -79,6 +79,38 @@ pub(crate) const COPYRIGHT_LINES: &[u8] = concat!(
 )
 .as_bytes();
 
+/// Full response to the `VER` menu command (Tier A quickwin A2),
+/// mirroring `internalCommandVER()` at
+/// `amiexpress/express.e:25688-25698`.
+///
+/// The legacy emits four sections:
+///   1. an `AmiExpress <ver> (<date>) Copyright ©2018-2023 Darren Coles`
+///      header,
+///   2. an `Original Version:` label,
+///   3. the two original-author lines (Thomas, Hodge),
+///   4. a `Registered to <key>.` line.
+///
+/// `NextExpress` doesn't carry an `AmiExpress` build at runtime, so the
+/// header line is stable at `AmiExpress 5` (matching
+/// [`COPYRIGHT_LINES`]). The `Registered to` line is deliberately
+/// elided — see `slices/cmds-quickwins.md` (A2 Out of Scope) — and a
+/// trailing `NextExpress <version> (<sha>) Copyright ©2026` line is
+/// appended so the operator can tell which Rust port build is running.
+pub(crate) const VERSION_BANNER: &[u8] = concat!(
+    "\r\nAmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
+    "\r\n",
+    "Original Version:\r\n",
+    "  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n",
+    "  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n",
+    "\r\n",
+    "NextExpress ",
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("NEXTEXPRESS_GIT_SHA"),
+    ") Copyright \u{00A9}2026\r\n",
+)
+.as_bytes();
+
 /// Sent after a not-found name lookup to invite a retry.
 pub(crate) const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
 
@@ -768,6 +800,60 @@ mod tests {
     fn render_post_success_emits_message_number_and_terminator() {
         // Pin the legacy-aligned save confirmation.
         assert_eq!(render_post_success(7), b"\r\nMessage #7 saved.\r\n");
+    }
+
+    #[test]
+    fn version_banner_carries_legacy_author_lines_verbatim() {
+        // Pin the four legacy lines (`amiexpress/express.e:25690-25694`)
+        // so a future edit can't quietly drift the wording. Each line
+        // is checked individually so a swap or reorder fails the test.
+        let banner = std::str::from_utf8(VERSION_BANNER).expect("utf8 banner");
+        assert!(
+            banner.contains("AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n"),
+            "missing AmiExpress copyright line: {banner:?}",
+        );
+        assert!(
+            banner.contains("Original Version:\r\n"),
+            "missing Original Version label: {banner:?}",
+        );
+        assert!(
+            banner.contains("  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n"),
+            "missing Thomas author line: {banner:?}",
+        );
+        assert!(
+            banner.contains("  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n"),
+            "missing Hodge author line: {banner:?}",
+        );
+    }
+
+    #[test]
+    fn version_banner_carries_nextexpress_version_and_sha() {
+        // Slice A2: the trailing line pins the running Rust port to
+        // its `Cargo.toml` version + `build.rs` SHA so the operator
+        // can correlate a running session with a specific build.
+        let banner = std::str::from_utf8(VERSION_BANNER).expect("utf8 banner");
+        let version = env!("CARGO_PKG_VERSION");
+        let sha = env!("NEXTEXPRESS_GIT_SHA");
+        let needle = format!("NextExpress {version} ({sha}) Copyright \u{00A9}2026\r\n");
+        assert!(
+            banner.contains(&needle),
+            "expected `{needle}` in banner: {banner:?}",
+        );
+    }
+
+    #[test]
+    fn version_banner_starts_with_crlf_and_omits_registration_key_line() {
+        // Slice A2 (Out of Scope): the legacy `Registered to <key>.`
+        // line (`amiexpress/express.e:25696`) is deliberately elided.
+        let banner = std::str::from_utf8(VERSION_BANNER).expect("utf8 banner");
+        assert!(
+            banner.starts_with("\r\n"),
+            "banner missing CRLF prefix: {banner:?}"
+        );
+        assert!(
+            !banner.contains("Registered to"),
+            "banner must elide the legacy `Registered to` line: {banner:?}",
+        );
     }
 
     #[test]

@@ -58,6 +58,42 @@ async fn t_command_renders_legacy_it_is_format() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn ver_command_renders_legacy_version_banner() {
+    // Slice A2 — `VER` (version banner). Mirrors
+    // `internalCommandVER()` at `amiexpress/express.e:25688-25698`.
+    // Each author line is pinned so a future wording drift fails
+    // here rather than silently in production.
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"VER").await;
+    let post_ver = drain_until(&mut stream, b"Command: ").await;
+    let needles: &[&[u8]] = &[
+        "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n".as_bytes(),
+        b"Original Version:\r\n",
+        b"  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n",
+        b"  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n",
+        b"NextExpress ",
+    ];
+    for needle in needles {
+        assert!(
+            contains(&post_ver, needle),
+            "expected `{}` in VER response, got {:?}",
+            String::from_utf8_lossy(needle),
+            String::from_utf8_lossy(&post_ver)
+        );
+    }
+    // Slice A2 (Out of Scope): no `Registered to` line.
+    assert!(
+        !contains(&post_ver, b"Registered to"),
+        "VER must elide the legacy `Registered to` line, got {:?}",
+        String::from_utf8_lossy(&post_ver)
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// Builds a `Runtime` with an in-memory user repo, the seeded sysop,
 /// a single `Main` conference, an empty mail store, and an in-memory
 /// caller log, then binds a [`TelnetListener`] on an ephemeral port

@@ -27,7 +27,7 @@ use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_time_line, GOODBYE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
     INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE, MENU_PROMPT, READ_REQUIRES_NUMBER_LINE,
-    UNKNOWN_COMMAND_LINE,
+    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
@@ -157,6 +157,7 @@ where
                 self.write_and_flush(&render_time_line(SystemTime::now()))
                     .await?;
             }
+            MenuCommand::ShowVersion => self.write_and_flush(VERSION_BANNER).await?,
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))
