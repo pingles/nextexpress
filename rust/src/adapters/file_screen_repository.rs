@@ -335,21 +335,15 @@ impl ScreenRepository for FileScreenRepository {
 /// pass through unchanged.
 fn normalise_to_crlf(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(input.len());
-    let mut i = 0;
-    while i < input.len() {
-        match input[i] {
-            0x08 | b'\r' if i + 1 < input.len() && input[i + 1] == b'\n' => {
+    let mut bytes = input.iter().copied().peekable();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            0x08 | b'\r' if bytes.peek() == Some(&b'\n') => {
+                bytes.next();
                 out.extend_from_slice(b"\r\n");
-                i += 2;
             }
-            b'\r' | b'\n' => {
-                out.extend_from_slice(b"\r\n");
-                i += 1;
-            }
-            other => {
-                out.push(other);
-                i += 1;
-            }
+            b'\r' | b'\n' => out.extend_from_slice(b"\r\n"),
+            other => out.push(other),
         }
     }
     out
@@ -395,6 +389,45 @@ mod tests {
     fn normalise_to_crlf_normalises_mixed_input() {
         let mixed = b"a\nb\r\nc\x08\nd\re";
         assert_eq!(normalise_to_crlf(mixed), b"a\r\nb\r\nc\r\nd\r\ne");
+    }
+
+    // Boundary: `\x08` as the *first* byte. The two-byte look-ahead
+    // arm has to handle i=0 without underflowing the index check
+    // (`i + 1 < input.len()` must use addition, not subtraction).
+    #[test]
+    fn normalise_to_crlf_handles_bs_lf_at_start() {
+        assert_eq!(normalise_to_crlf(b"\x08\n"), b"\r\n");
+    }
+
+    // Boundary: `\r` as the *first* byte followed by `\n`. Same
+    // index-arithmetic invariant as the BS/LF start case.
+    #[test]
+    fn normalise_to_crlf_handles_crlf_at_start() {
+        assert_eq!(normalise_to_crlf(b"\r\nrest"), b"\r\nrest");
+    }
+
+    // Boundary: lone `\x08` as the *last* byte. The look-ahead
+    // guard must be a strict `<` so we never read past the buffer;
+    // a `<=` mutant would index `input[i + 1]` out of bounds and
+    // panic.
+    #[test]
+    fn normalise_to_crlf_handles_trailing_bs() {
+        assert_eq!(normalise_to_crlf(b"foo\x08"), b"foo\x08");
+    }
+
+    // Boundary: lone `\r` as the *last* byte. The bare-CR arm
+    // promotes it to `\r\n` — the look-ahead arm must *not* fire.
+    #[test]
+    fn normalise_to_crlf_handles_trailing_bare_cr() {
+        assert_eq!(normalise_to_crlf(b"foo\r"), b"foo\r\n");
+    }
+
+    // Boundary: lone `\n` as the only byte. Catches `i += 1`
+    // mutants in the bare-LF arm at i=0 (underflow panic) and
+    // pins down the empty-prefix output.
+    #[test]
+    fn normalise_to_crlf_promotes_solo_lf() {
+        assert_eq!(normalise_to_crlf(b"\n"), b"\r\n");
     }
 
     #[tokio::test]
