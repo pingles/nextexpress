@@ -53,6 +53,13 @@ surviving mutant is equivalent or intentionally deferred.
 2. Favour the use of hexagonal-style architecture to enable testing
 3. Use comments to explain the intent behind the code. You don't need to write comments to explain what the code is doing.
 4. Always include *doc* comments for public functions, structs, enums, and methods. Always document the parameters, returns and errors.
+5. **Favour idiomatic Rust over line-for-line translations of the legacy `E`
+   source.** The `amiexpress/` tree is the authority on *behaviour* and
+   *user-visible strings* — not on how to write Rust. When porting a procedure,
+   match the legacy's outputs and side effects, then express the implementation
+   with the standard library, the `time` crate's format descriptions, iterator
+   combinators, etc., rather than hand-rolled loops mirroring the E code.
+   Parity is at the wire / behaviour boundary, not the line boundary.
 
 ## System Design
 

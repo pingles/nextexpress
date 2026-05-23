@@ -470,6 +470,13 @@ pub(crate) fn render_post_success(number: u32) -> Vec<u8> {
     out
 }
 
+/// `time::macros::format_description!` builds a const `FormatItem`
+/// slice describing the legacy `FORMAT_USA` date-time layout —
+/// `MM-DD-YY HH:MM:SS` (`amiexpress/express.e:25636-25640`).
+const TIME_FORMAT: &[time::format_description::FormatItem<'_>] = time::macros::format_description!(
+    "[month]-[day]-[year repr:last_two] [hour]:[minute]:[second]"
+);
+
 /// Formats the response to the `T` menu command (Tier A — quickwin):
 /// the legacy "It is " prefix followed by date and time, wrapped in
 /// CRLFs. Mirrors `internalCommandT()` at
@@ -482,31 +489,10 @@ pub(crate) fn render_post_success(number: u32) -> Vec<u8> {
 /// timezone setting — landing local-offset support is a future
 /// refinement, not a parity break in the visible literal.
 pub(crate) fn render_time_line(at: std::time::SystemTime) -> Vec<u8> {
-    use time::OffsetDateTime;
-    let now = OffsetDateTime::from(at);
-    let mut out = Vec::with_capacity(40);
-    out.extend_from_slice(b"\r\nIt is ");
-    // amiexpress/express.e:25636-25640 — `It is <date> <time>`.
-    write_two_digits(&mut out, now.month() as u8);
-    out.push(b'-');
-    write_two_digits(&mut out, now.day());
-    out.push(b'-');
-    // year().rem_euclid(100) is in 0..=99, fits in u8.
-    let yy = u8::try_from(now.year().rem_euclid(100)).expect("year mod 100 in 0..=99");
-    write_two_digits(&mut out, yy);
-    out.push(b' ');
-    write_two_digits(&mut out, now.hour());
-    out.push(b':');
-    write_two_digits(&mut out, now.minute());
-    out.push(b':');
-    write_two_digits(&mut out, now.second());
-    out.extend_from_slice(b"\r\n");
-    out
-}
-
-fn write_two_digits(out: &mut Vec<u8>, value: u8) {
-    out.push(b'0' + (value / 10) % 10);
-    out.push(b'0' + value % 10);
+    let formatted = time::OffsetDateTime::from(at)
+        .format(TIME_FORMAT)
+        .expect("TIME_FORMAT is total over OffsetDateTime");
+    format!("\r\nIt is {formatted}\r\n").into_bytes()
 }
 
 /// Formats the auto-rejoin announcement (Slice 30 / Slice 34a).

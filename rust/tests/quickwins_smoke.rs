@@ -2,7 +2,7 @@
 //!
 //! Spawns the compiled `nextexpress` binary against a temp BBS path,
 //! signs in as the seeded sysop, and drives one Tier A quickwin per
-//! scenario. Each scenario asserts the verbatim AmiExpress wire text
+//! scenario. Each scenario asserts the verbatim `AmiExpress` wire text
 //! so the binary really delivers the legacy literals.
 //!
 //! Scenarios land one-per-commit so each Tier A slice has its own
@@ -89,22 +89,26 @@ fn walk_show_time_command(addr: &str) -> Result<(), String> {
             String::from_utf8_lossy(&post_t)
         ));
     }
-    // The rendered time string includes two colons (HH:MM:SS) and two
-    // hyphens (MM-DD-YY) — the simplest structural check that
-    // distinguishes a real render from a stub literal.
+    // Structural check on the rendered time literal: `MM-DD-YY HH:MM:SS`
+    // splits into three hyphen-separated date parts and three
+    // colon-separated time parts. Anything else (e.g. a stub literal or
+    // a swapped separator) fails the parse.
     let it_is_idx = find(&post_t, b"It is ").ok_or("It is prefix not found")?;
     let tail = &post_t[it_is_idx + b"It is ".len()..];
     let line_end = tail
         .windows(2)
         .position(|w| w == b"\r\n")
         .ok_or("missing CRLF terminator after time line")?;
-    let line = &tail[..line_end];
-    let colon_count = line.iter().filter(|b| **b == b':').count();
-    let hyphen_count = line.iter().filter(|b| **b == b'-').count();
-    if colon_count != 2 || hyphen_count != 2 {
+    let line =
+        std::str::from_utf8(&tail[..line_end]).map_err(|e| format!("non-utf8 time line: {e}"))?;
+    let (date, clock) = line
+        .split_once(' ')
+        .ok_or_else(|| format!("expected `<date> <time>`, got {line:?}"))?;
+    let date_parts: Vec<&str> = date.split('-').collect();
+    let clock_parts: Vec<&str> = clock.split(':').collect();
+    if date_parts.len() != 3 || clock_parts.len() != 3 {
         return Err(format!(
-            "expected `MM-DD-YY HH:MM:SS` (2 hyphens, 2 colons) after `It is `, got {:?}",
-            std::str::from_utf8(line).unwrap_or("<bin>")
+            "expected `MM-DD-YY HH:MM:SS` after `It is `, got {line:?}",
         ));
     }
 

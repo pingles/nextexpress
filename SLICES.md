@@ -299,6 +299,20 @@ rendering a built-in fallback. The fallback exists only for the
 "sysop hasn't dropped the file in place yet" case and is built to
 look as close to the legacy default as we can make it.
 
+### Parity is at the wire boundary, not the line boundary
+
+Carrying the legacy strings forward is non-negotiable; carrying the
+legacy *implementation shape* forward is not. The `amiexpress/` tree
+is Amiga `E`, which has none of `std`'s combinators, no `time` crate
+format descriptions, no iterator chaining — so a literal line-for-line
+port often produces awkward Rust (hand-rolled two-digit padders,
+manual byte buffers built one push at a time, etc.). Prefer the
+idiomatic Rust expression of the same behaviour: `format!`,
+`time::macros::format_description!`, iterator chains, `Display` impls.
+The tests pin the wire output verbatim, so the parity surface is
+preserved; the implementation underneath is the Rust author's
+business.
+
 ## Done means done
 
 A slice is **Done** only when every Allium rule, invariant and black-box
