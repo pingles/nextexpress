@@ -1,160 +1,189 @@
-//! Tier A "quick wins" binary smoke test.
+//! Tier A "quick wins" in-process integration tests.
 //!
-//! Spawns the compiled `nextexpress` binary against a temp BBS path,
-//! signs in as the seeded sysop, and drives one Tier A quickwin per
-//! scenario. Each scenario asserts the verbatim `AmiExpress` wire text
-//! so the binary really delivers the legacy literals.
-//!
-//! Scenarios land one-per-commit so each Tier A slice has its own
-//! end-to-end gate. The wire-and-smoke closing slice
-//! (`slices/cmds-quickwins.md` — Slice A-wire) collapses them into a
-//! single composite walk later.
+//! Each scenario boots a [`TelnetListener`] in-process on a tokio
+//! task, opens a real telnet client to the bound address, drives one
+//! Tier A quickwin, and asserts the verbatim `AmiExpress` wire text.
+//! Going in-process (rather than spawning the `nextexpress` binary)
+//! cuts the per-test cost from a full process startup to a single
+//! `Runtime` build, while still exercising the same composition root
+//! and the same telnet adapter the binary uses.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
-const PER_READ_TIMEOUT: Duration = Duration::from_secs(2);
-const NEEDLE_DEADLINE: Duration = Duration::from_secs(10);
-const STARTUP_DEADLINE: Duration = Duration::from_secs(15);
+use nextexpress::adapters::in_memory_caller_log::InMemoryCallerLog;
+use nextexpress::adapters::in_memory_mail_stores::InMemoryMailStores;
+use nextexpress::adapters::in_memory_user_repository::InMemoryUserRepository;
+use nextexpress::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+use nextexpress::adapters::telnet_listener::TelnetListener;
+use nextexpress::app::config::Config;
+use nextexpress::app::mail_stores::MailStores;
+use nextexpress::app::runtime::Runtime;
+use nextexpress::app::seed;
+use nextexpress::app::services::{
+    SharedCallerLog, SharedConferences, SharedHasher, SharedMailStores, SharedUserRepo,
+};
+use nextexpress::domain::caller_log::CallerLogAppender;
+use nextexpress::domain::conference::{Conference, MessageBase};
+use nextexpress::domain::password::PasswordHasher;
+use nextexpress::domain::user_repository::UserRepository;
 
-#[test]
-fn binary_renders_legacy_t_command_over_telnet() {
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+
+/// Per-`drain_until` deadline. A real BBS prompt arrives in
+/// milliseconds; two seconds is generous enough to forgive a slow CI
+/// runner without making genuine failures wait forever.
+const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
+
+#[tokio::test]
+async fn t_command_renders_legacy_it_is_format() {
     // Slice A1 — `T` (current date/time). Mirrors
     // `internalCommandT()` at `amiexpress/express.e:25622-25644`.
-    // The exact `MM-DD-YY HH:MM:SS` payload depends on the wall
-    // clock so the smoke pins only the surrounding literals: the
-    // `It is ` prefix, the trailing CRLF, and the menu reappears.
-    let dir = tempfile::tempdir().expect("tempdir");
-    let config_path = dir.path().join("nextexpress.toml");
-    let toml = format!(
-        "port = 0\nmax_nodes = 1\nbbs_path = {}\nmax_password_failures = 3\n",
-        toml_string(dir.path()),
+    // The wall-clock fields are wall-clock-dependent so the smoke
+    // pins the surrounding literal: `It is ` prefix, CRLF terminator,
+    // and a `MM-DD-YY HH:MM:SS` structure.
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"T").await;
+    let post_t = drain_until(&mut stream, b"Command: ").await;
+    assert!(
+        contains(&post_t, b"It is "),
+        "expected legacy `It is ` prefix after T, got {:?}",
+        String::from_utf8_lossy(&post_t)
     );
-    std::fs::write(&config_path, toml).expect("write config");
-    seed_minimal_conf01(dir.path());
+    assert_time_line_shape(&post_t);
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nextexpress"))
-        .arg(&config_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn binary");
-
-    let outcome = (|| -> Result<(), String> {
-        let addr = read_listen_addr(&mut child)?;
-        walk_show_time_command(&addr)
-    })();
-
-    let _ = child.kill();
-    let _ = child.wait();
-
-    if let Err(message) = outcome {
-        panic!("smoke test failed: {message}");
-    }
+    end_session(&mut stream).await;
 }
 
-/// Drives the bare minimum Tier A `T` scenario:
-///
-///   1. Sign in as the seeded `sysop` / `sysop`.
-///   2. Send `T`.
-///   3. Assert the response contains `It is ` (verbatim from
-///      `amiexpress/express.e:25636`) and a `:` (date-time separator)
-///      before the next menu prompt.
-///   4. `G` ends the session.
-fn walk_show_time_command(addr: &str) -> Result<(), String> {
-    let mut stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
+/// Builds a `Runtime` with an in-memory user repo, the seeded sysop,
+/// a single `Main` conference, an empty mail store, and an in-memory
+/// caller log, then binds a [`TelnetListener`] on an ephemeral port
+/// and spawns its accept loop. Returns the address the listener is
+/// bound to.
+async fn spawn_listener_with_seeded_sysop() -> std::net::SocketAddr {
+    let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+    let conferences = vec![Conference::new(
+        1,
+        "Main".to_string(),
+        vec![MessageBase::new(1, 1, "main".to_string())],
+    )
+    .expect("valid conference")];
+
+    let mut sysop = seed::default_sysop(hasher.as_ref()).expect("seed sysop");
+    seed::grant_all_memberships(&mut sysop, &conferences);
+    let user_repo: SharedUserRepo =
+        Arc::new(InMemoryUserRepository::new(vec![sysop])) as Arc<dyn UserRepository + Send + Sync>;
+    let hasher_shared: SharedHasher = hasher as Arc<dyn PasswordHasher + Send + Sync>;
+    let caller_log: SharedCallerLog =
+        Arc::new(InMemoryCallerLog::new()) as Arc<dyn CallerLogAppender + Send + Sync>;
+    let mail_stores: SharedMailStores =
+        Arc::new(InMemoryMailStores::new()) as Arc<dyn MailStores + Send + Sync>;
+    let conferences_handle: SharedConferences = Arc::new(conferences);
+
+    let config = Config {
+        max_nodes: 1,
+        max_password_failures: 3,
+        ..Config::default()
+    };
+    let runtime = Runtime::from_config(
+        &config,
+        user_repo,
+        hasher_shared,
+        caller_log,
+        conferences_handle,
+        mail_stores,
+    );
+
+    let listener = TelnetListener::bind("127.0.0.1:0", runtime)
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("local_addr");
+    let listener = Arc::new(listener);
+    let task_listener = listener.clone();
+    tokio::spawn(async move { task_listener.run().await });
+    addr
+}
+
+/// Connects to `addr`, walks the standard auth handshake as the
+/// seeded `sysop` / `sysop`, and returns the open stream sitting at
+/// the menu's `Command: ` prompt.
+async fn sign_in_seeded_sysop(addr: &std::net::SocketAddr) -> TcpStream {
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    drain_until(&mut stream, b"Enter your Name: ").await;
+    write_line(&mut stream, b"sysop").await;
+    drain_until(&mut stream, b"PassWord: ").await;
+    write_line(&mut stream, b"sysop").await;
+    drain_until(&mut stream, b"Command: ").await;
     stream
-        .set_read_timeout(Some(PER_READ_TIMEOUT))
-        .map_err(|e| format!("set_read_timeout: {e}"))?;
+}
 
-    drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
-    write_line(&mut stream, b"sysop")?;
-    drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
-    write_line(&mut stream, b"sysop")?;
+/// Sends `G` to log off and drains until the listener emits the
+/// `Goodbye` line, mirroring the close-of-session pattern shared by
+/// every quickwin scenario.
+async fn end_session(stream: &mut TcpStream) {
+    write_line(stream, b"G").await;
+    drain_until(stream, b"Goodbye").await;
+}
 
-    drain_until(&mut stream, b"Command: ")
-        .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
-
-    // `T` should print exactly the legacy literal: `\r\nIt is ` then
-    // `MM-DD-YY HH:MM:SS\r\n` then the menu prompt reappears.
-    write_line(&mut stream, b"T")?;
-    let post_t = drain_until_capturing(&mut stream, b"Command: ")
-        .map_err(|e| format!("Command prompt after T: {e}"))?;
-    if !contains(&post_t, b"It is ") {
-        return Err(format!(
-            "expected legacy `It is ` prefix after T, got {:?}",
-            String::from_utf8_lossy(&post_t)
-        ));
-    }
-    // Structural check on the rendered time literal: `MM-DD-YY HH:MM:SS`
-    // splits into three hyphen-separated date parts and three
-    // colon-separated time parts. Anything else (e.g. a stub literal or
-    // a swapped separator) fails the parse.
-    let it_is_idx = find(&post_t, b"It is ").ok_or("It is prefix not found")?;
+/// Structural check on the rendered `T` line: between `It is ` and
+/// the CRLF the format is `MM-DD-YY HH:MM:SS` — three hyphen-separated
+/// date parts and three colon-separated time parts. Anything else
+/// (e.g. a stub literal or a swapped separator) fails the parse.
+fn assert_time_line_shape(post_t: &[u8]) {
+    let it_is_idx = find(post_t, b"It is ").expect("`It is ` prefix not found");
     let tail = &post_t[it_is_idx + b"It is ".len()..];
     let line_end = tail
         .windows(2)
         .position(|w| w == b"\r\n")
-        .ok_or("missing CRLF terminator after time line")?;
-    let line =
-        std::str::from_utf8(&tail[..line_end]).map_err(|e| format!("non-utf8 time line: {e}"))?;
-    let (date, clock) = line
-        .split_once(' ')
-        .ok_or_else(|| format!("expected `<date> <time>`, got {line:?}"))?;
+        .expect("missing CRLF terminator after time line");
+    let line = std::str::from_utf8(&tail[..line_end]).expect("non-utf8 time line");
+    let (date, clock) = line.split_once(' ').unwrap_or_else(|| {
+        panic!("expected `<date> <time>`, got {line:?}");
+    });
     let date_parts: Vec<&str> = date.split('-').collect();
     let clock_parts: Vec<&str> = clock.split(':').collect();
-    if date_parts.len() != 3 || clock_parts.len() != 3 {
-        return Err(format!(
-            "expected `MM-DD-YY HH:MM:SS` after `It is `, got {line:?}",
-        ));
-    }
-
-    write_line(&mut stream, b"G")?;
-    drain_until(&mut stream, b"Goodbye").map_err(|e| format!("Goodbye line: {e}"))?;
-    Ok(())
+    assert!(
+        date_parts.len() == 3 && clock_parts.len() == 3,
+        "expected `MM-DD-YY HH:MM:SS` after `It is `, got {line:?}",
+    );
 }
 
-/// Writes a single-conference Conf01 so the post-auth auto-rejoin
-/// can attach the session somewhere. The `T` command itself reads no
-/// conference state, but the menu loop runs inside a joined session.
-fn seed_minimal_conf01(bbs_path: &Path) {
-    let conf01 = bbs_path.join("Conf01");
-    std::fs::create_dir_all(&conf01).expect("create Conf01");
-    std::fs::write(
-        conf01.join("conference.toml"),
-        b"number = 1\nname = \"Main\"\n[[msgbase]]\nnumber = 1\nname = \"main\"\n",
-    )
-    .expect("write Conf01/conference.toml");
-    std::fs::write(conf01.join("menu.txt"), b"CONF1-MENU\r\n").expect("write Conf01/menu.txt");
-
-    let msgbase = conf01.join("MsgBase");
-    std::fs::create_dir_all(&msgbase).expect("create MsgBase");
+async fn write_line(stream: &mut TcpStream, body: &[u8]) {
+    stream.write_all(body).await.expect("write body");
+    stream.write_all(b"\r\n").await.expect("write CRLF");
+    stream.flush().await.expect("flush");
 }
 
-fn toml_string(path: &Path) -> String {
-    format!("\"{}\"", path.display())
-}
-
-fn read_listen_addr(child: &mut Child) -> Result<String, String> {
-    let stdout = child.stdout.take().ok_or("stdout not piped")?;
-    let mut reader = BufReader::new(stdout);
-    let deadline = Instant::now() + STARTUP_DEADLINE;
-    while Instant::now() < deadline {
-        let mut line = String::new();
-        let n = reader
-            .read_line(&mut line)
-            .map_err(|e| format!("reading stdout: {e}"))?;
+/// Reads bytes from `stream` until `needle` appears in the
+/// accumulated buffer, EOF arrives, or [`DRAIN_DEADLINE`] elapses.
+/// The deadline matters: a broken server would otherwise leave us
+/// blocked on `read` forever.
+async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 256];
+    loop {
+        let n = match tokio::time::timeout(DRAIN_DEADLINE, stream.read(&mut chunk)).await {
+            Ok(Ok(n)) => n,
+            Ok(Err(_)) | Err(_) => 0,
+        };
         if n == 0 {
-            return Err("binary exited before printing 'Listening on ...'".to_string());
+            break;
         }
-        if let Some(addr) = line.trim().strip_prefix("Listening on ") {
-            return Ok(addr.to_string());
+        out.extend_from_slice(&chunk[..n]);
+        if contains(&out, needle) {
+            break;
         }
     }
-    Err("timed out waiting for 'Listening on ...'".to_string())
+    assert!(
+        contains(&out, needle),
+        "needle {:?} not found within {DRAIN_DEADLINE:?}; got {:?}",
+        std::str::from_utf8(needle).unwrap_or("<bin>"),
+        String::from_utf8_lossy(&out),
+    );
+    out
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -163,45 +192,4 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
-}
-
-fn write_line(stream: &mut TcpStream, body: &[u8]) -> Result<(), String> {
-    stream
-        .write_all(body)
-        .map_err(|e| format!("write body: {e}"))?;
-    stream
-        .write_all(b"\r\n")
-        .map_err(|e| format!("write CRLF: {e}"))?;
-    stream.flush().map_err(|e| format!("flush: {e}"))?;
-    Ok(())
-}
-
-fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Result<(), String> {
-    drain_until_capturing(stream, needle).map(|_| ())
-}
-
-fn drain_until_capturing(stream: &mut TcpStream, needle: &[u8]) -> Result<Vec<u8>, String> {
-    let deadline = Instant::now() + NEEDLE_DEADLINE;
-    let mut buf = [0u8; 256];
-    let mut acc = Vec::new();
-    while Instant::now() < deadline {
-        let n = match stream.read(&mut buf) {
-            Ok(n) => n,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => 0,
-            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => 0,
-            Err(error) => return Err(format!("read: {error}")),
-        };
-        if n > 0 {
-            acc.extend_from_slice(&buf[..n]);
-            if acc.windows(needle.len()).any(|w| w == needle) {
-                return Ok(acc);
-            }
-        }
-    }
-    Err(format!(
-        "needle {:?} not found within {:?}; got {:?}",
-        std::str::from_utf8(needle).unwrap_or("<bin>"),
-        NEEDLE_DEADLINE,
-        String::from_utf8_lossy(&acc)
-    ))
 }

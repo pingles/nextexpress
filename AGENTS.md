@@ -60,6 +60,13 @@ surviving mutant is equivalent or intentionally deferred.
    with the standard library, the `time` crate's format descriptions, iterator
    combinators, etc., rather than hand-rolled loops mirroring the E code.
    Parity is at the wire / behaviour boundary, not the line boundary.
+6. **End-to-end tests run the listener in-process, not as a spawned binary.**
+   Bind a `TelnetListener` on `127.0.0.1:0` with a `Runtime` built from
+   in-memory adapters, `tokio::spawn` its accept loop, and connect with a
+   tokio client. A child-process boot is slower, harder to debug, and only
+   buys parity with the binary's argv/config-load path, which is covered
+   by its own startup tests. The existing `tests/quickwins_smoke.rs` is the
+   reference shape for new command-family smokes.
 
 ## System Design
 
