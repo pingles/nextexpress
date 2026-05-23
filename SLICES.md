@@ -2,41 +2,151 @@
 
 Incremental delivery plan for the Rust port of AmiExpress (NextExpress).
 
+The plan is **organised around the AmiExpress menu commands**. Each
+remaining slice ships one user-typeable command (or a tight cluster of
+sub-commands that share the same code path) end-to-end: parser →
+domain rule → adapter → wire bytes → smoke test. A slice is done when
+the legacy user could type the command, see the verbatim AmiExpress
+wire text, and the rule and its invariants are backed by tests. Slices
+are ordered so the most user-visible commands land first and so each
+slice introduces only the seams the *next* slice will need.
+
 Each slice is sized to fit a 15–20 minute TDD session: write a failing
-test, write the minimum code to pass, mutate to verify the test catches
-real bugs, then refactor. Slices are ordered so user-visible value lands
-as early as possible, and so that later slices can build on the seams
-introduced by earlier ones without retro-fitting.
+test, write the minimum code to pass, mutate to verify the test
+catches real bugs, then refactor.
 
 Spec references use the form `<file>:<RuleOrEntity>` and point at
 [the Allium specs](specs/) as the source of truth. Legacy E source in
 `amiexpress/` is referenced only for original strings and to disambiguate
-fine details.
+fine details. The canonical legacy menu dispatch table lives at
+`amiexpress/express.e:28285` (`processInternalCommand`).
 
 This file is the small, always-loaded index. Per-slice **In Scope** /
-**Out of Scope** detail lives in [`slices/`](slices/), one file per phase
-— load only the phase you're working on.
+**Out of Scope** detail lives in [`slices/`](slices/), one file per
+command family — load only the family you're working on.
 
-## Phases
+## Foundation (already shipped)
 
-| Phase | File | Slices | Theme | Status |
-| --- | --- | --- | --- | :---: |
-| 0 | [slices/phase0.md](slices/phase0.md) | 1 | Project foundations | Done |
-| 1 | [slices/phase1.md](slices/phase1.md) | 2–13, 8a, 13a | Sign in, see the menu, log off | Done |
-| 2 | [slices/phase2.md](slices/phase2.md) | 14–18 | Hardening the logon flow | Done |
-| 3 | [slices/phase3.md](slices/phase3.md) | 19–21 | New user onboarding | Done |
-| 4 | [slices/phase4.md](slices/phase4.md) | 27–34, 34a | Conferences (read) | Done |
-| 5 | [slices/phase5.md](slices/phase5.md) | 35–36 | Conferences (admin) | Skipped |
-| 6 | [slices/phase6.md](slices/phase6.md) | 37–41, 41a | Messaging (read) | Done |
-| 7 | [slices/phase7.md](slices/phase7.md) | 42–44, 44a | Messaging (write) | Done |
-| 8 | [slices/phase8.md](slices/phase8.md) | 45–49, 49a, 49b | Messaging (advanced) | Done |
-| 9 | [slices/phase9.md](slices/phase9.md) | 50–52 | Files (browse and flag) | Todo |
-| 10 | [slices/phase10.md](slices/phase10.md) | 53–57 | Files (transfer) | Todo |
-| 11 | [slices/phase11.md](slices/phase11.md) | 58–60 | Files (admin) | Todo |
-| 12 | [slices/phase12.md](slices/phase12.md) | 61–64 | Per-user accounting refinements | Todo |
-| 13 | [slices/phase13.md](slices/phase13.md) | 65–68 | User self-service | Todo |
-| 14 | [slices/phase14.md](slices/phase14.md) | 22–26 | Sysop console & node controls | Todo |
-| Future | [slices/future.md](slices/future.md) | — | Not yet sliced (FTP, HTTPd, QWK, FTN, OLM, …) | Todo |
+The Cargo crate, the telnet listener, the session state machine, the
+user / conference / mail entities, the on-disk repositories, and the
+menu prompt are in place. The commands shipped so far are: `G`, `J`,
+`R`, `E`, `C`, `RP`, `FW`, `K`, `MV`, `EH`, plus the auto-mail-scan
+and auto-rejoin hooks fired by `J`. The canonical record of what each
+shipped slice covers is the [Allium specs](specs/) plus the code and
+its tests; the per-slice "In Scope" history is in git.
+
+Two of the shipped commands (`M` and `N`) are presently bound to
+scan-mail semantics — a divergence from the legacy that
+[`slices/cmds-mail-finish.md`](slices/cmds-mail-finish.md) corrects.
+
+## Menu-command roadmap
+
+Each remaining slice maps to one legacy menu command (or a tight
+cluster). The table is ordered by user-visible value: small, common,
+no-dependency commands land first; commands that need new subsystems
+(file transfer, OLM, …) come once the prerequisite slice has been
+done.
+
+| Cmd | Legacy source | Slice file | Tier | Status |
+| :---: | --- | --- | :---: | :---: |
+| **A. Quick wins (small commands, no new subsystems)** ||||
+| `?` | `express.e:24594` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `T` | `express.e:25622` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `S` | `express.e:25540` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `VER` | `express.e:25688` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `H` | `express.e:25071` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `X` | `express.e:26113` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `M` | `express.e:25239` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (fix mis-binding) |
+| `Q` | `express.e:25504` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `^` | `express.e:25089` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `S` extended report | `express.e:25540` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A11, after Tier I) |
+| `NS` non-stop pagination | `express.e:24627, 24644, 26170` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A12) |
+| **B. Mail UI completion** ||||
+| `MS` | `express.e:25250` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo |
+| `N` (mail) | `express.e:11713` (`searchNewMail`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (semantic fix) |
+| `R` sub-prompt | `express.e:11972` (`readMSG`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo |
+| Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (B3) |
+| Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (B8) |
+| **C. Conference navigation** ||||
+| `CS` (surface) | spec rule `conferences.allium:ConferenceScan` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (rule done, command missing) |
+| `<` / `>` | `express.e:24529, 24548` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo |
+| `JM <n>` | `express.e:25185` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4a) |
+| `<<` / `>>`, `JM` interactive | `express.e:24566, 24580, 25197` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4b) |
+| `J` no-arg prompt | `express.e:25143-25151` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (parity gap on shipped `J`) |
+| `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo |
+| **D. Files — browsing first, transfer second** ||||
+| `F` (file listings) | `express.e:24877` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
+| `FR` (reverse listings) | `express.e:24883` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
+| `Z` (zippy search) | `express.e:26123` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
+| `A` list flagged set | `express.e:24601` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (D6a) |
+| `A` add/remove flagged | `express.e:24604` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (D6b) |
+| `FS` (file status) | `express.e:24872` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
+| `N` (new files scan) | `express.e:25275` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (after the mail-`N` semantic fix) |
+| `D` / `DS` (download) | `express.e:24853` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
+| `U` (upload, baseline) | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4a) |
+| `U` upload accounting refinements | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4b) |
+| `RZ` (instant upload) | `express.e:25608` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
+| `V` / `VS` (view file) | `express.e:25675` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
+| `FM` (file maintenance) | `express.e:24889` | [cmds-files-sysop.md](slices/cmds-files-sysop.md) | D | Todo |
+| `US` (sysop upload) | `express.e:25660` | [cmds-files-sysop.md](slices/cmds-files-sysop.md) | D | Todo |
+| **E. Communication with other users / sysop** ||||
+| `O` (page sysop) | `express.e:25372` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
+| `OLM` (node-to-node) | `express.e:25406` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
+| `WHO` | `express.e:26094` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
+| `WHD` | `express.e:26104` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
+| **F. User self-service** ||||
+| `W` (change user info) | `express.e:25712` | [cmds-user-self.md](slices/cmds-user-self.md) | F | Todo |
+| `B <n>` (direct bulletin) | `express.e:24648` | [cmds-user-self.md](slices/cmds-user-self.md) | F | Todo (F5a) |
+| `B` interactive bulletin index | `express.e:24634` | [cmds-user-self.md](slices/cmds-user-self.md) | F | Todo (F5b) |
+| `GR` (greets) | `express.e:24411` | [cmds-user-self.md](slices/cmds-user-self.md) | F | Todo |
+| **G. Sysop session control + in-session F-keys** ||||
+| F1 sysop direct logon | (key combo) | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G1) |
+| Local logon + `RL` relogon | `express.e:25534` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G2) |
+| Node reservation | spec rule `session.allium:ReserveNodeForUser` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G3) |
+| Node suspend / resume / shutdown | spec rules in `session.allium` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G4) |
+| Sysop kick | spec rule `session.allium:SysopKick` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G5) |
+| Sysop in-session time +/- (F2/F3) | `express.e:7864-7876` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G6) |
+| Sysop display-file + capture (Shift-F4 / F4) | `express.e:7878-7889` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G7) |
+| Sysop temp-access grant (Shift-F6) | `express.e:7899-7921` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G8) |
+| Sysop available toggle (F7) | `express.e:7923-7930` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G9) |
+| Sysop "switch user" UX | (wraps `RelogonRequested`) | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G2b) |
+| Page reserved-for-X user | spec rule `session.allium:ReserveNodeForUser` | [cmds-sysop-session.md](slices/cmds-sysop-session.md) | G | Todo (G3b) |
+| **H. Sysop console (`F6`-class) commands** ||||
+| `1` account read-only / search | `express.e:24453` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo (H1a) |
+| `1` account field edits | `express.e:24453` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo (H1b) |
+| `2` (caller log viewer) | `express.e:24461` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
+| `3` (edit dir file) | `express.e:24511` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
+| `4` (edit any file) | `express.e:24517` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
+| `5` (dir anywhere) | `express.e:24523` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
+| `0` (remote shell) | `express.e:24424` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
+| `NM` (node monitor) | `express.e:25281` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
+| `UP` (node uptime) | `express.e:25667` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
+| `CM` (conference maint.) | `express.e:24843` | — | H | Skipped (see below) |
+| **I. Accounting + crypto refinements** ||||
+| Per-conference accounting | spec — `core.allium:ConferenceMembership` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
+| Credit accounts | spec — `core.allium:CreditAccount` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
+| Daily byte cap end-to-end | spec — `files.allium:DailyDownloadsLeQuota` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
+| Low-credit ratio weighting (`lcfiles`) | spec — `files.allium:File.status` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo (I3b) |
+| Legacy + lower-round password hashes | spec — `core.allium:PasswordHashKind` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
+| **J. Lower-priority / niche commands** ||||
+| `ZOOM` (QWK gather) | `express.e:26215` | [cmds-misc.md](slices/cmds-misc.md) | J | Todo |
+| `VO` (voting booth) | `express.e:25700` | [cmds-misc.md](slices/cmds-misc.md) | J | Todo |
+| `WALL` / external command dispatcher | `express.e:28258` (`runSysCommand`) | [cmds-external.md](slices/cmds-external.md) | J | Todo |
+| Per-conference external command overrides | `express.e:28258` | [cmds-external.md](slices/cmds-external.md) | J | Todo (X3) |
+| **Future / not yet sliced** ||||
+| SSH, FTP, HTTPd, QWK, FTN, IEMSI, axSetupTool replacement | — | [future.md](slices/future.md) | — | Future |
+| Xmodem / Ymodem / Hydra alt transport | `amiexpress/xpr*.e` | [future.md](slices/future.md) | — | Future |
+| OS-level signal handling (daemon stop) | — | [future.md](slices/future.md) | — | Future |
+| Sysop bulk file import (CLI wizard) | — | [future.md](slices/future.md) | — | Future |
+| Browse-side lha smoke harness | — | [future.md](slices/future.md) | — | Future |
+
+Each command-family file lays out its slices in the order the table
+suggests, and is the only file you need to load when working on
+commands in that tier. A command-family file owns its own
+**wire-and-smoke closing slice**: a phase whose theme names a
+user-visible capability is only **Done** once that capability is
+reachable by running the compiled binary, not merely the library
+tests — same rule as the foundation phases.
 
 ## Concurrency model
 
@@ -82,12 +192,14 @@ Concretely:
 - `Session` starts with what `AcceptConnection` and the state machine
   need; the boolean presentation flags (`ansi_colour`, `quick_logon`,
   `rip_mode`, `quiet_mode`, `cmd_shortcuts`, `expert_mode`) land in the
-  toggles slice that exposes them.
+  toggles slice that exposes them (Tier A — `cmds-quickwins.md`).
 - `Node.status` starts as the subset Phase 1 transitions through;
-  `reserved`, `suspended` and `shutting_down` land with their commands.
+  `reserved`, `suspended` and `shutting_down` land with their commands
+  in `cmds-sysop-session.md`.
 - `PasswordHashKind` starts with one variant (`pbkdf2_10000`, the spec's
   default for new accounts); the legacy 32-bit hash and the lower-round
-  pbkdf2 levels arrive when an older user record forces us to read them.
+  pbkdf2 levels arrive when an older user record forces us to read them
+  (Tier I — `cmds-accounting.md`).
 - `Config` is grown a key at a time, each key landing in the slice whose
   rule reads it (e.g. `max_password_failures` lands with the
   password-failure slice, `input_timeout` with the idle-timeout slice).
@@ -187,7 +299,7 @@ rendering a built-in fallback. The fallback exists only for the
 "sysop hasn't dropped the file in place yet" case and is built to
 look as close to the legacy default as we can make it.
 
-## Progress
+## Done means done
 
 A slice is **Done** only when every Allium rule, invariant and black-box
 function listed in its "In Scope" section is implemented, backed by tests
@@ -195,153 +307,99 @@ that pass, and `cargo test`, `cargo build`, `cargo fmt --check` and
 `cargo clippy -- -D warnings` are all clean. Anything else is **Todo**
 (or **In progress** while a slice is being worked on).
 
-A **phase** whose theme names a user-facing capability ("Sign in, see
-the menu, log off", "Conferences (read)", "Files (transfer)", and so
-on) is **Done** only once that capability is reachable by running the
+A **command-family file** whose theme names a user-facing capability
+is **Done** only once each of its commands is reachable by running the
 compiled binary — not merely the library or per-test in-process
-listeners. Every such phase therefore owns a closing slice that wires
+listeners. Every such file therefore owns a closing slice that wires
 the composition root (`app::main`), pins down the runtime config
-acquisition story (config file? built-in defaults? CLI flags?) and the
-seed-data story (how does an installer get a user record on disk to
-log in as?), and adds a smoke test that spawns the binary process and
-exercises the headline flow end-to-end. Library-level slice tests are
-necessary but not sufficient: a phase whose binary wouldn't actually
-deliver its theme is **In progress**, not Done — even if every named
-rule has its own green test. Future-phase slice tables therefore each
-end with a "Phase N — wire and smoke" closing slice; the lack of one
-in Phase 1 is a planning bug being fixed by Slice 13a below.
-
-| # | Slice | Status |
-| ---: | --- | :---: |
-| 1 | Cargo crate skeleton | Done |
-| 2 | User entity (login-time fields only) | Done |
-| 3 | In-memory `UserRepository` port + adapter | Done |
-| 4 | Password verification adapter (single algorithm) | Done |
-| 5 | Node entity (Phase 1 statuses only) | Done |
-| 6 | Session entity skeleton | Done |
-| 7 | `AcceptConnection` rule | Done |
-| 8 | Telnet listener + per-session task | Done |
-| 8a | Telnet wire-quality (echo, password masking, line editing, AmiExpress prompts) | Done |
-| 9 | `PromptForName` + `NameTyped` rules (existing user path only) | Done |
-| 10 | `VerifyPassword` rule (happy path) | Done |
-| 11 | `VerifyPassword` rule (failure path) | Done |
-| 12 | `EnterMenu` + display the conference menu | Done |
-| 13 | `UserRequestsLogoff` + `FinaliseLogoff` + `ReleaseNode` | Done |
-| 13a | Phase 1 wire-and-smoke (composition root + sysop seed) | Done |
-| 14 | Daily time budget initialisation + decrement | Done |
-| 15 | Forced password reset | Done |
-| 16 | Account-locked / insufficient-access rejection | Done |
-| 17 | Idle timeout | Done |
-| 18 | Carrier loss | Done |
-| 19 | `user_typed_NEW` branch | Done |
-| 20 | `CompleteNewUserRegistration` | Done |
-| 20a | New-user password gate (`VerifyNewUserPassword`) | Done |
-| 21 | Pending-validation gate | Done |
-| 22 | Sysop direct logon | Todo |
-| 23 | Local logon + relogon | Todo |
-| 24 | Node reservation | Todo |
-| 25 | Node suspend / resume / shutdown | Todo |
-| 26 | Sysop kick | Todo |
-| 27 | Conference + MessageBase entities | Done |
-| 28 | Conference loader from disk | Done |
-| 29 | `ConferenceMembership` + access checks | Done |
-| 30 | `JoinConference` (auto-rejoin on logon) | Done |
-| 31 | Conference / node bulletins + per-conference menu | Done |
-| 32 | Explicit `J` (join conference) command | Done |
-| 33 | `ConferenceScan` (CS command) | Done |
-| 34 | `JoinedConferenceForNameType` | Done |
-| 34a | Phase 4 wire-and-smoke (composition root + conference catalogue) | Done |
-| 35 | Sysop creates conference | Skipped |
-| 36 | Sysop grants / revokes access | Skipped |
-| 37 | `Mail` entity + on-disk message store | Done |
-| 38 | `ReadPointers` entity | Done |
-| 39 | `ReadMail` rule + `R` menu command | Done |
-| 40 | `ScanMail` + `M` / `N` menu commands | Done |
-| 41 | Auto mail scan on join | Done |
-| 41a | Phase 6 wire-and-smoke (mail store + read pointers in composition root) | Done |
-| 42 | `PostMail` rule (single-addressee, `E` command) | Done |
-| 43 | Broadcast addressing (ALL / EALL) | Done |
-| 44 | `PostCommentToSysop` (`C` command) | Done |
-| 44a | Phase 7 wire-and-smoke (ALL / EALL + comment-to-sysop end-to-end) | Done |
-| 45 | `ReplyToMail` | Done |
-| 46 | `ForwardMail` | Done |
-| 47 | Censored users + private / private-to-sysop | Done |
-| 48 | `MailAttachment` + `AttachFileToMail` | Done |
-| 49 | `DeleteMail`, `MoveMail`, `EditMailHeader` | Done |
-| 49a | Phase 8 wire-and-smoke — user-facing reply / forward | Done |
-| 49b | Phase 8 wire-and-smoke — sysop kill / move / edit-header | Done |
-| 49c | `ScanMail` listing rows (extend `MailScanCompleted` with the per-mail `MailScanRow` listing that the legacy `searchNewMail` prints) | Todo |
-| 49d | `ScanAllMail` rule + `MS` menu command (multi-conference walk; combined listing) | Todo |
-| 50 | `Bytes` value type + `FileArea` + `File` entities | Todo |
-| 51 | `FlagFile` / `UnflagFile` | Todo |
-| 52 | `A` (edit file flags) + `Z` (zippy search) commands | Todo |
-| 53 | `Transfer` entity + Zmodem adapter (download stub) | Todo |
-| 54 | `BeginDownload` + `CompleteDownload` | Todo |
-| 55 | `CheckDownloadEligibility` | Todo |
-| 56 | `BeginUpload` + `CompleteUpload` | Todo |
-| 57 | Background file check | Todo |
-| 58 | `SysopUploadFile` | Todo |
-| 59 | `MoveFile` + `DeleteFile` + `AdmitHeldFile` | Todo |
-| 60 | `lcfiles` and `quarantined` workflows | Todo |
-| 61 | Per-conference accounting | Todo |
-| 62 | Credit accounts | Todo |
-| 63 | Daily byte cap end-to-end | Todo |
-| 64 | Legacy + lower-round password hashes | Todo |
-| 65 | Quiet mode + ANSI / RIP / expert toggles | Todo |
-| 66 | `W` (change user info) command | Todo |
-| 67 | `S` (user stats) + `T` (time) commands | Todo |
-| 68 | Sysop chat allowance (`O` page sysop) | Todo |
+acquisition story and the seed-data story, and adds a smoke test that
+spawns the binary process and exercises the headline flow end-to-end.
+Library-level slice tests are necessary but not sufficient: a
+command-family whose binary wouldn't actually deliver its commands is
+**In progress**, not Done.
 
 ## Skipped slices
 
 Slices land here when the work has been considered and deliberately not
-done, rather than merely deferred. A skipped slice keeps its number (so
-later slices don't renumber) but ships no rules, no code and no tests.
-The entry below explains why — so a future contributor doesn't quietly
-resurrect the slice without revisiting the reasoning.
+done, rather than merely deferred. A skipped slice keeps its identity
+(so other slices that reference it don't quietly resurrect it) but
+ships no rules, no code and no tests. The entry below explains why —
+so a future contributor doesn't quietly bring the slice back without
+revisiting the reasoning.
 
-### Phase 5 — Conferences (admin) — Slices 35, 36
+### Conferences (admin) — original Phase 5 (Slices 35, 36) and `CM`
 
-Phase 5 was sketched from the spec's sysop-admin section
-(`conferences.allium:SysopCreatesConference`,
-`SysopGrantsConferenceAccess`, `SysopRevokesConferenceAccess`). On
-re-reading the legacy AmiExpress source it turns out neither rule
-corresponds to a runtime command the legacy ever had, and neither has a
-planned caller in any other phase:
+The legacy `CM` command (`express.e:24843`, `conferenceMaintenance()`)
+and the original Slices 35–36 (`SysopCreatesConference`,
+`SysopGrantsConferenceAccess`, `SysopRevokesConferenceAccess`) all
+overlap. On re-reading the legacy source none of them corresponds to a
+runtime command that survives the move to file-based config, and none
+of them has a planned caller in any other slice:
 
-- **No legacy runtime "create conference".** `cmds.numConf` is read once
-  at startup from the `NCONFS` tooltype (`amiexpress/express.e:31791`).
-  `conferenceMaintenance()` (`amiexpress/express.e:22686`) only edits
-  *existing* conferences (ratios, mail-scan pointer resets, capacity).
-  `ACS_CREATE_CONFERENCE` exists as a name in `axcommon.e:20` but is
-  never checked anywhere in the source. The legacy "create a
-  conference" workflow is stop-BBS / edit-tooltypes / make-directories
-  / restart — which already maps onto NextExpress's "drop a
-  `Conf<NN>/conference.toml` and restart" (Slice 28's
+- **No legacy runtime "create conference".** `cmds.numConf` is read
+  once at startup from the `NCONFS` tooltype
+  (`amiexpress/express.e:31791`). `conferenceMaintenance()`
+  (`amiexpress/express.e:22686`) only edits *existing* conferences
+  (ratios, mail-scan pointer resets, capacity). The legacy "create a
+  conference" workflow is stop-BBS / edit-tooltypes /
+  make-directories / restart — which already maps onto NextExpress's
+  "drop a `Conf<NN>/conference.toml` and restart" (Slice 28's
   `FileConferenceRepository`).
 - **No legacy runtime "grant/revoke access" command pair.** Access is
   held in the user record's 10-char `conferenceAccess` field and is
-  only mutated as a whole string from the F6 account editor's `F` field
-  (`amiexpress/express.e:21446`), the `PRESET.AREA` tooltype copier
-  (`:21333`) or the Shift-F6 temporary-access swap (`:7900`). Slice 36's
-  bulk-by-AREA-name form was already out of scope. The per-(user,
-  conference) data primitives already exist
-  (`User::upsert_membership`, `User::set_membership_granted` in
-  `rust/src/domain/user.rs`); they are exercised by the Slice 34a
-  composition-root seed.
-- **No planned caller anywhere.** Phase 13's `W` command edits the
-  user's *own* info only. Phase 14 (sysop console & node controls) is
-  entirely about local logon and node-level operations — none of its
-  slices touch `Conference` or `ConferenceMembership`. The legacy F6
-  account editor and `conferenceMaintenance()` are not sliced anywhere
-  and, per `AGENTS.md`'s "configuration via files rather than a separate
-  program" rule, are intended to be replaced by file edits (and a
-  possible CLI wizard, listed under [`slices/future.md`](slices/future.md)
-  as "axSetupTool replacement") rather than in-BBS commands.
+  only mutated by the F6 account editor's `F` field
+  (`express.e:21446`), the `PRESET.AREA` tooltype copier
+  (`:21333`) or the Shift-F6 temporary-access swap (`:7900`).
+- **No planned caller anywhere.** Tier F's `W` command edits the
+  user's *own* info only. Tier G (sysop session control) is entirely
+  about local logon and node-level operations. The legacy F6 account
+  editor and `conferenceMaintenance()` are subsumed by file edits
+  (and the possible CLI wizard in [`slices/future.md`](slices/future.md))
+  rather than in-BBS commands, per `AGENTS.md`'s "configuration via
+  files rather than a separate program" rule.
 
-If a future in-BBS sysop-admin surface lands (or the CLI wizard grows a
-"new conference" subcommand), the rules can be revived then — they will
-have a caller and a user-visible behaviour to anchor the tests.
+If a future in-BBS sysop-admin surface lands, the rules can be revived
+then — they will have a caller and a user-visible behaviour to anchor
+the tests.
+
+### Per-slice deferrals that are deliberately not picked up
+
+Some "Out of Scope" bullets in the command-family files refer to
+behaviour the legacy supports but that NextExpress will not
+implement. They are listed here so a future contributor can see the
+deferral was deliberate.
+
+| Origin slice | Deferral | Why not |
+| --- | --- | --- |
+| A6 (`X` expert mode) | Per-conference menu expert variants | Legacy supports per-conference variant strings; NextExpress uses one expert-mode boolean. Adds complexity without changing the user-observable behaviour for the common case. |
+| A8 (`M` ANSI toggle) | Per-screen RIP mode rendering | `Session.rip_mode` is recorded by `AcceptConnection`, but no command surface needs it and no slice ships an RIP-aware renderer. RIP terminals are vanishingly rare in 2026. |
+| C5 (`CF` flags editor) | Forced-newscan / no-newscan tooltype overrides | The legacy stored these as `.info` tooltypes. Per `AGENTS.md` we use file-based config; the sysop can edit `Conf<n>/conference.toml` directly. |
+| D6b (`A` add/remove) | Cross-conference flagging | Legacy permits flagging from outside the current conference in some configurations. Adds a flag-disambiguation UX without a clear win — defer permanently unless asked. |
+| E5 (`OLM`) | File attachments to OLMs | Legacy `OLM` is single-line; attachments belong to mail (`AttachFileToMail`) and there's no parity story for adding them here. |
+| F3 (`W` extended) | Handle changes (sysop-only) | Not in the spec schema; the closest legacy surface is the F6 account editor's name field, which `cmds-sysop-console.md`'s H1b covers. |
+| F5b (`B`) | Per-security bulletin variants beyond `findSecurityScreen` | The on-disk fallback chain already lets a sysop ship per-tier bulletins by file naming; an additional config layer is duplication. |
+| G1 (sysop direct logon) | `instantLogon` sysop key combo | Tracked as an open question in `session.allium`. If the spec ever closes the question the slice can be added; until then there's no rule to implement. |
+| G9 (sysop available toggle) | Auto-availability based on idle time | Manual toggle matches legacy behaviour and avoids surprising the sysop when a long compile or reading session flips them to "away." |
+| H5 (`NM` actions) | Real-time stats overlays | Legacy `NM` doesn't have them; not a planned feature. |
+| I2 (credit accounts) | Payment / billing integration | Credit accounts are tracked; the means of *funding* them is deliberately external (cash, donation, etc.). |
+
+### Amiga-only sysop console keys (F8 / F9 / Shift-F10)
+
+These three sysop console keys are deliberately not sliced because the
+hardware / OS facility they wrap doesn't exist on the platforms
+NextExpress targets:
+
+- **F8 — SER-OUT toggle** and **F9 — SER-IN toggle**
+  (`amiexpress/express.e:7932-7942`). The legacy emits / consumes
+  bytes via the Amiga serial port hardware. Telnet (and the planned
+  SSH transport) have no equivalent — there is nothing to toggle.
+- **Shift-F10 — clear tooltype cache** (`amiexpress/express.e:7957-7960`).
+  The legacy caches resolved `.info` tooltype lookups for performance
+  on slow disks. NextExpress reads TOML on each start; there is no
+  cache to clear.
+
+If a future SSH or serial adapter ever brings the underlying
+facility back, these can be revived then.
 
 ## Asset inventory (from `amiexpress/deployment/binaries.lha`)
 
@@ -356,7 +414,7 @@ configured path.
 | Asset | Use |
 | --- | --- |
 | `defaultbbs/Conf02/Menu.txt` | Default ANSI conference menu (2.4 KB, full command set). Used by Slice 12 as the menu shown after logon. |
-| `defaultbbs/Conf01/menu.txt` | Minimal "Lamer Land" 4-command menu (G/O/C/U). Useful as a low-access-tier menu fixture in Slice 31. |
+| `defaultbbs/Conf01/menu.txt` | Minimal "Lamer Land" 4-command menu (G/O/C/U). Useful as a low-access-tier menu fixture. |
 | `defaultbbs/Conf01/path`, `paths`, `NDirs` | Tiny on-disk format for "where does this conference live" — reference for Slice 28 conference loader. |
 | `defaultbbs/Conf01/MsgBase/MailStats`, `MailLock` | Seed files showing the message-base on-disk schema; reference for Slice 37 mail store. |
 | `defaultbbs/Conf01/Conf.DB`, `defaultbbs/Conf02/Conf.DB` | Empty conference databases; layout reference for Slice 28. |
@@ -365,3 +423,4 @@ configured path.
 | `defaultbbs/Documentation/Aedoc4.guide` | Original AmigaGuide manual — search here for any user-facing string we need to mirror exactly (prompts, error wording). |
 | `defaultbbs/Access/*.info`, `defaultbbs/Commands/BBSCmd/*.info`, `defaultbbs/FCheck/*.info`, `defaultbbs/Protocols/Xpr*.info` | Amiga tooltype configs. Reference only — per `AGENTS.md`, the Rust port stores config in files, not icon tooltypes. |
 | `amiexpress/express.e:6539` (`displayScreen`) | Authoritative list of which SCREEN_* names the BBS dispatches and the order they appear in. |
+| `amiexpress/express.e:28285` (`processInternalCommand`) | Authoritative legacy dispatch table — the canonical list of `internalCommandX` procs and the tokens that reach them. |

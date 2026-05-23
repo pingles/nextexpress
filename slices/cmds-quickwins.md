@@ -1,0 +1,201 @@
+# Tier A — Quick wins
+
+Small, common menu commands that don't depend on a new subsystem.
+Each slice in this file ships one command end-to-end and is sized to
+fit a 15–20 minute TDD session.
+
+See [SLICES.md](../SLICES.md) for the schema-growth principle, asset
+inventory and adapter-contract checklist.
+
+## Common shape
+
+Every slice in this tier:
+
+- adds an enum variant on `MenuCommand` (`rust/src/app/menu_command.rs`)
+  plus a matching parse-test;
+- wires a dispatch arm in `MenuFlow::run`
+  (`rust/src/app/menu_flow/mod.rs`);
+- emits the legacy wire text verbatim, with the `// amiexpress/express.e:NNNN`
+  comment carrying the original line beside the byte literal;
+- carries a smoke test in the file's wire-and-smoke closing slice.
+
+The toggles in this tier (`X`, `M`, `Q`) introduce the boolean
+presentation flags backfilled onto `Session` per the schema-growth
+principle — they were deferred from `AcceptConnection`'s ensures
+clause in Slice 7 and land here with their first reader.
+
+## Slice A1 — `T` (current date and time)
+
+- **In Scope**
+  - Parser: `MenuCommand::ShowTime`, recognised case-insensitively as
+    a no-arg `T`.
+  - Wire text: `It is <MM-DD-YYYY> <HH:MM:SS>` formatted exactly as
+    `internalCommandT()` does (`amiexpress/express.e:25622-25644`,
+    `FORMAT_USA`).
+  - Adapter: `Clock` port already exists; this slice only reads it.
+- **Out of Scope**
+  - Time-remaining display (that's `T` *plus* "time used today"
+    accounting — covered by Tier A's `S` slice and Tier I's
+    `daily_byte_cap`).
+- **Why it lands first**: zero new domain — pure presentation.
+
+## Slice A2 — `VER` (version banner)
+
+- **In Scope**
+  - Parser: `MenuCommand::ShowVersion`.
+  - Wire text adapted from `internalCommandVER()`
+    (`amiexpress/express.e:25688-25698`): three lines naming the
+    legacy authors with original copyright lines preserved verbatim,
+    plus a NextExpress line stating the Rust port version
+    (`env!("CARGO_PKG_VERSION")`).
+- **Out of Scope**
+  - Registration key display — the legacy emits the registered
+    licensee; NextExpress is unregistered and elides the line.
+
+## Slice A3 — `S` (user stats screen)
+
+- **In Scope**
+  - Parser: `MenuCommand::ShowStats`.
+  - Reads the existing fields on `User`
+    (`times_called`, `messages_posted`, `bytes_uploaded_total`,
+    `bytes_downloaded_total`, `last_call`, `slot_number`,
+    `security_level`).
+  - Wire text mirrors `internalCommandS()`
+    (`amiexpress/express.e:25540-25608`) line by line, with the same
+    `[32mLabel[33m:[0m value` ANSI prefixes.
+- **Out of Scope**
+  - The full multi-page report (`secStatus`, `secBulletin`,
+    `onlineBaud`); start with the seven lines every user expects and
+    grow as later slices add the fields.
+
+## Slice A4 — `T` *time-remaining* sub-display
+
+- **In Scope**
+  - Extends slice A1 to also print `Time remaining: <m>` minutes,
+    reading `Session.time_remaining()` (already on the session per
+    Slice 14).
+- **Out of Scope**
+  - `Session.bytes_remaining_today` (lands in Tier I).
+- **Why split from A1**: A1 ships in one TDD turn with no new field
+  reads; this extension adds the read of `time_remaining` and a
+  dedicated wire literal.
+
+## Slice A5 — `H` (BBS help screen)
+
+- **In Scope**
+  - Parser: `MenuCommand::ShowHelp`.
+  - Adapter: `ScreenRepository::bbs_help_screen()` loads
+    `<bbs-loc>/BBSHelp.txt` if present; falls back to the verbatim
+    legacy message `Sorry Help is unavailable at this time.`
+    (`amiexpress/express.e:25083`).
+- **Out of Scope**
+  - The `^` topic-help lookup (slice A9 below).
+
+## Slice A6 — `X` (expert mode toggle)
+
+- **In Scope**
+  - Adds `User.expert_mode: bool` (first read here).
+  - Toggles the field, writes back via `UserRepository`, emits
+    `Expert mode enabled` / `Expert mode disabled` per
+    `amiexpress/express.e:26115-26120`.
+  - Menu-prompt rendering branches on `expert_mode`: when set, the
+    full `Menu.txt` is *not* re-displayed before each prompt (matches
+    legacy `displayMenuPrompt`).
+- **Out of Scope**
+  - Per-conference menu expert variants (legacy supports them; defer).
+
+## Slice A7 — `?` (display menu)
+
+- **In Scope**
+  - Parser: `MenuCommand::ShowMenu`.
+  - When `User.expert_mode == true`, prints `Conf<N>/Menu.txt`
+    (`amiexpress/express.e:24594-24598`).
+  - When `expert_mode == false`, no-op (the menu has just been
+    displayed by the loop).
+- **Depends on**: A6 (the `expert_mode` field).
+
+## Slice A8 — `M` (ANSI mode toggle) and the existing-`M` cleanup
+
+- **In Scope**
+  - Adds `Session.ansi_colour: bool` (read by Slice 7's
+    `AcceptConnection` — deferred per schema-growth principle).
+  - Re-binds the parser: `MenuCommand::Scan(ScanArg::All)` (the
+    current `M` binding) moves to `MS`; `MenuCommand::AnsiToggle` is
+    the new `M`.
+  - Wire text `Ansi Color On` / `Ansi Color Off`
+    (`amiexpress/express.e:25241-25247`).
+  - Outgoing writes that contain `\x1b[…m` escapes are stripped at
+    the terminal adapter when `ansi_colour = false`.
+- **Out of Scope**
+  - Per-screen ANSI substitution (RIP mode is its own field, see
+    `cmds-misc.md`).
+- **Pairs with**: Tier B's `cmds-mail-finish.md` which already
+  reshapes the scan-mail UX; the `M` rebind is the half of the
+  reshape that lives here so each command lands clean.
+
+## Slice A9 — `Q` (quiet mode toggle)
+
+- **In Scope**
+  - Adds `Session.quiet_mode: bool` (first read here).
+  - Toggle emits `Quiet Mode On` / `Quiet Mode Off`
+    (`amiexpress/express.e:25508-25512`).
+  - Per the existing OLM stub in
+    [cmds-comm.md](cmds-comm.md), quiet sessions don't receive
+    inter-node messages once OLM lands.
+
+## Slice A10 — `^` (context help screen)
+
+- **In Scope**
+  - Parser: `MenuCommand::TopicHelp(String)` — accepts
+    `^<topic>` or `^ <topic>`.
+  - Adapter looks up `<bbs-loc>/help/<topic>.txt`; if not found, falls
+    back one character at a time per
+    `amiexpress/express.e:25094-25109` (`internalCommandUpHat`'s
+    truncation-and-retry loop).
+- **Out of Scope**
+  - SCREEN-style colour codes inside help files beyond what
+    `displayFile` already handles.
+
+## Slice A11 — `S` extended report (full legacy stats screen)
+
+- **In Scope**
+  - Extends slice A3 to the full legacy `internalCommandS()` output
+    (`amiexpress/express.e:25540-25608`): `secStatus`, `secBulletin`,
+    `onlineBaud`, `messagesPosted`, `timesCalled`, plus the
+    Tier-I-only fields (`bytes_uploaded_total`,
+    `bytes_downloaded_total`) once they exist.
+- **Out of Scope**
+  - Per-conference breakdown — that's a separate Tier I refinement.
+- **Why split from A3**: A3 lands a usable baseline in one TDD turn.
+  This slice ships once the remaining fields exist on `User` and
+  `ConferenceMembership` (Tier I).
+
+## Slice A12 — `NS` non-stop pause / break-out (cross-cutting)
+
+- **In Scope**
+  - Adds a session-scoped `non_stop` flag plumbed through the
+    Terminal adapter.
+  - Any command that paginates (`F`, `FR`, `Z`, `B`, `MS`, `R` sub-prompt
+    `L`ist) honours the legacy `paramsContains('NS')` token
+    (`amiexpress/express.e:24627, 24644, 26170, …`) and the
+    `<SPACE> = pause` / `<CR> = continue` / `Q` / `NS` runtime
+    keystrokes during a paginated stream.
+  - Deferred from slice D2 once `H`'s `NS` token paths are unified.
+- **Out of Scope**
+  - Per-conference default pause settings — that's a config concern.
+- **Why here**: the flag is read by file, mail and bulletin
+  commands across multiple tiers; landing it as a single quickwin
+  prevents drift between the readers.
+
+## Slice A-wire — Tier A wire-and-smoke
+
+- **In Scope**
+  - Composition-root wiring: every new command above is reachable
+    from a `cargo run` binary against the default `nextexpress.toml`.
+  - Smoke test (`tests/cmds_quickwins_smoke.rs`) connects via telnet
+    to the spawned process, logs in as the seeded sysop, and sends
+    each Tier-A command in turn — asserts the verbatim wire-bytes
+    for the response and that the menu prompt re-appears after each.
+- **Out of Scope**
+  - Performance / load shape — smoke proves reachability, not
+    throughput.
