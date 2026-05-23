@@ -88,6 +88,16 @@ pub trait ScreenRepository {
     /// "you've got new mail" splash.
     fn mailscan_screen(&self) -> ScreenFuture<'_>;
 
+    /// Returns the BBS help screen (`<bbs-loc>/BBSHelp.txt`,
+    /// Tier A quickwin A5, `amiexpress/express.e:25079-25085`).
+    ///
+    /// Used by the `H` menu command. Returns empty bytes when the
+    /// asset is absent so the caller can fall back to the legacy
+    /// `Sorry Help is unavailable at this time.` line
+    /// ([`crate::app::wire_text::HELP_UNAVAILABLE_LINE`]) instead of
+    /// silently rendering a built-in stub.
+    fn bbs_help_screen(&self) -> ScreenFuture<'_>;
+
     /// Returns the `SCREEN_LOGOFF` asset
     /// (`Screens/LOGOFF.txt`, `amiexpress/express.e:6554`, displayed at
     /// `:8187`). Rendered on a normal user-requested logoff

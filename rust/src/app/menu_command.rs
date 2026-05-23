@@ -37,6 +37,10 @@ pub(crate) enum MenuCommand {
     /// Mirrors `internalCommandVER()` at
     /// `amiexpress/express.e:25688-25698`.
     ShowVersion,
+    /// `H`: print the BBS help screen (Tier A quickwin A5).
+    /// Mirrors `internalCommandH()` at
+    /// `amiexpress/express.e:25071-25087`.
+    ShowHelp,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -89,6 +93,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("VER") {
         return MenuCommand::ShowVersion;
+    }
+    if trimmed.eq_ignore_ascii_case("H") {
+        return MenuCommand::ShowHelp;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -396,6 +403,24 @@ mod tests {
         // `VER` takes no arguments in the legacy.
         assert_eq!(parse_menu_command("VER 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("VER full"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_show_help_command() {
+        // Tier A quickwin A5: `H` (case-insensitive) routes to
+        // `internalCommandH()` at `amiexpress/express.e:25071-25087`.
+        assert_eq!(parse_menu_command("H"), MenuCommand::ShowHelp);
+        assert_eq!(parse_menu_command("h"), MenuCommand::ShowHelp);
+    }
+
+    #[test]
+    fn show_help_rejects_extra_tokens() {
+        // The slice ships the no-arg form only. The legacy supported
+        // an `NS` (non-stop) token that gets reintroduced by A12; for
+        // now `H NS` falls through to Unknown so the future binding
+        // is unambiguous.
+        assert_eq!(parse_menu_command("H NS"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("H help"), MenuCommand::Unknown);
     }
 
     #[test]

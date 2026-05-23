@@ -65,6 +65,13 @@ const FALLBACK_MAILSCAN: &[u8] = b"\r\n*** New mail in this conference ***\r\n";
 /// pre-goodbye splash."
 const FALLBACK_LOGOFF: &[u8] = b"";
 
+/// Built-in fallback for `<bbs-loc>/BBSHelp.txt`
+/// (`amiexpress/express.e:25079`). The `H` command's caller writes
+/// the dedicated `Sorry Help is unavailable at this time.` line
+/// ([`crate::app::wire_text::HELP_UNAVAILABLE_LINE`]) when the
+/// returned bytes are empty, so the fallback here is empty.
+const FALLBACK_BBS_HELP: &[u8] = b"";
+
 /// Lower bound for the security-level menu walk, mirroring the
 /// `minLevel := 5` default in `amiexpress/express.e:6246`
 /// (findSecurityScreen).
@@ -88,6 +95,7 @@ pub struct FileScreenRepository {
     internetnames: Mutex<Option<Vec<u8>>>,
     mailscan: Mutex<Option<Vec<u8>>>,
     logoff: Mutex<Option<Vec<u8>>>,
+    bbs_help: Mutex<Option<Vec<u8>>>,
 }
 
 impl FileScreenRepository {
@@ -106,6 +114,7 @@ impl FileScreenRepository {
             internetnames: Mutex::new(None),
             mailscan: Mutex::new(None),
             logoff: Mutex::new(None),
+            bbs_help: Mutex::new(None),
         }
     }
 
@@ -261,6 +270,12 @@ impl FileScreenRepository {
         let path = self.bbs_path.join("Screens").join("LOGOFF.txt");
         self.cached_file(&self.logoff, &path, FALLBACK_LOGOFF).await
     }
+
+    async fn bbs_help_bytes(&self) -> Vec<u8> {
+        let path = self.bbs_path.join("BBSHelp.txt");
+        self.cached_file(&self.bbs_help, &path, FALLBACK_BBS_HELP)
+            .await
+    }
 }
 
 impl ScreenRepository for FileScreenRepository {
@@ -305,6 +320,10 @@ impl ScreenRepository for FileScreenRepository {
 
     fn logoff_screen(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.logoff_bytes().await })
+    }
+
+    fn bbs_help_screen(&self) -> ScreenFuture<'_> {
+        Box::pin(async move { self.bbs_help_bytes().await })
     }
 }
 
@@ -646,6 +665,48 @@ mod tests {
         assert_eq!(repo.logoff_screen().await, b"FIRST\r\n");
         std::fs::write(&path, b"SECOND\n").unwrap();
         assert_eq!(repo.logoff_screen().await, b"FIRST\r\n");
+    }
+
+    #[tokio::test]
+    async fn bbs_help_screen_returns_empty_fallback_when_asset_is_missing() {
+        // Tier A quickwin A5: absent asset means the `H` command's
+        // caller writes the dedicated `Sorry Help is unavailable at
+        // this time.` line instead. The adapter signals absence with
+        // empty bytes.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.bbs_help_screen().await, FALLBACK_BBS_HELP);
+        assert!(repo.bbs_help_screen().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn bbs_help_screen_loads_from_disk_when_present() {
+        // Per the slice, the BBSHelp asset lives at the BBS root
+        // (matching legacy `<bbs-loc>/BBSHelp.txt`), not under
+        // `Screens/`. Amiga `\b\n` line endings are translated to
+        // telnet `\r\n` on the way out.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("BBSHelp.txt"),
+            b"== Help ==\x08\nType G to log off.\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(
+            repo.bbs_help_screen().await,
+            b"== Help ==\r\nType G to log off.\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn bbs_help_screen_is_cached_after_first_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("BBSHelp.txt");
+        std::fs::write(&path, b"FIRST\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.bbs_help_screen().await, b"FIRST\r\n");
+        std::fs::write(&path, b"SECOND\n").unwrap();
+        assert_eq!(repo.bbs_help_screen().await, b"FIRST\r\n");
     }
 
     #[tokio::test]

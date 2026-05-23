@@ -25,9 +25,9 @@ use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_time_line, GOODBYE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
-    INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE, MENU_PROMPT, READ_REQUIRES_NUMBER_LINE,
-    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
+    render_time_line, GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE,
+    INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE,
+    MENU_PROMPT, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE, VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
@@ -158,6 +158,7 @@ where
                     .await?;
             }
             MenuCommand::ShowVersion => self.write_and_flush(VERSION_BANNER).await?,
+            MenuCommand::ShowHelp => self.handle_show_help().await?,
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))
@@ -174,5 +175,19 @@ where
 
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
         crate::app::terminal::write_and_flush(self.terminal, bytes).await
+    }
+
+    /// Tier A quickwin A5 (`H`): write the on-disk `BBSHelp.txt`
+    /// asset if present, or the legacy
+    /// `Sorry Help is unavailable at this time.` line when the
+    /// adapter returns empty bytes (`amiexpress/express.e:25079-25085`).
+    async fn handle_show_help(&mut self) -> Result<(), T::Error> {
+        let bytes = self.services.screens().bbs_help_screen().await;
+        if bytes.is_empty() {
+            self.write_and_flush(HELP_UNAVAILABLE_LINE).await
+        } else {
+            self.terminal.write(&bytes).await?;
+            self.terminal.flush().await
+        }
     }
 }

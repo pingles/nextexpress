@@ -94,12 +94,77 @@ async fn ver_command_renders_legacy_version_banner() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn h_command_falls_back_to_help_unavailable_when_no_asset() {
+    // Slice A5 — `H` (BBS help). When `<bbs-loc>/BBSHelp.txt` is
+    // absent the listener emits the verbatim legacy line at
+    // `amiexpress/express.e:25083`, then re-prompts.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let addr = spawn_listener_at_bbs_path(dir.path().to_path_buf()).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"H").await;
+    let post_h = drain_until(&mut stream, b"Command: ").await;
+    assert!(
+        contains(
+            &post_h,
+            b"\r\n\r\nSorry Help is unavailable at this time.\r\n\r\n"
+        ),
+        "expected legacy help-unavailable line after H, got {:?}",
+        String::from_utf8_lossy(&post_h)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn h_command_renders_bbs_help_asset_when_present() {
+    // Slice A5 — `H` (BBS help). When `<bbs-loc>/BBSHelp.txt` exists
+    // the listener writes it through, with Amiga `\b\n` line endings
+    // translated to telnet `\r\n` by the screen adapter.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("BBSHelp.txt"),
+        b"== Help Screen ==\x08\nType G to log off.\x08\n",
+    )
+    .expect("write BBSHelp.txt");
+    let addr = spawn_listener_at_bbs_path(dir.path().to_path_buf()).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"H").await;
+    let post_h = drain_until(&mut stream, b"Command: ").await;
+    assert!(
+        contains(&post_h, b"== Help Screen ==\r\nType G to log off.\r\n"),
+        "expected disk help asset (CRLF-normalised), got {:?}",
+        String::from_utf8_lossy(&post_h)
+    );
+    // The fallback line must NOT appear when an asset is present.
+    assert!(
+        !contains(&post_h, b"Sorry Help is unavailable"),
+        "fallback must not fire when BBSHelp.txt is on disk, got {:?}",
+        String::from_utf8_lossy(&post_h)
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// Builds a `Runtime` with an in-memory user repo, the seeded sysop,
 /// a single `Main` conference, an empty mail store, and an in-memory
 /// caller log, then binds a [`TelnetListener`] on an ephemeral port
 /// and spawns its accept loop. Returns the address the listener is
-/// bound to.
+/// bound to. The BBS root defaults to the current working directory
+/// (cargo's manifest dir at test time), which has no asset overrides;
+/// use [`spawn_listener_at_bbs_path`] when a scenario needs assets on
+/// disk.
 async fn spawn_listener_with_seeded_sysop() -> std::net::SocketAddr {
+    spawn_listener_at_bbs_path(std::env::current_dir().expect("cwd")).await
+}
+
+/// Variant of [`spawn_listener_with_seeded_sysop`] that roots the
+/// `Runtime`'s BBS path at a caller-supplied directory — used by
+/// scenarios that need to drop screen assets (e.g. `BBSHelp.txt`)
+/// where the [`FileScreenRepository`] will find them.
+async fn spawn_listener_at_bbs_path(bbs_path: std::path::PathBuf) -> std::net::SocketAddr {
     let hasher = Arc::new(Pbkdf2PasswordHasher::new());
     let conferences = vec![Conference::new(
         1,
@@ -122,6 +187,7 @@ async fn spawn_listener_with_seeded_sysop() -> std::net::SocketAddr {
     let config = Config {
         max_nodes: 1,
         max_password_failures: 3,
+        bbs_path,
         ..Config::default()
     };
     let runtime = Runtime::from_config(

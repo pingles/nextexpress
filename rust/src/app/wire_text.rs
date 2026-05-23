@@ -111,6 +111,13 @@ pub(crate) const VERSION_BANNER: &[u8] = concat!(
 )
 .as_bytes();
 
+/// Sent when the `H` command (Tier A quickwin A5) can't find a
+/// `BBSHelp.txt` asset on disk. Verbatim from
+/// `amiexpress/express.e:25083`'s `\b\n\b\nSorry Help is unavailable
+/// at this time.\b\n\b\n` (Amiga `\b\n` → telnet `\r\n`).
+pub(crate) const HELP_UNAVAILABLE_LINE: &[u8] =
+    b"\r\n\r\nSorry Help is unavailable at this time.\r\n\r\n";
+
 /// Sent after a not-found name lookup to invite a retry.
 pub(crate) const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
 

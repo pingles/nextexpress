@@ -348,6 +348,10 @@ mod tests {
         fn logoff_screen(&self) -> ScreenFuture<'_> {
             bytes(b"LOGOFF SCREEN\r\n")
         }
+
+        fn bbs_help_screen(&self) -> ScreenFuture<'_> {
+            bytes(b"BBSHELP\r\n")
+        }
     }
 
     fn bytes(value: &'static [u8]) -> ScreenFuture<'static> {
