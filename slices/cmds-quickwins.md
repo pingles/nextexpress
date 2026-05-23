@@ -24,30 +24,38 @@ presentation flags backfilled onto `Session` per the schema-growth
 principle — they were deferred from `AcceptConnection`'s ensures
 clause in Slice 7 and land here with their first reader.
 
-## Slice A1 — `T` (current date and time)
+## Slice A1 — `T` (current date and time) — **Done**
 
 - **In Scope**
   - Parser: `MenuCommand::ShowTime`, recognised case-insensitively as
     a no-arg `T`.
-  - Wire text: `It is <MM-DD-YYYY> <HH:MM:SS>` formatted exactly as
+  - Wire text: `It is <MM-DD-YY> <HH:MM:SS>` formatted exactly as
     `internalCommandT()` does (`amiexpress/express.e:25622-25644`,
-    `FORMAT_USA`).
-  - Adapter: `Clock` port already exists; this slice only reads it.
+    `FORMAT_USA` — note: legacy `FORMAT_USA` produces a two-digit
+    year, *not* `YYYY` as the original draft of this slice said).
+  - Rendering uses `time::macros::format_description!` for the
+    `MM-DD-YY HH:MM:SS` portion, per the AGENTS.md "favour idiomatic
+    Rust" rule. Time is in UTC; local-offset support is a future
+    refinement.
 - **Out of Scope**
   - Time-remaining display (that's `T` *plus* "time used today"
     accounting — covered by Tier A's `S` slice and Tier I's
     `daily_byte_cap`).
 - **Why it lands first**: zero new domain — pure presentation.
 
-## Slice A2 — `VER` (version banner)
+## Slice A2 — `VER` (version banner) — **Done**
 
 - **In Scope**
   - Parser: `MenuCommand::ShowVersion`.
   - Wire text adapted from `internalCommandVER()`
-    (`amiexpress/express.e:25688-25698`): three lines naming the
-    legacy authors with original copyright lines preserved verbatim,
-    plus a NextExpress line stating the Rust port version
-    (`env!("CARGO_PKG_VERSION")`).
+    (`amiexpress/express.e:25688-25698`): the legacy `AmiExpress 5
+    Copyright ©2018-2023 Darren Coles` header, the `Original
+    Version:` label, and the two author lines (Thomas, Hodge) —
+    each preserved verbatim. Trailed by `NextExpress
+    <CARGO_PKG_VERSION> (<git-sha>) Copyright ©2026` so the
+    operator can pin a running session to a specific build.
+  - Implementation: `VERSION_BANNER` const built with `concat!` +
+    `env!("CARGO_PKG_VERSION")` + `env!("NEXTEXPRESS_GIT_SHA")`.
 - **Out of Scope**
   - Registration key display — the legacy emits the registered
     licensee; NextExpress is unregistered and elides the line.
@@ -80,16 +88,21 @@ clause in Slice 7 and land here with their first reader.
   reads; this extension adds the read of `time_remaining` and a
   dedicated wire literal.
 
-## Slice A5 — `H` (BBS help screen)
+## Slice A5 — `H` (BBS help screen) — **Done**
 
 - **In Scope**
   - Parser: `MenuCommand::ShowHelp`.
   - Adapter: `ScreenRepository::bbs_help_screen()` loads
-    `<bbs-loc>/BBSHelp.txt` if present; falls back to the verbatim
-    legacy message `Sorry Help is unavailable at this time.`
-    (`amiexpress/express.e:25083`).
+    `<bbs-loc>/BBSHelp.txt` if present; the dispatch arm falls back
+    to the verbatim legacy message `Sorry Help is unavailable at
+    this time.` (`amiexpress/express.e:25083`) when the adapter
+    returns empty bytes (matching the existing `logoff_screen`
+    "absent = empty" contract).
+  - Per-security-level walk (`BBSHelp5.txt`, `BBSHelp10.txt`, …) is
+    *not* implemented; a future refinement can mirror the
+    `default_menu` walk if a slice needs it.
 - **Out of Scope**
-  - The `^` topic-help lookup (slice A9 below).
+  - The `^` topic-help lookup (slice A10 below).
 
 ## Slice A6 — `X` (expert mode toggle)
 

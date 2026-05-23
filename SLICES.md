@@ -30,10 +30,11 @@ command family — load only the family you're working on.
 The Cargo crate, the telnet listener, the session state machine, the
 user / conference / mail entities, the on-disk repositories, and the
 menu prompt are in place. The commands shipped so far are: `G`, `J`,
-`R`, `E`, `C`, `RP`, `FW`, `K`, `MV`, `EH`, plus the auto-mail-scan
-and auto-rejoin hooks fired by `J`. The canonical record of what each
-shipped slice covers is the [Allium specs](specs/) plus the code and
-its tests; the per-slice "In Scope" history is in git.
+`R`, `E`, `C`, `RP`, `FW`, `K`, `MV`, `EH`, `T`, `VER`, `H`, plus the
+auto-mail-scan and auto-rejoin hooks fired by `J`. The canonical
+record of what each shipped slice covers is the [Allium specs](specs/)
+plus the code and its tests; the per-slice "In Scope" history is in
+git.
 
 Two of the shipped commands (`M` and `N`) are presently bound to
 scan-mail semantics — a divergence from the legacy that
@@ -51,10 +52,10 @@ done.
 | :---: | --- | --- | :---: | :---: |
 | **A. Quick wins (small commands, no new subsystems)** ||||
 | `?` | `express.e:24594` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
-| `T` | `express.e:25622` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `T` | `express.e:25622` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Done |
 | `S` | `express.e:25540` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
-| `VER` | `express.e:25688` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
-| `H` | `express.e:25071` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `VER` | `express.e:25688` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Done |
+| `H` | `express.e:25071` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Done |
 | `X` | `express.e:26113` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
 | `M` | `express.e:25239` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (fix mis-binding) |
 | `Q` | `express.e:25504` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
