@@ -30,8 +30,8 @@ command family — load only the family you're working on.
 The Cargo crate, the telnet listener, the session state machine, the
 user / conference / mail entities, the on-disk repositories, and the
 menu prompt are in place. The commands shipped so far are: `G`, `J`,
-`R`, `E`, `C`, `RP`, `FW`, `K`, `MV`, `EH`, `T`, `VER`, `H`, plus the
-auto-mail-scan and auto-rejoin hooks fired by `J`. The canonical
+`R`, `E`, `C`, `RP`, `FW`, `K`, `MV`, `EH`, `T`, `VER`, `H`, `Q`, plus
+the auto-mail-scan and auto-rejoin hooks fired by `J`. The canonical
 record of what each shipped slice covers is the [Allium specs](specs/)
 plus the code and its tests; the per-slice "In Scope" history is in
 git.
@@ -58,7 +58,7 @@ done.
 | `H` | `express.e:25071` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Done |
 | `X` | `express.e:26113` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
 | `M` | `express.e:25239` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (fix mis-binding) |
-| `Q` | `express.e:25504` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
+| `Q` | `express.e:25504` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Done |
 | `^` | `express.e:25089` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo |
 | `S` extended report | `express.e:25540` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A11, after Tier I) |
 | `NS` non-stop pagination | `express.e:24627, 24644, 26170` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A12) |

@@ -118,6 +118,16 @@ pub(crate) const VERSION_BANNER: &[u8] = concat!(
 pub(crate) const HELP_UNAVAILABLE_LINE: &[u8] =
     b"\r\n\r\nSorry Help is unavailable at this time.\r\n\r\n";
 
+/// Sent when the `Q` command (Tier A quickwin A9) flips the session
+/// into quiet mode. Verbatim from `amiexpress/express.e:25509`'s
+/// `\b\nQuiet Mode On\b\n` (Amiga `\b\n` → telnet `\r\n`).
+pub(crate) const QUIET_MODE_ON_LINE: &[u8] = b"\r\nQuiet Mode On\r\n";
+
+/// Sent when the `Q` command (Tier A quickwin A9) flips the session
+/// back out of quiet mode. Verbatim from
+/// `amiexpress/express.e:25511`'s `\b\nQuiet Mode Off\b\n`.
+pub(crate) const QUIET_MODE_OFF_LINE: &[u8] = b"\r\nQuiet Mode Off\r\n";
+
 /// Sent after a not-found name lookup to invite a retry.
 pub(crate) const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
 

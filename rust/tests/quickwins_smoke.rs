@@ -95,6 +95,46 @@ async fn ver_command_renders_legacy_version_banner() {
 }
 
 #[tokio::test]
+async fn q_command_toggles_quiet_mode_on_then_off() {
+    // Slice A9 — `Q` (quiet-mode toggle). Mirrors
+    // `internalCommandQ()` at `amiexpress/express.e:25504-25516`.
+    // The first press emits `Quiet Mode On` (legacy `\b\n` → telnet
+    // `\r\n`); the second press emits `Quiet Mode Off`. Both
+    // responses are pinned verbatim so a future wording drift fails
+    // here rather than silently in production.
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"Q").await;
+    let after_first = drain_until(&mut stream, b"Command: ").await;
+    assert!(
+        contains(&after_first, b"\r\nQuiet Mode On\r\n"),
+        "expected `Quiet Mode On` after first Q, got {:?}",
+        String::from_utf8_lossy(&after_first)
+    );
+    assert!(
+        !contains(&after_first, b"Quiet Mode Off"),
+        "first Q must not emit the Off variant, got {:?}",
+        String::from_utf8_lossy(&after_first)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    let after_second = drain_until(&mut stream, b"Command: ").await;
+    assert!(
+        contains(&after_second, b"\r\nQuiet Mode Off\r\n"),
+        "expected `Quiet Mode Off` after second Q, got {:?}",
+        String::from_utf8_lossy(&after_second)
+    );
+    assert!(
+        !contains(&after_second, b"Quiet Mode On"),
+        "second Q must not re-emit the On variant, got {:?}",
+        String::from_utf8_lossy(&after_second)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
 async fn h_command_falls_back_to_help_unavailable_when_no_asset() {
     // Slice A5 — `H` (BBS help). When `<bbs-loc>/BBSHelp.txt` is
     // absent the listener emits the verbatim legacy line at

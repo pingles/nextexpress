@@ -322,6 +322,23 @@ mod state_basics {
     }
 
     #[test]
+    fn quiet_mode_starts_false_per_accept_connection() {
+        // `session.allium:AcceptConnection` and
+        // `session.allium:SysopDirectLogon` both seed `quiet_mode: false`.
+        let s = new_session(LogonChannel::Remote);
+        assert!(!s.quiet_mode());
+    }
+
+    #[test]
+    fn quiet_mode_round_trips_via_setter() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.set_quiet_mode(true);
+        assert!(s.quiet_mode());
+        s.set_quiet_mode(false);
+        assert!(!s.quiet_mode());
+    }
+
+    #[test]
     fn new_session_has_no_visits() {
         let s = new_session(LogonChannel::Remote);
         assert!(s.visits().is_empty());
@@ -1863,6 +1880,40 @@ mod conferencing {
         assert!(
             entry.text.contains("no_conference_access"),
             "expected no_conference_access in goodbye line, got {entry:?}"
+        );
+    }
+}
+
+mod quiet {
+    use std::time::SystemTime;
+
+    use super::super::typed::MenuSession;
+    use super::fixtures::{make_conf, session_at_onboarded_with, user_with_grants};
+
+    #[test]
+    fn toggle_quiet_mode_returns_new_value_and_flips_each_call() {
+        // Tier A quickwin A9: each press of the Q key flips
+        // `Session.quiet_mode`. The first toggle reports `true`
+        // (Quiet Mode On), the second reports `false`. The inner
+        // session reflects the same flip — the typed wrapper
+        // delegates to `Session::set_quiet_mode`.
+        let confs = vec![make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[2]));
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        let mut menu = MenuSession::from_session(s);
+
+        assert!(menu.toggle_quiet_mode());
+        let s = menu.into_inner();
+        assert!(s.quiet_mode(), "first toggle should switch quiet_mode on");
+        let mut menu = MenuSession::from_session(s);
+
+        assert!(!menu.toggle_quiet_mode());
+        let s = menu.into_inner();
+        assert!(
+            !s.quiet_mode(),
+            "second toggle should switch quiet_mode off"
         );
     }
 }

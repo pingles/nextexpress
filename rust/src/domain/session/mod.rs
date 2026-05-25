@@ -146,6 +146,12 @@ struct SessionShared {
     /// bulletin (`conferences.allium:ShowConferenceBulletin`). The
     /// full toggle UI lands in Slice 65.
     quick_logon: bool,
+    /// `session.allium:Session.quiet_mode` (Tier A quickwin A9).
+    /// When `true` the session suppresses inter-node OLM broadcasts
+    /// and join announcements; the Q menu command toggles it.
+    /// Seeded `false` by `AcceptConnection` and `SysopDirectLogon`
+    /// per the spec.
+    quiet_mode: bool,
     /// `session.allium:Session.display_name_type` (first read in
     /// Slice 34). Set on every successful conference join to the
     /// joined conference's `accepted_name_type`; controls how the
@@ -349,6 +355,7 @@ impl Session {
                 last_input_at: connected_at,
                 online_baud,
                 quick_logon: false,
+                quiet_mode: false,
                 display_name_type: NameType::Handle,
             },
             phase: SessionPhase::Connecting,
@@ -368,6 +375,20 @@ impl Session {
     /// presentation-toggles flow drive this directly.
     pub fn set_quick_logon(&mut self, quick: bool) {
         self.shared.quick_logon = quick;
+    }
+
+    /// Returns whether the session is in quiet mode, suppressing
+    /// inter-node OLM broadcasts and join announcements. Mirrors
+    /// `session.allium:Session.quiet_mode` (Tier A quickwin A9).
+    #[must_use]
+    pub fn quiet_mode(&self) -> bool {
+        self.shared.quiet_mode
+    }
+
+    /// Sets [`Self::quiet_mode`]. The `Q` menu command toggles it
+    /// through [`crate::domain::session::typed::MenuSession::toggle_quiet_mode`].
+    pub fn set_quiet_mode(&mut self, quiet: bool) {
+        self.shared.quiet_mode = quiet;
     }
 
     /// Returns the [`NameType`] the session is currently rendering

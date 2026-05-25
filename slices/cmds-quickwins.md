@@ -146,7 +146,7 @@ clause in Slice 7 and land here with their first reader.
   reshapes the scan-mail UX; the `M` rebind is the half of the
   reshape that lives here so each command lands clean.
 
-## Slice A9 — `Q` (quiet mode toggle)
+## Slice A9 — `Q` (quiet mode toggle) — **Done**
 
 - **In Scope**
   - Adds `Session.quiet_mode: bool` (first read here).

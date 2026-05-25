@@ -343,6 +343,16 @@ impl MenuSession {
         Some((visit.conference_number(), visit.msgbase_number()))
     }
 
+    /// Toggles the session's quiet-mode flag and returns the new
+    /// value. Implements the `Q` menu command's mutation step
+    /// (Tier A quickwin A9, `amiexpress/express.e:25506`'s
+    /// `quietFlag := Not(quietFlag)`).
+    pub(crate) fn toggle_quiet_mode(&mut self) -> bool {
+        let new_value = !self.session.quiet_mode();
+        self.session.set_quiet_mode(new_value);
+        new_value
+    }
+
     /// `session.allium:UserRequestsLogoff` from the menu — the only
     /// total transition out of `Menu` the driver invokes. Consumes
     /// `self` and yields a [`LoggingOffSession`].

@@ -27,7 +27,8 @@ use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_time_line, GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE,
     INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE,
-    MENU_PROMPT, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE, VERSION_BANNER,
+    MENU_PROMPT, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE,
+    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
@@ -159,6 +160,18 @@ where
             }
             MenuCommand::ShowVersion => self.write_and_flush(VERSION_BANNER).await?,
             MenuCommand::ShowHelp => self.handle_show_help().await?,
+            MenuCommand::QuietToggle => {
+                // Tier A quickwin A9 (`Q`): toggle `Session.quiet_mode`
+                // and emit the legacy on/off literal at
+                // `amiexpress/express.e:25506-25512`. The flag's effect
+                // on OLM/join broadcasts lands with cmds-comm.md.
+                let line = if session.toggle_quiet_mode() {
+                    QUIET_MODE_ON_LINE
+                } else {
+                    QUIET_MODE_OFF_LINE
+                };
+                self.write_and_flush(line).await?;
+            }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))

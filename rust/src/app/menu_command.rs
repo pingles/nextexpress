@@ -41,6 +41,10 @@ pub(crate) enum MenuCommand {
     /// Mirrors `internalCommandH()` at
     /// `amiexpress/express.e:25071-25087`.
     ShowHelp,
+    /// `Q`: toggle the session's quiet mode (Tier A quickwin A9).
+    /// Mirrors `internalCommandQ()` at
+    /// `amiexpress/express.e:25504-25516`.
+    QuietToggle,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -96,6 +100,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("H") {
         return MenuCommand::ShowHelp;
+    }
+    if trimmed.eq_ignore_ascii_case("Q") {
+        return MenuCommand::QuietToggle;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -421,6 +428,23 @@ mod tests {
         // is unambiguous.
         assert_eq!(parse_menu_command("H NS"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("H help"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_quiet_toggle_command() {
+        // Tier A quickwin A9: `Q` (case-insensitive) routes to
+        // `internalCommandQ()` at `amiexpress/express.e:25504-25516`.
+        assert_eq!(parse_menu_command("Q"), MenuCommand::QuietToggle);
+        assert_eq!(parse_menu_command("q"), MenuCommand::QuietToggle);
+    }
+
+    #[test]
+    fn quiet_toggle_rejects_extra_tokens() {
+        // The legacy command takes no arguments; trailing tokens fall
+        // through to Unknown so the parser doesn't accidentally bind
+        // future `Q*` two-letter commands.
+        assert_eq!(parse_menu_command("Q 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("Q on"), MenuCommand::Unknown);
     }
 
     #[test]
