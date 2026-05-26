@@ -7,7 +7,7 @@
 //! fixture.
 //!
 //! v1 implements the existing [`UserRepository`] port shape
-//! (`save(User)`, `allocate_slot_and_create`, lookups). The
+//! (`save(User)`, `create_user`, lookups). The
 //! design's eventual command-style writes (deltas, patches,
 //! reservations) are out of scope here — they enter the picture when
 //! the port itself grows them.
@@ -25,9 +25,9 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::domain::conference::{ConferenceMembership, MessageBaseRef};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
-use crate::domain::user::{PersistedUser, RatioMode, User, UserError, UserFlag};
+use crate::domain::user::{NewUserDraft, PersistedUser, RatioMode, User, UserError, UserFlag};
 use crate::domain::user_repository::{
-    BuildUserFn, NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
+    NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
 };
 
 /// Errors returned when opening a [`SqliteUserRepository`].
@@ -177,7 +177,7 @@ impl SqliteUserRepository {
     ///
     /// Intended only for one-time bootstrap of seed data (e.g. the
     /// default sysop on first boot). Regular user creation must go
-    /// through [`UserRepository::allocate_slot_and_create`] so the
+    /// through [`UserRepository::create_user`] so the
     /// repository owns slot allocation.
     ///
     /// # Errors
@@ -495,23 +495,12 @@ impl UserRepository for SqliteUserRepository {
         })
     }
 
-    fn allocate_slot_and_create(
-        &self,
-        build_user: BuildUserFn<'_>,
-    ) -> Result<User, UserCreationError> {
+    fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
         let mut conn = self.conn.lock().expect("user db mutex");
         let tx = conn
             .transaction()
             .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
-        let next_slot: u32 = tx
-            .query_row(
-                "SELECT COALESCE(MAX(slot_number), 0) + 1 FROM users",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
-        let user = build_user(next_slot)?;
-        let folded_handle = user.handle().to_ascii_lowercase();
+        let folded_handle = draft.handle.to_ascii_lowercase();
         let dup_handle: bool = tx
             .query_row(
                 "SELECT 1 FROM users WHERE handle_folded = ?1",
@@ -523,29 +512,17 @@ impl UserRepository for SqliteUserRepository {
             .unwrap_or(false);
         if dup_handle {
             return Err(UserCreationError::DuplicateUser {
-                handle: user.handle().to_string(),
+                handle: draft.handle.clone(),
             });
         }
-        // Match the in-memory adapter's contract: a build callback
-        // that overrides the offered slot is welcome to, but the
-        // repository still refuses to insert two rows for the same
-        // slot. `next_slot` itself is fresh by construction, so this
-        // check is only meaningful when the callback substituted a
-        // different value.
-        let slot_in_use: bool = tx
+        let next_slot: u32 = tx
             .query_row(
-                "SELECT 1 FROM users WHERE slot_number = ?1",
-                params![user.slot_number()],
-                |_| Ok(true),
+                "SELECT COALESCE(MAX(slot_number), 0) + 1 FROM users",
+                [],
+                |row| row.get(0),
             )
-            .optional()
-            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?
-            .unwrap_or(false);
-        if slot_in_use {
-            return Err(UserCreationError::DuplicateSlot {
-                slot: user.slot_number(),
-            });
-        }
+            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
+        let user = User::register_new(next_slot, draft)?;
         Self::upsert_user(&tx, &user)
             .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
         tx.commit()
@@ -783,7 +760,7 @@ impl std::fmt::Display for PointerBuildError {
 }
 impl std::error::Error for PointerBuildError {}
 
-// Helper so the `allocate_slot_and_create` path can lift rusqlite errors
+// Helper so the `create_user` path can lift rusqlite errors
 // into the existing UserCreationError vocabulary without growing it.
 impl UserError {
     fn from_sqlite_for_creation(e: &rusqlite::Error) -> Self {
@@ -799,11 +776,10 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
-    use crate::domain::user::{NewUserRegistration, UserFlag};
+    use crate::domain::user::{NewUserDraft, UserFlag};
 
-    fn registration(slot: u32, handle: &str) -> NewUserRegistration {
-        NewUserRegistration {
-            slot_number: slot,
+    fn draft_with(handle: &str) -> NewUserDraft {
+        NewUserDraft {
             handle: handle.to_string(),
             location: Some("Townsville".to_string()),
             phone_number: Some("555-0123".to_string()),
@@ -820,16 +796,10 @@ mod tests {
         }
     }
 
-    fn build_with(handle: &'static str) -> BuildUserFn<'static> {
-        Box::new(move |slot| User::register_new(registration(slot, handle)))
-    }
-
     #[test]
-    fn allocate_slot_and_create_starts_at_one_in_a_fresh_database() {
+    fn create_user_starts_at_one_in_a_fresh_database() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        let user = repo
-            .allocate_slot_and_create(build_with("alice"))
-            .expect("create");
+        let user = repo.create_user(draft_with("alice")).expect("create");
         assert_eq!(user.slot_number(), 1);
         assert!(matches!(
             repo.find_by_handle("alice"),
@@ -840,8 +810,7 @@ mod tests {
     #[test]
     fn find_by_handle_is_case_insensitive_on_stored_handle() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        repo.allocate_slot_and_create(build_with("Alice"))
-            .expect("create");
+        repo.create_user(draft_with("Alice")).expect("create");
         assert!(matches!(
             repo.find_by_handle("alice"),
             NameLookupResult::Found(_)
@@ -855,9 +824,7 @@ mod tests {
     #[test]
     fn save_round_trips_a_full_user_record() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        let mut alice = repo
-            .allocate_slot_and_create(build_with("alice"))
-            .expect("create");
+        let mut alice = repo.create_user(draft_with("alice")).expect("create");
         alice.bump_invalid_attempts();
         alice.bump_invalid_attempts();
         alice.bump_times_called();
@@ -909,7 +876,7 @@ mod tests {
     fn save_unknown_user_returns_user_not_found() {
         let repo = SqliteUserRepository::in_memory().expect("open");
         let alien =
-            User::register_new(registration(999, "unknown")).expect("valid registration record");
+            User::register_new(999, draft_with("unknown")).expect("valid registration record");
         let err = repo.save(alien).expect_err("save should fail");
         assert_eq!(
             err,
@@ -920,12 +887,11 @@ mod tests {
     }
 
     #[test]
-    fn allocate_slot_and_create_rejects_duplicate_handle() {
+    fn create_user_rejects_duplicate_handle() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        repo.allocate_slot_and_create(build_with("alice"))
-            .expect("create first");
+        repo.create_user(draft_with("alice")).expect("create first");
         let err = repo
-            .allocate_slot_and_create(build_with("alice"))
+            .create_user(draft_with("alice"))
             .expect_err("duplicate should error");
         assert_eq!(
             err,
@@ -936,23 +902,18 @@ mod tests {
     }
 
     #[test]
-    fn allocate_slot_and_create_returns_one_above_max_used() {
+    fn create_user_returns_one_above_max_used() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        repo.allocate_slot_and_create(build_with("alice"))
-            .expect("alice");
-        repo.allocate_slot_and_create(build_with("bob"))
-            .expect("bob");
-        let next = repo
-            .allocate_slot_and_create(build_with("carol"))
-            .expect("carol");
+        repo.create_user(draft_with("alice")).expect("alice");
+        repo.create_user(draft_with("bob")).expect("bob");
+        let next = repo.create_user(draft_with("carol")).expect("carol");
         assert_eq!(next.slot_number(), 3);
     }
 
     #[test]
     fn find_sysop_returns_slot_one() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        repo.allocate_slot_and_create(build_with("sysop"))
-            .expect("sysop");
+        repo.create_user(draft_with("sysop")).expect("sysop");
         match repo.find_sysop() {
             NameLookupResult::Found(user) => assert!(user.is_sysop()),
             NameLookupResult::NotFound => panic!("sysop should have been created"),
@@ -991,8 +952,7 @@ mod tests {
     fn is_empty_returns_true_for_a_fresh_database_and_false_once_a_user_is_inserted() {
         let repo = SqliteUserRepository::in_memory().expect("open");
         assert!(repo.is_empty().expect("count"));
-        repo.allocate_slot_and_create(build_with("alice"))
-            .expect("alice");
+        repo.create_user(draft_with("alice")).expect("alice");
         assert!(!repo.is_empty().expect("count after insert"));
     }
 
@@ -1003,9 +963,7 @@ mod tests {
         // an encoder/decoder that always returned 0 (or shifted the
         // epoch) is observable on read-back.
         let repo = SqliteUserRepository::in_memory().expect("open");
-        let mut alice = repo
-            .allocate_slot_and_create(build_with("alice"))
-            .expect("create");
+        let mut alice = repo.create_user(draft_with("alice")).expect("create");
         alice.lock_account();
         alice.record_last_call(SystemTime::UNIX_EPOCH + Duration::from_secs(123_456));
         repo.save(alice.clone()).expect("save");
@@ -1035,9 +993,7 @@ mod tests {
         use crate::domain::conference::{Conference, MessageBase};
 
         let repo = SqliteUserRepository::in_memory().expect("open");
-        let mut alice = repo
-            .allocate_slot_and_create(build_with("alice"))
-            .expect("create");
+        let mut alice = repo.create_user(draft_with("alice")).expect("create");
         let conf = Conference::new(
             7,
             "Seven".to_string(),
@@ -1081,8 +1037,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let db_path = dir.path().join("users.db");
         let repo = SqliteUserRepository::open(&db_path).expect("open file db");
-        repo.allocate_slot_and_create(build_with("alice"))
-            .expect("create alice");
+        repo.create_user(draft_with("alice")).expect("create alice");
         drop(repo);
         assert!(db_path.exists());
 

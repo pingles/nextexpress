@@ -308,22 +308,24 @@ mod tests {
     fn rejects_when_user_lacks_message_edit_and_is_not_sysop() {
         // A pending-validation new user holds neither MessageEdit
         // nor the sysop disjunct.
-        let new_user = User::register_new(crate::domain::user::NewUserRegistration {
-            slot_number: 9,
-            handle: "newcomer".to_string(),
-            location: None,
-            phone_number: None,
-            email: None,
-            password_hash: "h".to_string(),
-            password_salt: Some("s".to_string()),
-            password_hash_kind: PasswordHashKind::Pbkdf210000,
-            line_length: 0,
-            ansi_colour: false,
-            flags: std::collections::BTreeSet::new(),
-            ratio_mode: crate::domain::user::RatioMode::Disabled,
-            ratio_value: 0,
-            now: SystemTime::UNIX_EPOCH,
-        })
+        let new_user = User::register_new(
+            9,
+            crate::domain::user::NewUserDraft {
+                handle: "newcomer".to_string(),
+                location: None,
+                phone_number: None,
+                email: None,
+                password_hash: "h".to_string(),
+                password_salt: Some("s".to_string()),
+                password_hash_kind: PasswordHashKind::Pbkdf210000,
+                line_length: 0,
+                ansi_colour: false,
+                flags: std::collections::BTreeSet::new(),
+                ratio_mode: crate::domain::user::RatioMode::Disabled,
+                ratio_value: 0,
+                now: SystemTime::UNIX_EPOCH,
+            },
+        )
         .expect("valid");
         assert!(!new_user.has_access(Right::MessageEdit));
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));

@@ -125,7 +125,7 @@ pub struct MailDraft {
 ///
 /// The spec's `Mail` entity has eleven header fields plus a body; a
 /// struct-of-parameters pattern (matching
-/// [`crate::domain::user::NewUserRegistration`]) keeps construction
+/// [`crate::domain::user::NewUserDraft`]) keeps construction
 /// readable at call sites and side-steps `clippy::too_many_arguments`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewMail {

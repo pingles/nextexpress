@@ -4,7 +4,7 @@
 //! The port is a domain-side abstraction; concrete implementations live
 //! in [`crate::adapters`].
 
-use crate::domain::user::{User, UserError};
+use crate::domain::user::{NewUserDraft, User, UserError};
 
 /// Outcome of looking a typed handle up in the user database.
 ///
@@ -37,16 +37,16 @@ pub enum UserRepositoryError {
     },
 }
 
-/// Errors returned by [`UserRepository::allocate_slot_and_create`].
+/// Errors returned by [`UserRepository::create_user`].
 ///
 /// Separates the two distinct failure modes — the domain constructor
-/// rejecting the record vs. the repository's own consistency checks —
+/// rejecting the draft vs. the repository's own consistency checks —
 /// so adapter implementations have an explicit contract for both.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UserCreationError {
-    /// The supplied build callback rejected the inputs (for example,
-    /// a PBKDF2 hash kind paired with a missing salt). The repository
-    /// performs no insertion in this case.
+    /// The supplied draft failed [`User::register_new`]'s invariants
+    /// (for example, a PBKDF2 hash kind paired with a missing salt).
+    /// The repository performs no insertion in this case.
     #[error(transparent)]
     Build(#[from] UserError),
     /// A user with the same handle is already stored.
@@ -55,24 +55,7 @@ pub enum UserCreationError {
         /// Handle that collided with an existing record.
         handle: String,
     },
-    /// The slot number returned by the constructor is already used by
-    /// another record. The repository allocates the slot itself, so
-    /// this fires only when a constructor overrides the chosen slot or
-    /// the adapter has a consistency bug.
-    #[error("slot already in use: {slot}")]
-    DuplicateSlot {
-        /// Slot number that collided with an existing record.
-        slot: u32,
-    },
 }
-
-/// Callback handed to [`UserRepository::allocate_slot_and_create`].
-///
-/// Receives the slot number the repository has reserved and returns a
-/// fully-constructed [`User`] (or a [`UserError`] if domain invariants
-/// reject the inputs). Boxed so the trait stays object-safe — the
-/// runtime composes the repository behind `Arc<dyn UserRepository>`.
-pub type BuildUserFn<'a> = Box<dyn FnOnce(u32) -> Result<User, UserError> + Send + 'a>;
 
 /// Port over the user database.
 ///
@@ -103,27 +86,20 @@ pub trait UserRepository {
     fn save(&self, user: User) -> Result<(), UserRepositoryError>;
 
     /// Atomically allocates the next unused slot number, constructs a
-    /// [`User`] by invoking `build_user(slot)`, and inserts the result.
+    /// [`User`] from `draft` via
+    /// [`User::register_new`][crate::domain::user::User::register_new],
+    /// and inserts the result.
     ///
     /// Implementations must hold whatever lock/transaction the
     /// underlying store requires so two concurrent registrations do not
-    /// observe the same free slot. This replaces the previous
-    /// `next_free_slot()` + `create()` pair, which exposed a race-prone
-    /// contract.
+    /// observe the same free slot.
     ///
     /// Returns the freshly persisted [`User`] on success.
     ///
     /// # Errors
-    /// - [`UserCreationError::Build`] when `build_user` rejects the
-    ///   inputs (the repository has not modified its state).
-    /// - [`UserCreationError::DuplicateUser`] when the constructed
-    ///   handle is already taken.
-    /// - [`UserCreationError::DuplicateSlot`] when the constructor
-    ///   returned a user whose `slot_number` collides with an existing
-    ///   record (callers should normally take the slot offered to the
-    ///   callback unchanged).
-    fn allocate_slot_and_create(
-        &self,
-        build_user: BuildUserFn<'_>,
-    ) -> Result<User, UserCreationError>;
+    /// - [`UserCreationError::Build`] when the domain constructor
+    ///   rejects `draft` (the repository has not modified its state).
+    /// - [`UserCreationError::DuplicateUser`] when the draft's handle
+    ///   is already taken.
+    fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError>;
 }

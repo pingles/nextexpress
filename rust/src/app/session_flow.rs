@@ -19,7 +19,7 @@ use crate::domain::session::{
     SessionState, SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError,
     VerifyPasswordOutcome,
 };
-use crate::domain::user::{NewUserRegistration, RatioMode, User, UserFlag};
+use crate::domain::user::{NewUserDraft, RatioMode, UserFlag};
 use crate::domain::user_repository::{
     NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
 };
@@ -453,26 +453,22 @@ where
         let kind = PasswordHashKind::Pbkdf210000;
         let computed = self.hasher.compute_password_hash(&profile.password, kind)?;
         let default_ratio = self.default_ratio;
-        let user = self
-            .user_repo
-            .allocate_slot_and_create(Box::new(move |slot| {
-                User::register_new(NewUserRegistration {
-                    slot_number: slot,
-                    handle: profile.handle,
-                    location: profile.location,
-                    phone_number: profile.phone_number,
-                    email: profile.email,
-                    password_hash: computed.hash,
-                    password_salt: computed.salt,
-                    password_hash_kind: kind,
-                    line_length: profile.line_length,
-                    ansi_colour: profile.ansi_colour,
-                    flags: profile.flags,
-                    ratio_mode: default_ratio.mode,
-                    ratio_value: default_ratio.value,
-                    now,
-                })
-            }))?;
+        let draft = NewUserDraft {
+            handle: profile.handle,
+            location: profile.location,
+            phone_number: profile.phone_number,
+            email: profile.email,
+            password_hash: computed.hash,
+            password_salt: computed.salt,
+            password_hash_kind: kind,
+            line_length: profile.line_length,
+            ansi_colour: profile.ansi_colour,
+            flags: profile.flags,
+            ratio_mode: default_ratio.mode,
+            ratio_value: default_ratio.value,
+            now,
+        };
+        let user = self.user_repo.create_user(draft)?;
         let rejection = session.complete_new_user_registration(user, self.policy, now)?;
         if let Some(entry) = rejection {
             self.caller_log.append(entry);
@@ -822,6 +818,7 @@ mod tests {
     use crate::domain::caller_log::CallerLog;
     use crate::domain::password::{ComputedHash, PasswordError, PasswordHashKind};
     use crate::domain::session::LogonChannel;
+    use crate::domain::user::User;
 
     #[derive(Default)]
     struct TestLog {
@@ -895,23 +892,15 @@ mod tests {
             Ok(())
         }
 
-        fn allocate_slot_and_create(
-            &self,
-            build_user: crate::domain::user_repository::BuildUserFn<'_>,
-        ) -> Result<User, UserCreationError> {
+        fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
             let mut users = self.users.lock().unwrap();
-            let slot = users.iter().map(User::slot_number).max().unwrap_or(0) + 1;
-            let user = build_user(slot)?;
-            if users.iter().any(|u| u.handle() == user.handle()) {
+            if users.iter().any(|u| u.handle() == draft.handle) {
                 return Err(UserCreationError::DuplicateUser {
-                    handle: user.handle().to_string(),
+                    handle: draft.handle.clone(),
                 });
             }
-            if users.iter().any(|u| u.slot_number() == user.slot_number()) {
-                return Err(UserCreationError::DuplicateSlot {
-                    slot: user.slot_number(),
-                });
-            }
+            let slot = users.iter().map(User::slot_number).max().unwrap_or(0) + 1;
+            let user = User::register_new(slot, draft)?;
             users.push(user.clone());
             Ok(user)
         }

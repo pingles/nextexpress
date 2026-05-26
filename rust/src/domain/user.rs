@@ -712,8 +712,8 @@ impl User {
         })
     }
 
-    /// Builds a freshly-registered new user from a completed
-    /// registration profile.
+    /// Builds a freshly-registered new user from an allocated slot and
+    /// a completed registration draft.
     ///
     /// Mirrors the `User.created(...)` consequent of
     /// `session.allium:CompleteNewUserRegistration` (Slice 20). All
@@ -724,14 +724,17 @@ impl User {
     /// until Slice 53 introduces the field), and `account_created` /
     /// `last_call` / `password_last_updated` all set to `now`.
     ///
+    /// `slot` is supplied by the caller — production callers receive it
+    /// from [`crate::domain::user_repository::UserRepository::create_user`],
+    /// which allocates the next free slot inside its own transaction.
+    ///
     /// # Errors
     /// Returns [`UserError::SaltRequired`] when
-    /// `profile.password_hash_kind` is a PBKDF2 variant and
-    /// `profile.password_salt` is `None`. This enforces the spec's
+    /// `draft.password_hash_kind` is a PBKDF2 variant and
+    /// `draft.password_salt` is `None`. This enforces the spec's
     /// `SaltMatchesAlgorithm` invariant.
-    pub fn register_new(profile: NewUserRegistration) -> Result<Self, UserError> {
-        let NewUserRegistration {
-            slot_number,
+    pub fn register_new(slot: u32, draft: NewUserDraft) -> Result<Self, UserError> {
+        let NewUserDraft {
             handle,
             location,
             phone_number,
@@ -745,10 +748,10 @@ impl User {
             ratio_mode,
             ratio_value,
             now,
-        } = profile;
+        } = draft;
         let credentials = Credentials::new(password_hash_kind, password_hash, password_salt, now)?;
         Ok(Self {
-            slot_number,
+            slot_number: slot,
             handle,
             credentials,
             account: AccountStatus::awaiting_validation(),
@@ -1370,15 +1373,13 @@ impl User {
 ///
 /// Mirrors the `profile` argument of
 /// `session.allium:CompleteNewUserRegistration`. The slot number is
-/// supplied by the repository when it invokes the build callback in
-/// [`crate::domain::user_repository::UserRepository::allocate_slot_and_create`];
-/// ratio defaults come from `core/config.default_ratio_*`. They are
-/// bundled here so `register_new` has every piece of data the spec
-/// rule names without reaching into other ports.
+/// not part of the draft — the repository's
+/// [`crate::domain::user_repository::UserRepository::create_user`]
+/// allocates it inside its own transaction and threads it into
+/// `register_new(slot, draft)`. Ratio defaults come from
+/// `core/config.default_ratio_*`.
 #[derive(Debug, Clone)]
-pub struct NewUserRegistration {
-    /// Slot allocated by the user repository.
-    pub slot_number: u32,
+pub struct NewUserDraft {
     /// Handle the user typed at the registration prompt.
     pub handle: String,
     /// Free-text "City, State" location.
@@ -1412,7 +1413,7 @@ pub struct NewUserRegistration {
 /// Complete snapshot of a [`User`]'s persistent state as read from
 /// durable storage.
 ///
-/// Sibling to [`NewUserRegistration`]: where that bundles fresh-account
+/// Sibling to [`NewUserDraft`]: where that bundles fresh-account
 /// fields, this bundles every piece of state the BBS persists for an
 /// already-existing account. A storage adapter (e.g.
 /// [`crate::adapters::sqlite_user_repository::SqliteUserRepository`])
@@ -1708,9 +1709,8 @@ mod tests {
         assert!(user.is_locked_out());
     }
 
-    fn registration() -> NewUserRegistration {
-        NewUserRegistration {
-            slot_number: 7,
+    fn draft() -> NewUserDraft {
+        NewUserDraft {
             handle: "newbie".to_string(),
             location: Some("Townsville".to_string()),
             phone_number: Some("555-0123".to_string()),
@@ -1730,8 +1730,8 @@ mod tests {
     #[test]
     fn register_new_applies_spec_defaults_for_a_fresh_account() {
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        let user = User::register_new(registration()).expect("valid");
-        // Identity carried from profile.
+        let user = User::register_new(7, draft()).expect("valid");
+        // Identity carried from caller + draft.
         assert_eq!(user.slot_number, 7);
         assert_eq!(user.handle(), "newbie");
         assert_eq!(user.location(), Some("Townsville"));
@@ -1760,11 +1760,11 @@ mod tests {
 
     #[test]
     fn register_new_preserves_profile_flags() {
-        let mut profile = registration();
-        profile.flags.insert(UserFlag::ShowNewUserMessage);
-        profile.flags.insert(UserFlag::EditorPrompts);
+        let mut draft = draft();
+        draft.flags.insert(UserFlag::ShowNewUserMessage);
+        draft.flags.insert(UserFlag::EditorPrompts);
 
-        let user = User::register_new(profile).expect("valid");
+        let user = User::register_new(7, draft).expect("valid");
 
         assert_eq!(user.flags().len(), 2);
         assert!(user.flags().contains(&UserFlag::ShowNewUserMessage));
@@ -1773,9 +1773,9 @@ mod tests {
 
     #[test]
     fn register_new_pbkdf2_without_salt_is_rejected() {
-        let mut profile = registration();
-        profile.password_salt = None;
-        let err = User::register_new(profile).expect_err("missing salt should error");
+        let mut draft = draft();
+        draft.password_salt = None;
+        let err = User::register_new(7, draft).expect_err("missing salt should error");
         assert_eq!(err, UserError::SaltRequired);
     }
 
@@ -1783,7 +1783,7 @@ mod tests {
     fn register_new_user_is_below_lockout_threshold_via_access_level_one() {
         // The spec sets access_level = 2 for new users; downgrading
         // exposes the `is_locked_out` predicate boundary.
-        let user = User::register_new(registration()).expect("valid");
+        let user = User::register_new(7, draft()).expect("valid");
         assert!(!user.is_locked_out(), "level 2 should be allowed through");
     }
 
@@ -1813,7 +1813,7 @@ mod tests {
         // pending-validation tier. The black-box `has_access` from
         // `conferences.allium` grants only the two non-destructive
         // rights the spec calls out for that tier.
-        let user = User::register_new(registration()).expect("valid");
+        let user = User::register_new(7, draft()).expect("valid");
         assert!(user.is_new_user());
         assert!(user.has_access(Right::ReadMessage));
         assert!(user.has_access(Right::CommentToSysop));
@@ -2019,7 +2019,7 @@ mod tests {
 
     #[test]
     fn register_new_user_starts_with_zero_messages_posted() {
-        let user = User::register_new(registration()).expect("valid");
+        let user = User::register_new(7, draft()).expect("valid");
         assert_eq!(user.messages_posted(), 0);
     }
 
@@ -2038,7 +2038,7 @@ mod tests {
         // The SQLite adapter projects a User onto columns via
         // `to_persisted`, then reconstitutes it via `from_persisted`.
         // Round-tripping must preserve every observable field.
-        let mut user = User::register_new(registration()).expect("valid");
+        let mut user = User::register_new(7, draft()).expect("valid");
         user.bump_invalid_attempts();
         user.bump_invalid_attempts();
         user.bump_times_called();
@@ -2101,7 +2101,7 @@ mod tests {
         // mutation; restoration must preserve the values exactly as
         // stored (sysop edits to invalid_attempts on a locked account
         // are otherwise unrecoverable across restarts).
-        let user = User::register_new(registration()).expect("valid");
+        let user = User::register_new(7, draft()).expect("valid");
         let mut snapshot = user.to_persisted();
         snapshot.account_locked = true;
         snapshot.invalid_attempts = 7;
@@ -2112,7 +2112,7 @@ mod tests {
 
     #[test]
     fn from_persisted_rejects_pbkdf2_without_salt() {
-        let user = User::register_new(registration()).expect("valid");
+        let user = User::register_new(7, draft()).expect("valid");
         let mut snapshot = user.to_persisted();
         snapshot.password_salt = None;
         assert_eq!(

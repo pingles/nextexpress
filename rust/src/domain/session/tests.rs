@@ -33,22 +33,24 @@ mod fixtures {
     }
 
     pub(super) fn fresh_new_user(now: SystemTime) -> User {
-        User::register_new(crate::domain::user::NewUserRegistration {
-            slot_number: 7,
-            handle: "newbie".to_string(),
-            location: Some("Townsville".to_string()),
-            phone_number: Some("555".to_string()),
-            email: Some("n@example.com".to_string()),
-            password_hash: "hash".to_string(),
-            password_salt: Some("salt".to_string()),
-            password_hash_kind: PasswordHashKind::Pbkdf210000,
-            line_length: 80,
-            ansi_colour: true,
-            flags: BTreeSet::new(),
-            ratio_mode: crate::domain::user::RatioMode::ByFiles,
-            ratio_value: 3,
-            now,
-        })
+        User::register_new(
+            7,
+            crate::domain::user::NewUserDraft {
+                handle: "newbie".to_string(),
+                location: Some("Townsville".to_string()),
+                phone_number: Some("555".to_string()),
+                email: Some("n@example.com".to_string()),
+                password_hash: "hash".to_string(),
+                password_salt: Some("salt".to_string()),
+                password_hash_kind: PasswordHashKind::Pbkdf210000,
+                line_length: 80,
+                ansi_colour: true,
+                flags: BTreeSet::new(),
+                ratio_mode: crate::domain::user::RatioMode::ByFiles,
+                ratio_value: 3,
+                now,
+            },
+        )
         .expect("valid registration")
     }
 
