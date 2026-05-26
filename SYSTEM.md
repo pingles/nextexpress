@@ -1,433 +1,544 @@
 # NextExpress System Notes
 
 This document captures the current internal design of the Rust implementation
-under `rust/` and the remaining higher-impact refactorings that would make the
-system easier to understand and extend.
+under `rust/` and the larger refactorings worth considering next.
 
 ## Current Shape
 
-The implementation follows a ports-and-adapters direction:
+The implementation is a hexagonal (ports and adapters) layout split across three
+top-level modules under `rust/src/`:
 
-- `rust/src/domain/` holds core BBS concepts: `Session`, `User`, `Conference`,
-  `Node`, `Mail`, `ReadPointers`, persistence ports (`UserRepository`,
-  `ConferenceRepository`, `MailStore`), phase-typed session wrappers, the
-  messaging rules (`read_mail`, `scan_mail`, `post_mail`,
-  `post_comment_to_sysop`, `reply_to_mail`, `forward_mail`), password hashing,
-  caller logs, and session policy.
-- `rust/src/app/` is the application layer: configuration, runtime
-  composition, session orchestration, terminal/screen ports, the app-level
-  `MailStores` registry service, menu-command parsing, shared terminal I/O
-  helpers, and use-case functions.
-- `rust/src/adapters/` holds concrete technology choices: telnet, file-backed
-  conferences/screens, file-backed mail store (JSON per message), an in-memory
-  mail-stores registry (`InMemoryMailStores`) the composition root populates
-  with one `FileMailStore` per known `(conference, msgbase)` coordinate,
-  in-memory users/logs, and PBKDF2 hashing.
-- `rust/tests/architecture.rs` guards the most important rules today: domain
-  code must not import `app` or `adapters`, and it must not reference
-  runtime/adapter crates such as Tokio, serde_json, TOML, filesystem, or
-  networking APIs.
-- `rust/build.rs` captures the short git SHA (`git rev-parse --short HEAD`)
-  into the `NEXTEXPRESS_GIT_SHA` compile-time env var so both the connect
-  banner in `app::wire_text::COPYRIGHT_LINES` (`NextExpress (<sha>)
-  Copyright ©…`) and the startup log line emitted by `app::run` pin the
-  binary to a source commit. The build script falls back to `unknown` when
-  no working tree is available.
+- **`domain/`** — pure behaviour and entities distilled from the Allium specs in
+  `specs/`. Aggregates (`Session`, `User`, `Conference`, `ConferenceVisit`,
+  `Mail`, `Node`), value objects (`ReadPointers`, `MessageBaseRef`, `Bytes`),
+  port traits (`UserRepository`, `ConferenceRepository`, `MailStore`,
+  `PasswordHasher`, `CallerLogAppender`), phase-typed session wrappers, the
+  `messaging.allium` rule family (`read_mail`, `scan_mail`, `post_mail`,
+  `post_comment_to_sysop`, `reply_to_mail`, `forward_mail`, `delete_mail`,
+  `edit_mail_header`, `move_mail`, `attach_file_to_mail`), the password
+  helpers, caller-log entry shape, and `SessionPolicy`.
+
+- **`adapters/`** — concrete tech: `TelnetListener` (transport),
+  `FileConferenceRepository`, `FileScreenRepository` (file-backed assets with
+  caching), `FileMailStore` (one JSON file per message),
+  `InMemoryMailStores` (registry), `InMemoryUserRepository`,
+  `SqliteUserRepository`, `InMemoryCallerLog`, `Pbkdf2PasswordHasher`,
+  `telnet_line` codec.
+
+- **`app/`** — composition root, transport-agnostic driver, and the menu
+  command surface. Carries application-layer ports (`Terminal`,
+  `ScreenRepository`, `MailStores`), configuration types, the runtime
+  container (`Runtime` + `AppServices`), the per-connection orchestrator
+  (`SessionDriver`), three sub-flows (`LoginFlow`, `RegistrationFlow`,
+  `MenuFlow`), and the menu use-case modules (`app/menu/*`) paired with
+  their terminal-aware handlers (`app/menu_flow/*`).
+
+### Architectural invariants
+
+`rust/tests/architecture.rs` walks `src/domain/` and rejects:
+
+1. Any `use` path that names `crate::adapters`, `crate::app`, or a bare
+   `adapters::` / `app::` sibling.
+2. Any non-comment line that mentions an infrastructure crate or module
+   (`tokio::`, `serde_json::`, `toml::`, `std::fs::`, `std::net::`).
+
+The second guard is stronger than a plain import check — a domain error
+like `source: serde_json::Error` would fail the test even without an
+import, so the domain stays free of infrastructure types in signatures
+as well as bodies.
+
+### Sync domain, async edges
+
+Every domain port (`UserRepository`, `ConferenceRepository`, `MailStore`,
+`PasswordHasher`, `CallerLogAppender`) is **synchronous**. Async only
+appears at the application boundary: `Terminal`, `ScreenRepository`, and
+`MailStores` are async traits, defined in `app/`. The pattern lets the
+messaging rules and session rules stay free of `await`, while the
+listener and the menu loop drive I/O cooperatively. The async traits
+return `Pin<Box<dyn Future + Send + 'a>>` so they remain object-safe
+behind `Arc<dyn …>`.
+
+### Build-time provenance
+
+`rust/build.rs` captures the short git SHA (`git rev-parse --short HEAD`)
+into the `NEXTEXPRESS_GIT_SHA` compile-time env var. The connect banner
+(`app::wire_text::COPYRIGHT_LINES`) and the startup log line emitted by
+`app::run` both embed the SHA so operators can pin a running process to
+a source commit. The build script falls back to `unknown` outside a
+working tree.
+
+### Composition diagram
 
 ```mermaid
 flowchart LR
     Main["src/main.rs"] --> AppRun["app::main / app::run"]
 
-    AppRun --> Config["Config + config_loader"]
-    AppRun --> Seed["seed (sysop bootstrap)"]
-    AppRun --> ConfRepo["FileConferenceRepository"]
-    AppRun --> UserRepo["UserRepository (In-Memory or SQLite, selected by config.user_storage)"]
+    AppRun --> Config["app::config + config_loader"]
+    AppRun --> Seed["app::seed (sysop bootstrap)"]
+    AppRun --> ConfRepo["FileConferenceRepository::load_all"]
+    AppRun --> UserRepo["UserRepository\n(InMemory or SQLite\nper config.user_storage)"]
     AppRun --> Hasher["Pbkdf2PasswordHasher"]
     AppRun --> CallerLog["InMemoryCallerLog"]
-    AppRun --> Runtime["app::runtime::Runtime"]
+    AppRun --> MailRegistry["InMemoryMailStores\nregistry"]
+    MailRegistry --> FileMailStore["FileMailStore\n(per conference/msgbase)"]
 
+    AppRun --> Runtime["app::runtime::Runtime"]
     Runtime --> NodePool["NodePool"]
-    Runtime --> Screens["FileScreenRepository"]
     Runtime --> Services["AppServices"]
 
-    AppRun --> Telnet["TelnetListener::bind(addr, runtime)"]
-    Telnet --> Terminal["TelnetTerminal"]
-    Telnet --> Driver["SessionDriver (per connection)"]
+    Services --> Sharedhasher["SharedHasher"]
+    Services --> SharedRepo["SharedUserRepo"]
+    Services --> SharedLog["SharedCallerLog"]
+    Services --> SharedScreens["SharedScreens\n(FileScreenRepository)"]
+    Services --> SharedConfs["SharedConferences\n(Arc&lt;Vec&lt;Conference&gt;&gt;)"]
+    Services --> SharedMail["SharedMailStores"]
+    Services --> Policy["SessionPolicy\nDefaultRatio\nNewUserGateConfig"]
 
-    Driver --> Start["start (banner / copyright)"]
+    AppRun --> Telnet["TelnetListener::bind"]
+    Telnet --> Terminal["TelnetTerminal\n(impls app::Terminal)"]
+    Telnet --> Driver["SessionDriver\n(per connection)"]
+
+    Driver --> Start["start (banner + copyright)"]
     Driver --> Login["LoginFlow"]
     Driver --> Registration["RegistrationFlow"]
     Driver --> AutoRejoin["auto_rejoin"]
     Driver --> Menu["MenuFlow"]
-    Driver --> Presenter["SessionPresenter"]
+    Driver --> Finalise["session_flow::typed::finalise_logoff"]
 
-    Login --> Typed["domain::session::typed"]
+    Login --> Typed["domain::session::typed\n(phase wrappers)"]
     Registration --> Typed
     Menu --> Typed
-    Login --> Flow["session_flow (use cases)"]
-    Registration --> Flow
-    Menu --> Flow
-    AutoRejoin --> Flow
-    Presenter --> WireText["wire_text"]
+    Login --> SF["session_flow\n(use cases over ports)"]
+    Registration --> SF
+    AutoRejoin --> SF
+    Driver --> Presenter["session_presenter\n+ wire_text"]
 
-    AppRun --> MailRegistry["InMemoryMailStores (registry)"]
-    MailRegistry --> FileMailStore["FileMailStore (per msgbase)"]
-    Runtime --> MailRegistry
-    Services --> MailStoresPort["app::mail_stores::MailStores"]
-    MailStoresPort --> MailPort["MailStore (port)"]
+    Menu --> Parse["menu_command::parse"]
+    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, Unknown}"]
+    Menu --> MenuFlowHandlers["menu_flow/*\n(terminal handlers)"]
+    MenuFlowHandlers --> MenuUseCases["menu/*\n(terminal-free use cases)"]
 
-    AutoRejoin --> ScanOnJoin["mail_scan_on_join (Slice 41)"]
+    MenuUseCases --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment)"]
+    AutoRejoin --> ScanOnJoin["mail_scan_on_join"]
     Menu --> ScanOnJoin
-    Menu --> ReadHandler["menu_flow::handle_read_mail / handle_scan_mail"]
-    Menu --> PostHandler["menu_flow::handle_post_mail (Slice 42/43)"]
-    Menu --> CommentHandler["menu_flow::handle_comment_to_sysop (Slice 44)"]
-    ReadHandler --> MailStoresPort
-    ScanOnJoin --> MailStoresPort
-    PostHandler --> MailStoresPort
-    PostHandler --> UserRepo
-    CommentHandler --> MailStoresPort
-    CommentHandler --> UserRepo
-    ReadHandler --> ReadMailRule["domain::read_mail"]
-    ReadHandler --> ScanMailRule["domain::scan_mail"]
-    ScanOnJoin --> ScanMailRule
-    PostHandler --> PostMailRule["domain::post_mail"]
-    CommentHandler --> CommentRule["domain::post_comment_to_sysop"]
-    CommentRule --> PostMailRule
-    PostMailRule --> Mail
-    PostMailRule --> MailPort
+    ScanOnJoin --> Rules
 
-    Flow --> DomainSession["domain::Session"]
-    Flow --> DomainUser["domain::User"]
-    Flow --> DomainConference["domain::Conference"]
-    Flow --> Ports["UserRepository / PasswordHasher / CallerLogAppender"]
-    ReadMailRule --> Pointers["domain::ReadPointers"]
-    ReadMailRule --> Mail["domain::Mail"]
-    ScanMailRule --> Pointers
-    ScanMailRule --> Mail
-    ScanMailRule --> MailPort
+    Rules --> Mail["domain::Mail"]
+    Rules --> Pointers["domain::ReadPointers"]
+    Rules --> MailPort["MailStore (port)"]
+    SF --> DomainSession["domain::Session"]
+    SF --> DomainUser["domain::User"]
 
     ConfRepo -.implements.-> ConfPort["ConferenceRepository"]
-    UserRepo -.implements.-> Ports
-    Hasher -.implements.-> Ports
-    CallerLog -.implements.-> Ports
-    Screens -.implements.-> ScreenPort["ScreenRepository"]
-
-    MailRegistry -.implements.-> MailStoresPort
+    UserRepo -.implements.-> UserPort["UserRepository"]
+    Hasher -.implements.-> HasherPort["PasswordHasher"]
+    CallerLog -.implements.-> LogPort["CallerLogAppender"]
+    SharedScreens -.implements.-> ScreenPort["ScreenRepository\n(app port)"]
+    MailRegistry -.implements.-> MailRegistryPort["MailStores\n(app port)"]
     FileMailStore -.implements.-> MailPort
+    Terminal -.implements.-> TermPort["Terminal\n(app port)"]
 ```
 
-Phase 6 messaging is wired end-to-end: `domain::Mail` (Slice 37, entity)
-plus the `MailStore` port land per-msgbase via the `FileMailStore` adapter.
-Each store writes one JSON file per message at
-`<msgbase-dir>/<zero-padded-number>.json`, scans the directory at open time
-to recover the cached `highest_message` high-water mark, and backs the spec's
-`lock_msgbase(msgbase)` predicate with an in-process `tokio::sync::Mutex`.
-Timestamps on the wire (`posted_at`, `received_at`) are RFC 3339 strings in
-UTC via the `time` crate's `serde-well-known` adapter; non-UTC offsets in
-hand-written files parse to the same instant as their UTC form, which keeps
-the door open for sysops migrating data from other systems.
+### Phase-typed session
 
-Slice 38 introduces `domain::ReadPointers`, attached as a `Vec` on every
-`ConferenceMembership`. The user-level helper `read_pointers_for(user,
-msgbase)` is the spec's black box; rows are lazily created on first
-`ReadMail` / `ScanMail` for a base.
+`domain::session::typed` lifts the phase enum into eight wrapper types so
+the wrong handle for a given transition becomes unrepresentable at
+compile time:
 
-Slices 39–41 wire the headline read flow. The domain rules stay pure;
-the app layer (`app::menu_flow` and `app::mail_scan_on_join`) is what
-resolves the per-msgbase `MailStore` handle through the app-layer
-`MailStores` registry service (`services.mail_stores().for_msgbase(...)`),
-locks it, and threads it into the rule:
-- Slice 39 (`domain::read_mail::read_mail` + `can_read`): the rule
-  itself takes an already-loaded `&mut Mail`. The `R <num>` menu glue
-  in `menu_flow::handle_read_mail` does the `MailStore::load` →
-  `read_mail` → `MailStore::save` dance, then renders the legacy header
-  block plus body to the terminal.
-- Slice 40 (`domain::scan_mail::scan_mail`): the rule takes a
-  `MailStore` directly (it walks the base itself). The `M` / `N` menu
-  commands in `menu_flow::handle_scan_mail` resolve the store, lock it,
-  call the rule (advancing `last_scanned`), and render a summary line.
-  The same helper backs the spec's `count_unread_for` /
-  `first_unread_number_for` black boxes.
-- Slice 41 (`app::mail_scan_on_join`): both the auto-rejoin path (in
-  `SessionDriver`) and the explicit-join path (in `MenuFlow`) call the
-  shared `scan_mail_on_join` helper after the new `ConferenceVisit` is
-  created. When the scan surfaces unread mail the listener writes
-  `SCREEN_MAILSCAN` plus the summary line; an empty scan still emits the
-  summary so the user knows they were checked.
+`ConnectingSession` → `IdentifyingSession` → `AuthenticatingSession` →
+(`NewUserRegisteringSession`) → `OnboardedSession` → `MenuSession` →
+`LoggingOffSession` → `EndedSession`.
 
-Slice 41a wires the file-backed `MailStores` registry into the composition
-root: `app::run` walks the loaded conferences and opens one `FileMailStore`
-per `(conference, msgbase)` coordinate, registering them in an
-`InMemoryMailStores` registry served through `AppServices`. The registry and
-its `tokio::sync::Mutex` handle live in `app::mail_stores`; the domain sees
-only the single-base `MailStore` port. Read pointers ride along with the bound
-user record and flush on logoff via the existing `save_bound_user` path.
+`SessionDriver::run` threads these wrappers across the sub-flows. The
+mail-specific raw transitions on `Session` are kept private to the
+typed module so the app layer cannot bypass the phase invariants.
 
-Slices 43 / 44 / 44a complete Phase 7 (Messaging — write):
+### Application services container
 
-- `messaging.allium:AllowedAddressing` and `AllScanScope` (Slice 43)
-  land as fields on `domain::conference::MessageBase`, exposed via the
-  `[[msgbase]]` keys `allowed_addressing` and `all_scan_scope` in
-  `conference.toml`. Both default to the permissive legacy behaviour
-  (`Any` / `AllUsersInConf`) so existing files continue to load
-  unchanged. The pure helper `domain::mail::addressing_allows` is the
-  spec's black box; `domain::post_mail` enforces it at post time and
-  the `E` handler in `app::menu_flow` normalises empty / `ALL` / `EALL`
-  recipients before the rule sees them.
-- `domain::scan_mail` and the explicit/auto join helper in
-  `app::mail_scan_on_join` thread the per-msgbase `AllScanScope`
-  through the rule's signature. Single-msgbase scans treat both modes
-  identically (broadcasts always count for the visiting member); the
-  semantic split lands when cross-conference scanning arrives in a
-  future slice. The toggle is plumbed in now so adapters and the spec
-  agree on the read path.
-- `messaging.allium:PostCommentToSysop` (Slice 44) lives in
-  `domain::post_comment_to_sysop` and reuses the shared
-  `post_mail::apply_post_mail` helper so the `C` (comment to sysop)
-  command can fire even for users in the pending-validation tier (who
-  hold `Right::CommentToSysop` but not `Right::EnterMessage`). The
-  recipient is resolved through a new `UserRepository::find_sysop`
-  port, defaulting to the spec's `is_sysop: slot_number = 1`
-  invariant; the resulting mail is always `visibility = Private` and
-  addressed to handle `"Sysop"` per the spec.
-- Slice 44a's wire-and-smoke test
-  (`rust/tests/phase7_smoke.rs::binary_walks_phase7_broadcast_and_comment_to_sysop_over_telnet`)
-  drives the compiled binary against a `Conf01/` whose msgbase forbids
-  EALL, exercising the `E ALL`, refused `E EALL`, and `C` flows
-  end-to-end and reading the resulting mail back to confirm the
-  legacy ANSI render shows `Recv'd: N/A` for broadcasts and
-  `Status: Private Message` / `To: Sysop` for the comment.
-- `messaging.allium:ReplyToMail` (Slice 45) lives in
-  `domain::reply_to_mail` and is a thin shim over `post_mail`: it
-  derives the addressee from the source mail (`source.from_name` and
-  `source.author_slot` by default, `"ALL"` / `BroadcastTo::All` when
-  the source was an ALL broadcast and the caller's
-  `reply_keeps_broadcast` flag is set) and then delegates to
-  `post_mail` for the actual persistence and counter bumps. The
-  rule's own `requires: source.visibility != deleted` surfaces as
-  `ReplyToMailError::SourceDeleted`; every other gate bubbles up
-  through `ReplyToMailError::Post(PostMailError)`. No menu wiring
-  ships with this slice — the post-read `R` prompt arrives with a
-  later application-layer slice.
-- `messaging.allium:ForwardMail` (Slice 46) lives in
-  `domain::forward_mail` and composes a new `Fwd: <subject>` mail in
-  the same msgbase by prepending the spec's
-  `forward_header_for(source)` block (`From:` / `Date:` / `Subject:`,
-  date in RFC3339) to the original body, optionally followed by a
-  `--`-separated note, then delegates to `post_mail`. Visibility
-  carries from the source per the spec's `private: source.visibility
-  != public` selector. The rule's `requires: not source.is_deleted`
-  surfaces as `ForwardMailError::SourceDeleted`; underlying PostMail
-  gates bubble up through `ForwardMailError::Post(PostMailError)`.
-  Forwarding attachments is deferred to Slice 48. No menu wiring
-  ships here — the `F` prompt arrives with Phase 8's wire-and-smoke
-  closer.
-- Slices 49a / 49b close Phase 8 by wiring the messaging-advanced
-  domain rules through the menu and proving the binary delivers
-  them. 49a exposes user-facing `RP <num>` (reply) and `FW <num>`
-  (forward) commands that route through `app::menu::reply_forward`
-  and `app::menu_flow::reply_forward`. 49b adds the sysop
-  destructive ops — `K <num>` (delete with `y/N` confirm), `MV
-  <num>` (move with target conference/msgbase prompts) and `EH
-  <num>` (header edit with blank-keeps-current prompts for subject
-  and addressee) — under `app::menu::sysop_admin` and
-  `app::menu_flow::sysop_admin`. `tests/phase8_smoke.rs` covers
-  both surfaces end-to-end over telnet.
-- Slice 49 closes Phase 8's domain rules with three sysop /
-  privileged mail mutations:
-  - `messaging.allium:DeleteMail` in `domain::delete_mail`. Soft-
-    deletes a mail (visibility → Deleted, attachments cleared)
-    after gating on `sysop ∨ access_level ≥ 210 ∨ author ∨ addressee`.
-    `MailStore::lowest_undeleted_message` is a derived getter
-    (default impl walks `1..=highest_message` looking for the
-    first non-Deleted row) so the spec's bump consequent is
-    automatically honoured.
-  - `messaging.allium:EditMailHeader` in `domain::edit_mail_header`.
-    Sysop / access-≥210 rewrite of `subject` and/or
-    `(to_name, addressee_slot)` — callers pre-resolve the slot via
-    `lookup_user_by_name`. New `Mail::set_subject` and
-    `Mail::set_addressee` mutators ship here.
-  - `messaging.allium:MoveMail` in `domain::move_mail`. Atomic
-    create-new-in-target + soft-delete-old, preserving every
-    header field (visibility, `received_at`, attachments). Gates
-    on `sysop ∨ MessageEdit` and rejects same-msgbase moves.
-- `messaging.allium:AttachFileToMail` (Slice 48) lives in
-  `domain::attach_file_to_mail` and appends a
-  `messaging.allium:MailAttachment` row (`file_name`,
-  `file_size: core.allium:Bytes`) onto an existing `Mail`. The new
-  `core::bytes::Bytes` value type ships here (a `u64`-backed
-  newtype; Slice 50 expands its API). The rule's gates surface as
-  `AttachFileToMailError::{NotAuthorOrSysop,Deleted,AccessDenied}`.
-  The `FileMailStore` JSON payload now carries an optional
-  `attachments` array (`serde(default, skip_serializing_if = Vec::is_empty)`)
-  so pre-Slice-48 files load unchanged and post-Slice-48 mail
-  round-trips its manifest. Wire transfer of the underlying file
-  bytes is Phase 10's job — Slice 48 only models the metadata
-  binding.
-- Slice 47 wires the `core.allium:User.censored` flag into
-  `domain::user::User` (default false; `User::is_censored` /
-  `User::set_censored` accessors) and the `messaging.allium:PostMail`
-  visibility selector: a censored author's post is silently
-  downgraded to `PrivateToSysop`, even when `draft.private = false`
-  and even when `draft.private = true`. The `EALL → Public` branch
-  still takes precedence, so an echo-all post by a censored user
-  remains visible to the network. The `MailVisibility::status_glyph`
-  helper returns the listing-screen glyph (`'P'` / `'p'` for
-  Private / PrivateToSysop — same letter, different case — `' '`
-  for Public, `'D'` for Deleted) ready for the listing renderer
-  that lands with a later Phase-8 slice. The sysop rule that flips
-  `censored` in-band is deferred to Slice 49.
+`app::runtime::Runtime` is the single composition point for driven
+adapters, policy values, the screen repository, and the `NodePool`. It
+holds an `AppServices` value (also `Clone`, `Arc`-backed) that the
+listener clones per accepted connection. `AppServices` carries:
 
-Slice 42 opens Phase 7 (Messaging — write) with the single-addressee
-`PostMail` rule and the `E` / `E <to>` menu command:
+| Field | Type |
+|---|---|
+| `user_repo` | `Arc<dyn UserRepository + Send + Sync>` |
+| `hasher` | `Arc<dyn PasswordHasher + Send + Sync>` |
+| `caller_log` | `Arc<dyn CallerLogAppender + Send + Sync>` |
+| `screens` | `Arc<dyn ScreenRepository + Send + Sync>` |
+| `conferences` | `Arc<Vec<Conference>>` |
+| `mail_stores` | `Arc<dyn MailStores + Send + Sync>` |
+| `session_policy` / `default_ratio` / `new_user_gate` | `Copy` / small `Arc` |
 
-- `domain::post_mail::post_mail` is the pure rule. It takes the bound
-  `&mut User`, the visit's `MessageBaseRef`, an unlocked
-  `&mut dyn MailStore`, and a `PostMailDraft` whose `to_name` /
-  `from_name` / `addressee_slot` fields the caller has already resolved
-  (the spec's `lookup_user_by_name` and `display_name_of` black boxes
-  live in the app layer). The rule gates on
-  `has_access(EnterMessage)` and a granted `ConferenceMembership` for
-  the message base's conference, then asks the store to allocate the
-  next number and persist the new mail; on success it bumps both the
-  user-level `messages_posted` counter and the per-conference
-  membership counter, neither of which had been read before.
-- `User.messages_posted` and `ConferenceMembership.messages_posted`
-  (spec `core.allium`) are introduced in Slice 42; this is the first
-  rule that reads either, so per the schema-growth principle they
-  default to `0` on every construction path and Slice 42 wires the
-  single bump site.
-- The `E` / `E <to>` handler (`menu_flow::handle_post_mail`) drives a
-  minimal line-mode editor: To: (skipped when supplied inline),
-  Subject: (empty aborts), Private (y/N), then body lines terminated
-  by a single `.` on its own line (`/A` aborts). Recipient resolution
-  goes through the `UserRepository`'s `find_by_handle`; the resolved
-  user must have a granted membership for the current conference,
-  matching `amiexpress/express.e:10837-10840`. Slice 42 always uses
-  `BroadcastTo::None`; ALL / EALL fan-out lands with Slice 43, the
-  censored / private-to-sysop branch with Slice 47.
-- Display names are still rendered as the user's handle. The
-  `NameType::RealName` / `NameType::InternetName` branches of
-  `display_name_of(_, conference)` depend on `User.real_name` /
-  `User.internet_name` fields that no slice has yet introduced; the
-  conference's `accepted_name_type` is wired through every other
-  rendering path so the lookup is ready when those fields arrive.
+The container replaced a borrow-bag that threaded lifetimes through every
+flow signature; cloning is now one `Arc` bump per port. The sub-flows
+take `&AppServices` and downcast to `&dyn …` accessors on demand.
 
-The transport adapter, runtime composition, session-driving sub-flows, and the
-repository port shape were sharpened in recent refactorings:
+### Menu command surface
 
-- `app::runtime::Runtime` is the single composition point for driven adapters,
-  configuration-derived policy values (`SessionPolicy`, `DefaultRatio`,
-  `NewUserGateConfig`), the screen repository, and the `NodePool`.
-  `TelnetListener` no longer constructs any of these; it only binds, accepts
-  streams, and delegates to `SessionDriver`.
-- `SessionDriver` is a thin orchestrator. The sub-flows live in their own
-  modules: `app::login_flow::LoginFlow`,
-  `app::registration_flow::RegistrationFlow`, `app::menu_flow::MenuFlow`. The
-  rendering helpers shared by the auto-rejoin and explicit-join paths live in
-  `app::session_presenter`.
-- `domain::session::typed` is the single phase-typed API over `Session` for
-  the interactive driver. Mail-specific raw transition helpers on `Session`
-  are private implementation details used by these wrappers, so the app layer
-  cannot bypass the menu/onboarded phase guarantees.
-- `app::menu_command` owns effect-free parsing for `G`, `J`, `R`, `M`, `N`,
-  and `E` command lines. `MenuFlow` switches on the typed command and keeps
-  the terminal prompt/render loop.
-- `app::menu::{read_mail, scan_mail, post_mail, join}` owns the terminal-free
-  command use cases for the menu. These modules resolve repositories/stores,
-  call the typed session/domain rules, and return renderable outcome enums.
-  `MenuFlow` now collects prompts and maps those outcomes to wire text.
-- `app::terminal::{read_prompted, write_and_flush}` centralise the common
-  prompt/flush/read pattern shared by login, registration, and menu flows.
-- `UserRepository::allocate_slot_and_create` is the single atomic registration
-  entry point. Slot allocation and insertion happen under one lock, with
-  explicit `UserCreationError::{Build, DuplicateUser, DuplicateSlot}` variants.
-- The `NEW` registration literal is recognised by the login flow
-  (`NEW_USER_REGISTRATION_LITERAL` in `app::session_flow`). `UserRepository`
-  is pure storage and returns only `NameLookupResult::Found` /
-  `NotFound`.
-- `domain::Session` remains the aggregate root, but its rule surface is now
-  split by capability: `identity`, `registration`, `lifecycle`,
-  `conferencing`, `budget`, `lockout`, `conference_activity`, `log_format`,
-  `outcomes`, `errors`, and `transitions`. `domain/session/mod.rs` now holds
-  the state shape, shared accessors, core phase moves, and public re-exports.
-- `domain::User` remains the aggregate root, but its internal state is grouped
-  into private value objects: `Credentials`, `AccountStatus`,
-  `UsageAccounting`, `Profile`, `RatioPolicy`, and `ConferenceAccess`. The
-  public `User` API still exposes the spec-oriented accessors used by rules
-  and adapters.
+`app::menu_command::parse_menu_command` is effect-free. The
+`MenuCommand` enum currently covers (with the corresponding handler
+module under `app::menu_flow/`):
 
-The remaining concentration-of-responsibility hotspots are:
+| Command | Variant | Handler |
+|---|---|---|
+| `G` | `Logoff` | dispatch |
+| `J <n>` | `Join(NumberArg)` | `join` |
+| `R <n>` | `Read(NumberArg)` | `read_mail` |
+| `M` / `N` | `Scan(ScanArg::All/New)` | `scan_mail` |
+| `E` / `E <to>` | `Post(PostArg)` | `post_mail` |
+| `C` | `CommentToSysop` | `post_mail` |
+| `RP <n>` | `Reply(NumberArg)` | `reply_forward` |
+| `FW <n>` | `Forward(NumberArg)` | `reply_forward` |
+| `K <n>` | `Kill(NumberArg)` | `sysop_admin` |
+| `MV <n>` | `Move(NumberArg)` | `sysop_admin` |
+| `EH <n>` | `EditHeader(NumberArg)` | `sysop_admin` |
+| `T` | `ShowTime` | dispatch (`render_time_line`) |
+| `VER` | `ShowVersion` | dispatch (`VERSION_BANNER`) |
+| `H` | `ShowHelp` | dispatch (`bbs_help_screen` asset) |
+| `Q` | `QuietToggle` | dispatch (`toggle_quiet_mode`) |
+| anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
-- `domain/user.rs` is still a large file because the aggregate, its private
-  value objects, and its tests live together. That is acceptable while storage
-  design is settling, but the value objects can move into `domain/user/*`
-  modules if the file becomes painful to review.
-- `domain/session/tests.rs` remains a large cross-capability test module. It
-  is grouped internally, but future session changes may benefit from moving
-  tests closer to the capability modules they exercise.
-- `domain/session/mod.rs` still owns `Session`, `SessionShared`,
-  `SessionPhase`, and the core phase-move helpers. That is acceptable after
-  the capability split, but a `session/state.rs` extraction would be a natural
-  next cleanup if state-shape changes become frequent.
+Each non-trivial command lives in two files: a terminal-free use case
+under `app/menu/*` that resolves stores/repositories and returns an
+outcome enum, and a sibling handler under `app/menu_flow/*` that owns
+the prompts and wire rendering. `MenuFlow` collects prompts and maps
+outcomes to wire text; the use-case module never sees the terminal.
+Adding a new command means adding a use case under `app/menu/`, a
+handler under `app/menu_flow/`, a `MenuCommand` arm, and (usually) a
+domain rule. No other plumbing is needed.
 
-## Recommended Refactorings
+### Driver and sub-flow split
 
-### 1. Introduce a real user-store adapter before more account features
+`TelnetListener` only binds, accepts streams, runs the IAC negotiation,
+and constructs a per-connection `SessionDriver`. `SessionDriver` is a
+thin orchestrator:
 
-The runtime now ships both adapters: `InMemoryUserRepository` remains the
-default for `cargo run` against a fresh tree, but `config.user_storage =
-"<path>.db"` switches the composition root to `SqliteUserRepository`
-(`adapters/sqlite_user_repository.rs`). Schema layout follows
-`designs/USERS.md`: a `users` table for single-valued fields, plus
-`conference_memberships` and `read_pointers` tables for the per-user
-collections; round-tripping happens through the domain's `PersistedUser`
-snapshot (`domain/user.rs`).
+1. `start` — write banner + copyright, return an `IdentifyingSession`.
+2. `LoginFlow::identify` — prompt for name, dispatch to register, verify
+   password, return `Onboarded | LoggingOff | Ended | NeedsRegistration`.
+3. `RegistrationFlow::run` — only on `NeedsRegistration`. Owns the
+   new-user gate, profile collection, hash + persist, returns
+   `Onboarded | LoggingOff`.
+4. `auto_rejoin` — apply `conferences.allium:JoinConference`, render
+   `JOINED` + any name-type promotion screen, fire
+   `mail_scan_on_join::scan_mail_on_join` in `FollowPointer` mode.
+5. `MenuFlow::run` — the command loop above, returns `LoggingOffSession`.
+6. `finalise` — apply `finalise_logoff` and persist via
+   `session_flow::typed`.
 
-The bootstrap rule is now: seed the default sysop only when the chosen
-store is empty (`SqliteUserRepository::is_empty`), so restarting against
-an existing database preserves the on-disk state. Tests continue to use
-the in-memory adapter; the only test that exercises the SQLite path is
-`tests/sqlite_user_storage_smoke.rs`, which spins up a tempdir, boots
-the binary twice against the same `users.db`, and lets `tempfile`'s
-Drop guard delete the file when the test finishes.
+Rendering helpers shared by the auto-rejoin and explicit-join paths live
+in `app::session_presenter`. The wire byte constants live in
+`app::wire_text`.
 
-Future work owed to the design but not in v1:
+### Phase 6–8 messaging behaviour
 
-- command-style writes (additive counter updates, daily-byte
-  reservations, security-state flushes with `synchronous = FULL`);
-- a one-shot migration tool that imports the legacy on-disk `user`,
-  `userKeys`, `userMisc` files;
-- per-field write policy on the `UserRepository` port so the
-  session-end flush queue and the immediate security-state path stop
-  sharing the same `save(User)` entry.
+The messaging rule family is wired end-to-end. The domain rules stay
+pure; the app layer resolves the per-msgbase `MailStore` handle through
+the `MailStores` registry service
+(`services.mail_stores().for_msgbase(...)`), locks it, threads it into
+the rule, and writes the legacy ANSI output.
 
-### 2. Finish the smaller `Session` cleanup opportunistically
+- **Phase 6 (read)**:
+  - `domain::Mail` (Slice 37) plus the `MailStore` port. `FileMailStore`
+    writes one JSON file per message at `<msgbase-dir>/<seven-digit
+    zero-padded number>.json`, scans the directory at open time to
+    recover `highest_message`, and holds the spec's
+    `lock_msgbase(msgbase)` predicate as an in-process
+    `tokio::sync::Mutex`. Timestamps on the wire (`posted_at`,
+    `received_at`) are RFC 3339 strings in UTC via the `time` crate's
+    `serde-well-known` adapter.
+  - `domain::ReadPointers` (Slice 38) attached as a `Vec` on every
+    `ConferenceMembership`. `read_pointers_for(user, msgbase)` is the
+    spec's black box; rows are lazily created on first
+    `ReadMail`/`ScanMail` for a base.
+  - Slices 39–41 wire `read_mail`, `scan_mail` and
+    `mail_scan_on_join`. The `R <num>` handler does the
+    `MailStore::load` → `read_mail` → `MailStore::save` dance; `M`/`N`
+    walk the store via `scan_mail`; the auto-rejoin and explicit-join
+    paths share `scan_mail_on_join`.
+  - Slice 41a wires the file-backed registry into the composition root:
+    `app::run` walks the loaded conferences and opens one
+    `FileMailStore` per `(conference, msgbase)` coordinate.
 
-The high-value `Session` capability split is done. The remaining work is lower
-priority and should ride along with future slices that already touch the area:
+- **Phase 7 (write)**:
+  - Slice 42: `domain::post_mail` plus the `E` / `E <to>` handler. The
+    rule allocates the next number via the store, persists, and bumps
+    the user-level `messages_posted` and per-membership counters.
+  - Slice 43: `AllowedAddressing` / `AllScanScope` land as
+    `[[msgbase]]` fields. `domain::mail::addressing_allows` is the
+    permission black box; `post_mail` enforces it; the `E` handler
+    normalises `ALL` / `EALL` / empty before the rule sees them.
+  - Slice 44: `domain::post_comment_to_sysop` reuses `post_mail::apply_post_mail`
+    so users with `CommentToSysop` but not `EnterMessage` can post. The
+    recipient resolves through `UserRepository::find_sysop`.
+  - Slice 47: `User.censored` and the visibility downgrade
+    (censored → `PrivateToSysop`, EALL → `Public` still wins).
 
-- Move `Session`, `SessionShared`, `SessionPhase`, and core phase-move helpers
-  into `session/state.rs` if `mod.rs` starts accumulating state-specific churn.
-- Split `domain/session/tests.rs` into capability-local test modules once
-  editing the monolithic test file becomes a real review burden.
-- Keep `Session` as the aggregate root; avoid introducing extra domain
-  services unless a new Allium slice has behavior that does not naturally
-  belong to one session.
+- **Phase 8 (advanced + sysop ops)**:
+  - Slice 45 `reply_to_mail`, Slice 46 `forward_mail`, Slice 48
+    `attach_file_to_mail` (with the new `core::bytes::Bytes`
+    newtype), Slice 49 `delete_mail` / `edit_mail_header` /
+    `move_mail`.
+  - Slice 49a / 49b wire `RP`, `FW`, `K`, `MV`, `EH` through
+    `app/menu/{reply_forward, sysop_admin}` and the matching
+    `menu_flow` handlers. `tests/phase7_smoke.rs` /
+    `phase8_smoke.rs` drive the compiled binary end-to-end over
+    telnet.
 
-## Suggested Order
+### User storage
 
-1. Add a durable user repository before building more account/admin behavior.
-2. Finish the smaller `Session` state/test cleanup only when future session
-   slices make the current layout painful.
-3. Keep new menu commands following the `app::menu` use-case pattern rather
-   than adding store/repository effects back into `MenuFlow`.
+The composition root picks the user-repository adapter from
+`config.user_storage`:
 
-## Refactorings Not Worth Prioritising Yet
+- `None` → `InMemoryUserRepository`. Always seeds the default sysop.
+  Data is lost on shutdown. Default for `cargo run` against a fresh
+  tree, and the default for every test.
+- `Some(path)` → `SqliteUserRepository::open(path)`. Three tables:
+  `users` (single-valued fields), `conference_memberships` (joined to
+  `users`), `read_pointers` (joined to memberships). Schema laid out in
+  `designs/USERS.md`. Round-trips through the domain's
+  `PersistedUser` snapshot.
 
-- Splitting the crate into multiple crates. The module boundaries are still
-  sufficient; separate crates would add ceremony before the domain is stable.
-- Introducing a DI framework. Plain construction in the composition root is
-  enough.
-- Rewriting every async port just for style. The current boxed-future ports
-  are serviceable; change them only if they block a concrete refactor.
+Seeding the default sysop runs only when the chosen store is empty
+(`SqliteUserRepository::is_empty`), so restarting against an existing
+database preserves on-disk state. `tests/sqlite_user_storage_smoke.rs`
+covers two-boot persistence with a `tempdir`.
+
+### Concentration-of-responsibility hotspots
+
+The current top files by line count:
+
+| File | Lines | Notes |
+|---|---|---|
+| `domain/user.rs` | 2141 | Aggregate + private value objects (`Credentials`, `AccountStatus`, `UsageAccounting`, `Profile`, `RatioPolicy`, `ConferenceAccess`) + co-located tests. |
+| `domain/session/tests.rs` | 1973 | Cross-capability session tests, internally grouped but monolithic. |
+| `adapters/telnet_listener.rs` | 1706 | ~180 lines of production `TelnetListener` + `TelnetTerminal`; ~1500 lines of in-process integration tests. |
+| `app/session_flow.rs` | 1564 | Remaining use cases over `(Session, UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade. |
+| `adapters/sqlite_user_repository.rs` | 1097 | Schema init + row codec + queries + ~30 tests. |
+| `adapters/file_mail_store.rs` | 1033 | Per-msgbase JSON store + lock + tests. |
+| `app/wire_text.rs` | 937 | Wire-format constants and rendering helpers. |
+| `domain/session/typed.rs` | 837 | Phase-typed wrappers and their constructors. |
+| `domain/messaging/scan_mail.rs` | 833 | Scan rule + extensive test fixtures. |
+| `domain/conference.rs` | 794 | `Conference`, `MessageBase`, `ConferenceMembership`, `NameType`, `AllowedAddressing`, `AllScanScope`. |
+| `domain/messaging/post_mail.rs` | 782 | Post rule + helpers + tests. |
+
+## Idiomatic-Rust read
+
+What is already idiomatic:
+
+- **Domain ports are sync, application ports async.** The domain has
+  zero `tokio::*` references; `async` lives at the boundary
+  (`Terminal`, `ScreenRepository`, `MailStores`). This makes the rules
+  trivial to test with stack-allocated stores and keeps `await`
+  pressure on the I/O side.
+- **Hexagonal invariants are enforced by an integration test**, not by
+  convention. The infrastructure-reference guard catches the leak shape
+  most projects miss (`source: serde_json::Error`).
+- **Cheap-clone services container** (`AppServices`). Each port is held
+  behind `Arc`, so per-session clone is a fixed cost and no lifetimes
+  leak into flow signatures.
+- **Phase-typed session wrappers**. Eight wrappers turn "session is in
+  state X" assertions into compile errors.
+- **Tight value-object grouping inside `User`** — six private structs
+  hold related fields with their own invariants.
+- **`thiserror` enums everywhere**, with `#[from]` only where the
+  conversion is unambiguous. `Box<dyn Error + Send + Sync>` is used at
+  the binary entry point but does not leak into ports.
+- **Effect-free parsers** (`menu_command`) decoupled from the dispatch
+  loop. `parse_menu_command` is pure; reasonable to fuzz.
+- **`#![forbid(unsafe_code)]` plus clippy pedantic at warn level.**
+
+What is less idiomatic and worth flagging:
+
+- **`Box<dyn FnOnce(u32) -> Result<User, UserError> + Send + 'a>`** on
+  `UserRepository::allocate_slot_and_create`. Object-safe but the
+  callback shape is awkward; callers always do the same thing inside
+  the closure (build a `User` from a `NewUserDraft` and the slot).
+- **`NameLookupResult::Found(Box<User>)`** boxes the resolved record to
+  keep the enum small. Sensible (User is ~2 KB) but ad-hoc.
+- **Six `panic!("expected Resolved")` calls in
+  `domain/conference_visit.rs`** on accessors. State-typed wrappers
+  (`ResolvedVisit` / `PendingVisit`) would express the invariant in the
+  type system instead.
+- **`Pin<Box<dyn Future + Send + 'a>>` boilerplate** on `Terminal` and
+  `ScreenRepository`. With Rust 1.75+ `async fn` in trait, the
+  `Terminal` trait could shed the alias entirely (`Terminal` is already
+  generic at call sites); `ScreenRepository` would need `async_trait`
+  or the `RPITIT` variant because it lives behind `Arc<dyn …>`.
+- **`std::sync::Mutex::lock().expect("…")`** in three adapters
+  (`SqliteUserRepository`, `InMemoryUserRepository`,
+  `InMemoryCallerLog`). Panic-on-poison is acceptable here, but the
+  duplication suggests a thin helper.
+- **`eprintln!` for operational logging** in `file_mail_store.rs` and
+  `file_conference_repository.rs`. No structured logging or level
+  control. Acceptable while there's no `tracing` dependency, worth
+  revisiting before more adapters land.
+- **Bespoke TOML mirror enums** (`NameTypeToml`, `AllowedAddressingToml`,
+  `AllScanScopeToml`) in `file_conference_repository.rs`. Each exists
+  only to satisfy serde's snake_case deserialization. A
+  `serde(rename_all = "snake_case")` attribute directly on the domain
+  enums would remove the mirrors — but that couples domain types to
+  serde, which the architecture test would (correctly) reject. The
+  mirrors are the right tradeoff; just noting them as boilerplate.
+
+## Large-scale refactorings worth considering
+
+The first three are practical and can be staged in along normal slice
+work. Items 4 and 5 are bigger and should wait for a triggering need.
+
+### 1. Replace the `BuildUserFn` callback with a `NewUserDraft` value
+
+`UserRepository::allocate_slot_and_create(build_user: BuildUserFn<'_>)`
+takes a boxed `FnOnce(u32) -> Result<User, UserError>`. Every caller
+builds the same way: validate inputs, then call `User::new(slot, …)`.
+The callback adds object-safety drag without expressive power.
+
+A cleaner shape:
+
+```rust
+pub trait UserRepository {
+    fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError>;
+}
+```
+
+where `NewUserDraft` is a domain value type that owns the validated
+input fields (handle, hash kind, hash, salt, registered_at, access
+level, …). The repository allocates the slot inside its transaction
+and constructs the `User` itself. `UserCreationError::Build` still
+covers `User::new` rejections.
+
+Benefits: no `Box<dyn FnOnce>`, no lifetime parameter on the alias,
+the contract is fully data-shaped, and the adapter no longer needs
+to invoke caller code while holding its own lock. The migration is
+mechanical — there are two call sites
+(`session_flow::NewUserRegistrationFlow::complete` and the seeder).
+
+### 2. Split `domain/user.rs` along its existing value-object lines
+
+The aggregate already groups its private state into six value objects
+(`Credentials`, `AccountStatus`, `UsageAccounting`, `Profile`,
+`RatioPolicy`, `ConferenceAccess`). At 2141 lines the file is becoming
+review-painful even with that grouping. Moving each value object into
+`domain/user/{credentials,account_status,…}.rs` would let those types
+own their own constructors, validations, and tests, while
+`domain/user/mod.rs` keeps the `User` aggregate, its public accessors,
+and the cross-VO invariants.
+
+This pairs naturally with #1: `NewUserDraft` lives in
+`domain/user/draft.rs` and is the only construction path the
+repository sees.
+
+### 3. Push terminal I/O out of `menu_flow/*` into a small renderer port
+
+The `menu_flow/*` handlers each do roughly the same dance: call the
+matching `menu/*` use case, match on the outcome enum, write a wire
+constant or a small formatted line. That pattern is currently spelled
+out by hand in each handler.
+
+A thin `MenuRenderer` trait — methods like
+`render_read_mail(outcome: ReadMailOutcome)`, `render_scan(…)` — would
+collapse the per-handler `match` blocks into one call. The implementer
+of `MenuRenderer` for the live transport would still own the wire
+constants, but the dispatch loop would stop being a 60-line `match`
+that calls 11 different `self.handle_*` methods, each with its own
+copy of the prompt-flush-write idiom.
+
+The win is consistency: every command would walk the same use-case →
+outcome → renderer pipeline. The cost is one new trait and a layer of
+indirection. Probably worth doing the next time a new menu command
+needs a non-trivial outcome enum.
+
+### 4. Remove `panic!` from `domain/conference_visit.rs` via state typing
+
+The aggregate has six `panic!("expected Resolved")` calls on accessors
+that are only valid in the resolved state. The accessors are unsafe
+without an upstream invariant the type doesn't enforce.
+
+Two clean alternatives:
+
+- **State-typed wrappers** matching the session approach: `PendingVisit`
+  vs `ResolvedVisit`, with accessors only defined on the resolved
+  variant. The state types preserve compile-time correctness through
+  call chains the same way `domain::session::typed` does today.
+- **Make the accessors return `Option<T>` / `Result<T, _>` and push the
+  resolution check to the caller.** Cheaper but the type system stops
+  helping.
+
+Worth doing now because `conference_visit.rs` is small enough that the
+refactor fits in one slice, and the existing pattern is duplicating
+behaviour that `session::typed` already proves works.
+
+### 5. Carve `app/session_flow.rs` into per-rule modules
+
+At 1564 lines, `session_flow.rs` has accreted: `name_typed`,
+`verify_password`, `verify_new_user_password`, `enter_menu`,
+`finalise_logoff`, `complete_password_reset`, plus the
+`NewUserRegistrationFlow` struct, plus five error enums, plus the
+`typed` namespace. Each use case mostly stands alone: it takes a
+phase-typed session, one or two ports, a `now`, and returns an
+outcome.
+
+Suggested layout:
+
+```
+app/session_flow/
+  mod.rs              -- re-exports + shared types (NewUserGateConfig, DefaultRatio)
+  name_typed.rs       -- + NameTypedFlowError
+  verify_password.rs  -- + VerifyPasswordFlowError
+  enter_menu.rs       -- + EnterMenuFlowError
+  finalise_logoff.rs  -- + FinaliseLogoffFlowError
+  registration.rs     -- NewUserRegistrationFlow + Complete* errors
+  password_reset.rs   -- complete_password_reset + CompletePasswordResetFlowError
+  typed.rs            -- the typed-wrapper helpers SessionDriver calls
+```
+
+Each file lands around 150–300 lines, errors live next to the use case
+they belong to, and the registration sub-flow stops being a struct
+that everyone has to import alongside the free functions.
+
+### 6. Move large adapter test modules into sibling files
+
+`adapters/telnet_listener.rs` is 1706 lines, of which ~1500 are the
+test module: a `FakeTerminal`, a `StaticScreens`, and dozens of
+in-process accept-loop scenarios. The pattern is the same for
+`SqliteUserRepository` (~30 in-file tests) and `FileScreenRepository`.
+
+Pulling these into `adapters/telnet_listener/tests.rs`,
+`adapters/sqlite_user_repository/tests.rs`, etc. (still `#[cfg(test)]
+mod tests` declarations in the parent) keeps the test surface intact
+while making the production module readable at a glance. Pure code
+move, no behavioural change.
+
+## Refactorings to skip for now
+
+- **Splitting the crate into workspace members.** Module boundaries and
+  the architecture test already give us the invariants a workspace
+  split would enforce. The split would add ceremony before the domain
+  is stable.
+- **A DI framework.** `AppServices` plus plain `Arc<dyn …>` is already
+  the simplest thing that works.
+- **Generic-everywhere `AppServices`.** Parameterising on
+  `<U: UserRepository, H: PasswordHasher, …>` would buy compile-time
+  specialisation at the cost of code-size blow-up across every flow
+  signature, and would block runtime adapter swapping (which is the
+  whole point of holding ports behind `Arc<dyn …>`). Type erasure here
+  is intentional.
+- **Async-fn-in-trait for `ScreenRepository`.** Until `RPITIT` works
+  cleanly behind `Arc<dyn Trait>`, the manual `Pin<Box<dyn Future>>`
+  alias is the shortest path. Revisit when `dyn` support catches up.
+- **Rewriting `wire_text.rs`.** The legacy strings are the wire
+  contract; the file is long because the BBS has many lines, not
+  because of poor structure.
+
+## Suggested order
+
+1. Items #1 and #4 are the lowest-risk wins — both change the shape
+   of one small surface and remove either an awkward callback or a
+   panic family.
+2. Item #2 is a mechanical move that's easier after #1 (the new
+   `NewUserDraft` lives in the new `domain/user/` subdirectory).
+3. Item #5 should follow whenever the next slice would otherwise
+   touch `session_flow.rs`.
+4. Items #3 and #6 are opportunistic; do them when a new menu command
+   or a new adapter would otherwise replicate the existing pattern.
