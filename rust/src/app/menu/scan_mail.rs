@@ -39,7 +39,7 @@ where
         return ScanMailOutcome::NoOpenMsgbase;
     };
 
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(guard) = mail_stores.lock(visit_msgbase).await else {
         return ScanMailOutcome::NoStore;
     };
 
@@ -47,8 +47,7 @@ where
         .map(crate::domain::conference::MessageBase::all_scan_scope)
         .unwrap_or_default();
 
-    let guard = store.lock().await;
-    let result = session.scan_mail(&**guard, visit_msgbase, scope, from_message, now);
+    let result = session.scan_mail(&*guard, visit_msgbase, scope, from_message, now);
     drop(guard);
 
     match result {

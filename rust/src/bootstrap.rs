@@ -210,7 +210,7 @@ fn open_mail_stores(
             let coord = MessageBaseRef::new(conf.number(), msgbase.number());
             let store = FileMailStore::open(dir, coord)?;
             let boxed: Box<dyn MailStore + Send> = Box::new(store);
-            registry.register(coord, Arc::new(tokio::sync::Mutex::new(boxed)));
+            registry.register(coord, boxed);
         }
     }
     let shared: SharedMailStores = Arc::new(registry) as Arc<dyn MailStores + Send + Sync>;

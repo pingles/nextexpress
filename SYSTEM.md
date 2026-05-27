@@ -402,34 +402,17 @@ What is less idiomatic and worth flagging:
 The list below focuses on system-boundary improvements rather than
 naming or small local cleanups. It skips refactorings already landed,
 including the `domain/user/` value-object split, the repository
-`create_user(NewUserDraft)` shape, and the bootstrap/app split (a
+`create_user(NewUserDraft)` shape, the bootstrap/app split (a
 dedicated `bootstrap` module owns adapter construction; the `app`
 module is forbidden from importing `crate::adapters` in production
-code, enforced by `tests/architecture.rs`).
+code, enforced by `tests/architecture.rs`), and the mail-store
+registry's locking API (the trait now exposes `lock(msgbase) ->
+MailStoreGuard` and `lock_pair(source, target) ->
+MailStorePairLockOutcome`; the raw `Arc<tokio::sync::Mutex<_>>` is
+gone, and `lock_pair` centralises lock ordering and detects
+same-store requests before acquiring a second lock).
 
-### 1. Hide mail-store locking behind a higher-level registry API
-
-`app::mail_stores::MailStores` currently exposes
-`Arc<tokio::sync::Mutex<Box<dyn MailStore + Send>>>` directly. Every
-mail command repeats the same sequence: derive current msgbase, look up
-the shared handle, `lock().await`, call a domain rule, drop the guard,
-and map the result.
-
-That leaks concurrency mechanics into terminal-free use cases. It also
-creates a real hazard in multi-store commands: `MV` locks the source
-store and then the target store before the domain can reject
-same-msgbase moves. If source and target are the same `Arc<Mutex<_>>`,
-the command waits on a lock it already holds.
-
-Replace the raw shared-handle API with methods such as
-`with_store(msgbase, |store| ...)` and
-`with_two_stores(source, target, |source, target| ...)`. The registry
-can centralise lock ordering, detect same-store requests before
-locking twice, and return an application-level "no store / same store /
-store error" outcome. The menu use cases would then depend on business
-operations over stores, not on `tokio::Mutex`.
-
-### 2. Narrow `domain::session::typed` back to session phases
+### 1. Narrow `domain::session::typed` back to session phases
 
 The typed session wrappers successfully make invalid session phases
 unrepresentable. Over time, though, `MenuSession` has also become a
@@ -447,7 +430,7 @@ without routing through `MenuSession` methods.
 The goal is not to weaken the phase model; it is to avoid making
 session typing the central command registry.
 
-### 3. Evolve user persistence away from full aggregate saves
+### 2. Evolve user persistence away from full aggregate saves
 
 `UserRepository::save(User)` persists the whole aggregate, and flows
 clone the session-bound user back to storage after logon, menu entry,
@@ -466,7 +449,7 @@ This does not need to happen immediately. It becomes important before
 adding cross-session sysop edits, background maintenance jobs, or
 multiple concurrent logons for the same account.
 
-### 4. Rebalance port error boundaries
+### 3. Rebalance port error boundaries
 
 Some domain-side ports carry storage-shaped errors. `MailStoreError`
 contains `std::io::Error`, path strings, and serialization details;
@@ -482,7 +465,7 @@ need a storage port, but the error shape can be less file-specific.
 app/bootstrap because runtime rules consume an already-loaded
 `Vec<Conference>`, not a repository.
 
-### 5. Keep file-size refactors opportunistic
+### 4. Keep file-size refactors opportunistic
 
 The older navigability refactors are still useful, just lower leverage
 than the boundary work above:
@@ -536,13 +519,11 @@ than the boundary work above:
 
 ## Suggested order
 
-1. Hide mail-store locking behind the registry API before adding more
-   multi-store commands.
-2. Narrow `domain::session::typed` before the next command family grows
+1. Narrow `domain::session::typed` before the next command family grows
    beyond messaging.
-3. Add optimistic or command-style user writes before cross-session
+2. Add optimistic or command-style user writes before cross-session
    sysop/background mutations.
-4. Revisit port error shapes while moving `ConferenceRepository` out of
+3. Revisit port error shapes while moving `ConferenceRepository` out of
    the domain boundary.
-5. Do the file-size and renderer cleanups opportunistically when a
+4. Do the file-size and renderer cleanups opportunistically when a
    nearby feature already touches those modules.

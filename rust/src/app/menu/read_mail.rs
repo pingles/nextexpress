@@ -70,7 +70,7 @@ where
         return ReadMailOutcome::NoMailBase;
     };
 
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return ReadMailOutcome::NoMailBase;
     };
 
@@ -80,7 +80,6 @@ where
         .map(|c| c.name().to_string())
         .unwrap_or_default();
 
-    let mut guard = store.lock().await;
     let mut mail = match guard.load(number) {
         Ok(Some(mail)) => mail,
         Ok(None) => return ReadMailOutcome::MessageNotFound,

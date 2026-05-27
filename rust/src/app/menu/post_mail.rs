@@ -67,7 +67,7 @@ where
         return PostMailOutcome::NoMailBase;
     };
 
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return PostMailOutcome::NoMailBase;
     };
 
@@ -102,11 +102,10 @@ where
     };
 
     let author_handle = session.user().handle().to_string();
-    let mut guard = store.lock().await;
     let result = session.post_mail(
         visit_msgbase,
         allowed_addressing,
-        &mut **guard,
+        &mut *guard,
         PostMailDraft {
             to_name,
             broadcast_to,
@@ -142,7 +141,7 @@ where
         return PostMailOutcome::NoMailBase;
     };
 
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return PostMailOutcome::NoMailBase;
     };
 
@@ -158,11 +157,10 @@ where
     };
 
     let from_name = session.user().handle().to_string();
-    let mut guard = store.lock().await;
     let result = session.post_comment_to_sysop(
         visit_msgbase,
         allowed_addressing,
-        &mut **guard,
+        &mut *guard,
         CommentToSysopDraft {
             sysop_slot: sysop.slot_number(),
             from_name,

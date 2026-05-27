@@ -73,7 +73,7 @@ pub enum NameType {
 ///
 /// Both fields are 1-indexed entity numbers, mirroring how the BBS
 /// surfaces them to users.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MessageBaseRef {
     conference_number: u32,
     msgbase_number: u32,

@@ -74,7 +74,7 @@ where
     let Some(visit_msgbase) = current_msgbase(session) else {
         return ReplyForwardOutcome::NoMailBase;
     };
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return ReplyForwardOutcome::NoMailBase;
     };
     let Some(allowed_addressing) = find_msgbase_in(conferences, visit_msgbase)
@@ -84,7 +84,6 @@ where
     };
 
     let from_name = session.user().handle().to_string();
-    let mut guard = store.lock().await;
     let Ok(Some(source)) = guard.load(input.source_number) else {
         return ReplyForwardOutcome::SourceNotFound;
     };
@@ -94,7 +93,7 @@ where
     let result = session.reply_to_mail(
         visit_msgbase,
         allowed_addressing,
-        &mut **guard,
+        &mut *guard,
         &source,
         ReplyToMailDraft {
             from_name,
@@ -128,7 +127,7 @@ where
     let Some(visit_msgbase) = current_msgbase(session) else {
         return ReplyForwardOutcome::NoMailBase;
     };
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return ReplyForwardOutcome::NoMailBase;
     };
     let Some(allowed_addressing) = find_msgbase_in(conferences, visit_msgbase)
@@ -144,14 +143,13 @@ where
     };
 
     let from_name = session.user().handle().to_string();
-    let mut guard = store.lock().await;
     let Ok(Some(source)) = guard.load(input.source_number) else {
         return ReplyForwardOutcome::SourceNotFound;
     };
     let result = session.forward_mail(
         visit_msgbase,
         allowed_addressing,
-        &mut **guard,
+        &mut *guard,
         &source,
         ForwardMailRequest {
             new_addressee_name: resolved.handle().to_string(),

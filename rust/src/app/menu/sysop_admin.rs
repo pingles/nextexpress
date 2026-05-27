@@ -5,7 +5,7 @@
 //! arguments. Each delegates to the matching domain rule through the
 //! typed [`MenuSession`].
 
-use crate::app::mail_stores::MailStores;
+use crate::app::mail_stores::{MailStorePairLockOutcome, MailStores};
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::messaging::delete_mail::DeleteMailError;
 use crate::domain::messaging::edit_mail_header::EditMailHeaderError;
@@ -81,11 +81,10 @@ where
     let Some(visit_msgbase) = current_msgbase(session) else {
         return DeleteOutcome::NoMailBase;
     };
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return DeleteOutcome::NoMailBase;
     };
-    let mut guard = store.lock().await;
-    let result = session.delete_mail(&mut **guard, number);
+    let result = session.delete_mail(&mut *guard, number);
     drop(guard);
     match result {
         Ok(()) => DeleteOutcome::Done,
@@ -106,19 +105,20 @@ where
         return MoveOutcome::NoMailBase;
     };
     let target_msgbase = MessageBaseRef::new(input.target_conference, input.target_msgbase);
-    let Some(source_store) = mail_stores.for_msgbase(source_msgbase) else {
-        return MoveOutcome::NoMailBase;
-    };
-    let Some(target_store) = mail_stores.for_msgbase(target_msgbase) else {
-        return MoveOutcome::UnknownTarget;
-    };
-    let mut source_guard = source_store.lock().await;
-    let mut target_guard = target_store.lock().await;
-    let result = session.move_mail(
-        &mut **source_guard,
-        &mut **target_guard,
-        input.source_number,
-    );
+    let (mut source_guard, mut target_guard) =
+        match mail_stores.lock_pair(source_msgbase, target_msgbase).await {
+            MailStorePairLockOutcome::MissingSource => return MoveOutcome::NoMailBase,
+            MailStorePairLockOutcome::MissingTarget => return MoveOutcome::UnknownTarget,
+            // The domain rule rejects same-msgbase moves; the registry
+            // short-circuits before locking so it can't deadlock on a
+            // shared mutex. Surface the rejection through the existing
+            // domain error variant for callers.
+            MailStorePairLockOutcome::SameStore => {
+                return MoveOutcome::Rejected(MoveMailError::SameMsgbase);
+            }
+            MailStorePairLockOutcome::Locked { source, target } => (source, target),
+        };
+    let result = session.move_mail(&mut *source_guard, &mut *target_guard, input.source_number);
     drop(target_guard);
     drop(source_guard);
     match result {
@@ -142,7 +142,7 @@ where
     let Some(visit_msgbase) = current_msgbase(session) else {
         return EditHeaderOutcome::NoMailBase;
     };
-    let Some(store) = mail_stores.for_msgbase(visit_msgbase) else {
+    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return EditHeaderOutcome::NoMailBase;
     };
 
@@ -162,9 +162,8 @@ where
         None
     };
 
-    let mut guard = store.lock().await;
     let result =
-        session.edit_mail_header(&mut **guard, input.source_number, input.new_subject, new_to);
+        session.edit_mail_header(&mut *guard, input.source_number, input.new_subject, new_to);
     drop(guard);
     match result {
         Ok(()) => EditHeaderOutcome::Done,
