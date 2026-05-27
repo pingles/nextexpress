@@ -1,5 +1,5 @@
-//! Binary entry point — hands off to [`nextexpress::app::main`].
+//! Binary entry point — hands off to [`nextexpress::bootstrap::main`].
 
 fn main() -> std::process::ExitCode {
-    nextexpress::app::main()
+    nextexpress::bootstrap::main()
 }

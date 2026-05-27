@@ -5,7 +5,7 @@ under `rust/` and the larger refactorings worth considering next.
 
 ## Current Shape
 
-The implementation is a hexagonal (ports and adapters) layout split across three
+The implementation is a hexagonal (ports and adapters) layout split across four
 top-level modules under `rust/src/`:
 
 - **`domain/`** — pure behaviour and entities distilled from the Allium specs in
@@ -25,27 +25,45 @@ top-level modules under `rust/src/`:
   `SqliteUserRepository`, `InMemoryCallerLog`, `Pbkdf2PasswordHasher`,
   `telnet_line` codec.
 
-- **`app/`** — composition root, transport-agnostic driver, and the menu
-  command surface. Carries application-layer ports (`Terminal`,
-  `ScreenRepository`, `MailStores`), configuration types, the runtime
-  container (`Runtime` + `AppServices`), the per-connection orchestrator
-  (`SessionDriver`), three sub-flows (`LoginFlow`, `RegistrationFlow`,
-  `MenuFlow`), and the menu use-case modules (`app/menu/*`) paired with
-  their terminal-aware handlers (`app/menu_flow/*`).
+- **`app/`** — application layer: ports, services, flows, and
+  transport-agnostic drivers. Carries application-layer ports
+  (`Terminal`, `ScreenRepository`, `MailStores`), configuration types,
+  the runtime value (`Runtime` + `AppServices`), the per-connection
+  orchestrator (`SessionDriver`), three sub-flows (`LoginFlow`,
+  `RegistrationFlow`, `MenuFlow`), and the menu use-case modules
+  (`app/menu/*`) paired with their terminal-aware handlers
+  (`app/menu_flow/*`). Production code under `app/` is forbidden from
+  importing `crate::adapters`; the boundary is enforced by
+  `tests/architecture.rs::app_does_not_depend_on_adapters_in_production_code`.
+
+- **`bootstrap/`** — composition root. The only module allowed to
+  construct concrete adapters: it loads the config, picks the user
+  repository (in-memory vs. SQLite), opens one `FileMailStore` per
+  known msgbase, builds a `FileScreenRepository`, wires the lot through
+  `Runtime::new`, binds the `TelnetListener` and runs the accept loop.
+  The `nextexpress` binary's `main` calls `bootstrap::main` and does
+  nothing else.
 
 ### Architectural invariants
 
-`rust/tests/architecture.rs` walks `src/domain/` and rejects:
+`rust/tests/architecture.rs` walks the source tree and rejects:
 
-1. Any `use` path that names `crate::adapters`, `crate::app`, or a bare
-   `adapters::` / `app::` sibling.
-2. Any non-comment line that mentions an infrastructure crate or module
-   (`tokio::`, `serde_json::`, `toml::`, `std::fs::`, `std::net::`).
+1. Any `use` path under `src/domain/` that names `crate::adapters`,
+   `crate::app`, or a bare `adapters::` / `app::` sibling.
+2. Any non-comment line under `src/domain/` that mentions an
+   infrastructure crate or module (`tokio::`, `serde_json::`, `toml::`,
+   `std::fs::`, `std::net::`).
+3. Any production-code `use` path under `src/app/` that names
+   `crate::adapters` (or the bare sibling). Test modules
+   (`#[cfg(test)] mod …`) are excluded since unit tests legitimately
+   reach for adapter test doubles; the walker tracks braces to skip
+   those blocks. Only `src/bootstrap.rs` is allowed to import adapter
+   types.
 
-The second guard is stronger than a plain import check — a domain error
-like `source: serde_json::Error` would fail the test even without an
-import, so the domain stays free of infrastructure types in signatures
-as well as bodies.
+The infrastructure-reference guard is stronger than a plain import
+check — a domain error like `source: serde_json::Error` would fail it
+even without an import, so the domain stays free of infrastructure types
+in signatures as well as bodies.
 
 ### Sync domain, async edges
 
@@ -71,7 +89,7 @@ working tree.
 
 ```mermaid
 flowchart LR
-    Main["src/main.rs"] --> AppRun["app::main / app::run"]
+    Main["src/main.rs"] --> AppRun["bootstrap::main / bootstrap::run"]
 
     AppRun --> Config["app::config + config_loader"]
     AppRun --> Seed["app::seed (sysop bootstrap)"]
@@ -79,6 +97,7 @@ flowchart LR
     AppRun --> UserRepo["UserRepository\n(InMemory or SQLite\nper config.user_storage)"]
     AppRun --> Hasher["Pbkdf2PasswordHasher"]
     AppRun --> CallerLog["InMemoryCallerLog"]
+    AppRun --> Screens["SharedScreens\n(FileScreenRepository)"]
     AppRun --> MailRegistry["InMemoryMailStores\nregistry"]
     MailRegistry --> FileMailStore["FileMailStore\n(per conference/msgbase)"]
 
@@ -89,7 +108,7 @@ flowchart LR
     Services --> Sharedhasher["SharedHasher"]
     Services --> SharedRepo["SharedUserRepo"]
     Services --> SharedLog["SharedCallerLog"]
-    Services --> SharedScreens["SharedScreens\n(FileScreenRepository)"]
+    Services --> SharedScreens
     Services --> SharedConfs["SharedConferences\n(Arc&lt;Vec&lt;Conference&gt;&gt;)"]
     Services --> SharedMail["SharedMailStores"]
     Services --> Policy["SessionPolicy\nDefaultRatio\nNewUserGateConfig"]
@@ -382,30 +401,13 @@ What is less idiomatic and worth flagging:
 
 The list below focuses on system-boundary improvements rather than
 naming or small local cleanups. It skips refactorings already landed,
-including the `domain/user/` value-object split and the repository
-`create_user(NewUserDraft)` shape.
+including the `domain/user/` value-object split, the repository
+`create_user(NewUserDraft)` shape, and the bootstrap/app split (a
+dedicated `bootstrap` module owns adapter construction; the `app`
+module is forbidden from importing `crate::adapters` in production
+code, enforced by `tests/architecture.rs`).
 
-### 1. Separate bootstrap from the app layer
-
-`app` is currently both the use-case layer and the concrete composition
-root. `app::mod` imports concrete adapters (`FileConferenceRepository`,
-`FileMailStore`, `SqliteUserRepository`, `TelnetListener`, etc.), and
-`app::runtime` constructs `FileScreenRepository` directly. That keeps
-startup convenient, but it also means the application ring knows about
-the adapter ring.
-
-Move config loading, adapter construction, seeding, and listener
-binding into a `bootstrap` module or the binary entry point. Leave
-`app` as application ports, services, flows, and transport-agnostic
-drivers. After that split, add an architecture guard that only the
-bootstrap module may import `crate::adapters`.
-
-The win is a clearer hexagonal boundary: future transports can reuse
-the same app layer without pulling file, SQLite, PBKDF2, or telnet
-construction along with it. The cost is one more composition module and
-a little re-export cleanup.
-
-### 2. Hide mail-store locking behind a higher-level registry API
+### 1. Hide mail-store locking behind a higher-level registry API
 
 `app::mail_stores::MailStores` currently exposes
 `Arc<tokio::sync::Mutex<Box<dyn MailStore + Send>>>` directly. Every
@@ -427,7 +429,7 @@ locking twice, and return an application-level "no store / same store /
 store error" outcome. The menu use cases would then depend on business
 operations over stores, not on `tokio::Mutex`.
 
-### 3. Narrow `domain::session::typed` back to session phases
+### 2. Narrow `domain::session::typed` back to session phases
 
 The typed session wrappers successfully make invalid session phases
 unrepresentable. Over time, though, `MenuSession` has also become a
@@ -445,7 +447,7 @@ without routing through `MenuSession` methods.
 The goal is not to weaken the phase model; it is to avoid making
 session typing the central command registry.
 
-### 4. Evolve user persistence away from full aggregate saves
+### 3. Evolve user persistence away from full aggregate saves
 
 `UserRepository::save(User)` persists the whole aggregate, and flows
 clone the session-bound user back to storage after logon, menu entry,
@@ -464,7 +466,7 @@ This does not need to happen immediately. It becomes important before
 adding cross-session sysop edits, background maintenance jobs, or
 multiple concurrent logons for the same account.
 
-### 5. Rebalance port error boundaries
+### 4. Rebalance port error boundaries
 
 Some domain-side ports carry storage-shaped errors. `MailStoreError`
 contains `std::io::Error`, path strings, and serialization details;
@@ -480,7 +482,7 @@ need a storage port, but the error shape can be less file-specific.
 app/bootstrap because runtime rules consume an already-loaded
 `Vec<Conference>`, not a repository.
 
-### 6. Keep file-size refactors opportunistic
+### 5. Keep file-size refactors opportunistic
 
 The older navigability refactors are still useful, just lower leverage
 than the boundary work above:
@@ -534,15 +536,13 @@ than the boundary work above:
 
 ## Suggested order
 
-1. Separate bootstrap from `app`, then enforce the new dependency rule
-   with an architecture test.
-2. Hide mail-store locking behind the registry API before adding more
+1. Hide mail-store locking behind the registry API before adding more
    multi-store commands.
-3. Narrow `domain::session::typed` before the next command family grows
+2. Narrow `domain::session::typed` before the next command family grows
    beyond messaging.
-4. Add optimistic or command-style user writes before cross-session
+3. Add optimistic or command-style user writes before cross-session
    sysop/background mutations.
-5. Revisit port error shapes while moving `ConferenceRepository` out of
+4. Revisit port error shapes while moving `ConferenceRepository` out of
    the domain boundary.
-6. Do the file-size and renderer cleanups opportunistically when a
+5. Do the file-size and renderer cleanups opportunistically when a
    nearby feature already touches those modules.

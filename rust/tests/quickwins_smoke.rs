@@ -18,11 +18,11 @@ use nextexpress::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use nextexpress::adapters::telnet_listener::TelnetListener;
 use nextexpress::app::config::Config;
 use nextexpress::app::mail_stores::MailStores;
-use nextexpress::app::runtime::Runtime;
 use nextexpress::app::seed;
 use nextexpress::app::services::{
     SharedCallerLog, SharedConferences, SharedHasher, SharedMailStores, SharedUserRepo,
 };
+use nextexpress::bootstrap;
 use nextexpress::domain::caller_log::CallerLogAppender;
 use nextexpress::domain::conference::{Conference, MessageBase};
 use nextexpress::domain::password::PasswordHasher;
@@ -230,7 +230,7 @@ async fn spawn_listener_at_bbs_path(bbs_path: std::path::PathBuf) -> std::net::S
         bbs_path,
         ..Config::default()
     };
-    let runtime = Runtime::from_config(
+    let runtime = bootstrap::build_runtime(
         &config,
         user_repo,
         hasher_shared,

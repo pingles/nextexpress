@@ -1,21 +1,19 @@
-//! Runtime composition root.
+//! Runtime composition value.
 //!
-//! Wires the driven adapters (user store, password hasher, caller log,
-//! screen and conference repositories), the configuration-derived
+//! Carries the driven-port handles (user store, password hasher, caller
+//! log, screen and conference repositories), the configuration-derived
 //! policy values (session policy, ratio defaults, new-user gate) and
-//! the [`NodePool`] into a single value the transport adapters consume.
+//! the [`NodePool`] in a single value the transport adapters consume.
 //!
-//! Transport adapters such as
-//! [`crate::adapters::telnet_listener::TelnetListener`] used to derive
-//! these values themselves from a [`Config`]; moving the wiring here
-//! keeps the listener focused on telnet transport, makes the
-//! composition visible in one place, and lets future transports
-//! (SSH, local console, websocket, in-process test transports) share
-//! the same setup without duplicating it.
+//! Construction is done by the bootstrap layer (`crate::bootstrap`)
+//! which knows the concrete adapters; the runtime stays pure
+//! application code. That keeps the listener focused on transport,
+//! makes the composition visible in one place, and lets future
+//! transports (SSH, local console, websocket, in-process test
+//! transports) share the same setup without duplicating it.
 
 use std::sync::Arc;
 
-use crate::adapters::file_screen_repository::FileScreenRepository;
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::services::{
@@ -34,39 +32,16 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Wires `config` and the supplied driven adapters into a runtime.
+    /// Wires `config`, the supplied driven-port handles and the
+    /// screen repository into a runtime.
     ///
-    /// The screen repository is constructed as a
-    /// [`FileScreenRepository`] rooted at `config.bbs_path`. Use
-    /// [`Self::with_screens`] when an injected screen source is
-    /// required (currently exposed for symmetry; not used in tests
-    /// today).
+    /// The runtime does not know how to build a screen repository; the
+    /// bootstrap layer chooses which adapter to use (`FileScreenRepository`
+    /// in production, an in-memory fake in tests) and passes the handle
+    /// in here.
     #[must_use]
-    pub fn from_config(
-        config: &Config,
-        user_repo: SharedUserRepo,
-        hasher: SharedHasher,
-        caller_log: SharedCallerLog,
-        conferences: SharedConferences,
-        mail_stores: SharedMailStores,
-    ) -> Self {
-        let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
-        Self::with_screens(
-            config,
-            user_repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences,
-            mail_stores,
-        )
-    }
-
-    /// Variant of [`Self::from_config`] that takes a pre-constructed
-    /// screen repository. Future tests that swap the on-disk fixture
-    /// for an in-memory one will drive this entry point.
-    #[must_use]
-    pub fn with_screens(
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
         config: &Config,
         user_repo: SharedUserRepo,
         hasher: SharedHasher,

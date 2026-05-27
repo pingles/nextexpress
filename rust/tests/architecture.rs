@@ -133,6 +133,113 @@ fn domain_does_not_depend_on_runtime_or_adapter_crates() {
     );
 }
 
+/// Returns `content` with every top-level `#[cfg(test)] mod <name> {
+/// … }` block elided. Block boundaries are tracked by counting `{` /
+/// `}` from the opening brace of the `mod` declaration; nested braces
+/// inside the test module (function bodies, struct literals, etc.) are
+/// followed correctly.
+///
+/// The guard for `app/` and `bootstrap` policy only inspects production
+/// code, since unit tests legitimately reach for adapter test doubles
+/// (`InMemoryUserRepository`, `Pbkdf2PasswordHasher`, etc.) and the
+/// hexagonal boundary is a production-code invariant. Reusing the same
+/// helper for both the use-import and infrastructure-reference checks
+/// keeps the policy consistent.
+fn strip_cfg_test_modules(content: &str) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut in_test_mod = false;
+    let mut depth: i32 = 0;
+    let mut pending_test_mod = false;
+    for line in content.lines() {
+        if in_test_mod {
+            for ch in line.chars() {
+                if ch == '{' {
+                    depth += 1;
+                } else if ch == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        in_test_mod = false;
+                        break;
+                    }
+                }
+            }
+            out.push('\n');
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if pending_test_mod {
+            if let Some(rest) = trimmed
+                .strip_prefix("pub ")
+                .map_or(Some(trimmed), |r| Some(r.trim_start()))
+                .and_then(|t| t.strip_prefix("mod "))
+            {
+                if let Some(open) = rest.find('{') {
+                    in_test_mod = true;
+                    depth = 0;
+                    for ch in rest[open..].chars() {
+                        if ch == '{' {
+                            depth += 1;
+                        } else if ch == '}' {
+                            depth -= 1;
+                        }
+                    }
+                    if depth == 0 {
+                        in_test_mod = false;
+                    }
+                    pending_test_mod = false;
+                    out.push('\n');
+                    continue;
+                }
+            }
+            // Not a `mod` declaration after the attribute — treat the
+            // attribute line as ordinary code, including the line we are
+            // currently inspecting.
+            pending_test_mod = false;
+        }
+        if trimmed.starts_with("#[cfg(test)]") {
+            pending_test_mod = true;
+            out.push('\n');
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+#[test]
+fn app_does_not_depend_on_adapters_in_production_code() {
+    // The hexagonal boundary lets `app/` depend only on `domain/` and
+    // its own ports. Adapter construction is the bootstrap layer's job.
+    // Test code legitimately needs adapter test doubles; the guard
+    // therefore strips `#[cfg(test)] mod …` blocks before scanning.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let app_dir = Path::new(manifest_dir).join("src").join("app");
+
+    let mut violations: Vec<String> = Vec::new();
+    for path in rust_sources(&app_dir) {
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
+        let content = strip_cfg_test_modules(&raw);
+        for (idx, line) in content.lines().enumerate() {
+            if use_violates(line, "adapters") {
+                violations.push(format!(
+                    "{}:{} imports `adapters` ({})",
+                    path.display(),
+                    idx + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "app layer must not import adapters in production code; found:\n{}",
+        violations.join("\n")
+    );
+}
+
 #[test]
 fn use_violates_detects_canonical_forms() {
     assert!(use_violates("use crate::adapters;", "adapters"));
@@ -160,4 +267,44 @@ fn references_infrastructure_ignores_comments_but_catches_code() {
         "source: serde_json::Error,",
         "serde_json::"
     ));
+}
+
+#[test]
+fn strip_cfg_test_modules_removes_test_blocks_only() {
+    let input = "use crate::adapters::Foo;\n\
+                 fn prod() {}\n\
+                 #[cfg(test)]\n\
+                 mod tests {\n    use crate::adapters::Bar;\n    fn t() { let _ = 1; }\n}\n\
+                 fn more_prod() {}\n";
+    let stripped = strip_cfg_test_modules(input);
+    assert!(
+        stripped.contains("use crate::adapters::Foo;"),
+        "production import retained: {stripped:?}"
+    );
+    assert!(
+        stripped.contains("fn more_prod"),
+        "code after test mod retained: {stripped:?}"
+    );
+    assert!(
+        !stripped.contains("use crate::adapters::Bar;"),
+        "test-mod import stripped: {stripped:?}"
+    );
+}
+
+#[test]
+fn strip_cfg_test_modules_keeps_cfg_test_attribute_on_items() {
+    // A bare `#[cfg(test)]` on a function (not a `mod`) must not
+    // accidentally swallow the function. The boundary is `mod …`.
+    let input = "#[cfg(test)]\n\
+                 fn helper() { let _ = 1; }\n\
+                 fn prod() {}\n";
+    let stripped = strip_cfg_test_modules(input);
+    assert!(
+        stripped.contains("fn helper"),
+        "test-only function preserved: {stripped:?}"
+    );
+    assert!(
+        stripped.contains("fn prod"),
+        "prod function preserved: {stripped:?}"
+    );
 }

@@ -59,7 +59,7 @@ impl TelnetListener {
     /// pre-constructed [`Runtime`] every accepted connection will
     /// share. Composition (driven adapters, policy values, node pool
     /// sizing) happens before this call — see
-    /// [`Runtime::from_config`].
+    /// [`crate::bootstrap::build_runtime`].
     ///
     /// # Errors
     /// Returns the underlying [`io::Error`] if the bind fails.
@@ -213,7 +213,7 @@ mod tests {
     ) -> Runtime {
         let mail_stores: SharedMailStores = std::sync::Arc::new(InMemoryMailStores::new())
             as std::sync::Arc<dyn MailStores + Send + Sync>;
-        Runtime::from_config(
+        crate::bootstrap::build_runtime(
             config,
             user_repo,
             hasher,
