@@ -351,10 +351,6 @@ What is already idiomatic:
 
 What is less idiomatic and worth flagging:
 
-- **`Box<dyn FnOnce(u32) -> Result<User, UserError> + Send + 'a>`** on
-  `UserRepository::allocate_slot_and_create`. Object-safe but the
-  callback shape is awkward; callers always do the same thing inside
-  the closure (build a `User` from a `NewUserDraft` and the slot).
 - **`NameLookupResult::Found(Box<User>)`** boxes the resolved record to
   keep the enum small. Sensible (User is ~2 KB) but ad-hoc.
 - **Six `panic!("expected Resolved")` calls in
@@ -384,70 +380,136 @@ What is less idiomatic and worth flagging:
 
 ## Large-scale refactorings worth considering
 
-The list below skips refactorings already landed (see the git log for
-the `NewUserDraft` work that replaced `BuildUserFn`, and the
-`domain/user/` value-object split).
+The list below focuses on system-boundary improvements rather than
+naming or small local cleanups. It skips refactorings already landed,
+including the `domain/user/` value-object split and the repository
+`create_user(NewUserDraft)` shape.
 
-### 1. Push terminal I/O out of `menu_flow/*` into a small renderer port
+### 1. Separate bootstrap from the app layer
 
-The `menu_flow/*` handlers each do roughly the same dance: call the
-matching `menu/*` use case, match on the outcome enum, write a wire
-constant or a small formatted line. That pattern is currently spelled
-out by hand in each handler.
+`app` is currently both the use-case layer and the concrete composition
+root. `app::mod` imports concrete adapters (`FileConferenceRepository`,
+`FileMailStore`, `SqliteUserRepository`, `TelnetListener`, etc.), and
+`app::runtime` constructs `FileScreenRepository` directly. That keeps
+startup convenient, but it also means the application ring knows about
+the adapter ring.
 
-A thin `MenuRenderer` trait — methods like
-`render_read_mail(outcome: ReadMailOutcome)`, `render_scan(…)` — would
-collapse the per-handler `match` blocks into one call. The implementer
-of `MenuRenderer` for the live transport would still own the wire
-constants, but the dispatch loop would stop being a 60-line `match`
-that calls 11 different `self.handle_*` methods, each with its own
-copy of the prompt-flush-write idiom.
+Move config loading, adapter construction, seeding, and listener
+binding into a `bootstrap` module or the binary entry point. Leave
+`app` as application ports, services, flows, and transport-agnostic
+drivers. After that split, add an architecture guard that only the
+bootstrap module may import `crate::adapters`.
 
-The win is consistency: every command would walk the same use-case →
-outcome → renderer pipeline. The cost is one new trait and a layer of
-indirection. Probably worth doing the next time a new menu command
-needs a non-trivial outcome enum.
+The win is a clearer hexagonal boundary: future transports can reuse
+the same app layer without pulling file, SQLite, PBKDF2, or telnet
+construction along with it. The cost is one more composition module and
+a little re-export cleanup.
 
-### 2. Carve `app/session_flow.rs` into per-rule modules
+### 2. Hide mail-store locking behind a higher-level registry API
 
-At 1564 lines, `session_flow.rs` has accreted: `name_typed`,
-`verify_password`, `verify_new_user_password`, `enter_menu`,
-`finalise_logoff`, `complete_password_reset`, plus the
-`NewUserRegistrationFlow` struct, plus five error enums, plus the
-`typed` namespace. Each use case mostly stands alone: it takes a
-phase-typed session, one or two ports, a `now`, and returns an
-outcome.
+`app::mail_stores::MailStores` currently exposes
+`Arc<tokio::sync::Mutex<Box<dyn MailStore + Send>>>` directly. Every
+mail command repeats the same sequence: derive current msgbase, look up
+the shared handle, `lock().await`, call a domain rule, drop the guard,
+and map the result.
 
-Suggested layout:
+That leaks concurrency mechanics into terminal-free use cases. It also
+creates a real hazard in multi-store commands: `MV` locks the source
+store and then the target store before the domain can reject
+same-msgbase moves. If source and target are the same `Arc<Mutex<_>>`,
+the command waits on a lock it already holds.
 
-```
-app/session_flow/
-  mod.rs              -- re-exports + shared types (NewUserGateConfig, DefaultRatio)
-  name_typed.rs       -- + NameTypedFlowError
-  verify_password.rs  -- + VerifyPasswordFlowError
-  enter_menu.rs       -- + EnterMenuFlowError
-  finalise_logoff.rs  -- + FinaliseLogoffFlowError
-  registration.rs     -- NewUserRegistrationFlow + Complete* errors
-  password_reset.rs   -- complete_password_reset + CompletePasswordResetFlowError
-  typed.rs            -- the typed-wrapper helpers SessionDriver calls
-```
+Replace the raw shared-handle API with methods such as
+`with_store(msgbase, |store| ...)` and
+`with_two_stores(source, target, |source, target| ...)`. The registry
+can centralise lock ordering, detect same-store requests before
+locking twice, and return an application-level "no store / same store /
+store error" outcome. The menu use cases would then depend on business
+operations over stores, not on `tokio::Mutex`.
 
-Each file lands around 150–300 lines, errors live next to the use case
-they belong to, and the registration sub-flow stops being a struct
-that everyone has to import alongside the free functions.
+### 3. Narrow `domain::session::typed` back to session phases
 
-### 3. Move large adapter test modules into sibling files
+The typed session wrappers successfully make invalid session phases
+unrepresentable. Over time, though, `MenuSession` has also become a
+messaging command facade: `domain::session::typed` imports read, scan,
+post, reply, forward, delete, move, and edit-header rules, then exposes
+methods that delegate into each one.
 
-`adapters/telnet_listener.rs` is 1706 lines, of which ~1500 are the
-test module: a `FakeTerminal`, a `StaticScreens`, and dozens of
-in-process accept-loop scenarios. The pattern is the same for
-`SqliteUserRepository` (~30 in-file tests) and `FileScreenRepository`.
+That preserves phase safety, but it couples the session state machine
+to every feature family. Keep the wrappers focused on phase
+transitions and session-level invariants. For command families, expose
+a narrow capability such as a "bound menu user" accessor or closure so
+`domain::messaging` and later `domain::files` can own their own rules
+without routing through `MenuSession` methods.
 
-Pulling these into `adapters/telnet_listener/tests.rs`,
-`adapters/sqlite_user_repository/tests.rs`, etc. (still `#[cfg(test)]
-mod tests` declarations in the parent) keeps the test surface intact
-while making the production module readable at a glance. Pure code
-move, no behavioural change.
+The goal is not to weaken the phase model; it is to avoid making
+session typing the central command registry.
+
+### 4. Evolve user persistence away from full aggregate saves
+
+`UserRepository::save(User)` persists the whole aggregate, and flows
+clone the session-bound user back to storage after logon, menu entry,
+logoff, read-pointer changes, message-post counters, and account-state
+changes. The SQLite adapter responds with a broad upsert over almost
+every user column.
+
+That is simple and has worked well for a single active session, but it
+becomes a lost-update risk as more mutable user subdomains land or if a
+user can be touched by background/sysop actions while logged in.
+Consider command-style writes or optimistic versioning for separate
+state families: login/account status, read pointers, usage counters,
+conference position, profile fields, and password changes.
+
+This does not need to happen immediately. It becomes important before
+adding cross-session sysop edits, background maintenance jobs, or
+multiple concurrent logons for the same account.
+
+### 5. Rebalance port error boundaries
+
+Some domain-side ports carry storage-shaped errors. `MailStoreError`
+contains `std::io::Error`, path strings, and serialization details;
+`ConferenceRepositoryError` models TOML/path failures and lives in
+`domain` even though conference loading is a startup/configuration
+concern.
+
+Prefer semantic domain/application errors at port boundaries and keep
+adapter-native details in adapter-specific error types or log context.
+`MailStore` may still belong near the messaging rules because the rules
+need a storage port, but the error shape can be less file-specific.
+`ConferenceRepository` is a stronger candidate to move out to
+app/bootstrap because runtime rules consume an already-loaded
+`Vec<Conference>`, not a repository.
+
+### 6. Keep file-size refactors opportunistic
+
+The older navigability refactors are still useful, just lower leverage
+than the boundary work above:
+
+- **Carve `app/session_flow.rs` into per-rule modules** when the next
+  slice would otherwise add to it. Suggested shape:
+
+  ```
+  app/session_flow/
+    mod.rs              -- re-exports + shared types (NewUserGateConfig, DefaultRatio)
+    name_typed.rs       -- + NameTypedFlowError
+    verify_password.rs  -- + VerifyPasswordFlowError
+    enter_menu.rs       -- + EnterMenuFlowError
+    finalise_logoff.rs  -- + FinaliseLogoffFlowError
+    registration.rs     -- NewUserRegistrationFlow + Complete* errors
+    password_reset.rs   -- complete_password_reset + CompletePasswordResetFlowError
+    typed.rs            -- the typed-wrapper helpers SessionDriver calls
+  ```
+
+- **Move large adapter test modules into sibling files** such as
+  `adapters/telnet_listener/tests.rs`,
+  `adapters/sqlite_user_repository/tests.rs`, and
+  `adapters/file_screen_repository/tests.rs`. This is a pure code move
+  that keeps production modules readable.
+
+- **Consider a small menu renderer** if new commands keep adding large
+  outcome-to-wire `match` blocks in `menu_flow/*`. The current
+  terminal-free use-case split is sound; a renderer would mainly reduce
+  repetition in presentation code.
 
 ## Refactorings to skip for now
 
@@ -472,7 +534,15 @@ move, no behavioural change.
 
 ## Suggested order
 
-1. Item #2 (carve `app/session_flow.rs`) follows whenever the next
-   slice would otherwise touch `session_flow.rs`.
-2. Items #1 and #3 are opportunistic; do them when a new menu command
-   or a new adapter would otherwise replicate the existing pattern.
+1. Separate bootstrap from `app`, then enforce the new dependency rule
+   with an architecture test.
+2. Hide mail-store locking behind the registry API before adding more
+   multi-store commands.
+3. Narrow `domain::session::typed` before the next command family grows
+   beyond messaging.
+4. Add optimistic or command-style user writes before cross-session
+   sysop/background mutations.
+5. Revisit port error shapes while moving `ConferenceRepository` out of
+   the domain boundary.
+6. Do the file-size and renderer cleanups opportunistically when a
+   nearby feature already touches those modules.
