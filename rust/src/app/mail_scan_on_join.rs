@@ -30,7 +30,7 @@ use crate::app::menu::scan_mail::{scan_mail, ScanMailOutcome};
 use crate::app::services::AppServices;
 use crate::app::terminal::Terminal;
 use crate::app::wire_text::{render_scan_summary, MAIL_STORE_ERROR_LINE};
-use crate::domain::session::typed::ScanOnJoin;
+use crate::domain::session::typed::BoundMenuUser;
 
 /// Whether the auto-scan-on-join walks from message 1 (`ForceAll`) or
 /// from `pointers.last_scanned + 1` (`FollowPointer`)
@@ -76,7 +76,7 @@ pub(crate) async fn scan_mail_on_join<T, S>(
 ) -> Result<(), T::Error>
 where
     T: Terminal,
-    S: ScanOnJoin,
+    S: BoundMenuUser,
 {
     match scan_mail(
         session,

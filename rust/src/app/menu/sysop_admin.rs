@@ -7,11 +7,13 @@
 
 use crate::app::mail_stores::{MailStorePairLockOutcome, MailStores};
 use crate::domain::conference::{Conference, MessageBaseRef};
-use crate::domain::messaging::delete_mail::DeleteMailError;
-use crate::domain::messaging::edit_mail_header::EditMailHeaderError;
+use crate::domain::messaging::delete_mail::{delete_mail as delete_mail_rule, DeleteMailError};
+use crate::domain::messaging::edit_mail_header::{
+    edit_mail_header as edit_mail_header_rule, EditMailHeaderError,
+};
 use crate::domain::messaging::mail::Mail;
-use crate::domain::messaging::move_mail::MoveMailError;
-use crate::domain::session::typed::MenuSession;
+use crate::domain::messaging::move_mail::{move_mail as move_mail_rule, MoveMailError};
+use crate::domain::session::typed::{BoundMenuUser, MenuSession};
 use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
 /// Outcome of a `K <num>` command.
@@ -84,7 +86,7 @@ where
     let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return DeleteOutcome::NoMailBase;
     };
-    let result = session.delete_mail(&mut *guard, number);
+    let result = delete_mail_rule(session.user_mut(), &mut *guard, number);
     drop(guard);
     match result {
         Ok(()) => DeleteOutcome::Done,
@@ -118,7 +120,12 @@ where
             }
             MailStorePairLockOutcome::Locked { source, target } => (source, target),
         };
-    let result = session.move_mail(&mut *source_guard, &mut *target_guard, input.source_number);
+    let result = move_mail_rule(
+        session.user_mut(),
+        &mut *source_guard,
+        &mut *target_guard,
+        input.source_number,
+    );
     drop(target_guard);
     drop(source_guard);
     match result {
@@ -162,8 +169,13 @@ where
         None
     };
 
-    let result =
-        session.edit_mail_header(&mut *guard, input.source_number, input.new_subject, new_to);
+    let result = edit_mail_header_rule(
+        session.user_mut(),
+        &mut *guard,
+        input.source_number,
+        input.new_subject,
+        new_to,
+    );
     drop(guard);
     match result {
         Ok(()) => EditHeaderOutcome::Done,

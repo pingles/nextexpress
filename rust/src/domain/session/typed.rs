@@ -29,55 +29,36 @@
 
 use std::time::SystemTime;
 
-use crate::domain::conference::{
-    AllScanScope, AllowedAddressing, Conference, MessageBaseRef, NameType,
-};
-use crate::domain::messaging::delete_mail::{delete_mail as delete_mail_rule, DeleteMailError};
-use crate::domain::messaging::edit_mail_header::{
-    edit_mail_header as edit_mail_header_rule, EditMailHeaderError,
-};
-use crate::domain::messaging::forward_mail::{
-    forward_mail as forward_mail_rule, ForwardMailError, ForwardMailRequest,
-};
-use crate::domain::messaging::mail::Mail;
-use crate::domain::messaging::mail_store::MailStore;
-use crate::domain::messaging::move_mail::{move_mail as move_mail_rule, MoveMailError};
-use crate::domain::messaging::post_comment_to_sysop::{
-    post_comment_to_sysop as post_comment_to_sysop_rule, CommentToSysopDraft,
-};
-use crate::domain::messaging::post_mail::{
-    post_mail as post_mail_rule, PostMailDraft, PostMailError,
-};
-use crate::domain::messaging::read_mail::{read_mail as read_mail_rule, ReadMailError};
-use crate::domain::messaging::reply_to_mail::{
-    reply_to_mail as reply_to_mail_rule, ReplyToMailDraft, ReplyToMailError,
-};
-use crate::domain::messaging::scan_mail::{scan_mail as scan_mail_rule, ScanMailError, ScanResult};
+use crate::domain::conference::{Conference, NameType};
 use crate::domain::session::{
     AcceptConnectionError, AutoRejoinOutcome, ExplicitJoinOutcome, LogonChannel, Session,
     SessionState,
 };
 use crate::domain::user::User;
 
-/// Trait shared by [`OnboardedSession`] and [`MenuSession`] for the
-/// auto-scan-on-join helper. Both phases can launch a mail scan
-/// (`messaging.allium:ScanMail`'s `requires: session.state in
-/// {onboarded, menu}`); the auto-rejoin path runs in `Onboarded`
-/// and the explicit-join path in `Menu`.
-pub(crate) trait ScanOnJoin {
+/// Phase-level capability shared by the post-authentication wrappers
+/// that have a bound user and an open conference visit
+/// ([`OnboardedSession`] and [`MenuSession`]).
+///
+/// The trait deliberately exposes only session-phase concerns —
+/// `current_msgbase` (open visit's coordinate) and `user_mut` (the
+/// bound user record). Feature-family rules in `domain::messaging`
+/// (and later `domain::files`) take `&mut User` directly rather than
+/// routing through `MenuSession` methods, so the session typing stays
+/// focused on the state machine rather than acting as a command
+/// registry.
+///
+/// Replaces the earlier `ScanOnJoin` trait, which leaked
+/// messaging-specific `scan_mail` mechanics into the session typing.
+pub(crate) trait BoundMenuUser {
     /// Returns the `(conference_number, msgbase_number)` pair for
     /// the session's open visit, or `None` when none is open.
     fn current_msgbase(&self) -> Option<(u32, u32)>;
 
-    /// Applies `messaging.allium:ScanMail` to the bound user.
-    fn scan_mail(
-        &mut self,
-        store: &dyn MailStore,
-        msgbase: MessageBaseRef,
-        scope: AllScanScope,
-        from_message: u32,
-        now: SystemTime,
-    ) -> Result<ScanResult, ScanMailError>;
+    /// Returns a mutable reference to the bound user. Domain rules
+    /// (read/scan/post mail, future file commands) consume this
+    /// reference directly.
+    fn user_mut(&mut self) -> &mut User;
 }
 
 /// Build a wrapper from a raw session, asserting (in debug builds) that
@@ -282,26 +263,17 @@ impl OnboardedSession {
     }
 }
 
-impl ScanOnJoin for OnboardedSession {
+impl BoundMenuUser for OnboardedSession {
     fn current_msgbase(&self) -> Option<(u32, u32)> {
         let visit = self.session.current_visit()?;
         Some((visit.conference_number(), visit.msgbase_number()))
     }
 
-    fn scan_mail(
-        &mut self,
-        store: &dyn MailStore,
-        msgbase: MessageBaseRef,
-        scope: AllScanScope,
-        from_message: u32,
-        now: SystemTime,
-    ) -> Result<ScanResult, ScanMailError> {
-        let user = self
-            .session
+    fn user_mut(&mut self) -> &mut User {
+        self.session
             .phase
             .user_mut()
-            .expect("Onboarded session has a bound user");
-        scan_mail_rule(user, store, msgbase, scope, from_message, now)
+            .expect("Onboarded session has a bound user")
     }
 }
 
@@ -408,200 +380,19 @@ impl MenuSession {
     pub(crate) fn into_active(self) -> ActivePhase {
         ActivePhase::Menu(self)
     }
-
-    /// Applies `messaging.allium:ReadMail` (Slice 39) to `mail` at
-    /// `now`, mutating both the bound user's read pointers and the
-    /// mail's `received_at` per the spec's `ensures` block.
-    ///
-    /// The caller is responsible for persisting the mutated `mail`
-    /// back to its [`crate::domain::messaging::mail_store::MailStore`]; the bound
-    /// user is flushed at logoff by the session flow.
-    ///
-    /// # Errors
-    /// Returns the matching [`ReadMailError`] variant when the rule
-    /// rejects the request.
-    pub(crate) fn read_mail(
-        &mut self,
-        mail: &mut Mail,
-        now: SystemTime,
-    ) -> Result<(), ReadMailError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        read_mail_rule(user, mail, now)
-    }
-
-    /// Applies `messaging.allium:PostMail` (Slice 42, single-addressee
-    /// path) to the bound user, persisting the new mail via `store`
-    /// and bumping the user's and per-conference `messages_posted`
-    /// counters.
-    ///
-    /// # Errors
-    /// Returns the matching [`PostMailError`] variant when the rule
-    /// rejects the request.
-    pub(crate) fn post_mail(
-        &mut self,
-        msgbase: MessageBaseRef,
-        allowed_addressing: AllowedAddressing,
-        store: &mut dyn MailStore,
-        draft: PostMailDraft,
-    ) -> Result<Mail, PostMailError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        post_mail_rule(user, msgbase, allowed_addressing, store, draft)
-    }
-
-    /// Applies `messaging.allium:PostCommentToSysop` (Slice 44) to the
-    /// bound user, persisting a private message addressed to the sysop
-    /// via `store` and bumping the user's and per-conference
-    /// `messages_posted` counters.
-    ///
-    /// # Errors
-    /// Returns the matching [`PostMailError`] variant when the rule
-    /// rejects the request.
-    pub(crate) fn post_comment_to_sysop(
-        &mut self,
-        msgbase: MessageBaseRef,
-        allowed_addressing: AllowedAddressing,
-        store: &mut dyn MailStore,
-        draft: CommentToSysopDraft,
-    ) -> Result<Mail, PostMailError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        post_comment_to_sysop_rule(user, msgbase, allowed_addressing, store, draft)
-    }
-
-    /// Applies `messaging.allium:ReplyToMail` (Slice 45) to the bound
-    /// user. The caller has already loaded `source` from the store
-    /// and the typed session guarantees we're at `state = menu`.
-    ///
-    /// # Errors
-    /// Returns the matching [`ReplyToMailError`] variant when the
-    /// rule rejects the request.
-    pub(crate) fn reply_to_mail(
-        &mut self,
-        msgbase: MessageBaseRef,
-        allowed_addressing: AllowedAddressing,
-        store: &mut dyn MailStore,
-        source: &Mail,
-        draft: ReplyToMailDraft,
-    ) -> Result<Mail, ReplyToMailError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        reply_to_mail_rule(user, msgbase, allowed_addressing, store, source, draft)
-    }
-
-    /// Applies `messaging.allium:ForwardMail` (Slice 46) to the bound
-    /// user.
-    ///
-    /// # Errors
-    /// Returns the matching [`ForwardMailError`] variant when the
-    /// rule rejects the request.
-    pub(crate) fn forward_mail(
-        &mut self,
-        msgbase: MessageBaseRef,
-        allowed_addressing: AllowedAddressing,
-        store: &mut dyn MailStore,
-        source: &Mail,
-        request: ForwardMailRequest,
-    ) -> Result<Mail, ForwardMailError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        forward_mail_rule(user, msgbase, allowed_addressing, store, source, request)
-    }
-
-    /// Applies `messaging.allium:DeleteMail` (Slice 49) to the bound
-    /// user.
-    ///
-    /// # Errors
-    /// Returns the matching [`DeleteMailError`] variant.
-    pub(crate) fn delete_mail(
-        &mut self,
-        store: &mut dyn MailStore,
-        number: u32,
-    ) -> Result<(), DeleteMailError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        delete_mail_rule(user, store, number)
-    }
-
-    /// Applies `messaging.allium:MoveMail` (Slice 49) to the bound
-    /// user. The caller passes both stores.
-    ///
-    /// # Errors
-    /// Returns the matching [`MoveMailError`] variant.
-    pub(crate) fn move_mail(
-        &mut self,
-        source: &mut dyn MailStore,
-        target: &mut dyn MailStore,
-        number: u32,
-    ) -> Result<Mail, MoveMailError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        move_mail_rule(user, source, target, number)
-    }
-
-    /// Applies `messaging.allium:EditMailHeader` (Slice 49) to the
-    /// bound user.
-    ///
-    /// # Errors
-    /// Returns the matching [`EditMailHeaderError`] variant.
-    pub(crate) fn edit_mail_header(
-        &mut self,
-        store: &mut dyn MailStore,
-        mail_number: u32,
-        new_subject: Option<String>,
-        new_to: Option<(String, Option<u32>)>,
-    ) -> Result<(), EditMailHeaderError> {
-        let user = self
-            .session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user");
-        edit_mail_header_rule(user, store, mail_number, new_subject, new_to)
-    }
 }
 
-impl ScanOnJoin for MenuSession {
+impl BoundMenuUser for MenuSession {
     fn current_msgbase(&self) -> Option<(u32, u32)> {
         let visit = self.session.current_visit()?;
         Some((visit.conference_number(), visit.msgbase_number()))
     }
 
-    fn scan_mail(
-        &mut self,
-        store: &dyn MailStore,
-        msgbase: MessageBaseRef,
-        scope: AllScanScope,
-        from_message: u32,
-        now: SystemTime,
-    ) -> Result<ScanResult, ScanMailError> {
-        let user = self
-            .session
+    fn user_mut(&mut self) -> &mut User {
+        self.session
             .phase
             .user_mut()
-            .expect("Menu session has a bound user");
-        scan_mail_rule(user, store, msgbase, scope, from_message, now)
+            .expect("Menu session has a bound user")
     }
 }
 

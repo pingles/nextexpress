@@ -5,9 +5,13 @@ use std::time::SystemTime;
 use crate::app::mail_stores::MailStores;
 use crate::domain::conference::{find_msgbase_in, Conference, MessageBaseRef};
 use crate::domain::messaging::mail::{BroadcastTo, Mail};
-use crate::domain::messaging::post_comment_to_sysop::CommentToSysopDraft;
-use crate::domain::messaging::post_mail::{PostMailDraft, PostMailError};
-use crate::domain::session::typed::MenuSession;
+use crate::domain::messaging::post_comment_to_sysop::{
+    post_comment_to_sysop as post_comment_to_sysop_rule, CommentToSysopDraft,
+};
+use crate::domain::messaging::post_mail::{
+    post_mail as post_mail_rule, PostMailDraft, PostMailError,
+};
+use crate::domain::session::typed::{BoundMenuUser, MenuSession};
 use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
 /// Already-collected fields for an `E` command.
@@ -102,7 +106,8 @@ where
     };
 
     let author_handle = session.user().handle().to_string();
-    let result = session.post_mail(
+    let result = post_mail_rule(
+        session.user_mut(),
         visit_msgbase,
         allowed_addressing,
         &mut *guard,
@@ -157,7 +162,8 @@ where
     };
 
     let from_name = session.user().handle().to_string();
-    let result = session.post_comment_to_sysop(
+    let result = post_comment_to_sysop_rule(
+        session.user_mut(),
         visit_msgbase,
         allowed_addressing,
         &mut *guard,

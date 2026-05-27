@@ -6,8 +6,8 @@ use crate::app::mail_stores::MailStores;
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::mail_store::MailStoreError;
-use crate::domain::messaging::read_mail::ReadMailError;
-use crate::domain::session::typed::MenuSession;
+use crate::domain::messaging::read_mail::{read_mail as read_mail_rule, ReadMailError};
+use crate::domain::session::typed::{BoundMenuUser, MenuSession};
 
 /// Outcome of the terminal-free read-mail command.
 pub(crate) enum ReadMailOutcome {
@@ -92,7 +92,7 @@ where
         }
     };
 
-    match session.read_mail(&mut mail, now) {
+    match read_mail_rule(session.user_mut(), &mut mail, now) {
         Ok(()) => {}
         Err(ReadMailError::Deleted) => return ReadMailOutcome::Deleted,
         Err(

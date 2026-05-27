@@ -10,10 +10,14 @@ use std::time::SystemTime;
 
 use crate::app::mail_stores::MailStores;
 use crate::domain::conference::{find_msgbase_in, Conference, MessageBaseRef};
-use crate::domain::messaging::forward_mail::{ForwardMailError, ForwardMailRequest};
+use crate::domain::messaging::forward_mail::{
+    forward_mail as forward_mail_rule, ForwardMailError, ForwardMailRequest,
+};
 use crate::domain::messaging::mail::Mail;
-use crate::domain::messaging::reply_to_mail::{ReplyToMailDraft, ReplyToMailError};
-use crate::domain::session::typed::MenuSession;
+use crate::domain::messaging::reply_to_mail::{
+    reply_to_mail as reply_to_mail_rule, ReplyToMailDraft, ReplyToMailError,
+};
+use crate::domain::session::typed::{BoundMenuUser, MenuSession};
 use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
 /// Caller-collected fields for an `RP <num>` command.
@@ -90,7 +94,8 @@ where
     let subject = input
         .subject
         .unwrap_or_else(|| format!("Re: {}", source.subject()));
-    let result = session.reply_to_mail(
+    let result = reply_to_mail_rule(
+        session.user_mut(),
         visit_msgbase,
         allowed_addressing,
         &mut *guard,
@@ -146,7 +151,8 @@ where
     let Ok(Some(source)) = guard.load(input.source_number) else {
         return ReplyForwardOutcome::SourceNotFound;
     };
-    let result = session.forward_mail(
+    let result = forward_mail_rule(
+        session.user_mut(),
         visit_msgbase,
         allowed_addressing,
         &mut *guard,

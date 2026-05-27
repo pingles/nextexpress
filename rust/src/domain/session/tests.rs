@@ -1938,6 +1938,8 @@ mod mail {
         // `Session::apply_read_mail`.
         use crate::domain::conference::MessageBaseRef;
         use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
+        use crate::domain::messaging::read_mail::read_mail;
+        use crate::domain::session::typed::BoundMenuUser;
         let confs = vec![make_conf(2)];
         let mut s = session_at_onboarded_with(user_with_grants(&[2]));
         s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
@@ -1961,7 +1963,7 @@ mod mail {
         });
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
         let mut menu = MenuSession::from_session(s);
-        menu.read_mail(&mut mail, now).expect("happy path");
+        read_mail(menu.user_mut(), &mut mail, now).expect("happy path");
 
         assert_eq!(mail.received_at(), Some(now));
         let s = menu.into_inner();

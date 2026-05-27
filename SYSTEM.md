@@ -337,7 +337,7 @@ The current top files by line count:
 | `adapters/sqlite_user_repository.rs` | 1097 | Schema init + row codec + queries + ~30 tests. |
 | `adapters/file_mail_store.rs` | 1033 | Per-msgbase JSON store + lock + tests. |
 | `app/wire_text.rs` | 937 | Wire-format constants and rendering helpers. |
-| `domain/session/typed.rs` | 837 | Phase-typed wrappers and their constructors. |
+| `domain/session/typed.rs` | 628 | Phase-typed wrappers and their constructors. |
 | `domain/messaging/scan_mail.rs` | 833 | Scan rule + extensive test fixtures. |
 | `domain/conference.rs` | 794 | `Conference`, `MessageBase`, `ConferenceMembership`, `NameType`, `AllowedAddressing`, `AllScanScope`. |
 | `domain/messaging/post_mail.rs` | 782 | Post rule + helpers + tests. |
@@ -405,32 +405,20 @@ including the `domain/user/` value-object split, the repository
 `create_user(NewUserDraft)` shape, the bootstrap/app split (a
 dedicated `bootstrap` module owns adapter construction; the `app`
 module is forbidden from importing `crate::adapters` in production
-code, enforced by `tests/architecture.rs`), and the mail-store
+code, enforced by `tests/architecture.rs`), the mail-store
 registry's locking API (the trait now exposes `lock(msgbase) ->
 MailStoreGuard` and `lock_pair(source, target) ->
 MailStorePairLockOutcome`; the raw `Arc<tokio::sync::Mutex<_>>` is
 gone, and `lock_pair` centralises lock ordering and detects
-same-store requests before acquiring a second lock).
+same-store requests before acquiring a second lock), and the
+session-typed narrowing (`domain::session::typed` no longer imports
+any messaging rules; the per-command `read_mail`/`post_mail`/etc.
+methods on `MenuSession` are gone. The new `BoundMenuUser` trait
+exposes only phase concerns — `current_msgbase` and `user_mut` —
+and the menu use cases under `app/menu/*` call the
+`domain::messaging::*` rules directly with `session.user_mut()`).
 
-### 1. Narrow `domain::session::typed` back to session phases
-
-The typed session wrappers successfully make invalid session phases
-unrepresentable. Over time, though, `MenuSession` has also become a
-messaging command facade: `domain::session::typed` imports read, scan,
-post, reply, forward, delete, move, and edit-header rules, then exposes
-methods that delegate into each one.
-
-That preserves phase safety, but it couples the session state machine
-to every feature family. Keep the wrappers focused on phase
-transitions and session-level invariants. For command families, expose
-a narrow capability such as a "bound menu user" accessor or closure so
-`domain::messaging` and later `domain::files` can own their own rules
-without routing through `MenuSession` methods.
-
-The goal is not to weaken the phase model; it is to avoid making
-session typing the central command registry.
-
-### 2. Evolve user persistence away from full aggregate saves
+### 1. Evolve user persistence away from full aggregate saves
 
 `UserRepository::save(User)` persists the whole aggregate, and flows
 clone the session-bound user back to storage after logon, menu entry,
@@ -449,7 +437,7 @@ This does not need to happen immediately. It becomes important before
 adding cross-session sysop edits, background maintenance jobs, or
 multiple concurrent logons for the same account.
 
-### 3. Rebalance port error boundaries
+### 2. Rebalance port error boundaries
 
 Some domain-side ports carry storage-shaped errors. `MailStoreError`
 contains `std::io::Error`, path strings, and serialization details;
@@ -465,7 +453,7 @@ need a storage port, but the error shape can be less file-specific.
 app/bootstrap because runtime rules consume an already-loaded
 `Vec<Conference>`, not a repository.
 
-### 4. Keep file-size refactors opportunistic
+### 3. Keep file-size refactors opportunistic
 
 The older navigability refactors are still useful, just lower leverage
 than the boundary work above:
@@ -519,11 +507,9 @@ than the boundary work above:
 
 ## Suggested order
 
-1. Narrow `domain::session::typed` before the next command family grows
-   beyond messaging.
-2. Add optimistic or command-style user writes before cross-session
+1. Add optimistic or command-style user writes before cross-session
    sysop/background mutations.
-3. Revisit port error shapes while moving `ConferenceRepository` out of
+2. Revisit port error shapes while moving `ConferenceRepository` out of
    the domain boundary.
-4. Do the file-size and renderer cleanups opportunistically when a
+3. Do the file-size and renderer cleanups opportunistically when a
    nearby feature already touches those modules.

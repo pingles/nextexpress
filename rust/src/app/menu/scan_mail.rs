@@ -4,8 +4,8 @@ use std::time::SystemTime;
 
 use crate::app::mail_stores::MailStores;
 use crate::domain::conference::{find_msgbase_in, Conference, MessageBaseRef};
-use crate::domain::messaging::scan_mail::{ScanMailError, ScanResult};
-use crate::domain::session::typed::ScanOnJoin;
+use crate::domain::messaging::scan_mail::{scan_mail as scan_mail_rule, ScanMailError, ScanResult};
+use crate::domain::session::typed::BoundMenuUser;
 
 /// Outcome of scanning the current message base.
 pub(crate) enum ScanMailOutcome {
@@ -29,7 +29,7 @@ pub(crate) async fn scan_mail<S, M>(
     now: SystemTime,
 ) -> ScanMailOutcome
 where
-    S: ScanOnJoin + ?Sized,
+    S: BoundMenuUser + ?Sized,
     M: MailStores + ?Sized,
 {
     let Some(visit_msgbase) = session
@@ -47,7 +47,14 @@ where
         .map(crate::domain::conference::MessageBase::all_scan_scope)
         .unwrap_or_default();
 
-    let result = session.scan_mail(&*guard, visit_msgbase, scope, from_message, now);
+    let result = scan_mail_rule(
+        session.user_mut(),
+        &*guard,
+        visit_msgbase,
+        scope,
+        from_message,
+        now,
+    );
     drop(guard);
 
     match result {
