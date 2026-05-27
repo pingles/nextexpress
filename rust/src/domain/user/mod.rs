@@ -19,103 +19,24 @@ use crate::domain::password::PasswordHashKind;
 /// keeps the limit colocated with the [`User::line_length`] getter.
 pub const MAX_LINE_LENGTH: u32 = 255;
 
-/// Logon-counter and time-budget bookkeeping for a [`User`].
-///
-/// Bundles the six fields the time-budget rules
-/// (`session.allium:EnterMenu`, `InitialiseDailyBudget`,
-/// `UpdateTimeUsed`, `FinaliseLogoff`) read or mutate together.
-/// Owned privately by [`User`]; the user's public surface delegates to
-/// these accessors so callers don't change.
-#[derive(Debug, Clone)]
-struct UsageAccounting {
-    /// Number of completed logons recorded for this user.
-    times_called: u32,
-    /// Timestamp of the most recently completed logon, if any.
-    last_call: Option<SystemTime>,
-    /// Per-call wall-clock allowance.
-    time_limit_per_call: Duration,
-    /// Combined per-day allowance across all visits in one accounting day.
-    time_limit_per_day: Duration,
-    /// Wall-clock time burned through today.
-    time_used_today: Duration,
-    /// Number of completed logons recorded for this user in the current
-    /// accounting day.
-    times_called_today: u32,
-}
+mod account_status;
+mod conference_access;
+mod credentials;
+mod draft;
+mod persisted;
+mod profile;
+mod ratio_policy;
+mod usage_accounting;
 
-impl UsageAccounting {
-    /// Constructs a freshly-zeroed accounting record.
-    fn new() -> Self {
-        Self {
-            times_called: 0,
-            last_call: None,
-            time_limit_per_call: Duration::ZERO,
-            time_limit_per_day: Duration::ZERO,
-            time_used_today: Duration::ZERO,
-            times_called_today: 0,
-        }
-    }
+use account_status::AccountStatus;
+use conference_access::ConferenceAccess;
+use credentials::Credentials;
+use profile::Profile;
+use ratio_policy::RatioPolicy;
+use usage_accounting::UsageAccounting;
 
-    /// Constructs an accounting record with the spec's
-    /// `CompleteNewUserRegistration` defaults: 30-minute per-call /
-    /// 1-hour per-day allowances, `last_call = now`, counters zeroed.
-    fn for_fresh_registration(now: SystemTime) -> Self {
-        Self {
-            times_called: 0,
-            last_call: Some(now),
-            time_limit_per_call: Duration::from_mins(30),
-            time_limit_per_day: Duration::from_hours(1),
-            time_used_today: Duration::ZERO,
-            times_called_today: 0,
-        }
-    }
-
-    fn times_called(&self) -> u32 {
-        self.times_called
-    }
-    fn last_call(&self) -> Option<SystemTime> {
-        self.last_call
-    }
-    fn time_limit_per_call(&self) -> Duration {
-        self.time_limit_per_call
-    }
-    fn time_limit_per_day(&self) -> Duration {
-        self.time_limit_per_day
-    }
-    fn time_used_today(&self) -> Duration {
-        self.time_used_today
-    }
-    fn times_called_today(&self) -> u32 {
-        self.times_called_today
-    }
-
-    fn bump_times_called(&mut self) {
-        self.times_called = self.times_called.saturating_add(1);
-    }
-
-    fn record_last_call(&mut self, at: SystemTime) {
-        self.last_call = Some(at);
-    }
-
-    fn set_time_limits(&mut self, per_call: Duration, per_day: Duration) {
-        self.time_limit_per_call = per_call;
-        self.time_limit_per_day = per_day;
-    }
-
-    /// Resets the daily counters at the start of a new accounting day.
-    fn reset_daily_counters(&mut self) {
-        self.times_called_today = 0;
-        self.time_used_today = Duration::ZERO;
-    }
-
-    fn bump_times_called_today(&mut self) {
-        self.times_called_today = self.times_called_today.saturating_add(1);
-    }
-
-    fn add_time_used_today(&mut self, elapsed: Duration) {
-        self.time_used_today = self.time_used_today.saturating_add(elapsed);
-    }
-}
+pub use draft::NewUserDraft;
+pub use persisted::PersistedUser;
 
 /// Ratio enforcement mode for a user (spec: `core.allium:RatioMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -200,455 +121,6 @@ pub enum UserFlag {
     EditorPrompts,
     /// Check uploads asynchronously in the background.
     BackgroundFileCheck,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AccountLockState {
-    Unlocked,
-    Locked,
-}
-
-impl AccountLockState {
-    fn is_locked(self) -> bool {
-        matches!(self, Self::Locked)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PasswordResetRequirement {
-    NotRequired,
-    Required,
-}
-
-impl PasswordResetRequirement {
-    fn is_required(self) -> bool {
-        matches!(self, Self::Required)
-    }
-}
-
-impl From<bool> for PasswordResetRequirement {
-    fn from(value: bool) -> Self {
-        if value {
-            Self::Required
-        } else {
-            Self::NotRequired
-        }
-    }
-}
-
-/// Stored password material and reset policy for a [`User`].
-#[derive(Debug, Clone)]
-struct Credentials {
-    /// Algorithm used to verify the stored password hash.
-    hash_kind: PasswordHashKind,
-    /// Opaque stored password hash.
-    hash: String,
-    /// Salt the hash was bound to, if the algorithm uses one.
-    salt: Option<String>,
-    /// Timestamp when the credential triple was last rotated.
-    last_updated: SystemTime,
-    /// Whether the next logon must force a password change.
-    reset: PasswordResetRequirement,
-}
-
-impl Credentials {
-    /// Constructs a stored credential set, enforcing the spec's
-    /// `SaltMatchesAlgorithm` invariant.
-    fn new(
-        hash_kind: PasswordHashKind,
-        hash: String,
-        salt: Option<String>,
-        last_updated: SystemTime,
-    ) -> Result<Self, UserError> {
-        if requires_salt(hash_kind) && salt.is_none() {
-            return Err(UserError::SaltRequired);
-        }
-        Ok(Self {
-            hash_kind,
-            hash,
-            salt,
-            last_updated,
-            reset: PasswordResetRequirement::NotRequired,
-        })
-    }
-
-    fn hash_kind(&self) -> PasswordHashKind {
-        self.hash_kind
-    }
-
-    fn hash(&self) -> &str {
-        &self.hash
-    }
-
-    fn salt(&self) -> Option<&str> {
-        self.salt.as_deref()
-    }
-
-    fn last_updated(&self) -> SystemTime {
-        self.last_updated
-    }
-
-    fn reset_required(&self) -> bool {
-        self.reset.is_required()
-    }
-
-    fn set_reset_required(&mut self, value: bool) {
-        self.reset = PasswordResetRequirement::from(value);
-    }
-
-    fn record_change(
-        &mut self,
-        hash: String,
-        salt: Option<String>,
-        kind: PasswordHashKind,
-        at: SystemTime,
-    ) {
-        self.hash = hash;
-        self.salt = salt;
-        self.hash_kind = kind;
-        self.last_updated = at;
-        self.reset = PasswordResetRequirement::NotRequired;
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AccountValidationStatus {
-    Existing,
-    AwaitingSysopValidation,
-}
-
-impl AccountValidationStatus {
-    fn is_new_user(self) -> bool {
-        matches!(self, Self::AwaitingSysopValidation)
-    }
-}
-
-/// Access tier, lockout counters, and validation status for a [`User`].
-#[derive(Debug, Clone)]
-struct AccountStatus {
-    /// `0..=255` access tier (`0` = locked out).
-    access_level: u8,
-    /// Recent invalid password attempts.
-    invalid_attempts: u32,
-    /// Independent account-lock flag set by lockout rules/admin tools.
-    lock: AccountLockState,
-    /// Whether the account is awaiting sysop validation.
-    validation: AccountValidationStatus,
-    /// `core.allium:User.censored` — when true the user's posts are
-    /// silently downgraded to `private_to_sysop` (`messaging.allium`
-    /// visibility selector, Slice 47). Defaults to false; sysop
-    /// admin tools that flip the flag are out of scope for Slice 47.
-    censored: bool,
-}
-
-impl AccountStatus {
-    /// Constructs account status for an existing user loaded from
-    /// configuration or storage.
-    fn existing(access_level: u8) -> Self {
-        Self {
-            access_level,
-            invalid_attempts: 0,
-            lock: AccountLockState::Unlocked,
-            validation: AccountValidationStatus::Existing,
-            censored: false,
-        }
-    }
-
-    /// Constructs the spec defaults for a freshly registered user.
-    fn awaiting_validation() -> Self {
-        Self {
-            access_level: 2,
-            invalid_attempts: 0,
-            lock: AccountLockState::Unlocked,
-            validation: AccountValidationStatus::AwaitingSysopValidation,
-            censored: false,
-        }
-    }
-
-    fn is_censored(&self) -> bool {
-        self.censored
-    }
-
-    fn set_censored(&mut self, value: bool) {
-        self.censored = value;
-    }
-
-    fn invalid_attempts(&self) -> u32 {
-        self.invalid_attempts
-    }
-
-    fn is_account_locked(&self) -> bool {
-        self.lock.is_locked()
-    }
-
-    fn access_level(&self) -> u8 {
-        self.access_level
-    }
-
-    fn is_locked_out(&self) -> bool {
-        self.access_level <= 1 || self.is_account_locked()
-    }
-
-    fn bump_invalid_attempts(&mut self) {
-        self.invalid_attempts = self.invalid_attempts.saturating_add(1);
-    }
-
-    fn clear_invalid_attempts(&mut self) {
-        self.invalid_attempts = 0;
-    }
-
-    fn lock_account(&mut self) {
-        self.lock = AccountLockState::Locked;
-        self.invalid_attempts = 0;
-    }
-
-    fn is_new_user(&self) -> bool {
-        self.validation.is_new_user()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AnsiColourPreference {
-    Disabled,
-    Enabled,
-}
-
-impl AnsiColourPreference {
-    fn enabled(self) -> bool {
-        matches!(self, Self::Enabled)
-    }
-}
-
-impl From<bool> for AnsiColourPreference {
-    fn from(value: bool) -> Self {
-        if value {
-            Self::Enabled
-        } else {
-            Self::Disabled
-        }
-    }
-}
-
-/// User-entered profile data and presentation preferences.
-#[derive(Debug, Clone)]
-struct Profile {
-    /// Free-text "City, State" location.
-    location: Option<String>,
-    /// Phone number on file.
-    phone_number: Option<String>,
-    /// Email address on file.
-    email: Option<String>,
-    /// Preferred terminal width (`0` = auto).
-    line_length: u32,
-    /// Whether the user wants ANSI colour output.
-    ansi_colour: AnsiColourPreference,
-    /// Timestamp the account was first created.
-    account_created: SystemTime,
-    /// User preference flags.
-    flags: BTreeSet<UserFlag>,
-}
-
-impl Profile {
-    /// Constructs the profile defaults for an existing account.
-    fn existing(account_created: SystemTime) -> Self {
-        Self {
-            location: None,
-            phone_number: None,
-            email: None,
-            line_length: 0,
-            ansi_colour: AnsiColourPreference::Disabled,
-            account_created,
-            flags: BTreeSet::new(),
-        }
-    }
-
-    /// Constructs a profile from the registration form fields.
-    fn registered(
-        location: Option<String>,
-        phone_number: Option<String>,
-        email: Option<String>,
-        line_length: u32,
-        ansi_colour: bool,
-        account_created: SystemTime,
-        flags: BTreeSet<UserFlag>,
-    ) -> Self {
-        Self {
-            location,
-            phone_number,
-            email,
-            line_length,
-            ansi_colour: AnsiColourPreference::from(ansi_colour),
-            account_created,
-            flags,
-        }
-    }
-
-    fn location(&self) -> Option<&str> {
-        self.location.as_deref()
-    }
-
-    fn phone_number(&self) -> Option<&str> {
-        self.phone_number.as_deref()
-    }
-
-    fn email(&self) -> Option<&str> {
-        self.email.as_deref()
-    }
-
-    fn line_length(&self) -> u32 {
-        self.line_length
-    }
-
-    fn ansi_colour(&self) -> bool {
-        self.ansi_colour.enabled()
-    }
-
-    fn account_created(&self) -> SystemTime {
-        self.account_created
-    }
-
-    fn flags(&self) -> &BTreeSet<UserFlag> {
-        &self.flags
-    }
-}
-
-/// Ratio enforcement settings for a [`User`].
-#[derive(Debug, Clone)]
-struct RatioPolicy {
-    /// Active ratio enforcement mode.
-    mode: RatioMode,
-    /// Ratio threshold (`0` means infinite for an enabled mode).
-    value: u32,
-}
-
-impl RatioPolicy {
-    /// Constructs a disabled ratio policy.
-    fn disabled() -> Self {
-        Self {
-            mode: RatioMode::Disabled,
-            value: 0,
-        }
-    }
-
-    /// Constructs a ratio policy from registration/default config.
-    fn new(mode: RatioMode, value: u32) -> Self {
-        Self { mode, value }
-    }
-
-    fn mode(&self) -> RatioMode {
-        self.mode
-    }
-
-    fn value(&self) -> u32 {
-        self.value
-    }
-}
-
-/// Conference memberships, current position, and messaging counters.
-#[derive(Debug, Clone)]
-struct ConferenceAccess {
-    /// Per-conference membership rows.
-    memberships: Vec<ConferenceMembership>,
-    /// Last joined `(conference, msgbase)` pair.
-    last_joined: Option<MessageBaseRef>,
-    /// Running count of posted messages across all conferences.
-    messages_posted: u32,
-}
-
-impl ConferenceAccess {
-    /// Constructs an empty conference-access record.
-    fn new() -> Self {
-        Self {
-            memberships: Vec::new(),
-            last_joined: None,
-            messages_posted: 0,
-        }
-    }
-
-    fn memberships(&self) -> &[ConferenceMembership] {
-        &self.memberships
-    }
-
-    fn memberships_mut(&mut self) -> &mut [ConferenceMembership] {
-        &mut self.memberships
-    }
-
-    fn upsert_membership(&mut self, membership: ConferenceMembership) {
-        if let Some(existing) = self
-            .memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == membership.conference_number())
-        {
-            *existing = membership;
-        } else {
-            self.memberships.push(membership);
-        }
-    }
-
-    fn set_membership_granted(&mut self, conference_number: u32, granted: bool) -> bool {
-        if let Some(existing) = self
-            .memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == conference_number)
-        {
-            existing.set_granted(granted);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn has_membership(&self, conference: &Conference) -> bool {
-        crate::domain::conference::has_membership(&self.memberships, conference)
-    }
-
-    fn has_granted_membership_for(&self, conference_number: u32) -> bool {
-        self.memberships
-            .iter()
-            .any(|m| m.conference_number() == conference_number && m.is_granted())
-    }
-
-    fn last_joined(&self) -> Option<MessageBaseRef> {
-        self.last_joined
-    }
-
-    fn record_join(&mut self, conference: &Conference, msgbase: &MessageBase) {
-        self.last_joined = Some(MessageBaseRef::new(conference.number(), msgbase.number()));
-    }
-
-    fn read_pointers_for(&self, msgbase: MessageBaseRef) -> Option<&ReadPointers> {
-        self.memberships
-            .iter()
-            .find(|m| m.conference_number() == msgbase.conference_number())
-            .and_then(|m| m.pointers_for(msgbase.msgbase_number()))
-    }
-
-    fn read_pointers_for_mut(&mut self, msgbase: MessageBaseRef) -> Option<&mut ReadPointers> {
-        self.memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == msgbase.conference_number())
-            .and_then(|m| m.pointers_for_mut(msgbase.msgbase_number()))
-    }
-
-    fn upsert_read_pointers(&mut self, pointers: ReadPointers, conference_number: u32) -> bool {
-        let Some(membership) = self
-            .memberships
-            .iter_mut()
-            .find(|m| m.conference_number() == conference_number)
-        else {
-            return false;
-        };
-        membership.upsert_pointers(pointers);
-        true
-    }
-
-    fn messages_posted(&self) -> u32 {
-        self.messages_posted
-    }
-
-    fn bump_messages_posted(&mut self) {
-        self.messages_posted = self.messages_posted.saturating_add(1);
-    }
 }
 
 /// A registered BBS user.
@@ -821,27 +293,21 @@ impl User {
             password_last_updated,
         )?;
         credentials.set_reset_required(force_password_reset);
-        let mut account = if is_new_user {
-            AccountStatus::awaiting_validation()
-        } else {
-            AccountStatus::existing(access_level)
-        };
-        // `awaiting_validation` hard-codes access_level = 2; respect the
-        // persisted value so sysop edits and tier changes round-trip.
-        account.access_level = access_level;
-        account.invalid_attempts = invalid_attempts;
-        if account_locked {
-            account.lock = AccountLockState::Locked;
-        }
-        account.censored = censored;
-        let usage = UsageAccounting {
+        let account = AccountStatus::from_persisted(
+            access_level,
+            invalid_attempts,
+            account_locked,
+            is_new_user,
+            censored,
+        );
+        let usage = UsageAccounting::from_persisted(
             times_called,
+            times_called_today,
             last_call,
             time_limit_per_call,
             time_limit_per_day,
             time_used_today,
-            times_called_today,
-        };
+        );
         let profile = Profile::registered(
             location,
             phone_number,
@@ -852,11 +318,8 @@ impl User {
             flags,
         );
         let ratio = RatioPolicy::new(ratio_mode, ratio_value);
-        let conferences = ConferenceAccess {
-            memberships,
-            last_joined,
-            messages_posted,
-        };
+        let conferences =
+            ConferenceAccess::from_persisted(memberships, last_joined, messages_posted);
         Ok(Self {
             slot_number,
             handle,
@@ -1309,34 +772,34 @@ impl User {
         PersistedUser {
             slot_number: self.slot_number,
             handle: self.handle.clone(),
-            password_hash_kind: self.credentials.hash_kind,
-            password_hash: self.credentials.hash.clone(),
-            password_salt: self.credentials.salt.clone(),
-            password_last_updated: self.credentials.last_updated,
-            force_password_reset: self.credentials.reset.is_required(),
-            access_level: self.account.access_level,
-            invalid_attempts: self.account.invalid_attempts,
+            password_hash_kind: self.credentials.hash_kind(),
+            password_hash: self.credentials.hash().to_string(),
+            password_salt: self.credentials.salt().map(str::to_string),
+            password_last_updated: self.credentials.last_updated(),
+            force_password_reset: self.credentials.reset_required(),
+            access_level: self.account.access_level(),
+            invalid_attempts: self.account.invalid_attempts(),
             account_locked: self.account.is_account_locked(),
             is_new_user: self.account.is_new_user(),
-            censored: self.account.censored,
-            times_called: self.usage.times_called,
-            times_called_today: self.usage.times_called_today,
-            last_call: self.usage.last_call,
-            time_limit_per_call: self.usage.time_limit_per_call,
-            time_limit_per_day: self.usage.time_limit_per_day,
-            time_used_today: self.usage.time_used_today,
-            location: self.profile.location.clone(),
-            phone_number: self.profile.phone_number.clone(),
-            email: self.profile.email.clone(),
-            line_length: self.profile.line_length,
-            ansi_colour: self.profile.ansi_colour.enabled(),
-            account_created: self.profile.account_created,
-            flags: self.profile.flags.clone(),
-            ratio_mode: self.ratio.mode,
-            ratio_value: self.ratio.value,
-            memberships: self.conferences.memberships.clone(),
-            last_joined: self.conferences.last_joined,
-            messages_posted: self.conferences.messages_posted,
+            censored: self.account.is_censored(),
+            times_called: self.usage.times_called(),
+            times_called_today: self.usage.times_called_today(),
+            last_call: self.usage.last_call(),
+            time_limit_per_call: self.usage.time_limit_per_call(),
+            time_limit_per_day: self.usage.time_limit_per_day(),
+            time_used_today: self.usage.time_used_today(),
+            location: self.profile.location().map(str::to_string),
+            phone_number: self.profile.phone_number().map(str::to_string),
+            email: self.profile.email().map(str::to_string),
+            line_length: self.profile.line_length(),
+            ansi_colour: self.profile.ansi_colour(),
+            account_created: self.profile.account_created(),
+            flags: self.profile.flags().clone(),
+            ratio_mode: self.ratio.mode(),
+            ratio_value: self.ratio.value(),
+            memberships: self.conferences.memberships().to_vec(),
+            last_joined: self.conferences.last_joined(),
+            messages_posted: self.conferences.messages_posted(),
         }
     }
 
@@ -1365,130 +828,6 @@ impl User {
     ) {
         self.credentials.record_change(hash, salt, kind, at);
     }
-}
-
-/// Bundle of fields collected during the new-user registration
-/// sub-flow, plus the freshly computed password hash, that
-/// [`User::register_new`] consumes.
-///
-/// Mirrors the `profile` argument of
-/// `session.allium:CompleteNewUserRegistration`. The slot number is
-/// not part of the draft — the repository's
-/// [`crate::domain::user_repository::UserRepository::create_user`]
-/// allocates it inside its own transaction and threads it into
-/// `register_new(slot, draft)`. Ratio defaults come from
-/// `core/config.default_ratio_*`.
-#[derive(Debug, Clone)]
-pub struct NewUserDraft {
-    /// Handle the user typed at the registration prompt.
-    pub handle: String,
-    /// Free-text "City, State" location.
-    pub location: Option<String>,
-    /// Phone number.
-    pub phone_number: Option<String>,
-    /// Email address.
-    pub email: Option<String>,
-    /// Pre-computed password hash bytes.
-    pub password_hash: String,
-    /// Salt the hash was bound to (`None` for hash kinds that don't
-    /// take one).
-    pub password_salt: Option<String>,
-    /// Algorithm used for `password_hash`.
-    pub password_hash_kind: PasswordHashKind,
-    /// Preferred terminal width (`0` = auto).
-    pub line_length: u32,
-    /// Whether the user wants ANSI colour output.
-    pub ansi_colour: bool,
-    /// Initial preference flags.
-    pub flags: BTreeSet<UserFlag>,
-    /// Ratio enforcement mode (`core/config.default_ratio_mode`).
-    pub ratio_mode: RatioMode,
-    /// Ratio threshold (`core/config.default_ratio_value`).
-    pub ratio_value: u32,
-    /// Timestamp recorded as `account_created`, `last_call`, and
-    /// `password_last_updated`.
-    pub now: SystemTime,
-}
-
-/// Complete snapshot of a [`User`]'s persistent state as read from
-/// durable storage.
-///
-/// Sibling to [`NewUserDraft`]: where that bundles fresh-account
-/// fields, this bundles every piece of state the BBS persists for an
-/// already-existing account. A storage adapter (e.g.
-/// [`crate::adapters::sqlite_user_repository::SqliteUserRepository`])
-/// reads its columns into a [`PersistedUser`] and constructs a
-/// [`User`] via [`User::from_persisted`].
-#[derive(Debug, Clone)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "this struct mirrors a row of boolean columns persisted in the user store; \
-              compressing them into enums would obscure the schema mapping"
-)]
-pub struct PersistedUser {
-    /// Stable account id; `1` is the sysop.
-    pub slot_number: u32,
-    /// Unique login name.
-    pub handle: String,
-    /// Algorithm used to verify the stored password hash.
-    pub password_hash_kind: PasswordHashKind,
-    /// Opaque stored password hash.
-    pub password_hash: String,
-    /// Salt the hash was bound to (`None` for hash kinds that don't
-    /// take one).
-    pub password_salt: Option<String>,
-    /// Timestamp when the credential triple was last rotated.
-    pub password_last_updated: SystemTime,
-    /// Whether the next logon must force a password change.
-    pub force_password_reset: bool,
-    /// `0..=255` access tier (`0` = locked out).
-    pub access_level: u8,
-    /// Recent invalid password attempts.
-    pub invalid_attempts: u32,
-    /// Independent account-lock flag set by lockout rules/admin tools.
-    pub account_locked: bool,
-    /// Whether the account is awaiting sysop validation.
-    pub is_new_user: bool,
-    /// Whether the user's posts are silently downgraded to
-    /// `private_to_sysop`.
-    pub censored: bool,
-    /// Number of completed logons recorded for this user.
-    pub times_called: u32,
-    /// Number of completed logons in the current accounting day.
-    pub times_called_today: u32,
-    /// Timestamp of the most recently completed logon, if any.
-    pub last_call: Option<SystemTime>,
-    /// Per-call wall-clock allowance.
-    pub time_limit_per_call: Duration,
-    /// Combined per-day allowance.
-    pub time_limit_per_day: Duration,
-    /// Wall-clock time used today.
-    pub time_used_today: Duration,
-    /// Free-text "City, State" location.
-    pub location: Option<String>,
-    /// Phone number.
-    pub phone_number: Option<String>,
-    /// Email address.
-    pub email: Option<String>,
-    /// Preferred terminal width (`0` = auto).
-    pub line_length: u32,
-    /// Whether the user wants ANSI colour output.
-    pub ansi_colour: bool,
-    /// Timestamp the account was first created.
-    pub account_created: SystemTime,
-    /// User preference flags.
-    pub flags: BTreeSet<UserFlag>,
-    /// Ratio enforcement mode in effect for this user.
-    pub ratio_mode: RatioMode,
-    /// Ratio threshold (`0` with non-disabled mode = infinite).
-    pub ratio_value: u32,
-    /// Per-conference membership rows (already including any read
-    /// pointer rows).
-    pub memberships: Vec<ConferenceMembership>,
-    /// Last joined `(conference, msgbase)` pair, if any.
-    pub last_joined: Option<MessageBaseRef>,
-    /// Running count of posted messages across all conferences.
-    pub messages_posted: u32,
 }
 
 /// Errors returned by [`User::new`] and [`User::from_persisted`].

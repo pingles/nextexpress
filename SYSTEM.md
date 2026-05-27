@@ -311,10 +311,10 @@ The current top files by line count:
 
 | File | Lines | Notes |
 |---|---|---|
-| `domain/user.rs` | 2141 | Aggregate + private value objects (`Credentials`, `AccountStatus`, `UsageAccounting`, `Profile`, `RatioPolicy`, `ConferenceAccess`) + co-located tests. |
 | `domain/session/tests.rs` | 1973 | Cross-capability session tests, internally grouped but monolithic. |
 | `adapters/telnet_listener.rs` | 1706 | ~180 lines of production `TelnetListener` + `TelnetTerminal`; ~1500 lines of in-process integration tests. |
 | `app/session_flow.rs` | 1564 | Remaining use cases over `(Session, UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade. |
+| `domain/user/mod.rs` | 1480 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
 | `adapters/sqlite_user_repository.rs` | 1097 | Schema init + row codec + queries + ~30 tests. |
 | `adapters/file_mail_store.rs` | 1033 | Per-msgbase JSON store + lock + tests. |
 | `app/wire_text.rs` | 937 | Wire-format constants and rendering helpers. |
@@ -384,52 +384,11 @@ What is less idiomatic and worth flagging:
 
 ## Large-scale refactorings worth considering
 
-The first three are practical and can be staged in along normal slice
-work. Items 4 and 5 are bigger and should wait for a triggering need.
+The list below skips refactorings already landed (see the git log for
+the `NewUserDraft` work that replaced `BuildUserFn`, and the
+`domain/user/` value-object split).
 
-### 1. Replace the `BuildUserFn` callback with a `NewUserDraft` value
-
-`UserRepository::allocate_slot_and_create(build_user: BuildUserFn<'_>)`
-takes a boxed `FnOnce(u32) -> Result<User, UserError>`. Every caller
-builds the same way: validate inputs, then call `User::new(slot, …)`.
-The callback adds object-safety drag without expressive power.
-
-A cleaner shape:
-
-```rust
-pub trait UserRepository {
-    fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError>;
-}
-```
-
-where `NewUserDraft` is a domain value type that owns the validated
-input fields (handle, hash kind, hash, salt, registered_at, access
-level, …). The repository allocates the slot inside its transaction
-and constructs the `User` itself. `UserCreationError::Build` still
-covers `User::new` rejections.
-
-Benefits: no `Box<dyn FnOnce>`, no lifetime parameter on the alias,
-the contract is fully data-shaped, and the adapter no longer needs
-to invoke caller code while holding its own lock. The migration is
-mechanical — there are two call sites
-(`session_flow::NewUserRegistrationFlow::complete` and the seeder).
-
-### 2. Split `domain/user.rs` along its existing value-object lines
-
-The aggregate already groups its private state into six value objects
-(`Credentials`, `AccountStatus`, `UsageAccounting`, `Profile`,
-`RatioPolicy`, `ConferenceAccess`). At 2141 lines the file is becoming
-review-painful even with that grouping. Moving each value object into
-`domain/user/{credentials,account_status,…}.rs` would let those types
-own their own constructors, validations, and tests, while
-`domain/user/mod.rs` keeps the `User` aggregate, its public accessors,
-and the cross-VO invariants.
-
-This pairs naturally with #1: `NewUserDraft` lives in
-`domain/user/draft.rs` and is the only construction path the
-repository sees.
-
-### 3. Push terminal I/O out of `menu_flow/*` into a small renderer port
+### 1. Push terminal I/O out of `menu_flow/*` into a small renderer port
 
 The `menu_flow/*` handlers each do roughly the same dance: call the
 matching `menu/*` use case, match on the outcome enum, write a wire
@@ -449,27 +408,7 @@ outcome → renderer pipeline. The cost is one new trait and a layer of
 indirection. Probably worth doing the next time a new menu command
 needs a non-trivial outcome enum.
 
-### 4. Remove `panic!` from `domain/conference_visit.rs` via state typing
-
-The aggregate has six `panic!("expected Resolved")` calls on accessors
-that are only valid in the resolved state. The accessors are unsafe
-without an upstream invariant the type doesn't enforce.
-
-Two clean alternatives:
-
-- **State-typed wrappers** matching the session approach: `PendingVisit`
-  vs `ResolvedVisit`, with accessors only defined on the resolved
-  variant. The state types preserve compile-time correctness through
-  call chains the same way `domain::session::typed` does today.
-- **Make the accessors return `Option<T>` / `Result<T, _>` and push the
-  resolution check to the caller.** Cheaper but the type system stops
-  helping.
-
-Worth doing now because `conference_visit.rs` is small enough that the
-refactor fits in one slice, and the existing pattern is duplicating
-behaviour that `session::typed` already proves works.
-
-### 5. Carve `app/session_flow.rs` into per-rule modules
+### 2. Carve `app/session_flow.rs` into per-rule modules
 
 At 1564 lines, `session_flow.rs` has accreted: `name_typed`,
 `verify_password`, `verify_new_user_password`, `enter_menu`,
@@ -497,7 +436,7 @@ Each file lands around 150–300 lines, errors live next to the use case
 they belong to, and the registration sub-flow stops being a struct
 that everyone has to import alongside the free functions.
 
-### 6. Move large adapter test modules into sibling files
+### 3. Move large adapter test modules into sibling files
 
 `adapters/telnet_listener.rs` is 1706 lines, of which ~1500 are the
 test module: a `FakeTerminal`, a `StaticScreens`, and dozens of
@@ -533,12 +472,7 @@ move, no behavioural change.
 
 ## Suggested order
 
-1. Items #1 and #4 are the lowest-risk wins — both change the shape
-   of one small surface and remove either an awkward callback or a
-   panic family.
-2. Item #2 is a mechanical move that's easier after #1 (the new
-   `NewUserDraft` lives in the new `domain/user/` subdirectory).
-3. Item #5 should follow whenever the next slice would otherwise
-   touch `session_flow.rs`.
-4. Items #3 and #6 are opportunistic; do them when a new menu command
+1. Item #2 (carve `app/session_flow.rs`) follows whenever the next
+   slice would otherwise touch `session_flow.rs`.
+2. Items #1 and #3 are opportunistic; do them when a new menu command
    or a new adapter would otherwise replicate the existing pattern.
