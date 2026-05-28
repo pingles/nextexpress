@@ -30,9 +30,11 @@ top-level modules under `rust/src/`:
   (`Terminal`, `ScreenRepository`, `MailStores`), configuration types,
   the runtime value (`Runtime` + `AppServices`), the per-connection
   orchestrator (`SessionDriver`), three sub-flows (`LoginFlow`,
-  `RegistrationFlow`, `MenuFlow`), and the menu use-case modules
+  `RegistrationFlow`, `MenuFlow`), the menu use-case modules
   (`app/menu/*`) paired with their terminal-aware handlers
-  (`app/menu_flow/*`). Production code under `app/` is forbidden from
+  (`app/menu_flow/*`), and the `ColourTerminal` decorator
+  (`app/colour_terminal`) that strips ANSI SGR escapes from output
+  while the `M`-toggled colour mode is off. Production code under `app/` is forbidden from
   importing `crate::adapters`; the boundary is enforced by
   `tests/architecture.rs::app_does_not_depend_on_adapters_in_production_code`.
 
@@ -115,6 +117,7 @@ flowchart LR
 
     AppRun --> Telnet["TelnetListener::bind"]
     Telnet --> Terminal["TelnetTerminal\n(impls app::Terminal)"]
+    Terminal --> Colour["ColourTerminal\n(strips ANSI when M-off)"]
     Telnet --> Driver["SessionDriver\n(per connection)"]
 
     Driver --> Start["start (banner + copyright)"]
@@ -232,7 +235,13 @@ the prompts and wire rendering. `MenuFlow` collects prompts and maps
 outcomes to wire text; the use-case module never sees the terminal.
 Adding a new command means adding a use case under `app/menu/`, a
 handler under `app/menu_flow/`, a `MenuCommand` arm, and (usually) a
-domain rule. No other plumbing is needed.
+domain rule. It must also be advertised in the main menu: the
+`main_menu_advertises_exactly_the_implemented_commands` test pins
+`Conf02/Menu5.txt` against the `MenuCommand` set via an exhaustive
+`advertised_token` match, so a new variant fails to compile until it is
+given a menu token and the assertion then fails until the menu asset
+lists it (simple toggles/queries are otherwise handled inline in
+`MenuFlow::dispatch` rather than in their own `app/menu/*` file).
 
 ### Driver and sub-flow split
 

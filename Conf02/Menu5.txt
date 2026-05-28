@@ -7,7 +7,7 @@
 
   MESSAGES
     R <n>    Read message number <n>
-    M        Scan all visible messages
+    MS       Scan all visible messages
     N        Scan new messages
     E [to]   Enter a message
     C        Comment to sysop
@@ -26,6 +26,10 @@
     S        User stats
     T        Show current time
     Q        Toggle quiet mode
+    M        Toggle ANSI colour
+    X        Toggle expert mode
+    ?        Re-display this menu
+    ^ <topic> Help on a topic
     H        Help
     VER      Version information
     G        Goodbye (log off)

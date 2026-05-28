@@ -588,8 +588,22 @@ mod tests {
         assert_eq!(parse_menu_command("VS"), MenuCommand::Unknown);
     }
 
+    /// The checked-in main menu (`Conf02/Menu5.txt`) must advertise
+    /// **exactly** the set of menu commands the parser implements. The
+    /// expected set is derived from [`advertised_token`] applied to
+    /// every `MenuCommand` variant ([`every_menu_command`]), so adding
+    /// a command fails this test — first to *compile*, because
+    /// `advertised_token`'s match is exhaustive and demands a token for
+    /// the new variant, and then on the assertion below until the menu
+    /// asset lists it. Removing or renaming a command likewise fails
+    /// until the menu drops or renames the entry.
+    ///
+    /// The advertised set is read back from the menu by taking the
+    /// first whitespace token of each indented line and keeping the
+    /// ones the parser recognises, so a stale entry (e.g. a command
+    /// that no longer parses) is caught too.
     #[test]
-    fn checked_in_main_menu_advertises_only_implemented_commands() {
+    fn main_menu_advertises_exactly_the_implemented_commands() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("crate lives under repository root")
@@ -601,32 +615,91 @@ mod tests {
             // checked-out repository and validates the asset there.
             return;
         };
-        let advertised = advertised_commands(&menu);
-        let expected = [
-            "C", "E", "EH", "FW", "G", "H", "J", "K", "M", "MV", "N", "Q", "R", "RP", "S", "T",
-            "VER",
-        ]
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
 
-        assert_eq!(advertised, expected);
-        for command in advertised {
-            assert_ne!(parse_menu_command(command), MenuCommand::Unknown);
+        let advertised: std::collections::BTreeSet<String> = menu
+            .lines()
+            .filter(|line| line.starts_with(' '))
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|token| parse_menu_command(token) != MenuCommand::Unknown)
+            .map(str::to_string)
+            .collect();
+
+        let expected: std::collections::BTreeSet<String> = every_menu_command()
+            .iter()
+            .filter_map(advertised_token)
+            .map(str::to_string)
+            .collect();
+
+        assert_eq!(
+            advertised, expected,
+            "Conf02/Menu5.txt must advertise exactly the implemented menu \
+             commands — update the menu (and `advertised_token`) when adding \
+             or removing a command",
+        );
+    }
+
+    /// The menu token each `MenuCommand` is advertised under in the main
+    /// menu, or `None` for commands that are not advertised
+    /// (`Unknown`). The match is **exhaustive on purpose**: a new
+    /// `MenuCommand` variant will not compile until it is given a token
+    /// here, which makes
+    /// [`main_menu_advertises_exactly_the_implemented_commands`] fail
+    /// until `Conf02/Menu5.txt` lists it. Add the new variant to
+    /// [`every_menu_command`] too so it is counted.
+    fn advertised_token(command: &MenuCommand) -> Option<&'static str> {
+        match command {
+            MenuCommand::Logoff => Some("G"),
+            MenuCommand::Join(_) => Some("J"),
+            MenuCommand::Read(_) => Some("R"),
+            MenuCommand::Scan(ScanArg::All) => Some("MS"),
+            MenuCommand::Scan(ScanArg::New) => Some("N"),
+            MenuCommand::Post(_) => Some("E"),
+            MenuCommand::CommentToSysop => Some("C"),
+            MenuCommand::Reply(_) => Some("RP"),
+            MenuCommand::Forward(_) => Some("FW"),
+            MenuCommand::Kill(_) => Some("K"),
+            MenuCommand::Move(_) => Some("MV"),
+            MenuCommand::EditHeader(_) => Some("EH"),
+            MenuCommand::ShowTime => Some("T"),
+            MenuCommand::ShowVersion => Some("VER"),
+            MenuCommand::ShowHelp => Some("H"),
+            MenuCommand::QuietToggle => Some("Q"),
+            MenuCommand::ShowStats => Some("S"),
+            MenuCommand::ExpertToggle => Some("X"),
+            MenuCommand::ShowMenu => Some("?"),
+            MenuCommand::TopicHelp(_) => Some("^"),
+            MenuCommand::AnsiToggle => Some("M"),
+            MenuCommand::Unknown => None,
         }
     }
 
-    fn advertised_commands(menu: &str) -> std::collections::BTreeSet<&str> {
-        menu.lines()
-            .filter_map(|line| {
-                if !line.starts_with("    ") {
-                    return None;
-                }
-                let command = line.split_whitespace().next()?;
-                command
-                    .chars()
-                    .all(|ch| ch.is_ascii_uppercase())
-                    .then_some(command)
-            })
-            .collect()
+    /// One sample of every `MenuCommand` variant, used to enumerate the
+    /// implemented command set. Keep in sync with [`advertised_token`]
+    /// (the compiler enforces that match; add the matching sample here).
+    fn every_menu_command() -> Vec<MenuCommand> {
+        vec![
+            MenuCommand::Logoff,
+            MenuCommand::Join(NumberArg::Missing),
+            MenuCommand::Read(NumberArg::Missing),
+            MenuCommand::Scan(ScanArg::All),
+            MenuCommand::Scan(ScanArg::New),
+            MenuCommand::Post(PostArg::Missing),
+            MenuCommand::CommentToSysop,
+            MenuCommand::Reply(NumberArg::Missing),
+            MenuCommand::Forward(NumberArg::Missing),
+            MenuCommand::Kill(NumberArg::Missing),
+            MenuCommand::Move(NumberArg::Missing),
+            MenuCommand::EditHeader(NumberArg::Missing),
+            MenuCommand::ShowTime,
+            MenuCommand::ShowVersion,
+            MenuCommand::ShowHelp,
+            MenuCommand::QuietToggle,
+            MenuCommand::ShowStats,
+            MenuCommand::ExpertToggle,
+            MenuCommand::ShowMenu,
+            MenuCommand::TopicHelp(String::new()),
+            MenuCommand::AnsiToggle,
+            MenuCommand::Unknown,
+        ]
     }
 }
