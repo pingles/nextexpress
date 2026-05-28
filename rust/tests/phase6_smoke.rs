@@ -137,7 +137,7 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
     // auto-scan-on-join. It must surface the seeded unread message
     // (SCREEN_MAILSCAN screen + "You have 1 new message" summary)
     // before the menu prompt.
-    let post_auth = drain_until_capturing(&mut stream, b"Command: ")
+    let post_auth = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
     if !contains(&post_auth, b"New mail") {
         return Err(format!(
@@ -156,7 +156,7 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
     // (From, To, Subject, Conf), the body line, and a return to
     // the menu prompt.
     write_line(&mut stream, b"R 1")?;
-    let post_r = drain_until_capturing(&mut stream, b"Command: ")
+    let post_r = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 1: {e}"))?;
     if !contains(&post_r, b"Subject") || !contains(&post_r, b"Welcome to NextExpress") {
         return Err(format!(
@@ -175,7 +175,7 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
     // (via ReadMail) and last_scanned to 1, so a re-scan from
     // last_scanned + 1 finds no further unread messages.
     write_line(&mut stream, b"N")?;
-    let post_n = drain_until_capturing(&mut stream, b"Command: ")
+    let post_n = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after N: {e}"))?;
     if !contains(&post_n, b"No new mail.") {
         return Err(format!(
@@ -191,7 +191,7 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
     // the "No new mail." summary. Pins the `unread_count > 0`
     // boundary that gates the SCREEN_MAILSCAN render.
     write_line(&mut stream, b"J 1")?;
-    let post_j = drain_until_capturing(&mut stream, b"Command: ")
+    let post_j = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after J 1: {e}"))?;
     if contains(&post_j, b"New mail in this conference") {
         return Err(format!(

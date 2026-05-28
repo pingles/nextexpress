@@ -57,8 +57,15 @@ pub(crate) const ANSI_PROMPT: &[u8] = b"Use ANSI graphics? (Y/n) ";
 /// `amiexpress/express.e:30018`.
 pub(crate) const NEW_USER_PASSWORD_PROMPT: &[u8] = b"Enter New User Password: ";
 
-/// Prompt printed after each menu screen, awaiting a command.
-pub(crate) const MENU_PROMPT: &[u8] = b"Command: ";
+/// The invariant tail of the menu prompt rendered by
+/// [`render_menu_prompt`] — `mins. left): ` (Tier A quickwin A4). The
+/// leading BBS name, conference block and minute count vary per
+/// session, but this suffix is constant, so it is the marker tests
+/// drain on to detect "the menu is awaiting a command". Test-only: the
+/// menu loop renders the full prompt via [`render_menu_prompt`] rather
+/// than referencing this constant.
+#[cfg(test)]
+pub(crate) const MENU_PROMPT_SUFFIX: &[u8] = b"mins. left): ";
 
 /// Two-line copyright block printed on every accepted connection,
 /// directly after the BBS title banner. The `NextExpress` line sits
@@ -610,6 +617,55 @@ pub(crate) fn render_stats_screen(
     out
 }
 
+/// Renders the menu prompt (Tier A quickwin A4), mirroring the default
+/// branch of `displayMenuPrompt()` (`amiexpress/express.e:28413-28421`):
+///
+/// ```text
+///   <bbsName> [<confNum>:<confLabel>] Menu (<mins> mins. left):
+/// ```
+///
+/// with the legacy ANSI colour run (`[35m` magenta name, `[36m` cyan
+/// number / label, `[34m` blue separator, `[33m` yellow minutes). The
+/// prompt has a trailing space and no CRLF — the user types their
+/// command on the same line.
+///
+/// The sysop-supplied custom-prompt (MCI) branch
+/// (`amiexpress/express.e:28409-28412`) is deferred.
+///
+/// # Parameters
+/// - `bbs_name`: the configured BBS name (legacy `cmds.bbsName`).
+/// - `conference`: the `(number, label)` of the open conference, where
+///   `label` is the conference name (optionally `"<name> - <msgbase>"`
+///   for multi-msgbase conferences). `None` for the defensive case
+///   where a menu session has no open conference, which renders the
+///   prompt without the `[<num>:<label>]` segment.
+/// - `mins_left`: per-call minutes remaining, `(timeTotal -
+///   timeUsed) / 60`.
+///
+/// # Returns
+/// The wire bytes of the prompt, ready to write to the terminal.
+pub(crate) fn render_menu_prompt(
+    bbs_name: &str,
+    conference: Option<(u32, &str)>,
+    mins_left: u64,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bbs_name.len() + 64);
+    out.extend_from_slice(b"\x1b[0m\x1b[35m");
+    out.extend_from_slice(bbs_name.as_bytes());
+    out.extend_from_slice(b" \x1b[0m");
+    if let Some((number, label)) = conference {
+        out.extend_from_slice(b"[\x1b[36m");
+        out.extend_from_slice(number.to_string().as_bytes());
+        out.extend_from_slice(b"\x1b[34m:\x1b[36m");
+        out.extend_from_slice(label.as_bytes());
+        out.extend_from_slice(b"\x1b[0m] ");
+    }
+    out.extend_from_slice(b"Menu (\x1b[33m");
+    out.extend_from_slice(mins_left.to_string().as_bytes());
+    out.extend_from_slice(b"\x1b[0m mins. left): ");
+    out
+}
+
 /// Formats the auto-rejoin announcement (Slice 30 / Slice 34a).
 /// Mirrors the legacy `joinConf` output at
 /// `amiexpress/express.e:5071-5073`:
@@ -769,6 +825,31 @@ mod tests {
         assert!(
             text.contains("Lst Date On\x1b[33m:\x1b[0m 01-Jan-1970 00:00:00\r\n"),
             "expected epoch date for never-called user, got: {text:?}",
+        );
+    }
+
+    #[test]
+    fn render_menu_prompt_matches_legacy_default_format() {
+        // Tier A quickwin A4 (menu-prompt parity): the default
+        // `displayMenuPrompt` format at `amiexpress/express.e:28419` —
+        // `<bbsName> [<confNum>:<confName>] Menu (<mins> mins. left): `
+        // with the legacy ANSI colour run. `<mins>` is
+        // `(timeTotal - timeUsed) / 60`.
+        assert_eq!(
+            render_menu_prompt("NextExpress", Some((1, "Main")), 58),
+            &b"\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m58\x1b[0m mins. left): "[..],
+        );
+    }
+
+    #[test]
+    fn render_menu_prompt_without_conference_omits_the_bracket_segment() {
+        // Defensive case: a menu session with no open conference
+        // (e.g. a user with no conference access). The legacy always
+        // has a current conference, so this is a NextExpress fallback —
+        // the `[<num>:<label>]` segment is dropped, the rest is intact.
+        assert_eq!(
+            render_menu_prompt("NextExpress", None, 0),
+            &b"\x1b[0m\x1b[35mNextExpress \x1b[0mMenu (\x1b[33m0\x1b[0m mins. left): "[..],
         );
     }
 

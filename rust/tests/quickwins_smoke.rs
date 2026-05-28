@@ -47,7 +47,7 @@ async fn t_command_renders_legacy_it_is_format() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"T").await;
-    let post_t = drain_until(&mut stream, b"Command: ").await;
+    let post_t = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
         contains(&post_t, b"It is "),
         "expected legacy `It is ` prefix after T, got {:?}",
@@ -68,7 +68,7 @@ async fn ver_command_renders_legacy_version_banner() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"VER").await;
-    let post_ver = drain_until(&mut stream, b"Command: ").await;
+    let post_ver = drain_until(&mut stream, b"mins. left): ").await;
     let needles: &[&[u8]] = &[
         "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n".as_bytes(),
         b"Original Version:\r\n",
@@ -106,7 +106,7 @@ async fn q_command_toggles_quiet_mode_on_then_off() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"Q").await;
-    let after_first = drain_until(&mut stream, b"Command: ").await;
+    let after_first = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
         contains(&after_first, b"\r\nQuiet Mode On\r\n"),
         "expected `Quiet Mode On` after first Q, got {:?}",
@@ -119,7 +119,7 @@ async fn q_command_toggles_quiet_mode_on_then_off() {
     );
 
     write_line(&mut stream, b"Q").await;
-    let after_second = drain_until(&mut stream, b"Command: ").await;
+    let after_second = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
         contains(&after_second, b"\r\nQuiet Mode Off\r\n"),
         "expected `Quiet Mode Off` after second Q, got {:?}",
@@ -146,7 +146,7 @@ async fn s_command_renders_user_stats_screen() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"S").await;
-    let post_s = drain_until(&mut stream, b"Command: ").await;
+    let post_s = drain_until(&mut stream, b"mins. left): ").await;
 
     let needles: &[&[u8]] = &[
         b"\x1b[32mUser Number\x1b[33m:\x1b[0m 1\r\n",
@@ -169,6 +169,40 @@ async fn s_command_renders_user_stats_screen() {
 }
 
 #[tokio::test]
+async fn menu_prompt_renders_bbs_name_conference_and_mins_left() {
+    // Slice A4 (menu-prompt parity). Mirrors the default branch of
+    // `displayMenuPrompt()` at `amiexpress/express.e:28419`:
+    // `<bbsName> [<confNum>:<confName>] Menu (<mins> mins. left): `
+    // with the legacy ANSI colour run. The seeded sysop auto-rejoins
+    // conference 1 ("Main") and the default config BBS name is
+    // "NextExpress". The `<mins>` value is session-dependent, so the
+    // assertion pins the stable prefix (up to the yellow minutes) and
+    // the suffix, not the digit count.
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Issue any command and capture the prompt that follows it.
+    write_line(&mut stream, b"T").await;
+    let buf = drain_until(&mut stream, b"mins. left): ").await;
+
+    assert!(
+        contains(
+            &buf,
+            b"\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m"
+        ),
+        "expected legacy menu-prompt prefix (bbs name + [1:Main] + Menu), got {:?}",
+        String::from_utf8_lossy(&buf)
+    );
+    assert!(
+        contains(&buf, b"\x1b[0m mins. left): "),
+        "expected legacy `mins. left): ` suffix, got {:?}",
+        String::from_utf8_lossy(&buf)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
 async fn h_command_falls_back_to_help_unavailable_when_no_asset() {
     // Slice A5 — `H` (BBS help). When `<bbs-loc>/BBSHelp.txt` is
     // absent the listener emits the verbatim legacy line at
@@ -178,7 +212,7 @@ async fn h_command_falls_back_to_help_unavailable_when_no_asset() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"H").await;
-    let post_h = drain_until(&mut stream, b"Command: ").await;
+    let post_h = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
         contains(
             &post_h,
@@ -206,7 +240,7 @@ async fn h_command_renders_bbs_help_asset_when_present() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"H").await;
-    let post_h = drain_until(&mut stream, b"Command: ").await;
+    let post_h = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
         contains(&post_h, b"== Help Screen ==\r\nType G to log off.\r\n"),
         "expected disk help asset (CRLF-normalised), got {:?}",
@@ -285,14 +319,14 @@ async fn spawn_listener_at_bbs_path(bbs_path: std::path::PathBuf) -> std::net::S
 
 /// Connects to `addr`, walks the standard auth handshake as the
 /// seeded `sysop` / `sysop`, and returns the open stream sitting at
-/// the menu's `Command: ` prompt.
+/// the menu prompt (whose stable tail is `mins. left): `).
 async fn sign_in_seeded_sysop(addr: &std::net::SocketAddr) -> TcpStream {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     drain_until(&mut stream, b"Enter your Name: ").await;
     write_line(&mut stream, b"sysop").await;
     drain_until(&mut stream, b"PassWord: ").await;
     write_line(&mut stream, b"sysop").await;
-    drain_until(&mut stream, b"Command: ").await;
+    drain_until(&mut stream, b"mins. left): ").await;
     stream
 }
 

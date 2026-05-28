@@ -113,7 +113,7 @@ fn walk_signin_loop(addr: &str) -> Result<(), String> {
 
     write_line(&mut stream, b"sysop")?;
 
-    let between_password_and_menu = drain_until_capturing(&mut stream, b"Command: ")
+    let between_password_and_menu = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt: {e}"))?;
     if !contains(&between_password_and_menu, b"*****") {
         return Err(format!(

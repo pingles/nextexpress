@@ -13,3 +13,7 @@
 port = 2323
 max_nodes = 32
 bbs_path = "."
+
+# Name shown in the menu prompt: `<bbs_name> [<conf>] Menu (<n> mins. left): `.
+# Defaults to "NextExpress" when omitted.
+bbs_name = "NextExpress"

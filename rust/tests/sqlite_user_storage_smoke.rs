@@ -105,7 +105,7 @@ fn sign_in_as_sysop(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"sysop")?;
     drain_until(stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
     write_line(stream, b"sysop")?;
-    drain_until(stream, b"Command: ").map_err(|e| format!("Command prompt: {e}"))?;
+    drain_until(stream, b"mins. left): ").map_err(|e| format!("Command prompt: {e}"))?;
     Ok(())
 }
 

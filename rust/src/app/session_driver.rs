@@ -409,6 +409,7 @@ mod tests {
             SessionPolicy::default(),
             ratio,
             gate,
+            "TestBBS".to_string(),
         );
         let terminal = FakeTerminal::new([
             TerminalRead::Line("alice".to_string()),
@@ -492,6 +493,7 @@ mod tests {
             SessionPolicy::default(),
             ratio,
             gate,
+            "TestBBS".to_string(),
         );
         let terminal = FakeTerminal::new([
             TerminalRead::Line("NEW".to_string()),

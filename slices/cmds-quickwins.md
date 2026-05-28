@@ -80,17 +80,39 @@ clause in Slice 7 and land here with their first reader.
     `onlineBaud`); start with the seven lines every user expects and
     grow as later slices add the fields.
 
-## Slice A4 — `T` *time-remaining* sub-display
+## Slice A4 — menu-prompt parity (incl. mins-left)
+
+**Recast.** The original framing — "extend the `T` command with a
+`Time remaining: <m>` line" — had no parity basis: `internalCommandT`
+(`amiexpress/express.e:25622`) is purely the date/time clock, and the
+legacy surfaces time-remaining in the **menu prompt**, not on `T`. The
+only `Time remaining` string in the legacy is the FTP response at
+`:28934`. So this slice instead brings the menu prompt up to legacy
+parity.
 
 - **In Scope**
-  - Extends slice A1 to also print `Time remaining: <m>` minutes,
-    reading `Session.time_remaining()` (already on the session per
+  - Replaces the simplified `Command: ` prompt with the legacy
+    `displayMenuPrompt` default format
+    (`amiexpress/express.e:28413-28421`):
+    `<bbsName> [<confNum>:<confName>] Menu (<mins> mins. left): `
+    with the legacy ANSI colour run. The multi-msgbase conference
+    label is `"<name> - <msgbase>"` (`:28416`).
+  - `<mins>` is `time_remaining.as_secs() / 60`, mirroring the legacy
+    `Div((timeTotal - timeUsed), 60)`. Read via
+    `MenuSession::time_remaining()` (delegates to `Session::time_remaining`,
     Slice 14).
+  - Introduces `Config.bbs_name` (legacy `cmds.bbsName`; default
+    `NextExpress`) and `AppServices::bbs_name()`.
+  - Rendering split: `wire_text::render_menu_prompt` (pure bytes) and
+    `session_presenter::format_menu_prompt` (resolves the conference
+    label + converts the budget to whole minutes).
 - **Out of Scope**
-  - `Session.bytes_remaining_today` (lands in Tier I).
-- **Why split from A1**: A1 ships in one TDD turn with no new field
-  reads; this extension adds the read of `time_remaining` and a
-  dedicated wire literal.
+  - The sysop-supplied custom-prompt (MCI) branch
+    (`amiexpress/express.e:28409-28412`).
+  - Seeding a non-zero per-call time budget for the default sysop —
+    the seed currently has zero limits, so the prompt reads
+    `(0 mins. left)` until a budget is configured; that's a seed/config
+    concern, not a prompt-rendering one.
 
 ## Slice A5 — `H` (BBS help screen) — **Done**
 

@@ -23,7 +23,7 @@ use crate::app::session_driver::SessionDriver;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 #[cfg(test)]
 use crate::app::wire_text::{
-    ANSI_PROMPT, EMAIL_PROMPT, LINE_LENGTH_PROMPT, LOCATION_PROMPT, MENU_PROMPT,
+    ANSI_PROMPT, EMAIL_PROMPT, LINE_LENGTH_PROMPT, LOCATION_PROMPT, MENU_PROMPT_SUFFIX,
     NEW_USER_PASSWORD_PROMPT, PASSWORD_PROMPT, PHONE_PROMPT, REGISTRATION_HANDLE_PROMPT,
     REGISTRATION_PASSWORD_CONFIRM_PROMPT, REGISTRATION_PASSWORD_PROMPT,
 };
@@ -1066,7 +1066,7 @@ mod tests {
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
         // Wait for the menu, then idle.
-        let _ = drain_until(&mut stream, MENU_PROMPT).await;
+        let _ = drain_until(&mut stream, MENU_PROMPT_SUFFIX).await;
         let buf = drain_until(&mut stream, b"Idle timeout").await;
         assert!(
             contains(&buf, b"Idle timeout"),

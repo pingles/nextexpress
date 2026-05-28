@@ -70,6 +70,47 @@ pub(crate) fn format_explicit_join_line(
     wire_text::explicit_join_line(conference_name, msgbase_name)
 }
 
+/// Resolves the conference label and renders the menu prompt
+/// (Tier A quickwin A4, the default branch of `displayMenuPrompt` at
+/// `amiexpress/express.e:28413-28421`).
+///
+/// For a multi-msgbase conference the label is `"<name> - <msgbase>"`,
+/// matching the legacy `StringF(tempstr,'\s - \s',...)` at
+/// `:28416`; otherwise it is just the conference name. `current` is the
+/// open visit's `(conference_number, msgbase_number)`, or `None` for a
+/// menu session with no open conference — which renders the prompt
+/// without the `[<num>:<label>]` segment.
+///
+/// `time_remaining` is the session's per-call budget; the displayed
+/// minute count is `time_remaining.as_secs() / 60` (whole minutes,
+/// truncated), mirroring the legacy `Div((timeTotal - timeUsed), 60)`
+/// at `amiexpress/express.e:28417`.
+#[must_use]
+pub(crate) fn format_menu_prompt(
+    bbs_name: &str,
+    conferences: &[Conference],
+    current: Option<(u32, u32)>,
+    time_remaining: std::time::Duration,
+) -> Vec<u8> {
+    let mins_left = time_remaining.as_secs() / 60;
+    let label = current.map(|(conference_number, msgbase_number)| {
+        let (name, msgbase_name) =
+            resolve_conference_strings(conferences, conference_number, msgbase_number);
+        let label = match msgbase_name {
+            Some(msgbase) => format!("{name} - {msgbase}"),
+            None => name.to_string(),
+        };
+        (conference_number, label)
+    });
+    wire_text::render_menu_prompt(
+        bbs_name,
+        label
+            .as_ref()
+            .map(|(number, label)| (*number, label.as_str())),
+        mins_left,
+    )
+}
+
 /// Renders `SCREEN_REALNAMES` / `SCREEN_INTERNETNAMES` when a join
 /// promoted the session's `display_name_type` (Slice 34).
 pub(crate) async fn render_name_type_promotion<T, S>(
@@ -131,6 +172,63 @@ mod tests {
         let (name, mb) = resolve_conference_strings(&confs, 3, 2);
         assert_eq!(name, "Tech-and-misc");
         assert_eq!(mb, Some("tech"));
+    }
+
+    #[test]
+    fn format_menu_prompt_uses_bare_conference_name_for_single_msgbase() {
+        // Tier A quickwin A4: a single-msgbase conference renders just
+        // its name in the `[<num>:<label>]` segment.
+        let confs = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        // 58m45s of budget displays as a truncated `58` minutes,
+        // pinning `as_secs() / 60` against the `%` / `*` mutants.
+        assert_eq!(
+            format_menu_prompt(
+                "NextExpress",
+                &confs,
+                Some((1, 1)),
+                std::time::Duration::from_secs(58 * 60 + 45)
+            ),
+            &b"\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m58\x1b[0m mins. left): "[..],
+        );
+    }
+
+    #[test]
+    fn format_menu_prompt_appends_msgbase_for_multi_msgbase_conference() {
+        // Mirrors the legacy `StringF(tempstr,'\s - \s',confName,
+        // msgBaseName)` label at `amiexpress/express.e:28416`.
+        let confs = vec![Conference::new(
+            3,
+            "Programming".to_string(),
+            vec![
+                MessageBase::new(3, 1, "main".to_string()),
+                MessageBase::new(3, 2, "tech".to_string()),
+            ],
+        )
+        .expect("valid")];
+        assert_eq!(
+            format_menu_prompt(
+                "NextExpress",
+                &confs,
+                Some((3, 2)),
+                std::time::Duration::from_secs(42 * 60 + 10)
+            ),
+            &b"\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m3\x1b[34m:\x1b[36mProgramming - tech\x1b[0m] Menu (\x1b[33m42\x1b[0m mins. left): "[..],
+        );
+    }
+
+    #[test]
+    fn format_menu_prompt_without_conference_omits_the_bracket() {
+        // Defensive: a menu session with no open conference renders the
+        // prompt without the `[<num>:<label>]` segment.
+        assert_eq!(
+            format_menu_prompt("NextExpress", &[], None, std::time::Duration::ZERO),
+            &b"\x1b[0m\x1b[35mNextExpress \x1b[0mMenu (\x1b[33m0\x1b[0m mins. left): "[..],
+        );
     }
 
     #[test]

@@ -161,7 +161,7 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
     write_line(&mut stream, b"sysop")?;
 
     // Wait for the menu prompt after sign-in and auto-rejoin.
-    drain_until(&mut stream, b"Command: ")
+    drain_until(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
 
     // E sysop opens the composer. We send sysop as the recipient
@@ -178,7 +178,7 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
     write_line(&mut stream, b"Body line two.")?;
     write_line(&mut stream, b".")?;
 
-    let post_e = drain_until_capturing(&mut stream, b"Command: ")
+    let post_e = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E: {e}"))?;
     if !contains(&post_e, b"Message #2 saved.") {
         return Err(format!(
@@ -189,7 +189,7 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
 
     // R 2 reads the message we just posted, proving it persisted.
     write_line(&mut stream, b"R 2")?;
-    let post_r = drain_until_capturing(&mut stream, b"Command: ")
+    let post_r = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 2: {e}"))?;
     if !contains(&post_r, b"Hello from the smoke test") {
         return Err(format!(
@@ -313,7 +313,7 @@ fn sign_in_as_sysop(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"sysop")?;
     drain_until(stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
     write_line(stream, b"sysop")?;
-    drain_until(stream, b"Command: ")
+    drain_until(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
     Ok(())
 }
@@ -328,7 +328,7 @@ fn post_all_message(stream: &mut TcpStream) -> Result<(), String> {
         .map_err(|e| format!("ALL body instructions: {e}"))?;
     write_line(stream, b"Hi everyone.")?;
     write_line(stream, b".")?;
-    let after = drain_until_capturing(stream, b"Command: ")
+    let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E ALL: {e}"))?;
     if !contains(&after, b"Message #1 saved.") {
         return Err(format!(
@@ -341,7 +341,7 @@ fn post_all_message(stream: &mut TcpStream) -> Result<(), String> {
 
 fn read_back_all_message(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"R 1")?;
-    let after = drain_until_capturing(stream, b"Command: ")
+    let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 1: {e}"))?;
     for (needle, description) in [
         (&b"To     \x1b[33m:\x1b[0m ALL"[..], "`To: ALL`"),
@@ -368,7 +368,7 @@ fn reject_eall_post(stream: &mut TcpStream) -> Result<(), String> {
         .map_err(|e| format!("EALL body instructions: {e}"))?;
     write_line(stream, b"Cross-conference notice.")?;
     write_line(stream, b".")?;
-    let after = drain_until_capturing(stream, b"Command: ")
+    let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E EALL: {e}"))?;
     if !contains(&after, b"This message base does not accept that addressee.") {
         return Err(format!(
@@ -393,7 +393,7 @@ fn post_comment_to_sysop(stream: &mut TcpStream) -> Result<(), String> {
         .map_err(|e| format!("C body instructions: {e}"))?;
     write_line(stream, b"There's a typo on the welcome screen.")?;
     write_line(stream, b".")?;
-    let after = drain_until_capturing(stream, b"Command: ")
+    let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after C: {e}"))?;
     // The rejected EALL did not advance highest_message, so the
     // comment-to-sysop is the second persisted mail.
@@ -408,7 +408,7 @@ fn post_comment_to_sysop(stream: &mut TcpStream) -> Result<(), String> {
 
 fn read_back_comment_to_sysop(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"R 2")?;
-    let after = drain_until_capturing(stream, b"Command: ")
+    let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 2: {e}"))?;
     for (needle, description) in [
         (&b"To     \x1b[33m:\x1b[0m Sysop"[..], "`To: Sysop`"),

@@ -93,7 +93,7 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
 
-    drain_until(&mut stream, b"Command: ")
+    drain_until(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
 
     // Step 1: post an original we control via `E sysop`. The seed
@@ -108,7 +108,7 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
         .map_err(|e| format!("Body instructions: {e}"))?;
     write_line(&mut stream, b"Phase 8 original body.")?;
     write_line(&mut stream, b".")?;
-    let post_e = drain_until_capturing(&mut stream, b"Command: ")
+    let post_e = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E: {e}"))?;
     if !contains(&post_e, b"Message #2 saved.") {
         return Err(format!(
@@ -124,7 +124,7 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
         .map_err(|e| format!("RP body instructions: {e}"))?;
     write_line(&mut stream, b"Replying inline.")?;
     write_line(&mut stream, b".")?;
-    let post_rp = drain_until_capturing(&mut stream, b"Command: ")
+    let post_rp = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after RP: {e}"))?;
     if !contains(&post_rp, b"Message #3 saved.") {
         return Err(format!(
@@ -136,7 +136,7 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
     // Step 3: read back the reply. Subject must carry the `Re: `
     // prefix and the body must be the user's input.
     write_line(&mut stream, b"R 3")?;
-    let post_r3 = drain_until_capturing(&mut stream, b"Command: ")
+    let post_r3 = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 3: {e}"))?;
     if !contains(&post_r3, b"Re: Phase 8 source") {
         return Err(format!(
@@ -160,7 +160,7 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
         .map_err(|e| format!("FW note instructions: {e}"))?;
     write_line(&mut stream, b"Please look at this.")?;
     write_line(&mut stream, b".")?;
-    let post_fw = drain_until_capturing(&mut stream, b"Command: ")
+    let post_fw = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after FW: {e}"))?;
     if !contains(&post_fw, b"Message #4 saved.") {
         return Err(format!(
@@ -174,7 +174,7 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
     // prepend to the body, the original body must appear, and
     // the note must follow the `--` separator.
     write_line(&mut stream, b"R 4")?;
-    let post_r4 = drain_until_capturing(&mut stream, b"Command: ")
+    let post_r4 = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 4: {e}"))?;
     if !contains(&post_r4, b"Fwd: Phase 8 source") {
         return Err(format!(
@@ -392,7 +392,7 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     write_line(&mut stream, b"sysop")?;
     drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
-    drain_until(&mut stream, b"Command: ")
+    drain_until(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
 
     // Step 1: EH 1 rewrites the seed mail's subject; R 1 confirms
@@ -405,7 +405,7 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"New To (blank = unchanged): ")
         .map_err(|e| format!("EH To prompt: {e}"))?;
     write_line(&mut stream, b"")?; // keep current addressee
-    let post_eh = drain_until_capturing(&mut stream, b"Command: ")
+    let post_eh = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after EH: {e}"))?;
     if !contains(&post_eh, b"Header updated.") {
         return Err(format!(
@@ -415,7 +415,7 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     }
 
     write_line(&mut stream, b"R 1")?;
-    let post_r_after_eh = drain_until_capturing(&mut stream, b"Command: ")
+    let post_r_after_eh = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 1 (post-EH): {e}"))?;
     if !contains(&post_r_after_eh, b"Sysop-edited subject") {
         return Err(format!(
@@ -433,7 +433,7 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"Target msgbase number: ")
         .map_err(|e| format!("MV msgbase prompt: {e}"))?;
     write_line(&mut stream, b"2")?;
-    let post_mv = drain_until_capturing(&mut stream, b"Command: ")
+    let post_mv = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after MV: {e}"))?;
     if !contains(&post_mv, b"Message moved. New number 1.") {
         return Err(format!(
@@ -453,7 +453,7 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
         .map_err(|e| format!("Body instructions: {e}"))?;
     write_line(&mut stream, b"Doomed.")?;
     write_line(&mut stream, b".")?;
-    let post_e = drain_until_capturing(&mut stream, b"Command: ")
+    let post_e = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E: {e}"))?;
     if !contains(&post_e, b"Message #2 saved.") {
         return Err(format!(
@@ -467,7 +467,7 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"Delete message (y/N)? ")
         .map_err(|e| format!("Confirm delete prompt: {e}"))?;
     write_line(&mut stream, b"y")?;
-    let post_k = drain_until_capturing(&mut stream, b"Command: ")
+    let post_k = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after K: {e}"))?;
     if !contains(&post_k, b"Message deleted.") {
         return Err(format!(
@@ -479,7 +479,7 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     // Step 5: R 2 now reports the source-deleted line via the read
     // path (mail visibility = Deleted → read denied).
     write_line(&mut stream, b"R 2")?;
-    let post_r = drain_until_capturing(&mut stream, b"Command: ")
+    let post_r = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after R 2 (post-K): {e}"))?;
     if !contains(&post_r, b"deleted") {
         return Err(format!(

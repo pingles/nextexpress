@@ -49,6 +49,7 @@ pub struct AppServices {
     session_policy: SessionPolicy,
     default_ratio: DefaultRatio,
     new_user_gate: Arc<NewUserGateConfig>,
+    bbs_name: Arc<str>,
 }
 
 impl AppServices {
@@ -66,6 +67,7 @@ impl AppServices {
         session_policy: SessionPolicy,
         default_ratio: DefaultRatio,
         new_user_gate: NewUserGateConfig,
+        bbs_name: String,
     ) -> Self {
         Self {
             user_repo,
@@ -77,6 +79,7 @@ impl AppServices {
             session_policy,
             default_ratio,
             new_user_gate: Arc::new(new_user_gate),
+            bbs_name: Arc::from(bbs_name),
         }
     }
 
@@ -136,5 +139,12 @@ impl AppServices {
     #[must_use]
     pub fn new_user_gate(&self) -> &NewUserGateConfig {
         &self.new_user_gate
+    }
+
+    /// Returns the configured BBS name shown in the menu prompt
+    /// (legacy `cmds.bbsName`, Tier A quickwin A4).
+    #[must_use]
+    pub fn bbs_name(&self) -> &str {
+        &self.bbs_name
     }
 }

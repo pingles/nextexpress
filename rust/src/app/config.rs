@@ -19,6 +19,12 @@ const DEFAULT_PORT: u16 = 2323;
 /// Default number of simultaneous nodes (`core.allium:config.max_nodes`).
 const DEFAULT_MAX_NODES: u32 = 32;
 
+/// Default BBS name shown in the menu prompt (legacy `cmds.bbsName`,
+/// read by `displayMenuPrompt` at `amiexpress/express.e:28417`). The
+/// legacy value is sysop-supplied via the `BBSNAME` tooltype; with no
+/// config key set, `NextExpress` falls back to its own product name.
+const DEFAULT_BBS_NAME: &str = "NextExpress";
+
 /// Default consecutive bad-password attempts before lockout
 /// (`core.allium:config.max_password_failures`).
 const DEFAULT_MAX_PASSWORD_FAILURES: u32 = 3;
@@ -52,6 +58,10 @@ pub struct Config {
     /// Root directory of the BBS installation. Sub-directories like
     /// `Screens/`, `Conf01/`, etc. are resolved relative to this.
     pub bbs_path: PathBuf,
+    /// Name shown in the menu prompt (legacy `cmds.bbsName`, read by
+    /// `displayMenuPrompt` at `amiexpress/express.e:28417`; default
+    /// `NextExpress`).
+    pub bbs_name: String,
     /// Number of consecutive bad-password attempts before the session
     /// ends and the account is locked
     /// (spec: `core.allium:config.max_password_failures`, default `3`).
@@ -142,6 +152,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             max_nodes: DEFAULT_MAX_NODES,
             bbs_path: PathBuf::from("."),
+            bbs_name: DEFAULT_BBS_NAME.to_string(),
             max_password_failures: DEFAULT_MAX_PASSWORD_FAILURES,
             daily_reset_offset: DEFAULT_DAILY_RESET_OFFSET,
             password_expiry_days: 0,
@@ -281,6 +292,13 @@ mod tests {
     }
 
     #[test]
+    fn default_bbs_name_is_nextexpress() {
+        // With no `bbs_name` key set, the menu prompt falls back to the
+        // product name (Tier A quickwin A4).
+        assert_eq!(Config::default().bbs_name, "NextExpress");
+    }
+
+    #[test]
     fn default_daily_reset_offset_is_six_hours() {
         assert_eq!(
             Config::default().daily_reset_offset,
@@ -369,6 +387,7 @@ mod tests {
             port = 9999
             max_nodes = 8
             bbs_path = "/srv/bbs"
+            bbs_name = "Demo Board"
             max_password_failures = 5
             daily_reset_offset = "3h"
             password_expiry_days = 90
@@ -387,6 +406,7 @@ mod tests {
         assert_eq!(config.port, 9999);
         assert_eq!(config.max_nodes, 8);
         assert_eq!(config.bbs_path, PathBuf::from("/srv/bbs"));
+        assert_eq!(config.bbs_name, "Demo Board");
         assert_eq!(config.max_password_failures, 5);
         assert_eq!(config.daily_reset_offset, Duration::from_hours(3));
         assert_eq!(config.password_expiry_days, 90);

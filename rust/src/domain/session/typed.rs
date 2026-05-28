@@ -315,6 +315,14 @@ impl MenuSession {
         Some((visit.conference_number(), visit.msgbase_number()))
     }
 
+    /// Returns the per-call time the session has left (Slice 14),
+    /// read by the menu prompt's `(<n> mins. left)` display
+    /// (Tier A quickwin A4).
+    #[must_use]
+    pub(crate) fn time_remaining(&self) -> std::time::Duration {
+        self.session.time_remaining()
+    }
+
     /// Toggles the session's quiet-mode flag and returns the new
     /// value. Implements the `Q` menu command's mutation step
     /// (Tier A quickwin A9, `amiexpress/express.e:25506`'s

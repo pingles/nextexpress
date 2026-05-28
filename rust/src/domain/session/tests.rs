@@ -1918,6 +1918,29 @@ mod quiet {
             "second toggle should switch quiet_mode off"
         );
     }
+
+    #[test]
+    fn time_remaining_reflects_inner_session_budget() {
+        // Tier A quickwin A4: the menu prompt's `(<n> mins. left)`
+        // reads `MenuSession::time_remaining`, which must delegate to
+        // the inner session's per-call budget (set by
+        // `initialise_daily_budget` on password match) rather than a
+        // zero default.
+        use super::super::*;
+        use super::fixtures::{alice, new_session};
+        use std::time::Duration;
+
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        let mut user = alice();
+        user.set_time_limits(Duration::from_mins(45), Duration::from_hours(2));
+        s.record_identified_user("alice", user).unwrap();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+
+        let menu = MenuSession::from_session(s);
+        assert_eq!(menu.time_remaining(), Duration::from_mins(45));
+    }
 }
 
 mod mail {

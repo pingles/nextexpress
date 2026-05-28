@@ -188,6 +188,7 @@ listener clones per accepted connection. `AppServices` carries:
 | `conferences` | `Arc<Vec<Conference>>` |
 | `mail_stores` | `Arc<dyn MailStores + Send + Sync>` |
 | `session_policy` / `default_ratio` / `new_user_gate` | `Copy` / small `Arc` |
+| `bbs_name` | `Arc<str>` (menu-prompt BBS name) |
 
 The container replaced a borrow-bag that threaded lifetimes through every
 flow signature; cloning is now one `Arc` bump per port. The sub-flows

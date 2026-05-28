@@ -131,7 +131,7 @@ fn walk_phase4_conference_flow(addr: &str) -> Result<(), String> {
     // After auth: the binary writes Authenticated, then runs the
     // auto-rejoin which renders the JOINED screen, then the
     // Conf01 menu.
-    let post_auth = drain_until_capturing(&mut stream, b"Command: ")
+    let post_auth = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
     if !contains(&post_auth, b"CONF1-MENU") {
         return Err(format!(
@@ -150,7 +150,7 @@ fn walk_phase4_conference_flow(addr: &str) -> Result<(), String> {
 
     // Switch to Conf02 with the explicit-join command.
     write_line(&mut stream, b"J 2")?;
-    let post_j = drain_until_capturing(&mut stream, b"Command: ")
+    let post_j = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after J 2: {e}"))?;
     if !contains(&post_j, b"CONF2-MENU") {
         return Err(format!(
@@ -174,7 +174,7 @@ fn walk_phase4_conference_flow(addr: &str) -> Result<(), String> {
     // user knows their identity is rendered differently in this
     // conference.
     write_line(&mut stream, b"J 3")?;
-    let post_j3 = drain_until_capturing(&mut stream, b"Command: ")
+    let post_j3 = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after J 3: {e}"))?;
     if !contains(&post_j3, b"CONF3-MENU") {
         return Err(format!(
@@ -193,7 +193,7 @@ fn walk_phase4_conference_flow(addr: &str) -> Result<(), String> {
     // first_accessible (Conf01) and the listener surfaces the
     // legacy "do not have access" notice before the JOINED screen.
     write_line(&mut stream, b"J 99")?;
-    let post_j99 = drain_until_capturing(&mut stream, b"Command: ")
+    let post_j99 = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after J 99: {e}"))?;
     if !contains(&post_j99, b"do not have access") {
         return Err(format!(

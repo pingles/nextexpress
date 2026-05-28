@@ -70,6 +70,7 @@ impl Runtime {
             config.session_policy(),
             default_ratio,
             new_user_gate,
+            config.bbs_name.clone(),
         );
         Self { pool, services }
     }

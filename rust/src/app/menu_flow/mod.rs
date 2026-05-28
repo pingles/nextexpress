@@ -23,12 +23,13 @@ use std::time::SystemTime;
 
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
+use crate::app::session_presenter::format_menu_prompt;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_stats_screen, render_time_line, GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE,
     INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE,
-    MENU_PROMPT, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE,
-    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
+    QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE,
+    VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
@@ -79,9 +80,16 @@ where
                 None => self.services.screens().default_menu(access_level).await,
             };
             self.terminal.write(&menu_bytes).await?;
-            let read = self
-                .read_prompted(MENU_PROMPT, TerminalEcho::Visible)
-                .await?;
+            // Tier A quickwin A4: the legacy `displayMenuPrompt`
+            // (`amiexpress/express.e:28404`) renders the BBS name, the
+            // current conference and the per-call minutes remaining.
+            let prompt = format_menu_prompt(
+                self.services.bbs_name(),
+                self.services.conferences(),
+                session.current_msgbase(),
+                session.time_remaining(),
+            );
+            let read = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
             let line = match read {
                 TerminalRead::Line(line) => {
                     session.record_input(SystemTime::now());
