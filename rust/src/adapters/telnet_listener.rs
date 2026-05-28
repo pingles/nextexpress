@@ -16,6 +16,7 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
+use crate::app::colour_terminal::ColourTerminal;
 use crate::app::node_pool::NodePool;
 use crate::app::runtime::Runtime;
 use crate::app::services::AppServices;
@@ -113,7 +114,10 @@ async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Resul
 
     let result = {
         stream.write_all(IAC_INIT).await?;
-        let terminal = TelnetTerminal::new(&mut stream);
+        // Wrap the transport terminal so the `M` command (Tier A
+        // quickwin A8) can strip ANSI colour from output; a fresh
+        // connection starts with colour on.
+        let terminal = ColourTerminal::new(TelnetTerminal::new(&mut stream), true);
         let services: AppServices = runtime.services().clone();
         let mut driver = SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
         driver.run().await

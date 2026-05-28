@@ -155,34 +155,41 @@ parity.
 
 ## Slice A8 — `M` (ANSI mode toggle) and the existing-`M` cleanup
 
+**Reconcile outcome.** The legacy `internalCommandM`
+(`amiexpress/express.e:25239`) toggles a *live, session-scoped*
+`ansiColour` flag, **not** the persisted `loggedOnUser` record. So the
+toggle is modelled as session/transport state, not a `User` mutation —
+the persisted `User.ansi_colour` stays the registration-time
+preference. The live flag lives on a `ColourTerminal` decorator over
+the transport `Terminal` (`rust/src/app/colour_terminal.rs`): while
+colour is off its `write` strips ANSI SGR (`ESC [ … m`) escapes from
+every server-originated byte stream (menu screens, the menu prompt via
+`read_prompted`, stats, join lines). The `Terminal` trait gains
+defaulted `ansi_colour()` / `set_ansi_colour()` so `MenuFlow` toggles
+generically; the composition root wraps the telnet terminal once.
+
 - **In Scope**
-  - Toggles the colour preference. **Reconcile first:** an
-    `ansi_colour` flag already lives on `User`
-    (`rust/src/domain/user/profile.rs`, persisted in
-    `user/persisted.rs` and the SQLite schema) — there is **no**
-    `Session.ansi_colour`. The toggle therefore either flips the
-    existing `User.ansi_colour` and writes back via `UserRepository`
-    (same shape as A6's `expert_mode`), or introduces a deliberate
-    session-level override that shadows the persisted preference.
-    Pick one before implementing and note the choice here.
   - Re-binds the parser: `MenuCommand::Scan(ScanArg::All)` (the
     current `M` binding) moves to `MS`; `MenuCommand::AnsiToggle` is
-    the new `M`.
+    the new `M`. (`MS` here carries the existing single-conference
+    scan-all until Tier B's `cmds-mail-finish.md` B1 upgrades it to
+    the legacy multi-conference scan.)
   - Wire text `Ansi Color On` / `Ansi Color Off`
     (`amiexpress/express.e:25241-25247`).
-  - Outgoing writes that contain `\x1b[…m` escapes are stripped at
-    the terminal adapter when colour is off. **This stripping does
-    not exist today** — `file_screen_repository`'s
-    `normalise_to_crlf` currently *preserves* escapes — so this
-    slice introduces the new adapter surface, it is not a deferred
-    hook waiting to be read.
+  - `ColourTerminal` strips ANSI SGR escapes from output while colour
+    is off; the live flag defaults **on** for a fresh connection.
 - **Out of Scope**
   - Per-screen ANSI substitution (RIP mode is its own field, see
     `cmds-misc.md`).
-- **Pairs with**: Tier B's `cmds-mail-finish.md`, which owns the
-  `MS` half of the scan-mail reshape. Landing `M` → `AnsiToggle`
-  here without `MS` there leaves scan-all unreachable, so the two
-  must land together (or `MS` first).
+  - **Initialising the live flag from `User.ansi_colour`.** Deferred:
+    that persisted flag defaults `false` for `User::new` / the seeded
+    sysop (`Profile::existing`) and there is no ANSI-detection or
+    registration-ANSI flow that sets it meaningfully, so initialising
+    the live flag from it would start sessions colour-off and strip
+    the colour the rest of the BBS already emits (breaking the
+    ANSI-prompt parity from A4). The flag defaults on and `M` toggles
+    it; wiring the preference awaits a slice that establishes a
+    sensible source for it.
 
 ## Slice A9 — `Q` (quiet mode toggle) — **Done**
 

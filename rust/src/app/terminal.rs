@@ -57,6 +57,21 @@ pub(crate) trait Terminal {
         echo: TerminalEcho,
         timeout: Duration,
     ) -> TerminalFuture<'_, TerminalRead, Self::Error>;
+
+    /// Whether ANSI colour output is currently enabled on this terminal
+    /// (Tier A quickwin A8). The default is `true` — adapters that
+    /// don't model a colour mode always emit colour; the
+    /// [`ColourTerminal`](crate::app::colour_terminal::ColourTerminal)
+    /// decorator overrides this to track the live `M`-toggled state.
+    fn ansi_colour(&self) -> bool {
+        true
+    }
+
+    /// Sets the live ANSI colour mode (the `M` command's effect).
+    /// A no-op by default; [`ColourTerminal`](crate::app::colour_terminal::ColourTerminal)
+    /// overrides it to strip ANSI SGR escapes from output while colour
+    /// is off.
+    fn set_ansi_colour(&mut self, _enabled: bool) {}
 }
 
 /// Writes `prompt`, flushes it, then reads one terminal line using

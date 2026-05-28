@@ -169,6 +169,56 @@ async fn s_command_renders_user_stats_screen() {
 }
 
 #[tokio::test]
+async fn m_command_toggles_ansi_colour_and_strips_escapes() {
+    // Slice A8 — `M` (ANSI toggle). Mirrors `internalCommandM()` at
+    // `amiexpress/express.e:25239`: the first press emits `Ansi Color
+    // Off` and the `ColourTerminal` decorator then strips ANSI SGR
+    // escapes from output; the second press emits `Ansi Color On` and
+    // colour returns. Colour is on by default for a fresh connection.
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Colour on by default: the menu prompt carries ANSI escapes.
+    write_line(&mut stream, b"T").await;
+    let colour_on = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&colour_on, b"\x1b["),
+        "with colour on the prompt must carry ANSI escapes, got {:?}",
+        String::from_utf8_lossy(&colour_on)
+    );
+
+    // `M` turns colour off; the following menu + prompt are stripped.
+    write_line(&mut stream, b"M").await;
+    let after_off = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after_off, b"\r\nAnsi Color Off\r\n"),
+        "expected `Ansi Color Off` after first M, got {:?}",
+        String::from_utf8_lossy(&after_off)
+    );
+    assert!(
+        !contains(&after_off, b"\x1b["),
+        "with colour off all ANSI escapes must be stripped, got {:?}",
+        String::from_utf8_lossy(&after_off)
+    );
+
+    // `M` again restores colour; the prompt's ANSI escapes return.
+    write_line(&mut stream, b"M").await;
+    let after_on = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after_on, b"\r\nAnsi Color On\r\n"),
+        "expected `Ansi Color On` after second M, got {:?}",
+        String::from_utf8_lossy(&after_on)
+    );
+    assert!(
+        contains(&after_on, b"\x1b["),
+        "with colour restored the prompt's ANSI escapes return, got {:?}",
+        String::from_utf8_lossy(&after_on)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
 async fn caret_command_displays_topic_help_and_is_silent_on_no_match() {
     // Slice A10 — `^<topic>` (topic help). Mirrors
     // `internalCommandUpHat()` at `amiexpress/express.e:25089`: reads

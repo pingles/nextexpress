@@ -63,6 +63,10 @@ pub(crate) enum MenuCommand {
     /// `amiexpress/express.e:25089-25110`. The string is the topic name
     /// after the caret; an empty topic is a no-op.
     TopicHelp(String),
+    /// `M`: toggle the session's ANSI colour output (Tier A quickwin
+    /// A8). Mirrors `internalCommandM()` at
+    /// `amiexpress/express.e:25239-25247`.
+    AnsiToggle,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -134,6 +138,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if let Some(topic) = trimmed.strip_prefix('^') {
         return MenuCommand::TopicHelp(topic.trim().to_string());
     }
+    if trimmed.eq_ignore_ascii_case("M") {
+        return MenuCommand::AnsiToggle;
+    }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
     }
@@ -191,7 +198,9 @@ fn parse_scan_command(line: &str) -> Option<ScanArg> {
     if tokens.next().is_some() {
         return None;
     }
-    if head.eq_ignore_ascii_case("M") {
+    // `MS` carries the scan-all that used to live on bare `M` (now the
+    // ANSI toggle, A8); `N` still scans new mail until its own rebind.
+    if head.eq_ignore_ascii_case("MS") {
         Some(ScanArg::All)
     } else if head.eq_ignore_ascii_case("N") {
         Some(ScanArg::New)
@@ -288,16 +297,34 @@ mod tests {
 
     #[test]
     fn parses_scan_commands() {
-        assert_eq!(parse_menu_command("M"), MenuCommand::Scan(ScanArg::All));
-        assert_eq!(parse_menu_command("m"), MenuCommand::Scan(ScanArg::All));
+        // Tier A quickwin A8 rebind: scan-all moves off bare `M` (now
+        // the ANSI toggle) onto `MS`; `N` still scans new mail until the
+        // Tier B / D `N` rebind.
+        assert_eq!(parse_menu_command("MS"), MenuCommand::Scan(ScanArg::All));
+        assert_eq!(parse_menu_command("ms"), MenuCommand::Scan(ScanArg::All));
         assert_eq!(parse_menu_command("N"), MenuCommand::Scan(ScanArg::New));
         assert_eq!(parse_menu_command("n"), MenuCommand::Scan(ScanArg::New));
     }
 
     #[test]
     fn scan_commands_reject_extra_tokens() {
-        assert_eq!(parse_menu_command("M 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("MS 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("N 7"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_ansi_toggle_command() {
+        // Tier A quickwin A8: bare `M` (case-insensitive) is the ANSI
+        // toggle, mirroring `internalCommandM()` at
+        // `amiexpress/express.e:25239-25247`.
+        assert_eq!(parse_menu_command("M"), MenuCommand::AnsiToggle);
+        assert_eq!(parse_menu_command("m"), MenuCommand::AnsiToggle);
+    }
+
+    #[test]
+    fn ansi_toggle_rejects_extra_tokens() {
+        assert_eq!(parse_menu_command("M 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("M on"), MenuCommand::Unknown);
     }
 
     #[test]
@@ -318,7 +345,6 @@ mod tests {
     fn unrelated_commands_are_unknown() {
         assert_eq!(parse_menu_command(""), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("Read 1"), MenuCommand::Unknown);
-        assert_eq!(parse_menu_command("MS"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("EM"), MenuCommand::Unknown);
     }
 

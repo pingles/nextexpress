@@ -26,10 +26,11 @@ use crate::app::services::AppServices;
 use crate::app::session_presenter::format_menu_prompt;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_stats_screen, render_time_line, EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE,
-    GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
-    INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE, QUIET_MODE_OFF_LINE,
-    QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE, VERSION_BANNER,
+    render_stats_screen, render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE,
+    EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE, GOODBYE_LINE, HELP_UNAVAILABLE_LINE,
+    IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE,
+    JOIN_REQUIRES_NUMBER_LINE, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE,
+    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
@@ -225,6 +226,21 @@ where
                 if !screen.is_empty() {
                     self.write_and_flush(&screen).await?;
                 }
+            }
+            MenuCommand::AnsiToggle => {
+                // Tier A quickwin A8 (`M`): flip the live ANSI colour
+                // mode on the terminal and emit the legacy on/off
+                // literal (`amiexpress/express.e:25243-25247`). While
+                // colour is off, the ColourTerminal decorator strips
+                // ANSI SGR escapes from every subsequent write.
+                let enabled = !self.terminal.ansi_colour();
+                self.terminal.set_ansi_colour(enabled);
+                let line = if enabled {
+                    ANSI_COLOR_ON_LINE
+                } else {
+                    ANSI_COLOR_OFF_LINE
+                };
+                self.write_and_flush(line).await?;
             }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }

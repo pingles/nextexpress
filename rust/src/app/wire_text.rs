@@ -145,6 +145,16 @@ pub(crate) const EXPERT_MODE_ENABLED_LINE: &[u8] = b"\r\nExpert mode enabled\r\n
 /// `\b\nExpert mode disabled\b\n`.
 pub(crate) const EXPERT_MODE_DISABLED_LINE: &[u8] = b"\r\nExpert mode disabled\r\n";
 
+/// Sent when the `M` command (Tier A quickwin A8) turns ANSI colour on.
+/// Verbatim from `amiexpress/express.e:25247`'s
+/// `\b\nAnsi Color On\b\n` (Amiga `\b\n` → telnet `\r\n`).
+pub(crate) const ANSI_COLOR_ON_LINE: &[u8] = b"\r\nAnsi Color On\r\n";
+
+/// Sent when the `M` command (Tier A quickwin A8) turns ANSI colour
+/// off. Verbatim from `amiexpress/express.e:25243`'s
+/// `\b\nAnsi Color Off\b\n`.
+pub(crate) const ANSI_COLOR_OFF_LINE: &[u8] = b"\r\nAnsi Color Off\r\n";
+
 /// Sent after a not-found name lookup to invite a retry.
 pub(crate) const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
 
