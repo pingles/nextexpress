@@ -169,6 +169,50 @@ async fn s_command_renders_user_stats_screen() {
 }
 
 #[tokio::test]
+async fn question_mark_redisplays_menu_only_in_expert_mode() {
+    // Slice A7 — `?` (display menu). Mirrors
+    // `internalCommandQuestionMark()` at
+    // `amiexpress/express.e:24594-24599`: a no-op outside expert mode
+    // (the loop already auto-displays the menu), and a re-display of
+    // the conference menu inside it. The harness has no `Menu.txt`
+    // asset, so the menu surfaces as the built-in `[ Default menu …`
+    // fallback.
+    let needle: &[u8] = b"[ Default menu";
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Normal mode: `?` is a no-op, so the only menu in the cycle is the
+    // loop's single auto-display — exactly one, not a duplicate.
+    write_line(&mut stream, b"?").await;
+    let normal = drain_until(&mut stream, b"mins. left): ").await;
+    let menu_count = normal
+        .windows(needle.len())
+        .filter(|w| *w == needle)
+        .count();
+    assert_eq!(
+        menu_count,
+        1,
+        "in normal mode `?` must not add a second menu, got {:?}",
+        String::from_utf8_lossy(&normal)
+    );
+
+    // Enable expert mode: the loop stops auto-displaying the menu.
+    write_line(&mut stream, b"X").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    // In expert mode, `?` brings the menu back.
+    write_line(&mut stream, b"?").await;
+    let expert = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&expert, needle),
+        "in expert mode `?` must re-display the menu, got {:?}",
+        String::from_utf8_lossy(&expert)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
 async fn x_command_toggles_expert_mode_and_gates_the_menu() {
     // Slice A6 — `X` (expert-mode toggle). Mirrors `internalCommandX()`
     // at `amiexpress/express.e:26113-26121`: the first press emits

@@ -74,16 +74,7 @@ where
             // with `?` (legacy `displayMenuPrompt` gate at
             // `amiexpress/express.e:28583`).
             if !session.user().expert_mode() {
-                let access_level = session.user().access_level();
-                let menu_bytes = match session.current_conference_number() {
-                    Some(conf) => {
-                        self.services
-                            .screens()
-                            .conference_menu(conf, access_level)
-                            .await
-                    }
-                    None => self.services.screens().default_menu(access_level).await,
-                };
+                let menu_bytes = self.render_menu_screen(&session).await;
                 self.terminal.write(&menu_bytes).await?;
             }
             // Tier A quickwin A4: the legacy `displayMenuPrompt`
@@ -215,6 +206,16 @@ where
                 };
                 self.write_and_flush(line).await?;
             }
+            MenuCommand::ShowMenu => {
+                // Tier A quickwin A7 (`?`): re-display the conference
+                // menu, but only in expert mode — outside it the loop
+                // has just displayed the menu anyway
+                // (`amiexpress/express.e:24595`).
+                if session.user().expert_mode() {
+                    let menu_bytes = self.render_menu_screen(&session).await;
+                    self.write_and_flush(&menu_bytes).await?;
+                }
+            }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))
@@ -231,6 +232,24 @@ where
 
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
         crate::app::terminal::write_and_flush(self.terminal, bytes).await
+    }
+
+    /// Renders the conference menu screen for the session's current
+    /// conference, preferring the per-conference asset and falling back
+    /// to the system-wide default (`ScreenRepository::conference_menu`
+    /// / `default_menu`). Shared by the menu loop's auto-display
+    /// (Tier A quickwin A6) and the `?` command (A7).
+    async fn render_menu_screen(&self, session: &MenuSession) -> Vec<u8> {
+        let access_level = session.user().access_level();
+        match session.current_conference_number() {
+            Some(conf) => {
+                self.services
+                    .screens()
+                    .conference_menu(conf, access_level)
+                    .await
+            }
+            None => self.services.screens().default_menu(access_level).await,
+        }
     }
 
     /// Tier A quickwin A5 (`H`): write the on-disk `BBSHelp.txt`

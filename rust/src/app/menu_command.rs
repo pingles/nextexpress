@@ -53,6 +53,11 @@ pub(crate) enum MenuCommand {
     /// Mirrors `internalCommandX()` at
     /// `amiexpress/express.e:26113-26121`.
     ExpertToggle,
+    /// `?`: re-display the conference menu (Tier A quickwin A7).
+    /// Mirrors `internalCommandQuestionMark()` at
+    /// `amiexpress/express.e:24594-24599` — a no-op outside expert
+    /// mode, where the menu loop has just displayed the menu anyway.
+    ShowMenu,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -117,6 +122,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("X") {
         return MenuCommand::ExpertToggle;
+    }
+    if trimmed == "?" {
+        return MenuCommand::ShowMenu;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -492,6 +500,22 @@ mod tests {
         // through to Unknown.
         assert_eq!(parse_menu_command("X 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("X on"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_show_menu_command() {
+        // Tier A quickwin A7: a bare `?` routes to
+        // `internalCommandQuestionMark()` at
+        // `amiexpress/express.e:24594-24599`.
+        assert_eq!(parse_menu_command("?"), MenuCommand::ShowMenu);
+    }
+
+    #[test]
+    fn show_menu_rejects_extra_tokens() {
+        // `?` takes no arguments; trailing tokens fall through to
+        // Unknown.
+        assert_eq!(parse_menu_command("? 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("? help"), MenuCommand::Unknown);
     }
 
     #[test]
