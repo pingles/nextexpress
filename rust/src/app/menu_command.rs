@@ -481,4 +481,46 @@ mod tests {
         assert_eq!(parse_menu_command("VO"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("VS"), MenuCommand::Unknown);
     }
+
+    #[test]
+    fn checked_in_main_menu_advertises_only_implemented_commands() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crate lives under repository root")
+            .join("Conf02")
+            .join("Menu5.txt");
+        let Ok(menu) = std::fs::read_to_string(path) else {
+            // cargo-mutants copies the Rust crate without the repo-root
+            // screen assets. The ordinary test suite runs from the
+            // checked-out repository and validates the asset there.
+            return;
+        };
+        let advertised = advertised_commands(&menu);
+        let expected = [
+            "C", "E", "EH", "FW", "G", "H", "J", "K", "M", "MV", "N", "Q", "R", "RP", "S", "T",
+            "VER",
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(advertised, expected);
+        for command in advertised {
+            assert_ne!(parse_menu_command(command), MenuCommand::Unknown);
+        }
+    }
+
+    fn advertised_commands(menu: &str) -> std::collections::BTreeSet<&str> {
+        menu.lines()
+            .filter_map(|line| {
+                if !line.starts_with("    ") {
+                    return None;
+                }
+                let command = line.split_whitespace().next()?;
+                command
+                    .chars()
+                    .all(|ch| ch.is_ascii_uppercase())
+                    .then_some(command)
+            })
+            .collect()
+    }
 }
