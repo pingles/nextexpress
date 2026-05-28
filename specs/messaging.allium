@@ -401,10 +401,11 @@ rule EditMailHeader {
 
 -- Mail scan: find unread messages addressed to the current user (or ALL,
 -- or EALL) within a single message base. Triggered on join, by the
--- standalone M / N menu commands, and (per-base) by the multi-conf
--- ScanAllMail rule that backs the legacy `MS` command.
+-- standalone N scan command (a NextExpress drift — legacy `N` is
+-- new-files; legacy `M` is the ANSI toggle), and (per-base) by the
+-- multi-conf ScanAllMail rule that backs the legacy `MS` command.
 --
--- The listing is the load-bearing output for the M / N / MS user
+-- The listing is the load-bearing output for the N / MS user
 -- surface: it is the table the legacy `searchNewMail` prints
 -- (Type / From / Subject / Msg) and the data structure the
 -- presentation layer iterates to render that table. `unread_count`

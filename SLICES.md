@@ -67,7 +67,7 @@ done.
 | `NS` non-stop pagination | `express.e:24627, 24644, 26170` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A12) |
 | **B. Mail UI completion** ||||
 | `MS` | `express.e:25250` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo |
-| `N` (mail) | `express.e:11713` (`searchNewMail`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (semantic fix) |
+| `N` (mail) | NextExpress-only drift — no legacy `N`→mail (legacy `N` = new-files, `express.e:25275`, see Tier D) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (semantic fix) |
 | `R` sub-prompt | `express.e:11972` (`readMSG`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo |
 | Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (B3) |
 | Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (B8) |

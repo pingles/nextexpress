@@ -58,19 +58,32 @@ binding to the legacy multi-conference scan.
   `MailScanCompleted` (`messaging.allium:431`) were added in commit
   `06ea1cd`. This slice is therefore a *code* slice, not a spec one:
   the Rust domain `ScanResult` (`rust/src/domain/messaging/scan_mail.rs`)
-  still carries only `unread_count` / `first_unread_number` /
+  still carries only `from` / `unread_count` / `first_unread_number` /
   `highest_message` and **no listing field**, and `walk()` counts the
   matching rows then discards them. The app renders only
   `render_scan_summary` (`wire_text.rs`, the `You have N new
-  messages…` one-liner) — the `Type  From  Subject  Msg` table header
-  literal does not exist yet.
+  messages…` one-liner) — the column-padded
+  `Type … From … Subject … Msg` table header (see In Scope below) does
+  not exist yet.
 - **In Scope**
   - Extend the domain `ScanResult` with the `listing: Vec<MailScanRow>`
     the spec already models, and have `walk()` collect the rows it
     currently throws away.
-  - Wire format mirrors the legacy table header
-    `[32mType  From  Subject  Msg[0m` plus one row per unread mail
-    (legacy `searchNewMail`, `amiexpress/express.e:11713-11739`).
+  - Wire format mirrors the legacy `searchNewMail`
+    (`amiexpress/express.e:11651`), `currentConf=0` branch. The header
+    is **three** writes (`:11713-11715`), not one literal: a green
+    fixed-width column line (`\x1b[32mType … From … Subject … Msg`,
+    `\b\n`), a yellow dashes separator (`\x1b[33m------- … -------`,
+    `\b\n`), then a standalone `\x1b[0m` (no `\b\n`). Each unread mail
+    is one row in the format
+    `'\s  \l\s[29]  \l\s[21]  \x1b[0m\z\r\d[6]\b\n'` (`:11720`): status
+    `\s` (7-char `Public `/`Private`) + 2 spaces, From left-justified to
+    29 + 2 spaces, Subject left-justified to 21 + 2 spaces, `\x1b[0m`,
+    then Msg right-justified zero-padded to 6.
+  - The table appears only in the multi-conf `MS` (`currentConf=0`)
+    path; the single-conf scan-on-join (`currentConf<>0`) prints no
+    table — just `\b\nFound Mail!` (`:11737`). Both end with
+    `\b\nWould you like to read it now ` + `yesNo(1)` (`:11739`).
 - **Out of Scope**
   - Compact / wide column variants — legacy has one column layout.
 
@@ -81,8 +94,16 @@ binding to the legacy multi-conference scan.
     message via the existing `ReadMail` rule, the session enters the
     sub-prompt loop modelled on `amiexpress/express.e:11972`
     (`readMSG`).
-  - Wire text: `Msg. Options: A,D,M,F,R,L,Q,?,??,<CR> (N>M):`
-    with the same ANSI as the legacy.
+  - Wire text: the ANSI-coloured prompt is assembled piecewise at
+    `amiexpress/express.e:12016-12021`, not a single literal. The
+    always-present skeleton is
+    `Msg. Options: A,F,R,L,Q,?,??,<CR> ( <range> )>: ` where `<range>`
+    is the runtime message-range string (e.g. `5+10`, built at
+    `:12010`). `D` (delete) is inserted after `A` only for callers with
+    `ACS_DELETE_MESSAGE` (`:12017`) and `M` (move) only for
+    `ACS_SYSOP_READ` (`:12018`), so a fully-privileged caller sees
+    `Msg. Options: A,D,M,F,R,L,Q,?,??,<CR> ( <range> )>: `. Carry the
+    legacy ANSI escapes verbatim. (There is no `(N>M):` literal.)
   - `<CR>` advances to the next message in the current msgbase;
     `Q` returns to the menu prompt.
 - **Out of Scope**
@@ -115,8 +136,11 @@ binding to the legacy multi-conference scan.
     (no-notice on blank) are aligned with `readMSG` rather than the
     NextExpress shortcut wire text.
 - **Out of Scope**
-  - Cross-conference forwarding — that's an open question in
-    `messaging.allium`.
+  - Cross-conference forwarding — `messaging.allium`'s `ForwardMail`
+    rule (lines 301–321) only models forwarding within the source
+    base's conference; a cross-conference variant is unspecified. (It
+    is *not* one of the spec's open questions — the only
+    "across conferences" question, line 573, concerns EALL routing.)
 
 ## Slice B7 — `E` and `C` wire-text drift fixes
 

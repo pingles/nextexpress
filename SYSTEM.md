@@ -208,7 +208,7 @@ module under `app::menu_flow/`):
 | `G` | `Logoff` | dispatch |
 | `J <n>` | `Join(NumberArg)` | `join` |
 | `R <n>` | `Read(NumberArg)` | `read_mail` |
-| `M` / `N` | `Scan(ScanArg::All/New)` | `scan_mail` |
+| `N` | `Scan(ScanArg::New)` | `scan_mail` |
 | `E` / `E <to>` | `Post(PostArg)` | `post_mail` |
 | `C` | `CommentToSysop` | `post_mail` |
 | `RP <n>` | `Reply(NumberArg)` | `reply_forward` |
@@ -289,8 +289,9 @@ the rule, and writes the legacy ANSI output.
     `ReadMail`/`ScanMail` for a base.
   - Slices 39–41 wire `read_mail`, `scan_mail` and
     `mail_scan_on_join`. The `R <num>` handler does the
-    `MailStore::load` → `read_mail` → `MailStore::save` dance; `M`/`N`
-    walk the store via `scan_mail`; the auto-rejoin and explicit-join
+    `MailStore::load` → `read_mail` → `MailStore::save` dance; `MS`/`N`
+    walk the store via `scan_mail` (bare `M` is the ANSI toggle since
+    the A8 rebind); the auto-rejoin and explicit-join
     paths share `scan_mail_on_join`.
   - Slice 41a wires the file-backed registry into the composition root:
     `app::run` walks the loaded conferences and opens one
@@ -346,17 +347,17 @@ The current top files by line count:
 
 | File | Lines | Notes |
 |---|---|---|
-| `domain/session/tests.rs` | 1973 | Cross-capability session tests, internally grouped but monolithic. |
-| `adapters/telnet_listener.rs` | 1706 | ~180 lines of production `TelnetListener` + `TelnetTerminal`; ~1500 lines of in-process integration tests. |
-| `app/session_flow.rs` | 1564 | Remaining use cases over `(Session, UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade. |
-| `domain/user/mod.rs` | 1480 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
-| `adapters/sqlite_user_repository.rs` | 1097 | Schema init + row codec + queries + ~30 tests. |
+| `domain/session/tests.rs` | 2000 | Cross-capability session tests, internally grouped but monolithic. |
+| `adapters/telnet_listener.rs` | 1710 | ~180 lines of production `TelnetListener` + `TelnetTerminal`; ~1500 lines of in-process integration tests. |
+| `app/session_flow.rs` | 1553 | Remaining use cases over `(Session, UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade. |
+| `domain/user/mod.rs` | 1521 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
+| `app/wire_text.rs` | 1144 | Wire-format constants and rendering helpers. |
+| `adapters/sqlite_user_repository.rs` | 1062 | Schema init + row codec + queries + ~30 tests. |
 | `adapters/file_mail_store.rs` | 1033 | Per-msgbase JSON store + lock + tests. |
-| `app/wire_text.rs` | 937 | Wire-format constants and rendering helpers. |
-| `domain/session/typed.rs` | 628 | Phase-typed wrappers and their constructors. |
 | `domain/messaging/scan_mail.rs` | 833 | Scan rule + extensive test fixtures. |
 | `domain/conference.rs` | 794 | `Conference`, `MessageBase`, `ConferenceMembership`, `NameType`, `AllowedAddressing`, `AllScanScope`. |
-| `domain/messaging/post_mail.rs` | 782 | Post rule + helpers + tests. |
+| `domain/messaging/post_mail.rs` | 784 | Post rule + helpers + tests. |
+| `domain/session/typed.rs` | 647 | Phase-typed wrappers and their constructors. |
 
 ## Idiomatic-Rust read
 

@@ -1,4 +1,4 @@
-//! `M` / `N` (Scan Mail) menu command (Slice 40).
+//! `MS` / `N` (Scan Mail) menu command (Slice 40).
 //!
 //! Delegates store resolution and the `messaging.allium:ScanMail`
 //! rule to [`crate::app::menu::scan_mail`], then renders the summary.
@@ -24,7 +24,7 @@ where
             // N => start from `last_scanned + 1` (the "new mail since"
             // semantics the spec encodes with `from_message = 0`).
             ScanArg::New => 0,
-            // M => start from message 1 (caller-controlled walk).
+            // MS => start from message 1 (caller-controlled walk).
             ScanArg::All => 1,
         };
         match scan_mail(

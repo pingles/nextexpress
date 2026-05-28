@@ -29,7 +29,7 @@
 //!   - the message is addressed to `user` and its `received_at` is
 //!     unset.
 //!
-//! The legacy `searchNewMail` (`amiexpress/express.e:11475`) walks the
+//! The legacy `searchNewMail` (`amiexpress/express.e:11651`) walks the
 //! same combination; this module preserves the wording for parity.
 //!
 //! [`MailStore`]: crate::domain::messaging::mail_store::MailStore
@@ -46,7 +46,9 @@ use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::user::User;
 
 /// Result of a single-msgbase mail scan
-/// (spec: `messaging.allium:MailScanCompleted` event payload).
+/// (spec: `messaging.allium:MailScanCompleted` event payload — minus
+/// the `listing: Vec<MailScanRow>` rows the spec models, which Slice B3
+/// will add; today `walk` only counts the rows it matches).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScanResult {
     /// The 1-indexed starting message number actually scanned (after
