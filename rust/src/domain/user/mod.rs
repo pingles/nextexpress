@@ -234,6 +234,9 @@ impl User {
                 email,
                 line_length,
                 ansi_colour,
+                // New accounts start in non-expert mode
+                // (`amiexpress/express.e:30452`).
+                false,
                 now,
                 flags,
             ),
@@ -278,6 +281,7 @@ impl User {
             email,
             line_length,
             ansi_colour,
+            expert_mode,
             account_created,
             flags,
             ratio_mode,
@@ -314,6 +318,7 @@ impl User {
             email,
             line_length,
             ansi_colour,
+            expert_mode,
             account_created,
             flags,
         );
@@ -606,6 +611,20 @@ impl User {
         self.profile.ansi_colour()
     }
 
+    /// Returns whether the user is in expert mode (Tier A quickwin A6).
+    /// In expert mode the menu screen is not auto-displayed before the
+    /// command prompt; the user requests it with `?`.
+    #[must_use]
+    pub fn expert_mode(&self) -> bool {
+        self.profile.expert_mode()
+    }
+
+    /// Sets the user's expert-mode flag (the `X` command's mutation).
+    /// Persisted with the user record on logoff.
+    pub fn set_expert_mode(&mut self, value: bool) {
+        self.profile.set_expert_mode(value);
+    }
+
     /// Returns the timestamp the account was first created.
     #[must_use]
     pub fn account_created(&self) -> SystemTime {
@@ -793,6 +812,7 @@ impl User {
             email: self.profile.email().map(str::to_string),
             line_length: self.profile.line_length(),
             ansi_colour: self.profile.ansi_colour(),
+            expert_mode: self.profile.expert_mode(),
             account_created: self.profile.account_created(),
             flags: self.profile.flags().clone(),
             ratio_mode: self.ratio.mode(),
@@ -1046,6 +1066,25 @@ mod tests {
         assert!(!user.is_locked_out());
         user.lock_account();
         assert!(user.is_locked_out());
+    }
+
+    #[test]
+    fn register_new_user_starts_in_non_expert_mode() {
+        // Tier A quickwin A6: new accounts default to `expert = "N"`
+        // (`amiexpress/express.e:30452`).
+        let user = User::register_new(7, draft()).expect("valid");
+        assert!(!user.expert_mode());
+    }
+
+    #[test]
+    fn set_expert_mode_round_trips() {
+        // The `X` command flips `User.expert_mode` in place; the
+        // toggle reads then writes via this setter.
+        let mut user = User::register_new(7, draft()).expect("valid");
+        user.set_expert_mode(true);
+        assert!(user.expert_mode());
+        user.set_expert_mode(false);
+        assert!(!user.expert_mode());
     }
 
     fn draft() -> NewUserDraft {
@@ -1385,6 +1424,7 @@ mod tests {
         user.add_time_used_today(Duration::from_secs(45));
         user.set_force_password_reset(true);
         user.set_censored(true);
+        user.set_expert_mode(true);
         user.bump_messages_posted();
         user.upsert_membership(ConferenceMembership::new(1, true));
         user.upsert_membership(ConferenceMembership::new(2, false));
@@ -1425,6 +1465,7 @@ mod tests {
         assert_eq!(restored.email(), user.email());
         assert_eq!(restored.line_length(), user.line_length());
         assert_eq!(restored.ansi_colour(), user.ansi_colour());
+        assert_eq!(restored.expert_mode(), user.expert_mode());
         assert_eq!(restored.account_created(), user.account_created());
         assert_eq!(restored.flags(), user.flags());
         assert_eq!(restored.ratio_mode(), user.ratio_mode());

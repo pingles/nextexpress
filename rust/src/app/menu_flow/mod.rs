@@ -26,10 +26,10 @@ use crate::app::services::AppServices;
 use crate::app::session_presenter::format_menu_prompt;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_stats_screen, render_time_line, GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE,
-    INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE,
-    QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE,
-    VERSION_BANNER,
+    render_stats_screen, render_time_line, EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE,
+    GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE,
+    INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE, QUIET_MODE_OFF_LINE,
+    QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE, UNKNOWN_COMMAND_LINE, VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
@@ -69,17 +69,23 @@ where
         mut session: MenuSession,
     ) -> Result<LoggingOffSession, T::Error> {
         loop {
-            let access_level = session.user().access_level();
-            let menu_bytes = match session.current_conference_number() {
-                Some(conf) => {
-                    self.services
-                        .screens()
-                        .conference_menu(conf, access_level)
-                        .await
-                }
-                None => self.services.screens().default_menu(access_level).await,
-            };
-            self.terminal.write(&menu_bytes).await?;
+            // Tier A quickwin A6: in expert mode the menu screen is not
+            // auto-displayed before the prompt — the user requests it
+            // with `?` (legacy `displayMenuPrompt` gate at
+            // `amiexpress/express.e:28583`).
+            if !session.user().expert_mode() {
+                let access_level = session.user().access_level();
+                let menu_bytes = match session.current_conference_number() {
+                    Some(conf) => {
+                        self.services
+                            .screens()
+                            .conference_menu(conf, access_level)
+                            .await
+                    }
+                    None => self.services.screens().default_menu(access_level).await,
+                };
+                self.terminal.write(&menu_bytes).await?;
+            }
             // Tier A quickwin A4: the legacy `displayMenuPrompt`
             // (`amiexpress/express.e:28404`) renders the BBS name, the
             // current conference and the per-call minutes remaining.
@@ -195,6 +201,19 @@ where
                     user.messages_posted(),
                 );
                 self.write_and_flush(&screen).await?;
+            }
+            MenuCommand::ExpertToggle => {
+                // Tier A quickwin A6 (`X`): flip the user's expert flag
+                // and emit the legacy on/off literal at
+                // `amiexpress/express.e:26115-26118`. The flip is
+                // persisted with the user record on logoff; in expert
+                // mode the menu loop stops auto-displaying the menu.
+                let line = if session.toggle_expert_mode() {
+                    EXPERT_MODE_ENABLED_LINE
+                } else {
+                    EXPERT_MODE_DISABLED_LINE
+                };
+                self.write_and_flush(line).await?;
             }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }

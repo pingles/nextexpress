@@ -333,6 +333,17 @@ impl MenuSession {
         new_value
     }
 
+    /// Toggles the bound user's expert-mode flag and returns the new
+    /// value. Implements the `X` menu command's mutation step
+    /// (Tier A quickwin A6, `amiexpress/express.e:26114`'s
+    /// `expert := IF expert="X" THEN "N" ELSE "X"`). The flip is
+    /// persisted with the user record when the session logs off.
+    pub(crate) fn toggle_expert_mode(&mut self) -> bool {
+        let new_value = !self.user().expert_mode();
+        self.user_mut().set_expert_mode(new_value);
+        new_value
+    }
+
     /// `session.allium:UserRequestsLogoff` from the menu — the only
     /// total transition out of `Menu` the driver invokes. Consumes
     /// `self` and yields a [`LoggingOffSession`].

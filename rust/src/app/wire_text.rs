@@ -135,6 +135,16 @@ pub(crate) const QUIET_MODE_ON_LINE: &[u8] = b"\r\nQuiet Mode On\r\n";
 /// `amiexpress/express.e:25511`'s `\b\nQuiet Mode Off\b\n`.
 pub(crate) const QUIET_MODE_OFF_LINE: &[u8] = b"\r\nQuiet Mode Off\r\n";
 
+/// Sent when the `X` command (Tier A quickwin A6) turns expert mode on.
+/// Verbatim from `amiexpress/express.e:26118`'s
+/// `\b\nExpert mode enabled\b\n` (Amiga `\b\n` → telnet `\r\n`).
+pub(crate) const EXPERT_MODE_ENABLED_LINE: &[u8] = b"\r\nExpert mode enabled\r\n";
+
+/// Sent when the `X` command (Tier A quickwin A6) turns expert mode
+/// off. Verbatim from `amiexpress/express.e:26115`'s
+/// `\b\nExpert mode disabled\b\n`.
+pub(crate) const EXPERT_MODE_DISABLED_LINE: &[u8] = b"\r\nExpert mode disabled\r\n";
+
 /// Sent after a not-found name lookup to invite a retry.
 pub(crate) const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
 

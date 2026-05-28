@@ -169,6 +169,55 @@ async fn s_command_renders_user_stats_screen() {
 }
 
 #[tokio::test]
+async fn x_command_toggles_expert_mode_and_gates_the_menu() {
+    // Slice A6 — `X` (expert-mode toggle). Mirrors `internalCommandX()`
+    // at `amiexpress/express.e:26113-26121`: the first press emits
+    // `Expert mode enabled` and stops the menu auto-displaying before
+    // the prompt; the second press emits `Expert mode disabled` and
+    // restores it (legacy `displayMenuPrompt` gate at :28583). The
+    // test harness has no `Menu.txt` asset, so the menu surfaces as the
+    // built-in `[ Default menu …` fallback.
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"X").await;
+    let after_enable = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after_enable, b"\r\nExpert mode enabled\r\n"),
+        "expected `Expert mode enabled` after first X, got {:?}",
+        String::from_utf8_lossy(&after_enable)
+    );
+
+    // In expert mode the menu is suppressed before the next prompt.
+    write_line(&mut stream, b"T").await;
+    let expert_cycle = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        !contains(&expert_cycle, b"[ Default menu"),
+        "menu must be suppressed in expert mode, got {:?}",
+        String::from_utf8_lossy(&expert_cycle)
+    );
+
+    write_line(&mut stream, b"X").await;
+    let after_disable = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after_disable, b"\r\nExpert mode disabled\r\n"),
+        "expected `Expert mode disabled` after second X, got {:?}",
+        String::from_utf8_lossy(&after_disable)
+    );
+
+    // Back in normal mode the menu auto-displays again.
+    write_line(&mut stream, b"T").await;
+    let normal_cycle = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&normal_cycle, b"[ Default menu"),
+        "menu must reappear in normal mode, got {:?}",
+        String::from_utf8_lossy(&normal_cycle)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
 async fn menu_prompt_renders_bbs_name_conference_and_mins_left() {
     // Slice A4 (menu-prompt parity). Mirrors the default branch of
     // `displayMenuPrompt()` at `amiexpress/express.e:28419`:

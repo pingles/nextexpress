@@ -73,6 +73,8 @@ pub struct PersistedUser {
     pub line_length: u32,
     /// Whether the user wants ANSI colour output.
     pub ansi_colour: bool,
+    /// Whether the user is in expert mode (Tier A quickwin A6).
+    pub expert_mode: bool,
     /// Timestamp the account was first created.
     pub account_created: SystemTime,
     /// User preference flags.

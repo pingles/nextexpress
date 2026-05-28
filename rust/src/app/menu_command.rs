@@ -49,6 +49,10 @@ pub(crate) enum MenuCommand {
     /// Mirrors `internalCommandS()` at
     /// `amiexpress/express.e:25540-25608`.
     ShowStats,
+    /// `X`: toggle the user's expert mode (Tier A quickwin A6).
+    /// Mirrors `internalCommandX()` at
+    /// `amiexpress/express.e:26113-26121`.
+    ExpertToggle,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -110,6 +114,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("S") {
         return MenuCommand::ShowStats;
+    }
+    if trimmed.eq_ignore_ascii_case("X") {
+        return MenuCommand::ExpertToggle;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -469,6 +476,22 @@ mod tests {
         // (A11) and any `S*` two-letter command stay unambiguous.
         assert_eq!(parse_menu_command("S 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("S full"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_expert_toggle_command() {
+        // Tier A quickwin A6: a bare `X` (case-insensitive) routes to
+        // `internalCommandX()` at `amiexpress/express.e:26113-26121`.
+        assert_eq!(parse_menu_command("X"), MenuCommand::ExpertToggle);
+        assert_eq!(parse_menu_command("x"), MenuCommand::ExpertToggle);
+    }
+
+    #[test]
+    fn expert_toggle_rejects_extra_tokens() {
+        // The legacy command takes no arguments; trailing tokens fall
+        // through to Unknown.
+        assert_eq!(parse_menu_command("X 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("X on"), MenuCommand::Unknown);
     }
 
     #[test]

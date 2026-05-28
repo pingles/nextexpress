@@ -123,6 +123,7 @@ impl SqliteUserRepository {
                  email                    TEXT,
                  line_length              INTEGER NOT NULL DEFAULT 0,
                  ansi_colour              INTEGER NOT NULL DEFAULT 0,
+                 expert_mode              INTEGER NOT NULL DEFAULT 0,
                  account_created          INTEGER NOT NULL,
                  flags                    INTEGER NOT NULL DEFAULT 0,
                  ratio_mode               TEXT    NOT NULL,
@@ -211,7 +212,7 @@ impl SqliteUserRepository {
                  location, phone_number, email,
                  line_length, ansi_colour, account_created, flags,
                  ratio_mode, ratio_value, messages_posted,
-                 last_joined_conference, last_joined_msgbase
+                 last_joined_conference, last_joined_msgbase, expert_mode
              ) VALUES (
                  ?1, ?2, ?3,
                  ?4, ?5, ?6,
@@ -224,7 +225,7 @@ impl SqliteUserRepository {
                  ?20, ?21, ?22,
                  ?23, ?24, ?25, ?26,
                  ?27, ?28, ?29,
-                 ?30, ?31
+                 ?30, ?31, ?32
              )
              ON CONFLICT(slot_number) DO UPDATE SET
                  handle = excluded.handle,
@@ -256,7 +257,8 @@ impl SqliteUserRepository {
                  ratio_value = excluded.ratio_value,
                  messages_posted = excluded.messages_posted,
                  last_joined_conference = excluded.last_joined_conference,
-                 last_joined_msgbase = excluded.last_joined_msgbase",
+                 last_joined_msgbase = excluded.last_joined_msgbase,
+                 expert_mode = excluded.expert_mode",
             params![
                 snapshot.slot_number,
                 snapshot.handle,
@@ -289,6 +291,7 @@ impl SqliteUserRepository {
                 snapshot.messages_posted,
                 snapshot.last_joined.map(|r| r.conference_number()),
                 snapshot.last_joined.map(|r| r.msgbase_number()),
+                i64::from(snapshot.expert_mode),
             ],
         )?;
 
@@ -345,7 +348,7 @@ impl SqliteUserRepository {
                         location, phone_number, email,
                         line_length, ansi_colour, account_created, flags,
                         ratio_mode, ratio_value, messages_posted,
-                        last_joined_conference, last_joined_msgbase
+                        last_joined_conference, last_joined_msgbase, expert_mode
                  FROM users WHERE slot_number = ?1",
                 params![slot],
                 row_to_partial_snapshot,
@@ -665,6 +668,7 @@ fn row_to_partial_snapshot(row: &Row<'_>) -> rusqlite::Result<PersistedUser> {
     let messages_posted: u32 = row.get(27)?;
     let last_joined_conference: Option<u32> = row.get(28)?;
     let last_joined_msgbase: Option<u32> = row.get(29)?;
+    let expert_mode: i64 = row.get(30)?;
 
     let last_joined = match (last_joined_conference, last_joined_msgbase) {
         (Some(c), Some(m)) => Some(MessageBaseRef::new(c, m)),
@@ -701,6 +705,7 @@ fn row_to_partial_snapshot(row: &Row<'_>) -> rusqlite::Result<PersistedUser> {
         email,
         line_length,
         ansi_colour: ansi_colour != 0,
+        expert_mode: expert_mode != 0,
         account_created: secs_to_system_time(account_created),
         flags: bitmask_to_flags(flags_bits),
         ratio_mode: str_to_ratio_mode(&ratio_mode)?,
@@ -833,6 +838,7 @@ mod tests {
         alice.bump_messages_posted();
         alice.set_censored(true);
         alice.set_force_password_reset(true);
+        alice.set_expert_mode(true);
         alice.upsert_membership(ConferenceMembership::new(1, true));
         alice.upsert_read_pointers(
             ReadPointers::new(1, 3, 5, SystemTime::UNIX_EPOCH + Duration::from_secs(200))
@@ -860,6 +866,10 @@ mod tests {
                 assert!(
                     loaded.ansi_colour(),
                     "the registration record opted into ANSI; the bool must survive a round-trip"
+                );
+                assert!(
+                    loaded.expert_mode(),
+                    "the X toggle set expert mode; the bool must survive a round-trip"
                 );
                 assert_eq!(loaded.memberships().len(), 1);
                 let pointer = loaded
