@@ -13,9 +13,13 @@ asset inventory.
 ## Slice D1 — `Bytes` value type + `FileArea` + `File` entities
 
 - **In Scope**
-  - Introduces `core.allium:Bytes` (`count: u64`, ordering, addition,
-    saturating subtraction).
-  - `core.allium:FileArea`, `files.allium:File` with the spec's
+  - **Expands** the existing `core.allium:Bytes` value type. `Bytes`
+    already exists (`rust/src/domain/bytes.rs`, introduced in Slice 48
+    for `MailAttachment.file_size`) but currently only has `new` /
+    `count`; this slice adds the ordering, addition and saturating
+    subtraction the file-area arithmetic needs.
+  - `core.allium:FileArea`, `files.allium:File` (neither entity
+    exists in the Rust tree yet) with the spec's
     `status` lifecycle (`available`, `in_playpen`, `held_for_review`,
     `lcfiles`, `quarantined`, `removed`).
   - On-disk loader reads `Conf<n>/Dir<m>` (legacy layout) and

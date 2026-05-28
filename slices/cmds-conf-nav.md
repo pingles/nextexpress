@@ -45,11 +45,14 @@ asset inventory.
 - **In Scope**
   - Parser: `MenuCommand::PrevConference` /
     `MenuCommand::NextConference`.
-  - Walks the `Config.num_conf` integer space looking for the
-    nearest neighbour the caller has access to, then calls into
-    `Session::explicit_join`. Wraps to the interactive prompt
-    (slice C2) when no such neighbour exists, matching
-    `amiexpress/express.e:24536-24544` / `:24555-24563`.
+  - Walks the conference catalogue looking for the nearest
+    neighbour the caller has access to, then calls into
+    `Session::explicit_join`. **Note:** `Config`
+    (`rust/src/app/config.rs`) has no `num_conf` field; the seam to
+    iterate is the existing `&[Conference]` slice from
+    `services.conferences()`, not a config integer. Wraps to the
+    interactive prompt (slice C2) when no such neighbour exists,
+    matching `amiexpress/express.e:24536-24544` / `:24555-24563`.
 
 ## Slice C4a — `JM <n>` (explicit join message base)
 

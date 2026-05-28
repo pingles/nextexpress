@@ -64,10 +64,14 @@ clause in Slice 7 and land here with their first reader.
 
 - **In Scope**
   - Parser: `MenuCommand::ShowStats`.
-  - Reads the existing fields on `User`
-    (`times_called`, `messages_posted`, `bytes_uploaded_total`,
-    `bytes_downloaded_total`, `last_call`, `slot_number`,
-    `security_level`).
+  - Reads the existing accessors on `User`
+    (`slot_number`, `access_level`, `times_called`,
+    `times_called_today`, `last_call`, `messages_posted`,
+    `time_used_today`) — all already present in
+    `rust/src/domain/user/mod.rs`. Note: there are **no**
+    `bytes_uploaded_total` / `bytes_downloaded_total` fields on
+    `User` yet (transfer accounting is Tier I); the byte lines of
+    the legacy report are deferred to slice A11.
   - Wire text mirrors `internalCommandS()`
     (`amiexpress/express.e:25540-25608`) line by line, with the same
     `[32mLabel[33m:[0m value` ANSI prefixes.
@@ -130,21 +134,33 @@ clause in Slice 7 and land here with their first reader.
 ## Slice A8 — `M` (ANSI mode toggle) and the existing-`M` cleanup
 
 - **In Scope**
-  - Adds `Session.ansi_colour: bool` (read by Slice 7's
-    `AcceptConnection` — deferred per schema-growth principle).
+  - Toggles the colour preference. **Reconcile first:** an
+    `ansi_colour` flag already lives on `User`
+    (`rust/src/domain/user/profile.rs`, persisted in
+    `user/persisted.rs` and the SQLite schema) — there is **no**
+    `Session.ansi_colour`. The toggle therefore either flips the
+    existing `User.ansi_colour` and writes back via `UserRepository`
+    (same shape as A6's `expert_mode`), or introduces a deliberate
+    session-level override that shadows the persisted preference.
+    Pick one before implementing and note the choice here.
   - Re-binds the parser: `MenuCommand::Scan(ScanArg::All)` (the
     current `M` binding) moves to `MS`; `MenuCommand::AnsiToggle` is
     the new `M`.
   - Wire text `Ansi Color On` / `Ansi Color Off`
     (`amiexpress/express.e:25241-25247`).
   - Outgoing writes that contain `\x1b[…m` escapes are stripped at
-    the terminal adapter when `ansi_colour = false`.
+    the terminal adapter when colour is off. **This stripping does
+    not exist today** — `file_screen_repository`'s
+    `normalise_to_crlf` currently *preserves* escapes — so this
+    slice introduces the new adapter surface, it is not a deferred
+    hook waiting to be read.
 - **Out of Scope**
   - Per-screen ANSI substitution (RIP mode is its own field, see
     `cmds-misc.md`).
-- **Pairs with**: Tier B's `cmds-mail-finish.md` which already
-  reshapes the scan-mail UX; the `M` rebind is the half of the
-  reshape that lives here so each command lands clean.
+- **Pairs with**: Tier B's `cmds-mail-finish.md`, which owns the
+  `MS` half of the scan-mail reshape. Landing `M` → `AnsiToggle`
+  here without `MS` there leaves scan-all unreachable, so the two
+  must land together (or `MS` first).
 
 ## Slice A9 — `Q` (quiet mode toggle) — **Done**
 
@@ -205,10 +221,15 @@ clause in Slice 7 and land here with their first reader.
 - **In Scope**
   - Composition-root wiring: every new command above is reachable
     from a `cargo run` binary against the default `nextexpress.toml`.
-  - Smoke test (`tests/cmds_quickwins_smoke.rs`) connects via telnet
-    to the spawned process, logs in as the seeded sysop, and sends
-    each Tier-A command in turn — asserts the verbatim wire-bytes
-    for the response and that the menu prompt re-appears after each.
+  - Smoke test (`tests/quickwins_smoke.rs` — this file already
+    exists and covers `T`, `VER`, `Q`, `H`; extend it per command
+    as `S` / `X` / `?` / `^` / `M` land). Per AGENTS.md guideline 6
+    it drives the `TelnetListener` **in-process** (bind on
+    `127.0.0.1:0`, `tokio::spawn` the accept loop, connect a tokio
+    client) rather than spawning the binary. It logs in as the
+    seeded sysop and sends each Tier-A command in turn — asserting
+    the verbatim wire-bytes for the response and that the menu
+    prompt re-appears after each.
 - **Out of Scope**
   - Performance / load shape — smoke proves reachability, not
     throughput.

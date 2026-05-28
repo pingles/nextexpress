@@ -47,12 +47,24 @@ for the cross-reference of every drift NextExpress currently carries.
 
 ## Slice B3 — `ScanMail` listing rows (was Slice 49c)
 
+- **Spec is already ahead of the code.** The `MailScanRow` value
+  (`messaging.allium:161`) and the `listing:` field on
+  `MailScanCompleted` (`messaging.allium:431`) were added in commit
+  `06ea1cd`. This slice is therefore a *code* slice, not a spec one:
+  the Rust domain `ScanResult` (`rust/src/domain/messaging/scan_mail.rs`)
+  still carries only `unread_count` / `first_unread_number` /
+  `highest_message` and **no listing field**, and `walk()` counts the
+  matching rows then discards them. The app renders only
+  `render_scan_summary` (`wire_text.rs`, the `You have N new
+  messages…` one-liner) — the `Type  From  Subject  Msg` table header
+  literal does not exist yet.
 - **In Scope**
-  - Extends `messaging.allium:MailScanCompleted` with the per-mail
-    `MailScanRow` listing emitted by legacy `searchNewMail`
-    (`amiexpress/express.e:11713-11739`).
+  - Extend the domain `ScanResult` with the `listing: Vec<MailScanRow>`
+    the spec already models, and have `walk()` collect the rows it
+    currently throws away.
   - Wire format mirrors the legacy table header
-    `[32mType  From  Subject  Msg[0m` plus one row per unread mail.
+    `[32mType  From  Subject  Msg[0m` plus one row per unread mail
+    (legacy `searchNewMail`, `amiexpress/express.e:11713-11739`).
 - **Out of Scope**
   - Compact / wide column variants — legacy has one column layout.
 
