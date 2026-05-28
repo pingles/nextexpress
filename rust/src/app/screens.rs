@@ -98,6 +98,18 @@ pub trait ScreenRepository {
     /// silently rendering a built-in stub.
     fn bbs_help_screen(&self) -> ScreenFuture<'_>;
 
+    /// Returns the topic-help screen for `topic`, read from
+    /// `<bbs-loc>/help/<topic>.txt` (Tier A quickwin A10,
+    /// `amiexpress/express.e:25089-25110`). When no file matches the
+    /// full topic, the lookup strips trailing characters one at a time
+    /// and retries (`^FILES` → `FILE` → `FIL` → …), mirroring the
+    /// legacy `internalCommandUpHat` truncate-and-retry loop.
+    ///
+    /// Used by the `^` menu command. Returns empty bytes when no prefix
+    /// of `topic` (including the empty topic) matches a screen, so the
+    /// caller can render the result unconditionally and skip silently.
+    fn topic_help(&self, topic: &str) -> ScreenFuture<'_>;
+
     /// Returns the `SCREEN_LOGOFF` asset
     /// (`Screens/LOGOFF.txt`, `amiexpress/express.e:6554`, displayed at
     /// `:8187`). Rendered on a normal user-requested logoff

@@ -133,7 +133,7 @@ flowchart LR
     Driver --> Presenter["session_presenter\n+ wire_text"]
 
     Menu --> Parse["menu_command::parse"]
-    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle, ShowMenu, Unknown}"]
+    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle, ShowMenu,\nTopicHelp, Unknown}"]
     Menu --> MenuFlowHandlers["menu_flow/*\n(terminal handlers)"]
     MenuFlowHandlers --> MenuUseCases["menu/*\n(terminal-free use cases)"]
 
@@ -220,6 +220,7 @@ module under `app::menu_flow/`):
 | `S` | `ShowStats` | dispatch (`render_stats_screen`) |
 | `X` | `ExpertToggle` | dispatch (`toggle_expert_mode`; gates menu display) |
 | `?` | `ShowMenu` | dispatch (`render_menu_screen`, expert mode only) |
+| `^<topic>` | `TopicHelp(String)` | dispatch (`screens().topic_help`) |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 Each non-trivial command lives in two files: a terminal-free use case

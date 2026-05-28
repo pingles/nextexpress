@@ -352,6 +352,10 @@ mod tests {
         fn bbs_help_screen(&self) -> ScreenFuture<'_> {
             bytes(b"BBSHELP\r\n")
         }
+
+        fn topic_help(&self, _topic: &str) -> ScreenFuture<'_> {
+            bytes(b"TOPICHELP\r\n")
+        }
     }
 
     fn bytes(value: &'static [u8]) -> ScreenFuture<'static> {

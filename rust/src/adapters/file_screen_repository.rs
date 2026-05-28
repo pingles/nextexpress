@@ -276,6 +276,30 @@ impl FileScreenRepository {
         self.cached_file(&self.bbs_help, &path, FALLBACK_BBS_HELP)
             .await
     }
+
+    /// Resolves `<bbs-loc>/help/<topic>.txt`, stripping trailing
+    /// characters from `topic` and retrying until a screen is found —
+    /// the legacy `internalCommandUpHat` truncate-and-retry loop
+    /// (`amiexpress/express.e:25094-25107`). Returns empty bytes when
+    /// no prefix matches. Not cached: `^` is infrequent and the topic
+    /// varies per call, so each lookup reads from disk like the legacy.
+    async fn topic_help_bytes(&self, topic: &str) -> Vec<u8> {
+        let help_dir = self.bbs_path.join("help");
+        // Longest-first: try the full topic, then progressively shorter
+        // prefixes, so the most specific screen wins (`^FILES` prefers
+        // `FILES.txt` over `FILE.txt`). `get(..len)` yields `None` on a
+        // non-UTF-8 char boundary, which is simply skipped.
+        for len in (1..=topic.len()).rev() {
+            let Some(candidate) = topic.get(..len) else {
+                continue;
+            };
+            let path = help_dir.join(format!("{candidate}.txt"));
+            if let Ok(bytes) = tokio::fs::read(&path).await {
+                return normalise_to_crlf(&bytes);
+            }
+        }
+        Vec::new()
+    }
 }
 
 impl ScreenRepository for FileScreenRepository {
@@ -324,6 +348,11 @@ impl ScreenRepository for FileScreenRepository {
 
     fn bbs_help_screen(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.bbs_help_bytes().await })
+    }
+
+    fn topic_help(&self, topic: &str) -> ScreenFuture<'_> {
+        let topic = topic.to_owned();
+        Box::pin(async move { self.topic_help_bytes(&topic).await })
     }
 }
 
@@ -740,6 +769,56 @@ mod tests {
         assert_eq!(repo.bbs_help_screen().await, b"FIRST\r\n");
         std::fs::write(&path, b"SECOND\n").unwrap();
         assert_eq!(repo.bbs_help_screen().await, b"FIRST\r\n");
+    }
+
+    #[tokio::test]
+    async fn topic_help_loads_exact_match_from_help_dir() {
+        // Tier A quickwin A10: `^NET` reads `<bbs-loc>/help/NET.txt`
+        // (legacy `<bbs-loc>help/<params>`, `amiexpress/express.e:25094`).
+        // Amiga `\b\n` line endings translate to telnet `\r\n`.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("help")).unwrap();
+        std::fs::write(dir.path().join("help").join("NET.txt"), b"Net rules.\x08\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.topic_help("NET").await, b"Net rules.\r\n");
+    }
+
+    #[tokio::test]
+    async fn topic_help_truncates_topic_until_a_screen_matches() {
+        // Legacy truncate-and-retry (`amiexpress/express.e:25102`):
+        // `^FILES` with only `help/FIL.txt` on disk strips characters
+        // (FILES -> FILE -> FIL) until a screen is found.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("help")).unwrap();
+        std::fs::write(dir.path().join("help").join("FIL.txt"), b"Files help.\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.topic_help("FILES").await, b"Files help.\r\n");
+    }
+
+    #[tokio::test]
+    async fn topic_help_prefers_the_longest_matching_prefix() {
+        // `^FILES` with both `FILE.txt` and `FILES.txt` present picks
+        // the exact (longest) match, not a shorter prefix — the legacy
+        // loop starts from the full topic.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("help")).unwrap();
+        std::fs::write(dir.path().join("help").join("FILE.txt"), b"short\n").unwrap();
+        std::fs::write(dir.path().join("help").join("FILES.txt"), b"long\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.topic_help("FILES").await, b"long\r\n");
+    }
+
+    #[tokio::test]
+    async fn topic_help_returns_empty_when_no_prefix_matches() {
+        // No `help/` screen matches any prefix of the topic, so the
+        // adapter signals "nothing to show" with empty bytes and the
+        // `^` command is a silent no-op (`amiexpress/express.e:25105`).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("help")).unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert!(repo.topic_help("XYZ").await.is_empty());
+        // A bare `^` carries no topic — also empty.
+        assert!(repo.topic_help("").await.is_empty());
     }
 
     #[tokio::test]

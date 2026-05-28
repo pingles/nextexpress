@@ -58,6 +58,11 @@ pub(crate) enum MenuCommand {
     /// `amiexpress/express.e:24594-24599` — a no-op outside expert
     /// mode, where the menu loop has just displayed the menu anyway.
     ShowMenu,
+    /// `^<topic>`: display the topic help screen (Tier A quickwin A10).
+    /// Mirrors `internalCommandUpHat()` at
+    /// `amiexpress/express.e:25089-25110`. The string is the topic name
+    /// after the caret; an empty topic is a no-op.
+    TopicHelp(String),
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -125,6 +130,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed == "?" {
         return MenuCommand::ShowMenu;
+    }
+    if let Some(topic) = trimmed.strip_prefix('^') {
+        return MenuCommand::TopicHelp(topic.trim().to_string());
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -516,6 +524,31 @@ mod tests {
         // Unknown.
         assert_eq!(parse_menu_command("? 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("? help"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_topic_help_command() {
+        // Tier A quickwin A10: `^<topic>` or `^ <topic>` routes to
+        // `internalCommandUpHat()` at `amiexpress/express.e:25089`.
+        // The topic is the text after the caret, trimmed.
+        assert_eq!(
+            parse_menu_command("^FILES"),
+            MenuCommand::TopicHelp("FILES".to_string())
+        );
+        assert_eq!(
+            parse_menu_command("^ files"),
+            MenuCommand::TopicHelp("files".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_bare_caret_as_empty_topic() {
+        // A bare `^` carries no topic; the legacy returns immediately
+        // without displaying anything.
+        assert_eq!(
+            parse_menu_command("^"),
+            MenuCommand::TopicHelp(String::new())
+        );
     }
 
     #[test]

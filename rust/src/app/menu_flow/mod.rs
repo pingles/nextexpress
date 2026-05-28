@@ -216,6 +216,16 @@ where
                     self.write_and_flush(&menu_bytes).await?;
                 }
             }
+            MenuCommand::TopicHelp(topic) => {
+                // Tier A quickwin A10 (`^`): display the topic help
+                // screen, truncating the topic until a screen matches
+                // (`amiexpress/express.e:25089`). An empty topic or a
+                // topic with no matching screen is a silent no-op.
+                let screen = self.services.screens().topic_help(&topic).await;
+                if !screen.is_empty() {
+                    self.write_and_flush(&screen).await?;
+                }
+            }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))

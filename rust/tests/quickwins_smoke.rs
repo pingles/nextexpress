@@ -169,6 +169,42 @@ async fn s_command_renders_user_stats_screen() {
 }
 
 #[tokio::test]
+async fn caret_command_displays_topic_help_and_is_silent_on_no_match() {
+    // Slice A10 — `^<topic>` (topic help). Mirrors
+    // `internalCommandUpHat()` at `amiexpress/express.e:25089`: reads
+    // `<bbs-loc>/help/<topic>.txt` and displays it; a topic with no
+    // matching screen is a silent no-op.
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("help")).expect("mkdir help");
+    std::fs::write(
+        dir.path().join("help").join("FILES.txt"),
+        b"FILE AREA HELP\x08\nUse F to list.\x08\n",
+    )
+    .expect("write help/FILES.txt");
+    let addr = spawn_listener_at_bbs_path(dir.path().to_path_buf()).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"^FILES").await;
+    let post_help = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&post_help, b"FILE AREA HELP\r\nUse F to list.\r\n"),
+        "expected disk topic-help asset (CRLF-normalised), got {:?}",
+        String::from_utf8_lossy(&post_help)
+    );
+
+    // A topic with no matching screen displays nothing.
+    write_line(&mut stream, b"^NOPE").await;
+    let post_miss = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        !contains(&post_miss, b"FILE AREA HELP"),
+        "an unmatched topic must be a silent no-op, got {:?}",
+        String::from_utf8_lossy(&post_miss)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
 async fn question_mark_redisplays_menu_only_in_expert_mode() {
     // Slice A7 — `?` (display menu). Mirrors
     // `internalCommandQuestionMark()` at
