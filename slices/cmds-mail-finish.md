@@ -16,11 +16,17 @@ for the cross-reference of every drift NextExpress currently carries.
 
 ## Slice B1 — `MS` (multi-conference mail scan, was Slice 49d)
 
+**Note:** `MS` already exists as a token — Tier A's A8 moved the
+single-conference scan-all there (`MS` → `MenuCommand::Scan(ScanArg::All)`)
+when it rebound bare `M` to the ANSI toggle. This slice *upgrades* that
+binding to the legacy multi-conference scan.
+
 - **In Scope**
   - New rule `messaging.allium:ScanAllMail` — for every conference
     the caller has access to, in numeric order, runs the existing
     `ScanMail` rule with `FORCE_MAILSCAN_ALL` semantics.
-  - Parser: `MenuCommand::ScanAllMail`.
+  - Re-point `MS` from `Scan(ScanArg::All)` to the new
+    `MenuCommand::ScanAllMail`.
   - Wire text: header `Scanning conferences for mail...`
     (`amiexpress/express.e:25258`), per-conference banner, then the
     listing row block from Slice B3 below.
