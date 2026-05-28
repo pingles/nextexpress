@@ -25,7 +25,7 @@ use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_time_line, GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE,
+    render_stats_screen, render_time_line, GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE,
     INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE, JOIN_REQUIRES_NUMBER_LINE,
     MENU_PROMPT, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE,
     UNKNOWN_COMMAND_LINE, VERSION_BANNER,
@@ -171,6 +171,22 @@ where
                     QUIET_MODE_OFF_LINE
                 };
                 self.write_and_flush(line).await?;
+            }
+            MenuCommand::ShowStats => {
+                // Tier A quickwin A3 (`S`): the baseline user-stats
+                // screen from `internalCommandS()`
+                // (`amiexpress/express.e:25540`), reading the fields
+                // already present on the logged-on user.
+                let user = session.user();
+                let screen = render_stats_screen(
+                    user.slot_number(),
+                    user.last_call(),
+                    user.access_level(),
+                    user.times_called(),
+                    user.times_called_today(),
+                    user.messages_posted(),
+                );
+                self.write_and_flush(&screen).await?;
             }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }

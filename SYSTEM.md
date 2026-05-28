@@ -133,7 +133,7 @@ flowchart LR
     Driver --> Presenter["session_presenter\n+ wire_text"]
 
     Menu --> Parse["menu_command::parse"]
-    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, Unknown}"]
+    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, Unknown}"]
     Menu --> MenuFlowHandlers["menu_flow/*\n(terminal handlers)"]
     MenuFlowHandlers --> MenuUseCases["menu/*\n(terminal-free use cases)"]
 
@@ -216,6 +216,7 @@ module under `app::menu_flow/`):
 | `VER` | `ShowVersion` | dispatch (`VERSION_BANNER`) |
 | `H` | `ShowHelp` | dispatch (`bbs_help_screen` asset) |
 | `Q` | `QuietToggle` | dispatch (`toggle_quiet_mode`) |
+| `S` | `ShowStats` | dispatch (`render_stats_screen`) |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 Each non-trivial command lives in two files: a terminal-free use case

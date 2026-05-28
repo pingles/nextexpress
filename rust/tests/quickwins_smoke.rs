@@ -135,6 +135,40 @@ async fn q_command_toggles_quiet_mode_on_then_off() {
 }
 
 #[tokio::test]
+async fn s_command_renders_user_stats_screen() {
+    // Slice A3 — `S` (user stats). Mirrors `internalCommandS()` at
+    // `amiexpress/express.e:25540-25608`. The counter and date fields
+    // are session-state-dependent, so the smoke pins only the stable
+    // fields — slot `1` and access level `255` for the seeded sysop —
+    // plus the presence of every baseline label with its `[32m…[33m:`
+    // ANSI prefix, proving the screen is reachable end-to-end.
+    let addr = spawn_listener_with_seeded_sysop().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"S").await;
+    let post_s = drain_until(&mut stream, b"Command: ").await;
+
+    let needles: &[&[u8]] = &[
+        b"\x1b[32mUser Number\x1b[33m:\x1b[0m 1\r\n",
+        b"\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n",
+        b"\x1b[32mLst Date On\x1b[33m:\x1b[0m ",
+        b"\x1b[32m# Times On \x1b[33m:\x1b[0m ",
+        b"\x1b[32mTimes Today\x1b[33m:\x1b[0m ",
+        b"\x1b[32mMsgs Posted\x1b[33m:\x1b[0m ",
+    ];
+    for needle in needles {
+        assert!(
+            contains(&post_s, needle),
+            "expected `{}` in S response, got {:?}",
+            String::from_utf8_lossy(needle),
+            String::from_utf8_lossy(&post_s)
+        );
+    }
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
 async fn h_command_falls_back_to_help_unavailable_when_no_asset() {
     // Slice A5 — `H` (BBS help). When `<bbs-loc>/BBSHelp.txt` is
     // absent the listener emits the verbatim legacy line at

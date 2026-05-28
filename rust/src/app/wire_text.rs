@@ -544,6 +544,72 @@ pub(crate) fn render_time_line(at: std::time::SystemTime) -> Vec<u8> {
     format!("\r\nIt is {formatted}\r\n").into_bytes()
 }
 
+/// `formatLongDateTime`'s `DD-MMM-YYYY HH:MM:SS` layout
+/// (`amiexpress/ACP.e:549-566`): a `FORMAT_DOS` day-month-year date with
+/// the century prepended — e.g. `09-Sep-2001 01:46:40`.
+const STATS_DATE_FORMAT: &[time::format_description::FormatItem<'_>] =
+    time::macros::format_description!("[day]-[month repr:short]-[year] [hour]:[minute]:[second]");
+
+/// Emits one `[32m<label>[33m:[0m <value>` stats line, terminated with
+/// a telnet CRLF. The label is written verbatim — callers pad it to the
+/// legacy's fixed 11-character column width.
+fn write_stat_line(out: &mut Vec<u8>, label: &[u8], value: &str) {
+    out.extend_from_slice(b"\x1b[32m");
+    out.extend_from_slice(label);
+    out.extend_from_slice(b"\x1b[33m:\x1b[0m ");
+    out.extend_from_slice(value.as_bytes());
+    out.extend_from_slice(b"\r\n");
+}
+
+/// Formats the `S` user-stats screen (Tier A quickwin A3).
+///
+/// Renders the baseline lines of `internalCommandS()`
+/// (`amiexpress/express.e:25540-25578`) — the subset whose fields exist
+/// on `User` today — in the legacy order, each label padded to 11
+/// characters and wrapped in the `[32m…[33m:[0m ` ANSI prefixes. The
+/// block is bracketed by a leading and trailing CRLF, matching the
+/// legacy's opening `aePuts('\b\n')` and closing blank line.
+///
+/// The config-gated `Area Name` / `Caller Num.` lines and the
+/// Tier-I-only rows (`Online Baud`, CPS rates, credit, sysop
+/// availability, file ratios) are deferred to slice A11.
+///
+/// # Parameters
+/// - `slot_number`: the user's account slot (legacy `User Number`).
+/// - `last_call`: the most recent completed logon, or `None` for a
+///   user who has never called — rendered as the Unix epoch, mirroring
+///   the legacy's `timeLastOn = 0` "never" sentinel.
+/// - `security_level`: the user's access level (legacy `Security Lv`).
+/// - `times_called`: lifetime completed logons (`# Times On`).
+/// - `times_called_today`: logons in the current accounting day.
+/// - `messages_posted`: lifetime messages posted.
+///
+/// # Returns
+/// The wire bytes of the stats screen, ready to write to the terminal.
+pub(crate) fn render_stats_screen(
+    slot_number: u32,
+    last_call: Option<std::time::SystemTime>,
+    security_level: u8,
+    times_called: u32,
+    times_called_today: u32,
+    messages_posted: u32,
+) -> Vec<u8> {
+    let last_on =
+        time::OffsetDateTime::from(last_call.unwrap_or(std::time::SystemTime::UNIX_EPOCH))
+            .format(STATS_DATE_FORMAT)
+            .expect("STATS_DATE_FORMAT is total over OffsetDateTime");
+    let mut out = Vec::with_capacity(220);
+    out.extend_from_slice(b"\r\n");
+    write_stat_line(&mut out, b"User Number", &slot_number.to_string());
+    write_stat_line(&mut out, b"Lst Date On", &last_on);
+    write_stat_line(&mut out, b"Security Lv", &security_level.to_string());
+    write_stat_line(&mut out, b"# Times On ", &times_called.to_string());
+    write_stat_line(&mut out, b"Times Today", &times_called_today.to_string());
+    write_stat_line(&mut out, b"Msgs Posted", &messages_posted.to_string());
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
 /// Formats the auto-rejoin announcement (Slice 30 / Slice 34a).
 /// Mirrors the legacy `joinConf` output at
 /// `amiexpress/express.e:5071-5073`:
@@ -663,6 +729,46 @@ mod tests {
         assert_eq!(
             explicit_join_line("Programming", Some("tech")),
             b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Programming [tech]\r\n",
+        );
+    }
+
+    #[test]
+    fn render_stats_screen_emits_legacy_baseline_lines() {
+        // Tier A quickwin A3 (`S`): the baseline stats block from
+        // `internalCommandS()` (`amiexpress/express.e:25540-25578`),
+        // restricted to the lines whose fields exist on `User` today.
+        // Each label is padded to 11 chars and wrapped in the legacy
+        // `[32m…[33m:[0m ` ANSI prefixes; `Lst Date On` uses
+        // `formatLongDateTime`'s `DD-MMM-YYYY HH:MM:SS` layout.
+        //
+        // `1_000_000_000` seconds past the Unix epoch is 2001-09-09
+        // 01:46:40 UTC — a fixed, well-known instant.
+        let last_call =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        assert_eq!(
+            render_stats_screen(1, Some(last_call), 255, 42, 3, 7),
+            &b"\r\n\
+\x1b[32mUser Number\x1b[33m:\x1b[0m 1\r\n\
+\x1b[32mLst Date On\x1b[33m:\x1b[0m 09-Sep-2001 01:46:40\r\n\
+\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\
+\x1b[32m# Times On \x1b[33m:\x1b[0m 42\r\n\
+\x1b[32mTimes Today\x1b[33m:\x1b[0m 3\r\n\
+\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 7\r\n\
+\r\n"[..],
+        );
+    }
+
+    #[test]
+    fn render_stats_screen_renders_never_called_user_as_unix_epoch() {
+        // A user who has never completed a logon has `last_call =
+        // None` (the seeded sysop's state). The legacy stores
+        // `timeLastOn = 0` for "never" and formats it as the epoch;
+        // we mirror that by rendering the Unix epoch.
+        let screen = render_stats_screen(1, None, 255, 0, 0, 0);
+        let text = std::str::from_utf8(&screen).expect("utf8");
+        assert!(
+            text.contains("Lst Date On\x1b[33m:\x1b[0m 01-Jan-1970 00:00:00\r\n"),
+            "expected epoch date for never-called user, got: {text:?}",
         );
     }
 

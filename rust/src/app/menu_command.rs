@@ -45,6 +45,10 @@ pub(crate) enum MenuCommand {
     /// Mirrors `internalCommandQ()` at
     /// `amiexpress/express.e:25504-25516`.
     QuietToggle,
+    /// `S`: print the user statistics screen (Tier A quickwin A3).
+    /// Mirrors `internalCommandS()` at
+    /// `amiexpress/express.e:25540-25608`.
+    ShowStats,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -103,6 +107,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("Q") {
         return MenuCommand::QuietToggle;
+    }
+    if trimmed.eq_ignore_ascii_case("S") {
+        return MenuCommand::ShowStats;
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
@@ -445,6 +452,23 @@ mod tests {
         // future `Q*` two-letter commands.
         assert_eq!(parse_menu_command("Q 1"), MenuCommand::Unknown);
         assert_eq!(parse_menu_command("Q on"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn parses_show_stats_command() {
+        // Tier A quickwin A3: a bare `S` (case-insensitive) routes to
+        // `internalCommandS()` at `amiexpress/express.e:25540-25608`.
+        assert_eq!(parse_menu_command("S"), MenuCommand::ShowStats);
+        assert_eq!(parse_menu_command("s"), MenuCommand::ShowStats);
+    }
+
+    #[test]
+    fn show_stats_rejects_extra_tokens() {
+        // The baseline `S` takes no arguments; trailing tokens fall
+        // through to Unknown so the future `S` extended-report form
+        // (A11) and any `S*` two-letter command stay unambiguous.
+        assert_eq!(parse_menu_command("S 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("S full"), MenuCommand::Unknown);
     }
 
     #[test]
