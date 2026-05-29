@@ -8,7 +8,6 @@
   MESSAGES
     R <n>    Read message number <n>
     MS       Scan all visible messages
-    N        Scan new messages
     E [to]   Enter a message
     C        Comment to sysop
     RP <n>   Reply to message number <n>

@@ -49,22 +49,26 @@ binding to the legacy multi-conference scan.
   - Cross-conference de-duplication — the legacy lists each
     conference's hits independently.
 
-## Slice B2 — `N` (mail) semantic fix and new-mail listing
+## Slice B2 — `N` (mail) semantic fix — **Done**
 
-- **In Scope**
-  - Re-binds the parser: `MenuCommand::Scan(ScanArg::New)` (the
-    current `N` binding) moves to a no-op pending Tier D's
-    `cmds-files-list.md`'s `N` (new files scan).
-  - The existing auto-mail-scan path on join (Slice 41) is unchanged
-    — that's where users see new mail today.
-  - Documents the divergence: legacy `M` and `N` do *not* run mail
-    scans — they're ANSI-toggle and new-files-scan respectively. Mail
-    scan in legacy is reached via auto-mail-scan-on-join, the `R`
-    sub-prompt's `L`ist option, or the explicit `MS` command.
-- **Depends on**: Tier A's `M` (ANSI toggle) slice. Lands as a pair.
-- **Why split out**: the rebinding touches one parser case and one
-  dispatch arm; isolating it from the listing-row work keeps each
-  slice reviewable in one sitting.
+`N`'s mail-scan binding (a NextExpress drift — legacy `N` is the
+new-files scan, `express.e:25275`) is removed. Rather than a silent
+no-op, `N` is now an **unknown command** (it falls through to
+`MenuCommand::Unknown` and emits the standard unknown-command notice),
+and its line is dropped from `Conf02/Menu5.txt`. `N` and its menu entry
+return in Tier D (`cmds-files-list.md`) as the real new-files scan.
+
+- **What was removed:** since `N` was the only consumer of
+  `MenuCommand::Scan(ScanArg)`, the whole `Scan` variant, the `ScanArg`
+  enum, `parse_scan_command`, the dispatch arm, the terminal handler
+  `handle_scan_mail` and its file `menu_flow/scan_mail.rs` are all gone.
+- **What stays:** the terminal-free `app::menu::scan_mail` use case —
+  the auto-mail-scan-on-join path (Slice 41) is its only remaining
+  caller, so it is *not* dead and was kept.
+- **The divergence, for the record:** legacy `M` and `N` do *not* run
+  mail scans — they're the ANSI toggle and the new-files scan. Mail
+  scan in the legacy is reached via auto-mail-scan-on-join, the `R`
+  sub-prompt's `L`ist option, or the explicit `MS` command.
 
 ## Slice B3 — `ScanMail` listing rows (was Slice 49c) — **Done (with B1)**
 

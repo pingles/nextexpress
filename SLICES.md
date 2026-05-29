@@ -39,9 +39,10 @@ The canonical record of what each shipped slice covers is the
 "In Scope" history is in git.
 
 `M` was rebound to its legacy ANSI-toggle meaning in Tier A (A8); the
-scan-all it used to carry now lives on `MS`. `N` is still bound to
-scan-mail semantics — a remaining divergence from the legacy that
-[`slices/cmds-mail-finish.md`](slices/cmds-mail-finish.md) corrects.
+scan-all it used to carry now lives on `MS`. `N`'s mail-scan binding
+(a NextExpress drift) was removed in Tier B (B2) — `N` is now an
+unknown command until Tier D ships the legacy new-files scan
+(`express.e:25275`).
 
 ## Menu-command roadmap
 
@@ -67,7 +68,7 @@ done.
 | `NS` non-stop pagination | `express.e:24627, 24644, 26170` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A12) |
 | **B. Mail UI completion** ||||
 | `MS` | `express.e:25250` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (folded B3's listing table in) |
-| `N` (mail) | NextExpress-only drift — no legacy `N`→mail (legacy `N` = new-files, `express.e:25275`, see Tier D) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (semantic fix) |
+| `N` (mail) | NextExpress-only drift — no legacy `N`→mail (legacy `N` = new-files, `express.e:25275`, see Tier D) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (`N` → unknown; new-files scan deferred to Tier D) |
 | `R` sub-prompt | `express.e:11972` (`readMSG`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo |
 | Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B3, shipped with B1's `MS`) |
 | Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (B8) |

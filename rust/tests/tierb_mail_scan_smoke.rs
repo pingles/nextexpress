@@ -120,6 +120,52 @@ async fn ms_scans_every_accessible_conference_over_telnet() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn n_is_an_unknown_command_and_no_longer_scans_mail_over_telnet() {
+    // Tier B B2: `N`'s mail-scan binding (a drift) is removed; the real
+    // new-files scan lands in Tier D. Until then `N` is unrecognized.
+    // Conference 2 carries unread mail — if `N` still scanned, it would
+    // surface here.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let conf1_msgbase = dir.path().join("conf1_msgbase");
+    let conf2_msgbase = dir.path().join("conf2_msgbase");
+    std::fs::create_dir_all(&conf1_msgbase).expect("create conf1 msgbase");
+    std::fs::create_dir_all(&conf2_msgbase).expect("create conf2 msgbase");
+    std::fs::write(
+        conf2_msgbase.join("0000001.json"),
+        seeded_mail_json(2, 1, "Carol", "Tier B Greetings"),
+    )
+    .expect("seed conf2 message");
+
+    let addr =
+        spawn_two_conference_listener(dir.path().to_path_buf(), &conf1_msgbase, &conf2_msgbase)
+            .await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"N").await;
+    let out = drain_until(&mut stream, b"mins. left): ").await;
+
+    assert!(
+        contains(&out, b"Unknown command. Type G to log off.\r\n"),
+        "N must now be an unknown command, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    // `N` must run no mail scan at all: no summary for the (empty)
+    // current conference, and conference 2's mail stays unsurfaced.
+    assert!(
+        !contains(&out, b"No new mail."),
+        "N must not scan the current conference, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        !contains(&out, b"You have ") && !contains(&out, b"Tier B Greetings"),
+        "N must not surface any mail, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// JSON payload for one public message addressed to the seeded sysop
 /// (slot 1, handle "sysop"), in the [`FileMailStore`] on-disk format.
 fn seeded_mail_json(conference: u32, msgbase: u32, from: &str, subject: &str) -> String {

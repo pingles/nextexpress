@@ -13,9 +13,6 @@ pub(crate) enum MenuCommand {
     Join(NumberArg),
     /// `R` / `R <number>`: read one message.
     Read(NumberArg),
-    /// `N`: scan new mail in the current conference. (A `NextExpress`
-    /// drift — legacy `N` is new-files; corrected by Tier B B2 / Tier D.)
-    Scan(ScanArg),
     /// `MS`: scan every conference the caller can access for mail
     /// (Tier B B1). Mirrors `internalCommandMS()` at
     /// `amiexpress/express.e:25250`.
@@ -86,15 +83,6 @@ pub(crate) enum NumberArg {
     /// `<command> <token>` where `<token>` could not be parsed as a
     /// `u32`, or where extra trailing tokens were supplied.
     Invalid,
-}
-
-/// Parsed shape of the `N` scan command. (`MS` is its own
-/// [`MenuCommand::ScanAllMail`] variant, not a `ScanArg`.)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ScanArg {
-    /// `N` - scan from `last_scanned + 1`. Surfaces unread mail the
-    /// user has not yet been alerted to.
-    New,
 }
 
 /// Parsed shape of an `E` / `E <to>` command.
@@ -174,9 +162,6 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if trimmed.eq_ignore_ascii_case("MS") {
         return MenuCommand::ScanAllMail;
     }
-    if let Some(scan) = parse_scan_command(trimmed) {
-        return MenuCommand::Scan(scan);
-    }
     if let Some(post) = parse_post_command(trimmed) {
         return MenuCommand::Post(post);
     }
@@ -198,21 +183,6 @@ fn parse_number_command(line: &str, command: &str) -> Option<NumberArg> {
     match arg.parse::<u32>() {
         Ok(n) => Some(NumberArg::Number(n)),
         Err(_) => Some(NumberArg::Invalid),
-    }
-}
-
-fn parse_scan_command(line: &str) -> Option<ScanArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if tokens.next().is_some() {
-        return None;
-    }
-    // `N` still scans new mail until its own rebind (Tier B B2 / D).
-    // `MS` is handled by the caller as its own command.
-    if head.eq_ignore_ascii_case("N") {
-        Some(ScanArg::New)
-    } else {
-        None
     }
 }
 
@@ -303,14 +273,20 @@ mod tests {
     }
 
     #[test]
-    fn parses_scan_commands() {
+    fn parses_ms_as_the_multi_conference_scan() {
         // Tier B B1: `MS` is the multi-conference mail scan
-        // (`MenuCommand::ScanAllMail`), no longer the single-conference
-        // `Scan(All)`. `N` still scans new mail until its Tier B/D rebind.
+        // (`MenuCommand::ScanAllMail`).
         assert_eq!(parse_menu_command("MS"), MenuCommand::ScanAllMail);
         assert_eq!(parse_menu_command("ms"), MenuCommand::ScanAllMail);
-        assert_eq!(parse_menu_command("N"), MenuCommand::Scan(ScanArg::New));
-        assert_eq!(parse_menu_command("n"), MenuCommand::Scan(ScanArg::New));
+    }
+
+    #[test]
+    fn n_is_not_recognized_pending_the_tier_d_new_files_scan() {
+        // Tier B B2: `N`'s mail-scan binding (a NextExpress drift —
+        // legacy `N` is the new-files scan) is removed. Until Tier D
+        // ships the new-files scan, `N` is an unknown command.
+        assert_eq!(parse_menu_command("N"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("n"), MenuCommand::Unknown);
     }
 
     #[test]
@@ -658,7 +634,6 @@ mod tests {
             MenuCommand::Logoff => Some("G"),
             MenuCommand::Join(_) => Some("J"),
             MenuCommand::Read(_) => Some("R"),
-            MenuCommand::Scan(ScanArg::New) => Some("N"),
             MenuCommand::ScanAllMail => Some("MS"),
             MenuCommand::Post(_) => Some("E"),
             MenuCommand::CommentToSysop => Some("C"),
@@ -688,7 +663,6 @@ mod tests {
             MenuCommand::Logoff,
             MenuCommand::Join(NumberArg::Missing),
             MenuCommand::Read(NumberArg::Missing),
-            MenuCommand::Scan(ScanArg::New),
             MenuCommand::ScanAllMail,
             MenuCommand::Post(PostArg::Missing),
             MenuCommand::CommentToSysop,

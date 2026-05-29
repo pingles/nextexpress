@@ -208,7 +208,6 @@ module under `app::menu_flow/`):
 | `G` | `Logoff` | dispatch |
 | `J <n>` | `Join(NumberArg)` | `join` |
 | `R <n>` | `Read(NumberArg)` | `read_mail` |
-| `N` | `Scan(ScanArg::New)` | `scan_mail` |
 | `E` / `E <to>` | `Post(PostArg)` | `post_mail` |
 | `C` | `CommentToSysop` | `post_mail` |
 | `RP <n>` | `Reply(NumberArg)` | `reply_forward` |

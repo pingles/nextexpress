@@ -17,7 +17,6 @@ mod post_mail;
 mod read_mail;
 mod reply_forward;
 mod scan_all_mail;
-mod scan_mail;
 mod sysop_admin;
 
 use std::time::SystemTime;
@@ -153,7 +152,6 @@ where
                 NumberArg::Missing => self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?,
                 NumberArg::Invalid => self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?,
             },
-            MenuCommand::Scan(scan) => self.handle_scan_mail(&mut session, scan).await?,
             MenuCommand::ScanAllMail => self.handle_scan_all_mail(&mut session).await?,
             MenuCommand::Post(post) => self.handle_post_mail(&mut session, post).await?,
             MenuCommand::CommentToSysop => self.handle_comment_to_sysop(&mut session).await?,

@@ -171,15 +171,16 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
         ));
     }
 
-    // N rescans for new mail. The previous R 1 advanced last_read
-    // (via ReadMail) and last_scanned to 1, so a re-scan from
-    // last_scanned + 1 finds no further unread messages.
+    // Tier B B2: `N` is no longer a mail scan (a NextExpress drift —
+    // legacy `N` is the new-files scan, landing in Tier D); it is now an
+    // unknown command. The "no new mail after reading" check is made by
+    // the re-join auto-scan below.
     write_line(&mut stream, b"N")?;
     let post_n = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after N: {e}"))?;
-    if !contains(&post_n, b"No new mail.") {
+    if !contains(&post_n, b"Unknown command. Type G to log off.") {
         return Err(format!(
-            "expected `No new mail.` after second scan, got {:?}",
+            "expected `N` to be an unknown command after the B2 rebind, got {:?}",
             String::from_utf8_lossy(&post_n)
         ));
     }
