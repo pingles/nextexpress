@@ -125,7 +125,9 @@ where
             ReplyForwardOutcome::NoMailBase => {
                 self.write_and_flush(NO_MAIL_BASE_LINE).await?;
             }
-            ReplyForwardOutcome::SourceNotFound => {
+            ReplyForwardOutcome::SourceNotFound
+            | ReplyForwardOutcome::ReplyRejected(ReplyToMailError::SourceNotPermitted)
+            | ReplyForwardOutcome::ForwardRejected(ForwardMailError::SourceNotPermitted) => {
                 self.write_and_flush(SOURCE_NOT_FOUND_LINE).await?;
             }
             ReplyForwardOutcome::UnknownAddressee => {

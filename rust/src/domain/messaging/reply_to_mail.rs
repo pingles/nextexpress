@@ -19,6 +19,7 @@ use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
 use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
 use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::messaging::post_mail::{post_mail, PostMailDraft, PostMailError};
+use crate::domain::messaging::read_mail::can_read;
 use crate::domain::user::User;
 
 /// Caller-supplied fields for a reply
@@ -44,16 +45,22 @@ pub struct ReplyToMailDraft {
     pub posted_at: SystemTime,
 }
 
-/// Errors raised by [`reply_to_mail`]. The rule's own `requires`
-/// surface as [`ReplyToMailError::SourceDeleted`]; every other gate
-/// (access, membership, addressing) bubbles up from the underlying
-/// [`post_mail`] call as [`ReplyToMailError::Post`].
+/// Errors raised by [`reply_to_mail`]. Source-message gates surface as
+/// [`ReplyToMailError::SourceDeleted`] and
+/// [`ReplyToMailError::SourceNotPermitted`]; every other gate (access,
+/// membership, addressing) bubbles up from the underlying [`post_mail`]
+/// call as [`ReplyToMailError::Post`].
 #[derive(Debug, thiserror::Error)]
 pub enum ReplyToMailError {
     /// `requires: source.visibility != deleted` — the message being
     /// replied to has been soft-deleted by the sysop.
     #[error("source mail is deleted")]
     SourceDeleted,
+    /// The caller is not permitted to read the source message. Replies
+    /// derive the addressee and default subject from the source, so the
+    /// action must not reveal private mail metadata.
+    #[error("user is not permitted to read the source mail")]
+    SourceNotPermitted,
     /// The underlying [`post_mail`] call rejected the derived draft.
     #[error(transparent)]
     Post(#[from] PostMailError),
@@ -83,6 +90,8 @@ pub enum ReplyToMailError {
 /// # Errors
 /// - [`ReplyToMailError::SourceDeleted`] when the source mail has
 ///   `visibility = Deleted`;
+/// - [`ReplyToMailError::SourceNotPermitted`] when the caller cannot
+///   read the source mail;
 /// - [`ReplyToMailError::Post`] wrapping any [`PostMailError`] that
 ///   the underlying post raises (access denied, missing membership,
 ///   addressing not allowed, store failure).
@@ -96,6 +105,9 @@ pub fn reply_to_mail(
 ) -> Result<Mail, ReplyToMailError> {
     if matches!(source.visibility(), MailVisibility::Deleted) {
         return Err(ReplyToMailError::SourceDeleted);
+    }
+    if !can_read(user, source) {
+        return Err(ReplyToMailError::SourceNotPermitted);
     }
 
     let keeps_all =
@@ -171,17 +183,18 @@ mod tests {
         user
     }
 
-    fn source_from(
+    fn source_from_with_visibility(
         store: &mut InMemoryMailStore,
         from_name: &str,
         author_slot: u32,
         to_name: &str,
         addressee_slot: Option<u32>,
         broadcast_to: BroadcastTo,
+        visibility: MailVisibility,
     ) -> Mail {
         store
             .insert(MailDraft {
-                visibility: MailVisibility::Public,
+                visibility,
                 from_name: from_name.to_string(),
                 to_name: to_name.to_string(),
                 broadcast_to,
@@ -192,6 +205,25 @@ mod tests {
                 body: "original body".to_string(),
             })
             .expect("source insert")
+    }
+
+    fn source_from(
+        store: &mut InMemoryMailStore,
+        from_name: &str,
+        author_slot: u32,
+        to_name: &str,
+        addressee_slot: Option<u32>,
+        broadcast_to: BroadcastTo,
+    ) -> Mail {
+        source_from_with_visibility(
+            store,
+            from_name,
+            author_slot,
+            to_name,
+            addressee_slot,
+            broadcast_to,
+            MailVisibility::Public,
+        )
     }
 
     fn reply_draft() -> ReplyToMailDraft {
@@ -330,6 +362,39 @@ mod tests {
             "got {err:?}"
         );
         // No write happened — only the original source is stored.
+        assert_eq!(store.highest_message(), 1);
+        assert_eq!(alice.messages_posted(), 0);
+    }
+
+    #[test]
+    fn rejects_private_source_the_user_cannot_read() {
+        let mut alice = make_user(2, "alice");
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let source = source_from_with_visibility(
+            &mut store,
+            "charlie",
+            4,
+            "bob",
+            Some(3),
+            BroadcastTo::None,
+            MailVisibility::Private,
+        );
+
+        let err = reply_to_mail(
+            &mut alice,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            &source,
+            reply_draft(),
+        )
+        .expect_err("reply must not reveal someone else's private mail");
+
+        assert!(
+            matches!(err, ReplyToMailError::SourceNotPermitted),
+            "got {err:?}"
+        );
         assert_eq!(store.highest_message(), 1);
         assert_eq!(alice.messages_posted(), 0);
     }

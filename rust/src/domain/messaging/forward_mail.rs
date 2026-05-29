@@ -24,6 +24,7 @@ use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
 use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
 use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::messaging::post_mail::{post_mail, PostMailDraft, PostMailError};
+use crate::domain::messaging::read_mail::can_read;
 use crate::domain::user::User;
 
 /// Caller-supplied fields for a forward
@@ -52,16 +53,22 @@ pub struct ForwardMailRequest {
     pub posted_at: SystemTime,
 }
 
-/// Errors raised by [`forward_mail`]. The rule's own `requires`
-/// surface as [`ForwardMailError::SourceDeleted`]; every other gate
-/// (access, membership, addressing) bubbles up from the underlying
-/// [`post_mail`] call as [`ForwardMailError::Post`].
+/// Errors raised by [`forward_mail`]. Source-message gates surface as
+/// [`ForwardMailError::SourceDeleted`] and
+/// [`ForwardMailError::SourceNotPermitted`]; every other gate (access,
+/// membership, addressing) bubbles up from the underlying [`post_mail`]
+/// call as [`ForwardMailError::Post`].
 #[derive(Debug, thiserror::Error)]
 pub enum ForwardMailError {
     /// `requires: not request.source.is_deleted` — the message
     /// being forwarded has been soft-deleted.
     #[error("source mail is deleted")]
     SourceDeleted,
+    /// The caller is not permitted to read the source message. A
+    /// forward includes the original body, so it must not bypass the
+    /// same private-mail visibility gate as `ReadMail`.
+    #[error("user is not permitted to read the source mail")]
+    SourceNotPermitted,
     /// The underlying [`post_mail`] call rejected the derived draft.
     #[error(transparent)]
     Post(#[from] PostMailError),
@@ -96,6 +103,8 @@ pub fn forward_header_for(mail: &Mail) -> String {
 /// # Errors
 /// - [`ForwardMailError::SourceDeleted`] when the source mail has
 ///   `visibility = Deleted`;
+/// - [`ForwardMailError::SourceNotPermitted`] when the caller cannot
+///   read the source mail;
 /// - [`ForwardMailError::Post`] wrapping any [`PostMailError`] that
 ///   the underlying post raises (access denied, missing membership,
 ///   addressing not allowed, store failure).
@@ -109,6 +118,9 @@ pub fn forward_mail(
 ) -> Result<Mail, ForwardMailError> {
     if matches!(source.visibility(), MailVisibility::Deleted) {
         return Err(ForwardMailError::SourceDeleted);
+    }
+    if !can_read(user, source) {
+        return Err(ForwardMailError::SourceNotPermitted);
     }
 
     let ForwardMailRequest {
@@ -203,6 +215,29 @@ mod tests {
                 author_slot,
                 addressee_slot: Some(2),
                 body: body.to_string(),
+            })
+            .expect("source insert")
+    }
+
+    fn source_to(
+        store: &mut InMemoryMailStore,
+        from_name: &str,
+        author_slot: u32,
+        to_name: &str,
+        addressee_slot: Option<u32>,
+        visibility: MailVisibility,
+    ) -> Mail {
+        store
+            .insert(MailDraft {
+                visibility,
+                from_name: from_name.to_string(),
+                to_name: to_name.to_string(),
+                broadcast_to: BroadcastTo::None,
+                subject: "private subject".to_string(),
+                posted_at: t(50),
+                author_slot,
+                addressee_slot,
+                body: "private body".to_string(),
             })
             .expect("source insert")
     }
@@ -416,6 +451,44 @@ mod tests {
         .expect_err("must refuse a deleted source");
         assert!(
             matches!(err, ForwardMailError::SourceDeleted),
+            "got {err:?}"
+        );
+        assert_eq!(store.highest_message(), 1);
+        assert_eq!(alice.messages_posted(), 0);
+    }
+
+    #[test]
+    fn rejects_private_source_the_user_cannot_read() {
+        let mut alice = make_user(2, "alice");
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let source = source_to(
+            &mut store,
+            "charlie",
+            4,
+            "bob",
+            Some(3),
+            MailVisibility::Private,
+        );
+
+        let err = forward_mail(
+            &mut alice,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            &source,
+            ForwardMailRequest {
+                new_addressee_name: "alice".to_string(),
+                new_addressee_slot: 2,
+                additional_note: None,
+                from_name: "alice".to_string(),
+                posted_at: t(100),
+            },
+        )
+        .expect_err("forward must not leak someone else's private mail");
+
+        assert!(
+            matches!(err, ForwardMailError::SourceNotPermitted),
             "got {err:?}"
         );
         assert_eq!(store.highest_message(), 1);
