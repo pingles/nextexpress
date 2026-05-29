@@ -16,6 +16,9 @@ use time::OffsetDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::domain::conference::MessageBaseRef;
+use crate::domain::messaging::limits::{
+    MAX_MAIL_BODY_BYTES, MAX_MAIL_SUBJECT_BYTES, MAX_PERSISTED_MAIL_BYTES,
+};
 use crate::domain::messaging::mail::{
     BroadcastTo, Mail, MailAttachment, MailDraft, MailVisibility, NewMail,
 };
@@ -131,10 +134,12 @@ impl MailStore for FileMailStore {
 
     fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError> {
         let path = self.path_for(number);
-        let text = match fs::read_to_string(&path) {
+        let text = match read_mail_payload_text(&path) {
             Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(MailStoreError::Io(e)),
+            Err(MailStoreError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(e) => return Err(e),
         };
         let payload: MailPayload =
             serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
@@ -179,16 +184,38 @@ fn scan_dir_for_highest(dir: &Path, msgbase: MessageBaseRef) -> Result<u32, Mail
         // against a directory that has accidentally received an
         // unrelated message file.
         let path = entry.path();
-        let text = fs::read_to_string(&path)?;
+        let text = read_mail_payload_text(&path)?;
         let payload: MailPayload =
             serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
                 path: path.display().to_string(),
                 source: Box::new(source),
             })?;
         payload.check_consistency(msgbase, number, &path)?;
+        payload.check_size_limits(&path)?;
         highest = highest.max(number);
     }
     Ok(highest)
+}
+
+fn read_mail_payload_text(path: &Path) -> Result<String, MailStoreError> {
+    let len = fs::metadata(path)?.len();
+    if len > MAX_PERSISTED_MAIL_BYTES {
+        return Err(malformed_payload(
+            path,
+            format!("mail file is {len} bytes, limit is {MAX_PERSISTED_MAIL_BYTES}"),
+        ));
+    }
+    fs::read_to_string(path).map_err(MailStoreError::Io)
+}
+
+fn malformed_payload(path: &Path, message: String) -> MailStoreError {
+    MailStoreError::Malformed {
+        path: path.display().to_string(),
+        source: Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            message,
+        )),
+    }
 }
 
 fn parse_message_filename(name: &str) -> Option<u32> {
@@ -273,6 +300,28 @@ impl MailPayload {
         Ok(())
     }
 
+    fn check_size_limits(&self, path: &Path) -> Result<(), MailStoreError> {
+        if self.subject.len() > MAX_MAIL_SUBJECT_BYTES {
+            return Err(malformed_payload(
+                path,
+                format!(
+                    "mail subject is {} bytes, limit is {MAX_MAIL_SUBJECT_BYTES}",
+                    self.subject.len()
+                ),
+            ));
+        }
+        if self.body.len() > MAX_MAIL_BODY_BYTES {
+            return Err(malformed_payload(
+                path,
+                format!(
+                    "mail body is {} bytes, limit is {MAX_MAIL_BODY_BYTES}",
+                    self.body.len()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn into_mail_checked(
         self,
         msgbase: MessageBaseRef,
@@ -280,6 +329,7 @@ impl MailPayload {
         path: &Path,
     ) -> Result<Mail, MailStoreError> {
         self.check_consistency(msgbase, filename_number, path)?;
+        self.check_size_limits(path)?;
         let visibility = MailVisibility::from(self.visibility);
         let broadcast_to = BroadcastTo::from(self.broadcast_to);
         let posted_at = std::time::SystemTime::from(self.posted_at);
@@ -414,8 +464,11 @@ mod tests {
 
     use crate::adapters::file_mail_store::FileMailStore;
     use crate::domain::conference::MessageBaseRef;
+    use crate::domain::messaging::limits::{
+        MAX_MAIL_BODY_BYTES, MAX_MAIL_SUBJECT_BYTES, MAX_PERSISTED_MAIL_BYTES,
+    };
     use crate::domain::messaging::mail::{BroadcastTo, MailAttachment, MailDraft, MailVisibility};
-    use crate::domain::messaging::mail_store::MailStore;
+    use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 
     fn t(secs: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
@@ -433,6 +486,25 @@ mod tests {
             addressee_slot: Some(2),
             body: "Hello, alice!".to_string(),
         }
+    }
+
+    fn raw_mail_payload(subject: &str, body: &str) -> String {
+        serde_json::json!({
+            "conference_number": 2,
+            "msgbase_number": 1,
+            "number": 1,
+            "visibility": "public",
+            "from_name": "Sysop",
+            "to_name": "alice",
+            "broadcast_to": "none",
+            "subject": subject,
+            "posted_at": "1970-01-01T00:00:01Z",
+            "received_at": null,
+            "author_slot": 1,
+            "addressee_slot": 2,
+            "body": body,
+        })
+        .to_string()
     }
 
     #[test]
@@ -659,6 +731,100 @@ mod tests {
     }
 
     #[test]
+    fn read_mail_payload_text_accepts_a_file_at_the_persisted_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("0000001.json");
+        let exact_len = usize::try_from(MAX_PERSISTED_MAIL_BYTES).expect("test limit fits usize");
+        std::fs::write(&path, vec![b'x'; exact_len]).unwrap();
+
+        let text = super::read_mail_payload_text(&path).expect("exact limit should read");
+
+        assert_eq!(text.len(), exact_len);
+    }
+
+    #[test]
+    fn read_mail_payload_text_rejects_a_file_over_the_persisted_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("0000001.json");
+        let too_large_len =
+            usize::try_from(MAX_PERSISTED_MAIL_BYTES).expect("test limit fits usize") + 1;
+        std::fs::write(&path, vec![b'x'; too_large_len]).unwrap();
+
+        let err = super::read_mail_payload_text(&path).expect_err("oversized file must fail");
+
+        assert!(matches!(err, MailStoreError::Malformed { .. }));
+    }
+
+    #[test]
+    fn open_accepts_subject_and_body_at_their_size_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let subject = "s".repeat(MAX_MAIL_SUBJECT_BYTES);
+        let body = "b".repeat(MAX_MAIL_BODY_BYTES);
+        std::fs::write(
+            dir.path().join("0000001.json"),
+            raw_mail_payload(&subject, &body),
+        )
+        .unwrap();
+
+        let store = FileMailStore::open(dir.path().to_path_buf(), msgbase)
+            .expect("exact size limits should open");
+        let mail = store.load(1).unwrap().expect("present");
+
+        assert_eq!(mail.subject().len(), MAX_MAIL_SUBJECT_BYTES);
+        assert_eq!(mail.body().len(), MAX_MAIL_BODY_BYTES);
+    }
+
+    #[test]
+    fn open_rejects_a_message_subject_over_the_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let subject = "s".repeat(MAX_MAIL_SUBJECT_BYTES + 1);
+        std::fs::write(
+            dir.path().join("0000001.json"),
+            raw_mail_payload(&subject, ""),
+        )
+        .unwrap();
+
+        let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
+            .expect_err("oversized subject must be rejected");
+
+        assert!(matches!(err, MailStoreError::Malformed { .. }));
+    }
+
+    #[test]
+    fn open_rejects_a_message_body_over_the_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let body = "x".repeat(MAX_MAIL_BODY_BYTES + 1);
+        std::fs::write(
+            dir.path().join("0000001.json"),
+            raw_mail_payload("x", &body),
+        )
+        .unwrap();
+
+        let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
+            .expect_err("oversized body must be rejected");
+
+        assert!(matches!(err, MailStoreError::Malformed { .. }));
+    }
+
+    #[test]
+    fn open_rejects_a_mail_file_larger_than_the_persisted_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let too_large_len =
+            usize::try_from(MAX_PERSISTED_MAIL_BYTES).expect("test limit fits usize") + 1;
+        let too_large = vec![b'x'; too_large_len];
+        std::fs::write(dir.path().join("0000001.json"), too_large).unwrap();
+
+        let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
+            .expect_err("oversized mail file must be rejected before parsing");
+
+        assert!(matches!(err, MailStoreError::Malformed { .. }));
+    }
+
+    #[test]
     fn re_opening_an_empty_directory_succeeds_and_creates_it() {
         // `open` must work for a fresh BBS install where the per-msgbase
         // directory doesn't exist yet. The store auto-creates it.
@@ -693,9 +859,6 @@ mod tests {
         assert_eq!(super::parse_message_filename(".json"), None);
         assert_eq!(super::parse_message_filename("1.json.bak"), None);
     }
-
-    // Bring MailStoreError into scope for the negative-path tests.
-    use crate::domain::messaging::mail_store::MailStoreError;
 
     #[test]
     fn load_surfaces_io_errors_other_than_not_found() {

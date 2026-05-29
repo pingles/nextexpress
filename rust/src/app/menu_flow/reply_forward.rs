@@ -9,6 +9,7 @@
 
 use std::time::SystemTime;
 
+use crate::app::input_limits::append_line_with_newline;
 use crate::app::menu::reply_forward::{
     forward_mail, reply_mail, ForwardInput, ReplyForwardOutcome, ReplyInput,
 };
@@ -21,6 +22,7 @@ use crate::app::wire_text::{
     READ_REQUIRES_NUMBER_LINE, SOURCE_DELETED_LINE, SOURCE_NOT_FOUND_LINE,
 };
 use crate::domain::messaging::forward_mail::ForwardMailError;
+use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
 use crate::domain::messaging::post_mail::PostMailError;
 use crate::domain::messaging::reply_to_mail::ReplyToMailError;
 use crate::domain::session::typed::MenuSession;
@@ -161,7 +163,10 @@ where
             PostMailError::NoMembership => {
                 self.write_and_flush(POST_RECIPIENT_NO_ACCESS_LINE).await?;
             }
-            PostMailError::EmptyAddressee | PostMailError::AddresseeMismatch => {
+            PostMailError::EmptyAddressee
+            | PostMailError::AddresseeMismatch
+            | PostMailError::SubjectTooLong
+            | PostMailError::BodyTooLong => {
                 self.write_and_flush(POST_ABORTED_LINE).await?;
             }
             PostMailError::AddressingNotAllowed => {
@@ -202,8 +207,10 @@ where
                         return Ok(None);
                     }
                     first_line = false;
-                    note.push_str(&line);
-                    note.push('\n');
+                    if !append_line_with_newline(&mut note, &line, MAX_MAIL_BODY_BYTES) {
+                        self.write_and_flush(POST_ABORTED_LINE).await?;
+                        return Ok(None);
+                    }
                 }
                 TerminalRead::Eof | TerminalRead::IdleTimedOut => {
                     self.write_and_flush(POST_ABORTED_LINE).await?;
@@ -211,5 +218,95 @@ where
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+    use std::convert::Infallible;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::adapters::file_screen_repository::FileScreenRepository;
+    use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
+    use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
+    use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::services::AppServices;
+    use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
+    use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+    use crate::app::wire_text::POST_ABORTED_LINE;
+    use crate::domain::messaging::post_mail::PostMailError;
+    use crate::domain::session::SessionPolicy;
+    use crate::domain::user::RatioMode;
+
+    #[derive(Default)]
+    struct CaptureTerminal {
+        output: Vec<u8>,
+        inputs: VecDeque<TerminalRead>,
+    }
+
+    impl Terminal for CaptureTerminal {
+        type Error = Infallible;
+
+        fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
+            Box::pin(async move {
+                self.output.extend_from_slice(bytes);
+                Ok(())
+            })
+        }
+
+        fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn read_line(
+            &mut self,
+            _echo: TerminalEcho,
+            _timeout: Duration,
+        ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+            Box::pin(async move { Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof)) })
+        }
+    }
+
+    fn test_services() -> AppServices {
+        AppServices::new(
+            Arc::new(InMemoryUserRepository::default()),
+            Arc::new(Pbkdf2PasswordHasher::new()),
+            Arc::new(InMemoryCallerLog::new()),
+            Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            Arc::new(Vec::new()),
+            Arc::new(InMemoryMailStores::new()),
+            SessionPolicy::default(),
+            DefaultRatio {
+                mode: RatioMode::Disabled,
+                value: 0,
+            },
+            NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            },
+            "Test BBS".to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn render_post_error_writes_abort_for_oversized_body() {
+        let services = test_services();
+        let mut terminal = CaptureTerminal::default();
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+
+            flow.render_post_error(PostMailError::BodyTooLong, "FW")
+                .await
+                .unwrap();
+        }
+
+        assert_eq!(terminal.output, POST_ABORTED_LINE);
     }
 }

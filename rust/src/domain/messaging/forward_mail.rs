@@ -21,6 +21,7 @@ use std::time::SystemTime;
 use time::OffsetDateTime;
 
 use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
+use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
 use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
 use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::messaging::post_mail::{post_mail, PostMailDraft, PostMailError};
@@ -132,6 +133,20 @@ pub fn forward_mail(
     } = request;
 
     let mut body = forward_header_for(source);
+    let note_bytes = additional_note
+        .as_ref()
+        .map_or(0, |note| "\n--\n".len() + note.len());
+    let Some(forwarded_body_len) = body
+        .len()
+        .checked_add(1)
+        .and_then(|len| len.checked_add(source.body().len()))
+        .and_then(|len| len.checked_add(note_bytes))
+    else {
+        return Err(ForwardMailError::Post(PostMailError::BodyTooLong));
+    };
+    if forwarded_body_len > MAX_MAIL_BODY_BYTES {
+        return Err(ForwardMailError::Post(PostMailError::BodyTooLong));
+    }
     body.push('\n');
     body.push_str(source.body());
     if let Some(note) = additional_note {
@@ -169,6 +184,7 @@ mod tests {
     use crate::domain::messaging::forward_mail::{
         forward_header_for, forward_mail, ForwardMailError, ForwardMailRequest,
     };
+    use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
     use crate::domain::messaging::mail::{BroadcastTo, Mail, MailDraft, MailVisibility};
     use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
     use crate::domain::messaging::mail_store::MailStore;
@@ -493,6 +509,100 @@ mod tests {
         );
         assert_eq!(store.highest_message(), 1);
         assert_eq!(alice.messages_posted(), 0);
+    }
+
+    #[test]
+    fn rejects_forward_when_the_derived_body_would_exceed_the_size_limit() {
+        let mut alice = make_user(2, "alice");
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let huge_body = "x".repeat(MAX_MAIL_BODY_BYTES);
+        let source = source_from(
+            &mut store,
+            "alice",
+            2,
+            "huge",
+            &huge_body,
+            MailVisibility::Public,
+            t(50),
+        );
+
+        let err = forward_mail(
+            &mut alice,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            &source,
+            ForwardMailRequest {
+                new_addressee_name: "bob".to_string(),
+                new_addressee_slot: 3,
+                additional_note: None,
+                from_name: "alice".to_string(),
+                posted_at: t(100),
+            },
+        )
+        .expect_err("forward header must not push body past the limit");
+
+        assert!(
+            matches!(err, ForwardMailError::Post(PostMailError::BodyTooLong)),
+            "got {err:?}"
+        );
+        assert_eq!(store.highest_message(), 1);
+        assert_eq!(alice.messages_posted(), 0);
+    }
+
+    #[test]
+    fn accepts_forward_when_the_derived_body_exactly_hits_the_size_limit() {
+        let mut alice = make_user(2, "alice");
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut header_store = InMemoryMailStore::new(msgbase);
+        let header_source = source_from(
+            &mut header_store,
+            "alice",
+            2,
+            "exact",
+            "",
+            MailVisibility::Public,
+            t(50),
+        );
+        let note = "ok";
+        let source_body_len = MAX_MAIL_BODY_BYTES
+            - forward_header_for(&header_source).len()
+            - 1
+            - "\n--\n".len()
+            - note.len();
+
+        let mut store = InMemoryMailStore::new(msgbase);
+        let source_body = "x".repeat(source_body_len);
+        let source = source_from(
+            &mut store,
+            "alice",
+            2,
+            "exact",
+            &source_body,
+            MailVisibility::Public,
+            t(50),
+        );
+
+        let forwarded = forward_mail(
+            &mut alice,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            &source,
+            ForwardMailRequest {
+                new_addressee_name: "bob".to_string(),
+                new_addressee_slot: 3,
+                additional_note: Some(note.to_string()),
+                from_name: "alice".to_string(),
+                posted_at: t(100),
+            },
+        )
+        .expect("derived body exactly at limit should be accepted");
+
+        assert_eq!(forwarded.body().len(), MAX_MAIL_BODY_BYTES);
+        assert_eq!(store.highest_message(), 2);
+        assert_eq!(alice.messages_posted(), 1);
     }
 
     #[test]

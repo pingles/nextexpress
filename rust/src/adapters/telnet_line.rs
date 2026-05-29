@@ -9,6 +9,8 @@ use std::io;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+use crate::app::input_limits::MAX_TERMINAL_LINE_BYTES;
+
 /// How [`read_telnet_line`] should echo the bytes it accepts.
 ///
 /// Because the listener advertises `IAC WILL ECHO` to the client at
@@ -111,6 +113,12 @@ pub(crate) async fn read_telnet_line(
                 stream.write_all(b"\x08 \x08").await?;
             }
             b if b >= 0x20 => {
+                if buf.len() >= MAX_TERMINAL_LINE_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "terminal input line exceeds maximum length",
+                    ));
+                }
                 buf.push(b);
                 let echoed = match echo {
                     EchoMode::Visible => b,
@@ -158,4 +166,50 @@ fn try_consume_cr_trailer(stream: &mut TcpStream, pushback: &mut Option<u8>) -> 
         Err(error) => return Err(error),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    async fn connected_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        (server, client)
+    }
+
+    #[tokio::test]
+    async fn accepts_a_line_at_the_terminal_byte_limit() {
+        let (mut server, mut client) = connected_pair().await;
+        let input = vec![b'a'; MAX_TERMINAL_LINE_BYTES];
+        client.write_all(&input).await.unwrap();
+        client.write_all(b"\r").await.unwrap();
+        let mut pushback = None;
+
+        let line = read_telnet_line(&mut server, &mut pushback, EchoMode::Visible)
+            .await
+            .unwrap()
+            .expect("line");
+
+        assert_eq!(line.len(), MAX_TERMINAL_LINE_BYTES);
+        assert!(line.bytes().all(|b| b == b'a'));
+    }
+
+    #[tokio::test]
+    async fn rejects_a_line_over_the_terminal_byte_limit() {
+        let (mut server, mut client) = connected_pair().await;
+        let input = vec![b'a'; MAX_TERMINAL_LINE_BYTES + 1];
+        client.write_all(&input).await.unwrap();
+        let mut pushback = None;
+
+        let err = read_telnet_line(&mut server, &mut pushback, EchoMode::Visible)
+            .await
+            .expect_err("overlong line must fail");
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }

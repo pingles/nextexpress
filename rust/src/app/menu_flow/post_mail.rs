@@ -9,6 +9,7 @@
 
 use std::time::SystemTime;
 
+use crate::app::input_limits::append_line_with_newline;
 use crate::app::menu::post_mail::{
     post_comment_to_sysop, post_mail, CommentToSysopInput, PostMailInput, PostMailOutcome,
 };
@@ -21,6 +22,7 @@ use crate::app::wire_text::{
     POST_PRIVATE_PROMPT, POST_RECIPIENT_NO_ACCESS_LINE, POST_SUBJECT_PROMPT, POST_TO_PROMPT,
     POST_UNKNOWN_USER_LINE,
 };
+use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
 use crate::domain::messaging::post_mail::PostMailError;
 use crate::domain::session::typed::MenuSession;
 
@@ -180,13 +182,14 @@ where
                 self.write_and_flush(POST_RECIPIENT_NO_ACCESS_LINE).await?;
             }
             PostMailOutcome::Rejected(
-                PostMailError::EmptyAddressee | PostMailError::AddresseeMismatch,
+                PostMailError::EmptyAddressee
+                | PostMailError::AddresseeMismatch
+                | PostMailError::SubjectTooLong
+                | PostMailError::BodyTooLong,
             ) => {
-                // Defensive: we've already gated empty recipients
-                // upstream (and the empty-to-ALL reroute means the
-                // rule never sees an empty `to_name` from the menu).
-                // The rule's gates fire only if a future refactor
-                // lets an invalid combination slip past the editor.
+                // Defensive: the editor gates empty recipients and
+                // oversized input upstream. The rule's gates fire only
+                // if a future refactor lets an invalid draft slip past.
                 self.write_and_flush(POST_ABORTED_LINE).await?;
             }
             PostMailOutcome::Rejected(PostMailError::AddressingNotAllowed) => {
@@ -269,8 +272,10 @@ where
                     if trimmed == "." {
                         return Ok(Some(body));
                     }
-                    body.push_str(&line);
-                    body.push('\n');
+                    if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
+                        self.write_and_flush(POST_ABORTED_LINE).await?;
+                        return Ok(None);
+                    }
                 }
                 TerminalRead::Eof | TerminalRead::IdleTimedOut => {
                     self.write_and_flush(POST_ABORTED_LINE).await?;

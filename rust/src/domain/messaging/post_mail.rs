@@ -20,6 +20,7 @@
 use std::time::SystemTime;
 
 use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
+use crate::domain::messaging::limits::{MAX_MAIL_BODY_BYTES, MAX_MAIL_SUBJECT_BYTES};
 use crate::domain::messaging::mail::{
     addressing_allows, BroadcastTo, Mail, MailDraft, MailVisibility,
 };
@@ -99,6 +100,12 @@ pub enum PostMailError {
     /// `requires: addressing_allows(visit.msgbase, broadcast)`.
     #[error("message base does not accept this addressing kind")]
     AddressingNotAllowed,
+    /// The subject exceeds [`MAX_MAIL_SUBJECT_BYTES`].
+    #[error("mail subject is too long")]
+    SubjectTooLong,
+    /// The body exceeds [`MAX_MAIL_BODY_BYTES`].
+    #[error("mail body is too long")]
+    BodyTooLong,
     /// The draft's `broadcast_to` and `addressee_slot` disagree.
     /// `BroadcastTo::None` requires `addressee_slot = Some(_)`; `All`
     /// and `Eall` require `addressee_slot = None`.
@@ -165,6 +172,12 @@ pub(crate) fn apply_post_mail(
 ) -> Result<Mail, PostMailError> {
     if draft.to_name.is_empty() {
         return Err(PostMailError::EmptyAddressee);
+    }
+    if draft.subject.len() > MAX_MAIL_SUBJECT_BYTES {
+        return Err(PostMailError::SubjectTooLong);
+    }
+    if draft.body.len() > MAX_MAIL_BODY_BYTES {
+        return Err(PostMailError::BodyTooLong);
     }
     match (draft.broadcast_to, draft.addressee_slot) {
         (BroadcastTo::None, Some(_)) | (BroadcastTo::All | BroadcastTo::Eall, None) => {}
@@ -240,6 +253,7 @@ mod tests {
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
+    use crate::domain::messaging::limits::{MAX_MAIL_BODY_BYTES, MAX_MAIL_SUBJECT_BYTES};
     use crate::domain::messaging::mail::MailVisibility;
     use crate::domain::password::PasswordHashKind;
 
@@ -780,5 +794,93 @@ mod tests {
         assert!(matches!(err, PostMailError::EmptyAddressee), "got {err:?}");
         assert_eq!(store.highest_message(), 0);
         assert_eq!(user.messages_posted(), 0);
+    }
+
+    #[test]
+    fn rejects_subject_over_the_size_limit_without_side_effects() {
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let mut draft = sample_draft();
+        draft.subject = "s".repeat(MAX_MAIL_SUBJECT_BYTES + 1);
+
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect_err("oversized subject must be rejected");
+
+        assert!(matches!(err, PostMailError::SubjectTooLong), "got {err:?}");
+        assert_eq!(store.highest_message(), 0);
+        assert_eq!(user.messages_posted(), 0);
+    }
+
+    #[test]
+    fn accepts_subject_at_the_size_limit() {
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let mut draft = sample_draft();
+        draft.subject = "s".repeat(MAX_MAIL_SUBJECT_BYTES);
+
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("subject at limit should be accepted");
+
+        assert_eq!(mail.subject().len(), MAX_MAIL_SUBJECT_BYTES);
+        assert_eq!(store.highest_message(), 1);
+        assert_eq!(user.messages_posted(), 1);
+    }
+
+    #[test]
+    fn rejects_body_over_the_size_limit_without_side_effects() {
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let mut draft = sample_draft();
+        draft.body = "b".repeat(MAX_MAIL_BODY_BYTES + 1);
+
+        let err = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect_err("oversized body must be rejected");
+
+        assert!(matches!(err, PostMailError::BodyTooLong), "got {err:?}");
+        assert_eq!(store.highest_message(), 0);
+        assert_eq!(user.messages_posted(), 0);
+    }
+
+    #[test]
+    fn accepts_body_at_the_size_limit() {
+        let mut user = make_user(2);
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(msgbase);
+        let mut draft = sample_draft();
+        draft.body = "b".repeat(MAX_MAIL_BODY_BYTES);
+
+        let mail = post_mail(
+            &mut user,
+            msgbase,
+            AllowedAddressing::Any,
+            &mut store,
+            draft,
+        )
+        .expect("body at limit should be accepted");
+
+        assert_eq!(mail.body().len(), MAX_MAIL_BODY_BYTES);
+        assert_eq!(store.highest_message(), 1);
+        assert_eq!(user.messages_posted(), 1);
     }
 }

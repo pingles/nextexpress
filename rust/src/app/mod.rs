@@ -18,6 +18,7 @@
 pub mod colour_terminal;
 pub mod config;
 pub mod config_loader;
+pub(crate) mod input_limits;
 pub mod login_flow;
 pub mod mail_scan_on_join;
 pub mod mail_stores;
