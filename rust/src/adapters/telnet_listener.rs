@@ -8,6 +8,7 @@
 //! pool sizing) lives in [`crate::app::runtime::Runtime`] — the
 //! listener is handed an already-built runtime.
 
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -112,7 +113,7 @@ async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Resul
         return Ok(());
     };
 
-    let result = {
+    release_node_after(pool.clone(), node_number, async {
         stream.write_all(IAC_INIT).await?;
         // Wrap the transport terminal so the `M` command (Tier A
         // quickwin A8) can strip ANSI colour from output; a fresh
@@ -121,7 +122,15 @@ async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Resul
         let services: AppServices = runtime.services().clone();
         let mut driver = SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
         driver.run().await
-    };
+    })
+    .await
+}
+
+async fn release_node_after<F, T>(pool: Arc<NodePool>, node_number: u32, operation: F) -> T
+where
+    F: Future<Output = T>,
+{
+    let result = operation.await;
     let _ = pool.release(node_number).await;
     result
 }
@@ -521,6 +530,24 @@ mod tests {
                 .any(|w| w == b"NextExpress"),
             "expected fresh banner after release, got {buf:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn connection_error_after_allocation_releases_the_node() {
+        let pool = Arc::new(NodePool::new(1));
+        let node_number = pool.allocate().await.expect("node available");
+        assert_eq!(pool.status_of(1).await, Some(NodeStatus::Connecting));
+
+        let result: io::Result<()> = release_node_after(pool.clone(), node_number, async {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "simulated negotiation failure",
+            ))
+        })
+        .await;
+
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+        assert_eq!(pool.status_of(1).await, Some(NodeStatus::Idle));
     }
 
     /// Spawns a listener bound to ephemeral port with `repo` and the
