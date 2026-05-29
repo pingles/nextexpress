@@ -225,7 +225,7 @@ module under `app::menu_flow/`):
 | `?` | `ShowMenu` | dispatch (`render_menu_screen`, expert mode only) |
 | `^<topic>` | `TopicHelp(String)` | dispatch (`screens().topic_help`) |
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
-| `MS` | `Scan(ScanArg::All)` | scan-all (was `M`) — `scan_mail` |
+| `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail` |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 Each non-trivial command lives in two files: a terminal-free use case

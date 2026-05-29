@@ -45,17 +45,42 @@ use crate::domain::messaging::read_mail::can_read;
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::user::User;
 
+/// One row in a mail-scan listing (spec: `messaging.allium:MailScanRow`).
+///
+/// Mirrors the columns the legacy `searchNewMail` prints when invoked
+/// outside an auto-rejoin (Type / From / Subject / Msg,
+/// `amiexpress/express.e:11713-11720`). Carries enough header
+/// information that the presentation layer can render the table without
+/// re-reading the message bodies; [`walk`] never opens a body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailScanRow {
+    /// The base this row came from. Lets a combined multi-conference
+    /// listing (the `MS` command) attribute each row to its source.
+    pub msgbase: MessageBaseRef,
+    /// Mail number within that base.
+    pub number: u32,
+    /// Public / Private / private-to-sysop.
+    pub visibility: MailVisibility,
+    /// Sender, as rendered by the conference's name-type.
+    pub from_name: String,
+    /// Addressee handle, `ALL` or `EALL`.
+    pub to_name: String,
+    /// Broadcast disposition (`None` / `All` / `Eall`).
+    pub broadcast_to: BroadcastTo,
+    /// Subject line.
+    pub subject: String,
+}
+
 /// Result of a single-msgbase mail scan
-/// (spec: `messaging.allium:MailScanCompleted` event payload — minus
-/// the `listing: Vec<MailScanRow>` rows the spec models, which Slice B3
-/// will add; today `walk` only counts the rows it matches).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// (spec: `messaging.allium:MailScanCompleted` event payload).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScanResult {
     /// The 1-indexed starting message number actually scanned (after
     /// resolving `from_message = 0` against `pointers.last_scanned`).
     pub from: u32,
     /// Number of messages visible-and-unread to the user in the
-    /// inclusive range `[from, highest_message]`.
+    /// inclusive range `[from, highest_message]`. Equal to
+    /// `listing.len()` — the spec's derived projection over the rows.
     pub unread_count: u32,
     /// Lowest unread number in that range, or `None` when no unread
     /// message was found.
@@ -63,6 +88,11 @@ pub struct ScanResult {
     /// The store's `highest_message` at scan time. The caller can
     /// pass this to subsequent reads without re-querying.
     pub highest_message: u32,
+    /// One [`MailScanRow`] per unread message, in ascending number
+    /// order. The presentation layer renders the listing table from
+    /// these; `unread_count` and `first_unread_number` are derived
+    /// projections kept for the summary-only callers (scan-on-join).
+    pub listing: Vec<MailScanRow>,
 }
 
 /// Errors returned by [`scan_mail`].
@@ -243,8 +273,7 @@ where
     }
     let highest = store.highest_message();
     let start = from.max(1);
-    let mut count: u32 = 0;
-    let mut first: Option<u32> = None;
+    let mut listing: Vec<MailScanRow> = Vec::new();
     // `start..=highest` is empty when `start > highest`, which keeps
     // the inverted-bounds case (the `from_message=10` against a
     // 2-message store) from ever entering the loop body — mirrors a
@@ -253,18 +282,26 @@ where
     for number in start..=highest {
         if let Some(mail) = store.load(number)? {
             if is_unread_for(user, &mail, scope) {
-                count = count.saturating_add(1);
-                if first.is_none() {
-                    first = Some(number);
-                }
+                listing.push(MailScanRow {
+                    msgbase,
+                    number: mail.number(),
+                    visibility: mail.visibility(),
+                    from_name: mail.from_name().to_string(),
+                    to_name: mail.to_name().to_string(),
+                    broadcast_to: mail.broadcast_to(),
+                    subject: mail.subject().to_string(),
+                });
             }
         }
     }
     Ok(ScanResult {
         from: start,
-        unread_count: count,
-        first_unread_number: first,
+        // Saturates rather than panicking on the (unreachable for any
+        // real mailbase) >4G-row case.
+        unread_count: u32::try_from(listing.len()).unwrap_or(u32::MAX),
+        first_unread_number: listing.first().map(|row| row.number),
         highest_message: highest,
+        listing,
     })
 }
 
@@ -459,6 +496,75 @@ mod tests {
         assert_eq!(result.unread_count, 3);
         assert_eq!(result.first_unread_number, Some(1));
         assert_eq!(result.highest_message, 3);
+    }
+
+    #[test]
+    fn scan_collects_a_listing_row_per_unread_message() {
+        // Spec `messaging.allium:ScanMail` `ensures` a `listing` of
+        // `MailScanRow` — one per unread message, in ascending number
+        // order. The presentation layer renders the legacy
+        // Type/From/Subject/Msg table from these rows without
+        // re-reading the message bodies.
+        let mut user = make_user(2);
+        let mut store = StubStore::new(ref_2_1());
+        store.push(addressed(2)); // #1 Public, addressed to user2
+        store.push(broadcast()); // #2 Public, ALL
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
+
+        assert_eq!(result.listing.len(), 2);
+        // `unread_count` / `first_unread_number` are the spec's derived
+        // projections over the listing.
+        assert_eq!(result.unread_count as usize, result.listing.len());
+        assert_eq!(result.first_unread_number, Some(result.listing[0].number));
+
+        let first = &result.listing[0];
+        assert_eq!(first.msgbase, ref_2_1());
+        assert_eq!(first.number, 1);
+        assert_eq!(first.visibility, MailVisibility::Public);
+        assert_eq!(first.from_name, "from");
+        assert_eq!(first.to_name, "user2");
+        assert_eq!(first.broadcast_to, BroadcastTo::None);
+        assert_eq!(first.subject, "subject");
+
+        let second = &result.listing[1];
+        assert_eq!(second.number, 2);
+        assert_eq!(second.to_name, "ALL");
+        assert_eq!(second.broadcast_to, BroadcastTo::All);
+    }
+
+    #[test]
+    fn scan_listing_omits_deleted_and_non_matching_messages() {
+        // The listing must contain exactly the matched-unread set, in
+        // the same order `unread_count` counts them — deleted and
+        // addressed-to-others mail never appear as rows.
+        let mut user = make_user(2);
+        let mut store = StubStore::new(ref_2_1());
+        store.push(addressed(3)); // #1 to someone else — excluded
+        store.push(addressed(2)); // #2 to user2 — included
+        store.push(addressed(2)); // #3 to user2, then deleted — excluded
+        store.mails[2]
+            .transition_to(MailVisibility::Deleted)
+            .unwrap();
+        let result = scan_mail(
+            &mut user,
+            &store,
+            ref_2_1(),
+            AllScanScope::AllUsersInConf,
+            0,
+            t(100),
+        )
+        .unwrap();
+
+        let numbers: Vec<u32> = result.listing.iter().map(|row| row.number).collect();
+        assert_eq!(numbers, vec![2]);
     }
 
     #[test]

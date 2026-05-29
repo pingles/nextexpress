@@ -13,8 +13,13 @@ pub(crate) enum MenuCommand {
     Join(NumberArg),
     /// `R` / `R <number>`: read one message.
     Read(NumberArg),
-    /// `M` / `N`: scan all/new mail.
+    /// `N`: scan new mail in the current conference. (A `NextExpress`
+    /// drift — legacy `N` is new-files; corrected by Tier B B2 / Tier D.)
     Scan(ScanArg),
+    /// `MS`: scan every conference the caller can access for mail
+    /// (Tier B B1). Mirrors `internalCommandMS()` at
+    /// `amiexpress/express.e:25250`.
+    ScanAllMail,
     /// `E` / `E <to>`: enter a message.
     Post(PostArg),
     /// `C`: comment to sysop (Slice 44).
@@ -83,15 +88,13 @@ pub(crate) enum NumberArg {
     Invalid,
 }
 
-/// Parsed shape of an `M` / `N` command.
+/// Parsed shape of the `N` scan command. (`MS` is its own
+/// [`MenuCommand::ScanAllMail`] variant, not a `ScanArg`.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ScanArg {
     /// `N` - scan from `last_scanned + 1`. Surfaces unread mail the
     /// user has not yet been alerted to.
     New,
-    /// `M` - scan from message 1. Lists every message visible to the
-    /// user in the current msgbase as the unread set.
-    All,
 }
 
 /// Parsed shape of an `E` / `E <to>` command.
@@ -165,6 +168,12 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if let Some(arg) = parse_number_command(trimmed, "R") {
         return MenuCommand::Read(arg);
     }
+    // `MS` (bare) is the multi-conference scan; an `eq_ignore_ascii_case`
+    // on the whole line rejects `MS <n>` (which falls through to
+    // Unknown) the same way the other no-argument commands do.
+    if trimmed.eq_ignore_ascii_case("MS") {
+        return MenuCommand::ScanAllMail;
+    }
     if let Some(scan) = parse_scan_command(trimmed) {
         return MenuCommand::Scan(scan);
     }
@@ -198,11 +207,9 @@ fn parse_scan_command(line: &str) -> Option<ScanArg> {
     if tokens.next().is_some() {
         return None;
     }
-    // `MS` carries the scan-all that used to live on bare `M` (now the
-    // ANSI toggle, A8); `N` still scans new mail until its own rebind.
-    if head.eq_ignore_ascii_case("MS") {
-        Some(ScanArg::All)
-    } else if head.eq_ignore_ascii_case("N") {
+    // `N` still scans new mail until its own rebind (Tier B B2 / D).
+    // `MS` is handled by the caller as its own command.
+    if head.eq_ignore_ascii_case("N") {
         Some(ScanArg::New)
     } else {
         None
@@ -297,11 +304,11 @@ mod tests {
 
     #[test]
     fn parses_scan_commands() {
-        // Tier A quickwin A8 rebind: scan-all moves off bare `M` (now
-        // the ANSI toggle) onto `MS`; `N` still scans new mail until the
-        // Tier B / D `N` rebind.
-        assert_eq!(parse_menu_command("MS"), MenuCommand::Scan(ScanArg::All));
-        assert_eq!(parse_menu_command("ms"), MenuCommand::Scan(ScanArg::All));
+        // Tier B B1: `MS` is the multi-conference mail scan
+        // (`MenuCommand::ScanAllMail`), no longer the single-conference
+        // `Scan(All)`. `N` still scans new mail until its Tier B/D rebind.
+        assert_eq!(parse_menu_command("MS"), MenuCommand::ScanAllMail);
+        assert_eq!(parse_menu_command("ms"), MenuCommand::ScanAllMail);
         assert_eq!(parse_menu_command("N"), MenuCommand::Scan(ScanArg::New));
         assert_eq!(parse_menu_command("n"), MenuCommand::Scan(ScanArg::New));
     }
@@ -651,8 +658,8 @@ mod tests {
             MenuCommand::Logoff => Some("G"),
             MenuCommand::Join(_) => Some("J"),
             MenuCommand::Read(_) => Some("R"),
-            MenuCommand::Scan(ScanArg::All) => Some("MS"),
             MenuCommand::Scan(ScanArg::New) => Some("N"),
+            MenuCommand::ScanAllMail => Some("MS"),
             MenuCommand::Post(_) => Some("E"),
             MenuCommand::CommentToSysop => Some("C"),
             MenuCommand::Reply(_) => Some("RP"),
@@ -681,8 +688,8 @@ mod tests {
             MenuCommand::Logoff,
             MenuCommand::Join(NumberArg::Missing),
             MenuCommand::Read(NumberArg::Missing),
-            MenuCommand::Scan(ScanArg::All),
             MenuCommand::Scan(ScanArg::New),
+            MenuCommand::ScanAllMail,
             MenuCommand::Post(PostArg::Missing),
             MenuCommand::CommentToSysop,
             MenuCommand::Reply(NumberArg::Missing),

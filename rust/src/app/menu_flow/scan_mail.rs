@@ -23,9 +23,8 @@ where
         let from_message = match scan {
             // N => start from `last_scanned + 1` (the "new mail since"
             // semantics the spec encodes with `from_message = 0`).
+            // (`MS` is now its own `ScanAllMail` command, Tier B B1.)
             ScanArg::New => 0,
-            // MS => start from message 1 (caller-controlled walk).
-            ScanArg::All => 1,
         };
         match scan_mail(
             session,

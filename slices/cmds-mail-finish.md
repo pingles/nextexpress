@@ -14,11 +14,26 @@ the BBS's primary mail-reading UI — to NextExpress so the top-level
 See [SLICES.md](../SLICES.md) and [COMMAND_PARITY.md](../COMMAND_PARITY.md)
 for the cross-reference of every drift NextExpress currently carries.
 
-## Slice B1 — `MS` (multi-conference mail scan, was Slice 49d)
+## Slice B1 — `MS` (multi-conference mail scan, was Slice 49d) — **Done**
 
-**Note:** `MS` already exists as a token — Tier A's A8 moved the
+Shipped together with **B3** (the listing table): `MS` now binds to a
+new `MenuCommand::ScanAllMail` and walks every accessible conference.
+The orphaned `ScanArg::All` variant was removed (nothing parsed to it
+once `MS` moved off it); `N` still maps to `Scan(ScanArg::New)` pending
+B2. The walk lives in the terminal-free `app::menu::scan_all_mail` use
+case (classifying each base as `Listing` / `NothingNew` / `NoMatch` /
+`NoStore` / `Error`), rendered by `app::menu_flow::scan_all_mail`.
+
+**Deferred to B4/B5:** the `\b\nWould you like to read it now `
++ `yesNo(1)` prompt and the drop-into-read it triggers
+(`amiexpress/express.e:11738-11745`). It is interactive-reading
+surface, not part of the spec's `ScanAllMail` rule, and overlaps the
+`R` sub-prompt slices; the existing scan output never had it either,
+so deferring is no regression.
+
+**Note:** `MS` already existed as a token — Tier A's A8 moved the
 single-conference scan-all there (`MS` → `MenuCommand::Scan(ScanArg::All)`)
-when it rebound bare `M` to the ANSI toggle. This slice *upgrades* that
+when it rebound bare `M` to the ANSI toggle. This slice *upgraded* that
 binding to the legacy multi-conference scan.
 
 - **In Scope**
@@ -51,7 +66,15 @@ binding to the legacy multi-conference scan.
   dispatch arm; isolating it from the listing-row work keeps each
   slice reviewable in one sitting.
 
-## Slice B3 — `ScanMail` listing rows (was Slice 49c)
+## Slice B3 — `ScanMail` listing rows (was Slice 49c) — **Done (with B1)**
+
+The domain `ScanResult` now carries `listing: Vec<MailScanRow>` (the
+spec's value, `messaging.allium:MailScanRow`), `walk()` collects the
+rows it used to discard, and `app::wire_text::render_scan_listing_table`
+renders the three-write header + per-row format below. The table is
+emitted only on the multi-conference `MS` path; the single-conference
+scan-on-join still renders just its summary line. The
+`Would you like to read it now` tail is deferred (see B1 above).
 
 - **Spec is already ahead of the code.** The `MailScanRow` value
   (`messaging.allium:161`) and the `listing:` field on
