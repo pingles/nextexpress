@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -e '[.tool_input.file_path?, .tool_response.filePath?, (.tool_input.command? // \"\" | scan(\"(?m)^\\\\*\\\\*\\\\* (?:Add File|Update File): ([^\\\\n]+)\")[]?)] | map(select(type == \"string\" and test(\"\\\\.rs$\"))) | length > 0' >/dev/null 2>&1 && root=$(git rev-parse --show-toplevel 2>/dev/null) && make -C \"$root\" fmt >/dev/null 2>&1 || true",
+            "statusMessage": "Running cargo fmt"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=$(git rev-parse --show-toplevel) && output=$(make -C \"$root\" clippy 2>&1) || { printf '%s' \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Clippy failed - fix before stopping:\\n\" + .)}'; exit 0; }; output=$(make -C \"$root\" test 2>&1) || printf '%s' \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Tests failed - fix before stopping:\\n\" + .)}'",
+            "statusMessage": "Running cargo clippy and nextest",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}
