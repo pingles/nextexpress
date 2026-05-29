@@ -284,6 +284,9 @@ impl FileScreenRepository {
     /// no prefix matches. Not cached: `^` is infrequent and the topic
     /// varies per call, so each lookup reads from disk like the legacy.
     async fn topic_help_bytes(&self, topic: &str) -> Vec<u8> {
+        if !is_safe_topic_help_name(topic) {
+            return Vec::new();
+        }
         let help_dir = self.bbs_path.join("help");
         // Longest-first: try the full topic, then progressively shorter
         // prefixes, so the most specific screen wins (`^FILES` prefers
@@ -300,6 +303,13 @@ impl FileScreenRepository {
         }
         Vec::new()
     }
+}
+
+fn is_safe_topic_help_name(topic: &str) -> bool {
+    !topic.is_empty()
+        && topic
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 
 impl ScreenRepository for FileScreenRepository {
@@ -819,6 +829,35 @@ mod tests {
         assert!(repo.topic_help("XYZ").await.is_empty());
         // A bare `^` carries no topic — also empty.
         assert!(repo.topic_help("").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn topic_help_rejects_parent_directory_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("help")).unwrap();
+        std::fs::write(dir.path().join("SECRET.txt"), b"secret\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+
+        assert!(repo.topic_help("../SECRET").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn topic_help_rejects_path_separators_instead_of_truncating_to_safe_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("help")).unwrap();
+        std::fs::write(dir.path().join("help").join("NET.txt"), b"net\n").unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+
+        assert!(repo.topic_help("NET/../SECRET").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn topic_help_rejects_absolute_path_topics() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("help")).unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+
+        assert!(repo.topic_help("/tmp/SECRET").await.is_empty());
     }
 
     #[tokio::test]
