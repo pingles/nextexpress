@@ -149,6 +149,44 @@ fn seed_two_message_base(msgbase: &std::path::Path) {
     .expect("seed message 2");
 }
 
+#[tokio::test]
+async fn again_re_displays_the_current_message_and_stays() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `A`gain re-displays the current message (1) and stays on it — the
+    // range remains `1+2` (legacy `displayMessage` then `nextMenu`,
+    // `express.e:12102-12105`).
+    write_line(&mut stream, b"A").await;
+    let again = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&again, b"First Subject"),
+        "`A` must re-display the current message, got {:?}",
+        String::from_utf8_lossy(&again)
+    );
+    assert!(
+        contains(&again, &sub_prompt(b"1+2")),
+        "`A` must stay on the current message (range 1+2), got {:?}",
+        String::from_utf8_lossy(&again)
+    );
+    assert!(
+        !contains(&again, b"Second Subject"),
+        "`A` must not advance to message 2, got {:?}",
+        String::from_utf8_lossy(&again)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
 /// The verbatim ungated `readMSG` sub-prompt skeleton
 /// (`amiexpress/express.e:12016-12021`) with `range` substituted into
 /// the `( <range> )` slot. ANSI escapes are emitted literally; note the

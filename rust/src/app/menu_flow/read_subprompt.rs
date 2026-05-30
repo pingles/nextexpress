@@ -40,32 +40,59 @@ where
         let mut number = start;
         loop {
             let prompt = render_read_subprompt(number, highest);
-            match self.read_prompted(&prompt, TerminalEcho::Visible).await? {
-                TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
-                    let trimmed = line.trim();
-                    if trimmed.eq_ignore_ascii_case("Q") {
-                        return Ok(());
-                    }
-                    if trimmed.is_empty() {
-                        let next = number + 1;
-                        if next > highest {
-                            // No further messages — legacy clamps the
-                            // range to `QUIT` and leaves the loop.
-                            return Ok(());
-                        }
-                        number = next;
-                        self.read_and_render(session, number).await?;
-                    }
-                    // Any other key is an unimplemented B5 option; fall
-                    // through and re-render the prompt.
+            // A disconnected or idle caller leaves the sub-prompt; the
+            // menu loop's next read applies carrier-loss / idle-timeout,
+            // matching the other interactive handlers.
+            let TerminalRead::Line(line) =
+                self.read_prompted(&prompt, TerminalEcho::Visible).await?
+            else {
+                return Ok(());
+            };
+            session.record_input(SystemTime::now());
+            let trimmed = line.trim();
+
+            // Empty input (`<CR>`) walks forward to the next message.
+            if trimmed.is_empty() {
+                if !self.advance_or_quit(session, &mut number, highest).await? {
+                    return Ok(());
                 }
-                // A disconnected or idle caller leaves the sub-prompt;
-                // the menu loop's next read applies carrier-loss /
-                // idle-timeout, matching the other interactive handlers.
-                TerminalRead::Eof | TerminalRead::IdleTimedOut => return Ok(()),
+                continue;
+            }
+
+            // Dispatch on the first character, mirroring the legacy
+            // `LowerChar(str[0])` SELECT (`express.e:12092-12224`).
+            match trimmed.chars().next().map(|c| c.to_ascii_lowercase()) {
+                // `Q`uit returns to the menu (`express.e:12226`).
+                Some('q') => return Ok(()),
+                // `A`gain re-displays the current message and stays on
+                // it (`express.e:12102-12105`).
+                Some('a') => {
+                    self.read_and_render(session, number).await?;
+                }
+                // Any other key is an unimplemented B5 option; fall
+                // through and re-render the prompt.
+                _ => {}
             }
         }
+    }
+
+    /// Advances `number` to the next message and displays it. Returns
+    /// `Ok(false)` when there is no next message — the legacy
+    /// out-of-range -> `QUIT` clamp (`express.e:12012`) — so the caller
+    /// leaves the loop.
+    async fn advance_or_quit(
+        &mut self,
+        session: &mut MenuSession,
+        number: &mut u32,
+        highest: u32,
+    ) -> Result<bool, T::Error> {
+        let next = *number + 1;
+        if next > highest {
+            return Ok(false);
+        }
+        *number = next;
+        self.read_and_render(session, *number).await?;
+        Ok(true)
     }
 
     /// Returns the highest existing message number in the session's
