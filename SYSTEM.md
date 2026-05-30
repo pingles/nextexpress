@@ -228,12 +228,17 @@ module under `app::menu_flow/`):
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 After `R <n>` displays a message, `read_mail` hands off to
-`read_subprompt`, the legacy `readMSG` sub-prompt loop (Tier B B4):
-`<CR>` walks forward to the next message in the base and `Q` returns to
-the menu. Its `A`/`F`/`R`/`L`/`D`/`M`/`EH`/`?`/`??` options (each
-dispatching to an existing messaging rule, with the `D`/`M`/`EH` access
-gates) land in B5; the surface is modelled in
-`messaging.allium:MailReadPrompt`.
+`read_subprompt`, the legacy `readMSG` sub-prompt loop (Tier B): `<CR>`
+walks forward to the next message and `Q` returns to the menu. The
+message-action options dispatch to their existing rules, preserving the
+legacy post-action navigation: `A`gain re-displays (stays), `R`eply
+advances, `F`orward stays, `D`elete advances (gated by
+`delete_mail::can_delete`), `M`ove advances on success only (gated by
+`move_mail::can_move`), `EH` edits the header then re-displays (gated by
+`edit_mail_header::can_edit_header`). `L`ist and the `?`/`??` help
+screens are still pending; the surface is modelled in
+`messaging.allium:MailReadPrompt`. The three access gates currently
+diverge from the legacy `ACS_*` flags — tracked as Tier B slice B9.
 
 Each non-trivial command lives in two files: a terminal-free use case
 under `app/menu/*` that resolves stores/repositories and returns an

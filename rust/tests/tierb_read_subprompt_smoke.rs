@@ -20,7 +20,7 @@
 //! here.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use nextexpress::adapters::file_mail_store::FileMailStore;
 use nextexpress::adapters::in_memory_caller_log::InMemoryCallerLog;
@@ -36,8 +36,11 @@ use nextexpress::app::services::{
 };
 use nextexpress::bootstrap;
 use nextexpress::domain::caller_log::CallerLogAppender;
-use nextexpress::domain::conference::{Conference, MessageBase, MessageBaseRef};
-use nextexpress::domain::password::PasswordHasher;
+use nextexpress::domain::conference::{
+    Conference, ConferenceMembership, MessageBase, MessageBaseRef,
+};
+use nextexpress::domain::password::{PasswordHashKind, PasswordHasher};
+use nextexpress::domain::user::User;
 use nextexpress::domain::user_repository::UserRepository;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -420,6 +423,56 @@ async fn edit_header_updates_the_subject_then_re_displays_and_stays() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn a_regular_user_cannot_delete_or_edit_others_mail_from_the_sub_prompt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    // The regular user (slot 3) is neither author (slot 2) nor addressee
+    // (slot 1) of the seeded mail, and sits below access 210.
+    let mut stream = sign_in(&addr, b"regular", b"regular").await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `D`elete is gated on the per-message delete permission — denied
+    // here, so the key is ignored (no confirm prompt) and the loop
+    // re-renders the sub-prompt on the same message.
+    write_line(&mut stream, b"D").await;
+    let after_d = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&after_d, b"Delete message"),
+        "`D` must be ignored for a non-owner regular user, got {:?}",
+        String::from_utf8_lossy(&after_d)
+    );
+    assert!(
+        contains(&after_d, &sub_prompt(b"1+2")),
+        "the sub-prompt must re-render on message 1 after the ignored `D`, got {:?}",
+        String::from_utf8_lossy(&after_d)
+    );
+
+    // `EH` is gated on edit-header access (sysop / access >= 210) — also
+    // denied, so it too is ignored (no `New subject` prompt).
+    write_line(&mut stream, b"EH").await;
+    let after_eh = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&after_eh, b"New subject"),
+        "`EH` must be ignored for a non-privileged user, got {:?}",
+        String::from_utf8_lossy(&after_eh)
+    );
+    assert!(
+        contains(&after_eh, &sub_prompt(b"1+2")),
+        "the sub-prompt must re-render on message 1 after the ignored `EH`, got {:?}",
+        String::from_utf8_lossy(&after_eh)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
 /// The verbatim ungated `readMSG` sub-prompt skeleton
 /// (`amiexpress/express.e:12016-12021`) with `range` substituted into
 /// the `( <range> )` slot. ANSI escapes are emitted literally; note the
@@ -481,8 +534,25 @@ async fn spawn_one_conference_listener(
 
     let mut sysop = seed::default_sysop(hasher.as_ref()).expect("seed sysop");
     seed::grant_all_memberships(&mut sysop, &conferences);
-    let user_repo: SharedUserRepo =
-        Arc::new(InMemoryUserRepository::new(vec![sysop])) as Arc<dyn UserRepository + Send + Sync>;
+    // A validated, non-sysop regular user (slot 3, access 100) used to
+    // prove the sub-prompt's `D` / `EH` gates deny a caller who is
+    // neither the message owner nor privileged.
+    let regular_pw = hasher
+        .compute_password_hash("regular", PasswordHashKind::Pbkdf210000)
+        .expect("hash regular password");
+    let mut regular = User::new(
+        3,
+        "regular".to_string(),
+        PasswordHashKind::Pbkdf210000,
+        regular_pw.hash,
+        regular_pw.salt,
+        SystemTime::UNIX_EPOCH,
+        100,
+    )
+    .expect("valid regular user");
+    regular.upsert_membership(ConferenceMembership::new(1, true));
+    let user_repo: SharedUserRepo = Arc::new(InMemoryUserRepository::new(vec![sysop, regular]))
+        as Arc<dyn UserRepository + Send + Sync>;
     let hasher_shared: SharedHasher = hasher as Arc<dyn PasswordHasher + Send + Sync>;
     let caller_log: SharedCallerLog =
         Arc::new(InMemoryCallerLog::new()) as Arc<dyn CallerLogAppender + Send + Sync>;
@@ -532,11 +602,15 @@ async fn spawn_one_conference_listener(
 }
 
 async fn sign_in_seeded_sysop(addr: &std::net::SocketAddr) -> TcpStream {
+    sign_in(addr, b"sysop", b"sysop").await
+}
+
+async fn sign_in(addr: &std::net::SocketAddr, handle: &[u8], password: &[u8]) -> TcpStream {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
     drain_until(&mut stream, b"Enter your Name: ").await;
-    write_line(&mut stream, b"sysop").await;
+    write_line(&mut stream, handle).await;
     drain_until(&mut stream, b"PassWord: ").await;
-    write_line(&mut stream, b"sysop").await;
+    write_line(&mut stream, password).await;
     drain_until(&mut stream, b"mins. left): ").await;
     stream
 }
