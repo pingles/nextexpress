@@ -156,8 +156,8 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
     // (From, To, Subject, Conf), the body line, and a return to
     // the menu prompt.
     write_line(&mut stream, b"R 1")?;
-    let post_r = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after R 1: {e}"))?;
+    let post_r = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("read sub-prompt after R 1: {e}"))?;
     if !contains(&post_r, b"Subject") || !contains(&post_r, b"Welcome to NextExpress") {
         return Err(format!(
             "expected ReadMail header + subject, got {:?}",
@@ -170,6 +170,10 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
             String::from_utf8_lossy(&post_r)
         ));
     }
+    // Tier B B4: `R` now drops into the read sub-prompt; `Q` leaves it.
+    write_line(&mut stream, b"Q")?;
+    drain_until_capturing(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after R 1 sub-prompt Q: {e}"))?;
 
     // Tier B B2: `N` is no longer a mail scan (a NextExpress drift —
     // legacy `N` is the new-files scan, landing in Tier D); it is now an

@@ -189,8 +189,8 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
 
     // R 2 reads the message we just posted, proving it persisted.
     write_line(&mut stream, b"R 2")?;
-    let post_r = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after R 2: {e}"))?;
+    let post_r = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("read sub-prompt after R 2: {e}"))?;
     if !contains(&post_r, b"Hello from the smoke test") {
         return Err(format!(
             "expected R 2 to render the newly posted subject, got {:?}",
@@ -203,6 +203,11 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
             String::from_utf8_lossy(&post_r)
         ));
     }
+
+    // Tier B B4: leave the read sub-prompt with `Q` before logging off.
+    write_line(&mut stream, b"Q")?;
+    drain_until_capturing(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after R 2 sub-prompt Q: {e}"))?;
 
     write_line(&mut stream, b"G")?;
     drain_until(&mut stream, b"Goodbye").map_err(|e| format!("Goodbye line: {e}"))?;
@@ -341,8 +346,8 @@ fn post_all_message(stream: &mut TcpStream) -> Result<(), String> {
 
 fn read_back_all_message(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"R 1")?;
-    let after = drain_until_capturing(stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after R 1: {e}"))?;
+    let after = drain_until_capturing(stream, b">: ")
+        .map_err(|e| format!("read sub-prompt after R 1: {e}"))?;
     for (needle, description) in [
         (&b"To     \x1b[33m:\x1b[0m ALL"[..], "`To: ALL`"),
         (&b"Recv'd\x1b[33m:\x1b[0m N/A"[..], "`Recv'd: N/A`"),
@@ -355,6 +360,10 @@ fn read_back_all_message(stream: &mut TcpStream) -> Result<(), String> {
             ));
         }
     }
+    // Tier B B4: `R` drops into the read sub-prompt; `Q` returns to the menu.
+    write_line(stream, b"Q")?;
+    drain_until_capturing(stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after R 1 sub-prompt Q: {e}"))?;
     Ok(())
 }
 
@@ -408,8 +417,8 @@ fn post_comment_to_sysop(stream: &mut TcpStream) -> Result<(), String> {
 
 fn read_back_comment_to_sysop(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"R 2")?;
-    let after = drain_until_capturing(stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after R 2: {e}"))?;
+    let after = drain_until_capturing(stream, b">: ")
+        .map_err(|e| format!("read sub-prompt after R 2: {e}"))?;
     for (needle, description) in [
         (&b"To     \x1b[33m:\x1b[0m Sysop"[..], "`To: Sysop`"),
         (
@@ -428,5 +437,9 @@ fn read_back_comment_to_sysop(stream: &mut TcpStream) -> Result<(), String> {
             ));
         }
     }
+    // Tier B B4: `R` drops into the read sub-prompt; `Q` returns to the menu.
+    write_line(stream, b"Q")?;
+    drain_until_capturing(stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after R 2 sub-prompt Q: {e}"))?;
     Ok(())
 }

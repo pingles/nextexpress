@@ -136,8 +136,8 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
     // Step 3: read back the reply. Subject must carry the `Re: `
     // prefix and the body must be the user's input.
     write_line(&mut stream, b"R 3")?;
-    let post_r3 = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after R 3: {e}"))?;
+    let post_r3 = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("read sub-prompt after R 3: {e}"))?;
     if !contains(&post_r3, b"Re: Phase 8 source") {
         return Err(format!(
             "expected the reply to carry `Re: Phase 8 source`, got {:?}",
@@ -150,6 +150,10 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
             String::from_utf8_lossy(&post_r3)
         ));
     }
+    // Tier B B4: leave the read sub-prompt with `Q`.
+    write_line(&mut stream, b"Q")?;
+    drain_until_capturing(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after R 3 sub-prompt Q: {e}"))?;
 
     // Step 4: forward the original to sysop with a note. FW 2 →
     // To: sysop → note line → `.`.
@@ -174,8 +178,8 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
     // prepend to the body, the original body must appear, and
     // the note must follow the `--` separator.
     write_line(&mut stream, b"R 4")?;
-    let post_r4 = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after R 4: {e}"))?;
+    let post_r4 = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("read sub-prompt after R 4: {e}"))?;
     if !contains(&post_r4, b"Fwd: Phase 8 source") {
         return Err(format!(
             "expected the forward to carry `Fwd: Phase 8 source`, got {:?}",
@@ -206,6 +210,10 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
             String::from_utf8_lossy(&post_r4)
         ));
     }
+    // Tier B B4: leave the read sub-prompt with `Q` before logging off.
+    write_line(&mut stream, b"Q")?;
+    drain_until_capturing(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after R 4 sub-prompt Q: {e}"))?;
 
     write_line(&mut stream, b"G")?;
     drain_until(&mut stream, b"Goodbye").map_err(|e| format!("Goodbye line: {e}"))?;
@@ -415,14 +423,18 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     }
 
     write_line(&mut stream, b"R 1")?;
-    let post_r_after_eh = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after R 1 (post-EH): {e}"))?;
+    let post_r_after_eh = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("read sub-prompt after R 1 (post-EH): {e}"))?;
     if !contains(&post_r_after_eh, b"Sysop-edited subject") {
         return Err(format!(
             "expected R 1 to show the edited subject, got {:?}",
             String::from_utf8_lossy(&post_r_after_eh)
         ));
     }
+    // Tier B B4: leave the read sub-prompt with `Q` before the move.
+    write_line(&mut stream, b"Q")?;
+    drain_until_capturing(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after R 1 sub-prompt Q: {e}"))?;
 
     // Step 2: MV 1 moves the mail from (1,1) to (1,2). The target
     // is empty so the new number is 1.

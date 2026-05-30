@@ -521,6 +521,89 @@ invariant ExternalMessagesHaveExtId {
 }
 
 ------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+-- A logged-on session reading mail in the current message base. The read
+-- sub-prompt (legacy `readMSG`) only opens once `ReadMail` has displayed a
+-- message, so the reader is always at the menu with `read_message` access.
+-- Identified by the session (every read-loop rule below dispatches on the
+-- session, consistent with the rest of this file) rather than the user, so
+-- the option triggers can be invoked with the same `session` argument they
+-- already take.
+actor MailReader {
+    identified_by: Session where state = menu
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+-- The read sub-prompt loop that the legacy `readMSG` opens after a message
+-- is displayed (`amiexpress/express.e:11972`). One surface instance per
+-- displayed message; the reader walks forward through the base from here.
+--
+-- This anchors intent only: it captures the option -> rule mapping and the
+-- three access gates. The literal prompt bytes, ANSI colour glyphs and the
+-- short/long `?` / `??` help screens are adapter concerns rendered outside
+-- the spec (consistent with this file excluding the editor presentation and
+-- wire transports). The prompt is assembled at
+-- `amiexpress/express.e:12016-12021`; options are dispatched at
+-- `amiexpress/express.e:12092-12224`.
+--
+-- Omitted on purpose (legacy options the NextExpress port drops): `NS`
+-- non-stop, `T`/translate, `U` account-edit, `E` / `EM` body editors, and
+-- `K`eep-and-quit.
+surface MailReadPrompt {
+    facing session: MailReader
+    context mail: Mail where visibility != deleted
+
+    exposes:
+        mail.number
+        mail.subject
+        mail.from_name
+        mail.to_name
+        mail.msgbase.highest_message     -- walk-forward boundary
+
+    provides:
+        -- A>gain: re-display the current message.
+        ReadMail(session, mail)
+
+        -- R>eply / F>orward / L>ist: always offered. The reply draft, the
+        -- forward request and the rescan's from-message are gathered by
+        -- follow-on prompts, so they are party inputs at action time.
+        ReplyToMail(session, mail, draft)
+        ForwardMail(session, request)
+        MailScanRequested(session, mail.msgbase.conference, mail.msgbase, from_message)
+
+        -- D>elete: gated on ACS_DELETE_MESSAGE (legacy `:12148`).
+        DeleteMail(session, mail)
+            when has_access(session.user, delete_message)
+
+        -- M>ove: gated on ACS_SYSOP_READ (legacy `:12170`). The target
+        -- conference and base are chosen at the move prompt.
+        MoveMail(session, mail, target_conference, target_msgbase)
+            when has_access(session.user, sysop_read) or session.user.is_sysop
+
+        -- EH (edit header): gated on ACS_MESSAGE_EDIT (legacy `:12179-12182`).
+        -- The new subject and to-name are entered at the edit prompt.
+        EditMailHeader(session, mail, new_subject, new_to_name)
+            when has_access(session.user, message_edit) or session.user.is_sysop
+
+    @guarantee NavigationWalksForward
+        -- Empty input (`<CR>`) advances to the next message in the base;
+        -- `Q` returns to the menu. Advancing past `mail.msgbase.highest_message`
+        -- returns to the menu rather than wrapping.
+
+    @guidance
+        -- `<CR>` / `Q` navigation and the short (`?`) / long (`??`) help
+        -- screens are surface-loop and presentation concerns; the spec
+        -- models the option -> rule dispatch and the three access gates,
+        -- not the prompt rendering. Tier B slice B4 ships only the prompt
+        -- plus `<CR>` / `Q` navigation; slice B5 wires the options and gates.
+}
+
+------------------------------------------------------------
 -- Black box functions
 ------------------------------------------------------------
 

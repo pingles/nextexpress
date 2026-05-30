@@ -15,6 +15,7 @@
 mod join;
 mod post_mail;
 mod read_mail;
+mod read_subprompt;
 mod reply_forward;
 mod scan_all_mail;
 mod sysop_admin;

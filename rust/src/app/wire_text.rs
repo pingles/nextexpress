@@ -478,6 +478,31 @@ pub(crate) fn render_mail_header(
     out
 }
 
+/// Renders the legacy `readMSG` read sub-prompt (Slice B4), assembled
+/// piecewise at `amiexpress/express.e:12016-12021`. This is the
+/// **ungated** form: the `D` (delete) and `M` (move) options that the
+/// legacy inserts after `A` for callers with `ACS_DELETE_MESSAGE`
+/// (`:12017`) / `ACS_SYSOP_READ` (`:12018`) are not emitted — they land
+/// with their handlers in Slice B5.
+///
+/// The `( <range> )` slot carries the runtime message-range string
+/// `<number>+<highest>` (`:12010`), where `highest` is the highest
+/// existing message number (legacy `mailStat.highMsgNum - 1`). The
+/// doubled `\x1b[36m` after `A` is the seam the legacy leaves when the
+/// skipped comma-prefixed `D` / `M` fragments would otherwise sit
+/// between `A` and `F`.
+pub(crate) fn render_read_subprompt(number: u32, highest: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(96);
+    out.extend_from_slice(
+        b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m ",
+    );
+    out.extend_from_slice(number.to_string().as_bytes());
+    out.push(b'+');
+    out.extend_from_slice(highest.to_string().as_bytes());
+    out.extend_from_slice(b" \x1b[32m )\x1b[0m>: ");
+    out
+}
+
 /// Formats the mail-scan summary line (Slice 40 / 41). Mirrors the
 /// legacy `searchNewMail` output's "New Mail" notice and the
 /// "No New Mail" fallback at `amiexpress/express.e:26499`.

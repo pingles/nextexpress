@@ -207,7 +207,7 @@ module under `app::menu_flow/`):
 |---|---|---|
 | `G` | `Logoff` | dispatch |
 | `J <n>` | `Join(NumberArg)` | `join` |
-| `R <n>` | `Read(NumberArg)` | `read_mail` |
+| `R <n>` | `Read(NumberArg)` | `read_mail` → `read_subprompt` |
 | `E` / `E <to>` | `Post(PostArg)` | `post_mail` |
 | `C` | `CommentToSysop` | `post_mail` |
 | `RP <n>` | `Reply(NumberArg)` | `reply_forward` |
@@ -226,6 +226,14 @@ module under `app::menu_flow/`):
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
 | `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail` |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
+
+After `R <n>` displays a message, `read_mail` hands off to
+`read_subprompt`, the legacy `readMSG` sub-prompt loop (Tier B B4):
+`<CR>` walks forward to the next message in the base and `Q` returns to
+the menu. Its `A`/`F`/`R`/`L`/`D`/`M`/`EH`/`?`/`??` options (each
+dispatching to an existing messaging rule, with the `D`/`M`/`EH` access
+gates) land in B5; the surface is modelled in
+`messaging.allium:MailReadPrompt`.
 
 Each non-trivial command lives in two files: a terminal-free use case
 under `app/menu/*` that resolves stores/repositories and returns an
