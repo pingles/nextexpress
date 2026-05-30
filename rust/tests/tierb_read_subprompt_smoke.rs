@@ -187,6 +187,89 @@ async fn again_re_displays_the_current_message_and_stays() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn reply_opens_the_editor_then_advances_to_the_next_message() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `R`eply drops into the body editor (proves the sub-prompt key
+    // reaches `handle_reply`).
+    write_line(&mut stream, b"R").await;
+    drain_until(&mut stream, b"End with a single '.'").await;
+    write_line(&mut stream, b"Replying from the sub-prompt.").await;
+    write_line(&mut stream, b".").await;
+
+    // After the reply the loop advances to message 2 and re-renders the
+    // sub-prompt at range `2+2` (legacy `R` -> `goNextMsg`,
+    // `express.e:12161-12168`).
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"Second Subject"),
+        "reply must advance to and display message 2, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        contains(&after, &sub_prompt(b"2+2")),
+        "reply must advance the sub-prompt to range 2+2, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn forward_posts_then_stays_on_the_current_message() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `F`orward to the seeded sysop, with no note.
+    write_line(&mut stream, b"F").await;
+    drain_until(&mut stream, b"Forward to: ").await;
+    write_line(&mut stream, b"sysop").await;
+    drain_until(&mut stream, b"blank line skips").await;
+    write_line(&mut stream, b".").await;
+
+    // The forward posts message 3, then the loop STAYS on message 1
+    // (legacy `F` -> `nextMenu`, `express.e:12153-12160`): range stays
+    // `1+2` and message 2 is not displayed.
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"Message #3 saved."),
+        "forward must post message 3, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        contains(&after, &sub_prompt(b"1+2")),
+        "forward must stay on message 1 (range 1+2), got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        !contains(&after, b"Second Subject"),
+        "forward must not advance to message 2, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
 /// The verbatim ungated `readMSG` sub-prompt skeleton
 /// (`amiexpress/express.e:12016-12021`) with `range` substituted into
 /// the `( <range> )` slot. ANSI escapes are emitted literally; note the

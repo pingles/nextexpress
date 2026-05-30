@@ -14,6 +14,7 @@
 
 use std::time::SystemTime;
 
+use crate::app::menu_command::NumberArg;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::render_read_subprompt;
 use crate::domain::conference::MessageBaseRef;
@@ -68,6 +69,21 @@ where
                 // it (`express.e:12102-12105`).
                 Some('a') => {
                     self.read_and_render(session, number).await?;
+                }
+                // `R`eply posts a reply to the current message, then
+                // advances to the next one (`express.e:12161-12168`).
+                Some('r') => {
+                    self.handle_reply(session, NumberArg::Number(number))
+                        .await?;
+                    if !self.advance_or_quit(session, &mut number, highest).await? {
+                        return Ok(());
+                    }
+                }
+                // `F`orward forwards the current message, then stays on
+                // it (`express.e:12153-12160`).
+                Some('f') => {
+                    self.handle_forward(session, NumberArg::Number(number))
+                        .await?;
                 }
                 // Any other key is an unimplemented B5 option; fall
                 // through and re-render the prompt.
