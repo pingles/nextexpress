@@ -90,20 +90,17 @@ pub(crate) const COPYRIGHT_LINES: &[u8] = concat!(
 /// mirroring `internalCommandVER()` at
 /// `amiexpress/express.e:25688-25698`.
 ///
-/// The legacy emits four sections:
-///   1. an `AmiExpress <ver> (<date>) Copyright ©2018-2023 Darren Coles`
-///      header,
-///   2. an `Original Version:` label,
-///   3. the two original-author lines (Thomas, Hodge),
-///   4. a `Registered to <key>.` line.
+/// The legacy emits an `AmiExpress <ver> (<date>) Copyright ©2018-2023 Darren
+/// Coles` header, an `Original Version:` label, the two original-author lines
+/// (Thomas, Hodge), and a `Registered to <key>.` line.
 ///
 /// `NextExpress` doesn't carry an `AmiExpress` build at runtime, so the
-/// header line is stable at `AmiExpress 5` (matching
-/// [`COPYRIGHT_LINES`]). The `Registered to` line is deliberately
-/// elided — see `slices/cmds-quickwins.md` (A2 Out of Scope) — and a
-/// trailing `NextExpress <version> (<sha>) Copyright ©2026` line is
-/// appended so the operator can tell which Rust port build is running.
+/// banner leads with `NextExpress <version> (<sha>) Copyright ©2026 Paul
+/// Ingles`, followed by the stable `AmiExpress 5` lineage. The `Registered to`
+/// line is deliberately elided — see `slices/cmds-quickwins.md` (A2 Out of
+/// Scope).
 pub(crate) const VERSION_BANNER: &[u8] = concat!(
+    "\r\n",
     "NextExpress ",
     env!("CARGO_PKG_VERSION"),
     " (",
@@ -1150,18 +1147,18 @@ mod tests {
     }
 
     #[test]
-    fn version_banner_carries_legacy_author_lines_verbatim() {
-        // Pin the four legacy lines (`amiexpress/express.e:25690-25694`)
-        // so a future edit can't quietly drift the wording. Each line
-        // is checked individually so a swap or reorder fails the test.
+    fn version_banner_carries_lineage_lines_verbatim() {
+        // Pin the lineage block so a future edit can't quietly drift
+        // the wording. Each line is checked individually so a swap or
+        // reorder fails the test.
         let banner = std::str::from_utf8(VERSION_BANNER).expect("utf8 banner");
+        assert!(
+            banner.contains("Based on Versions:\r\n"),
+            "missing lineage label: {banner:?}",
+        );
         assert!(
             banner.contains("AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n"),
             "missing AmiExpress copyright line: {banner:?}",
-        );
-        assert!(
-            banner.contains("Original Version:\r\n"),
-            "missing Original Version label: {banner:?}",
         );
         assert!(
             banner.contains("  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n"),
@@ -1175,13 +1172,14 @@ mod tests {
 
     #[test]
     fn version_banner_carries_nextexpress_version_and_sha() {
-        // Slice A2: the trailing line pins the running Rust port to
+        // Slice A2: the leading line pins the running Rust port to
         // its `Cargo.toml` version + `build.rs` SHA so the operator
         // can correlate a running session with a specific build.
         let banner = std::str::from_utf8(VERSION_BANNER).expect("utf8 banner");
         let version = env!("CARGO_PKG_VERSION");
         let sha = env!("NEXTEXPRESS_GIT_SHA");
-        let needle = format!("NextExpress {version} ({sha}) Copyright \u{00A9}2026\r\n");
+        let needle =
+            format!("NextExpress {version} ({sha}) Copyright \u{00A9}2026 Paul Ingles\r\n");
         assert!(
             banner.contains(&needle),
             "expected `{needle}` in banner: {banner:?}",

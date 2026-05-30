@@ -70,11 +70,12 @@ async fn ver_command_renders_legacy_version_banner() {
     write_line(&mut stream, b"VER").await;
     let post_ver = drain_until(&mut stream, b"mins. left): ").await;
     let needles: &[&[u8]] = &[
-        "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n".as_bytes(),
-        b"Original Version:\r\n",
+        "NextExpress ".as_bytes(),
+        " Copyright \u{00A9}2026 Paul Ingles\r\n".as_bytes(),
+        b"Based on Versions:\r\n",
+        "  AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n".as_bytes(),
         b"  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n",
         b"  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n",
-        b"NextExpress ",
     ];
     for needle in needles {
         assert!(
