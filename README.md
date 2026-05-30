@@ -26,6 +26,20 @@ Please note this is quite **experimental** still; there's likely bugs or issues.
 ## Thanks
 Thank you to @dmcoles for his [original Amiga rewrite](https://github.com/dmcoles/AmiExpress).
 
+## Original AmiExpress Reference Runtime
+There is an experimental Docker/FS-UAE harness in
+[`docker/amiexpress-fsuae/`](docker/amiexpress-fsuae/) for running the original
+Amiga AmiExpress release with its native telnet listener. It downloads the
+Aminet AmiExpress LHA at build time and can bootstrap a downloadable AROS m68k
+runtime; licensed Kickstart and Workbench assets can still be mounted for
+higher compatibility.
+
+Build and run that reference AmiExpress container with:
+
+```sh
+make amiexpress-docker
+```
+
 ## License
 This project is dual-licensed under the MIT or Apache-2 License.
 

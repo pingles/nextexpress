@@ -9,8 +9,14 @@ RELEASE_BIN := rust/target/release/$(BIN)
 SOURCES     := $(shell find rust/src -name '*.rs') rust/Cargo.toml rust/Cargo.lock
 MUTANTS_LOG := target/mutants-run.log
 MUTANTS_ARGS ?=
+AMIEXPRESS_IMAGE ?= nextexpress/amiexpress-fsuae
+AMIEXPRESS_PORT ?= 6023
+AMIEXPRESS_AROS_ROMS_VOLUME ?= nextexpress-aros-roms
+AMIEXPRESS_AROS_SYSTEM_VOLUME ?= nextexpress-aros-system
+AMIEXPRESS_BBS_VOLUME ?= nextexpress-bbs
+AMIEXPRESS_DOCKER_ARGS ?=
 
-.PHONY: all build test doctest mutants check fmt clippy clean
+.PHONY: all build test doctest mutants check fmt clippy clean amiexpress-docker-build amiexpress-docker
 
 all: build
 
@@ -52,3 +58,18 @@ clippy:
 clean:
 	cargo clean $(MANIFEST)
 	rm -f $(BIN)
+
+amiexpress-docker-build:
+	docker build -f docker/amiexpress-fsuae/Dockerfile -t $(AMIEXPRESS_IMAGE) .
+
+amiexpress-docker: amiexpress-docker-build
+	docker volume create $(AMIEXPRESS_AROS_ROMS_VOLUME) >/dev/null
+	docker volume create $(AMIEXPRESS_AROS_SYSTEM_VOLUME) >/dev/null
+	docker volume create $(AMIEXPRESS_BBS_VOLUME) >/dev/null
+	docker run --rm -it \
+		-p 127.0.0.1:$(AMIEXPRESS_PORT):6023 \
+		-v $(AMIEXPRESS_AROS_ROMS_VOLUME):/opt/aros \
+		-v $(AMIEXPRESS_AROS_SYSTEM_VOLUME):/amiga/workbench \
+		-v $(AMIEXPRESS_BBS_VOLUME):/amiga/bbs \
+		$(AMIEXPRESS_DOCKER_ARGS) \
+		$(AMIEXPRESS_IMAGE)
