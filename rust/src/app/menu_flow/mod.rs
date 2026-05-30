@@ -13,6 +13,8 @@
 //! shared terminal-I/O helpers.
 
 mod join;
+mod list_messages;
+mod pager;
 mod post_mail;
 mod read_mail;
 mod read_subprompt;

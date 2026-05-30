@@ -160,6 +160,11 @@ where
                         .await?;
                     self.read_and_render(session, number).await?;
                 }
+                // `L`ist the base's messages (`express.e:12220`), then
+                // stay on the current message (`nextMenu`, `:12223`).
+                Some('l') => {
+                    self.handle_list_messages(session).await?;
+                }
                 // Any other key is an unimplemented B5 option; fall
                 // through and re-render the prompt.
                 _ => {}

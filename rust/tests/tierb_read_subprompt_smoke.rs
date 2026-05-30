@@ -544,6 +544,150 @@ async fn question_mark_shows_the_short_help_then_double_shows_the_long_help() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn list_renders_the_paginated_message_table() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    // Seed more messages than fit a default 22-line page so the listing
+    // is forced to pause.
+    seed_n_messages(&msgbase, 25);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `L` prompts for a starting message, defaulting to the lowest (1).
+    write_line(&mut stream, b"L").await;
+    drain_until(
+        &mut stream,
+        b"Starting message \x1b[33m[\x1b[0m1\x1b[33m]\x1b[0m: ",
+    )
+    .await;
+    write_line(&mut stream, b"").await;
+
+    // The `listMSGs` table renders with the message number FIRST (unlike
+    // the scan table) and pauses once the page fills.
+    let page = drain_until(&mut stream, b"(Pause)...More(y/n/ns)? ").await;
+    assert!(
+        contains(&page, b"\x1b[32mMsg    Type"),
+        "expected the Msg-first list header, got {:?}",
+        String::from_utf8_lossy(&page)
+    );
+    assert!(
+        contains(&page, b"000001 Public "),
+        "expected message 1's row, got {:?}",
+        String::from_utf8_lossy(&page)
+    );
+
+    // `ns` finishes the listing without further pauses, then the loop
+    // returns to the sub-prompt.
+    write_line(&mut stream, b"ns").await;
+    let rest = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&rest, b"000025 Public "),
+        "non-stop must render the rest of the list, got {:?}",
+        String::from_utf8_lossy(&rest)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+/// Seeds `n` unread public messages addressed to the seeded sysop,
+/// numbered 1..=n.
+fn seed_n_messages(msgbase: &std::path::Path, n: u32) {
+    std::fs::create_dir_all(msgbase).expect("create msgbase");
+    for i in 1..=n {
+        std::fs::write(
+            msgbase.join(format!("{i:07}.json")),
+            seeded_mail_json(i, "Carol", &format!("Subject {i}"), "Body."),
+        )
+        .expect("seed message");
+    }
+}
+
+#[tokio::test]
+async fn list_excludes_mail_not_addressed_to_the_reader() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    std::fs::create_dir_all(&msgbase).expect("create msgbase");
+    // 1: to the sysop (shown). 2: to a stranger (excluded). 3: deleted
+    // (excluded).
+    std::fs::write(
+        msgbase.join("0000001.json"),
+        mail_json(1, "sysop", 1, "public", "MineSubject"),
+    )
+    .expect("seed 1");
+    std::fs::write(
+        msgbase.join("0000002.json"),
+        mail_json(2, "stranger", 99, "public", "StrangerSubject"),
+    )
+    .expect("seed 2");
+    std::fs::write(
+        msgbase.join("0000003.json"),
+        mail_json(3, "sysop", 1, "deleted", "DeletedSubject"),
+    )
+    .expect("seed 3");
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    write_line(&mut stream, b"L").await;
+    drain_until(&mut stream, b"\x1b[33m]\x1b[0m: ").await;
+    write_line(&mut stream, b"").await;
+    // Only one row fits, so the listing finishes and returns to the
+    // sub-prompt without a pause.
+    let list = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&list, b"MineSubject"),
+        "the reader's own message must be listed, got {:?}",
+        String::from_utf8_lossy(&list)
+    );
+    assert!(
+        !contains(&list, b"StrangerSubject") && !contains(&list, b"DeletedSubject"),
+        "mail addressed elsewhere or deleted must be excluded, got {:?}",
+        String::from_utf8_lossy(&list)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+/// JSON for one message with a chosen addressee slot and visibility, in
+/// the [`FileMailStore`] format.
+fn mail_json(
+    number: u32,
+    to_name: &str,
+    addressee_slot: u32,
+    visibility: &str,
+    subject: &str,
+) -> String {
+    format!(
+        r#"{{
+            "conference_number": 1,
+            "msgbase_number": 1,
+            "number": {number},
+            "visibility": "{visibility}",
+            "from_name": "Carol",
+            "to_name": "{to_name}",
+            "broadcast_to": "none",
+            "subject": "{subject}",
+            "posted_at": "1970-01-01T00:00:01Z",
+            "received_at": null,
+            "author_slot": 2,
+            "addressee_slot": {addressee_slot},
+            "body": "Body."
+        }}"#
+    )
+}
+
 /// The verbatim `readMSG` sub-prompt skeleton
 /// (`amiexpress/express.e:12016-12021`) with `range` substituted into
 /// the `( <range> )` slot. `show_delete` / `show_move` insert the `D` /

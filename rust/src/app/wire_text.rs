@@ -682,6 +682,50 @@ pub(crate) fn render_scan_listing_table(
     out
 }
 
+/// Renders the `L`ist (`listMSGs`) table header
+/// (`amiexpress/express.e:8856-8859`): two leading CRLFs, a green
+/// `Msg / Type / From / Subject` column line (message number **first**,
+/// unlike the scan table), a yellow dashes row, then a colour reset.
+/// The legacy counts this block as four lines towards the pager.
+pub(crate) fn render_list_header() -> Vec<u8> {
+    let mut out = Vec::with_capacity(160);
+    out.extend_from_slice(b"\r\n\r\n\x1b[32m");
+    out.extend_from_slice(left_field("Msg", 6).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(left_field("Type", 7).as_bytes());
+    out.extend_from_slice(b"  ");
+    out.extend_from_slice(left_field("From", 29).as_bytes());
+    out.extend_from_slice(b"  ");
+    out.extend_from_slice(left_field("Subject", 21).as_bytes());
+    out.extend_from_slice(b"\r\n\x1b[33m");
+    out.extend_from_slice("-".repeat(6).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice("-".repeat(7).as_bytes());
+    out.extend_from_slice(b"  ");
+    out.extend_from_slice("-".repeat(29).as_bytes());
+    out.extend_from_slice(b"  ");
+    out.extend_from_slice("-".repeat(21).as_bytes());
+    out.extend_from_slice(b"\r\n\x1b[0m");
+    out
+}
+
+/// Renders one `L`ist row (`amiexpress/express.e:8864`):
+/// `\z\r\d[6] \s  \l\s[29]  \l\s[21]  [0m\b\n` — the zero-padded message
+/// number first, then the 7-char status, the 29-wide From and 21-wide
+/// Subject columns, and a colour reset.
+pub(crate) fn render_list_row(row: &crate::domain::messaging::scan_mail::MailScanRow) -> Vec<u8> {
+    let mut out = Vec::with_capacity(80);
+    out.extend_from_slice(format!("{:06}", row.number).as_bytes());
+    out.push(b' ');
+    out.extend_from_slice(scan_row_status(row.visibility).as_bytes());
+    out.extend_from_slice(b"  ");
+    out.extend_from_slice(left_field(&row.from_name, 29).as_bytes());
+    out.extend_from_slice(b"  ");
+    out.extend_from_slice(left_field(&row.subject, 21).as_bytes());
+    out.extend_from_slice(b"  \x1b[0m\r\n");
+    out
+}
+
 /// The 7-character status column for a listing row
 /// (`amiexpress/express.e:11719`): only `Public` mail renders as
 /// `"Public "`; every other (non-deleted) visibility is `"Private"`.

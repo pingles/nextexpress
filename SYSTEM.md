@@ -235,8 +235,11 @@ legacy post-action navigation: `A`gain re-displays (stays), `R`eply
 advances, `F`orward stays, `D`elete advances (gated by
 `delete_mail::can_delete`), `M`ove advances on success only (gated by
 `move_mail::can_move`), `EH` edits the header then re-displays (gated by
-`edit_mail_header::can_edit_header`). `L`ist and the `?`/`??` help
-screens are still pending; the surface is modelled in
+`edit_mail_header::can_edit_header`). `?` / `??` render the short / long
+help list (gated the same way), and `L`ist shows the legacy `listMSGs`
+table (start-message prompt, addressed-to-reader rows via
+`app/menu/list_mail`) paginated through the shared `menu_flow::pager`
+(`(Pause)...More(y/n/ns)?`). The surface is modelled in
 `messaging.allium:MailReadPrompt`. The three access gates currently
 diverge from the legacy `ACS_*` flags — tracked as Tier B slice B9.
 
