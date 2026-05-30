@@ -14,6 +14,43 @@ the BBS's primary mail-reading UI — to NextExpress so the top-level
 See [SLICES.md](../SLICES.md) and [COMMAND_PARITY.md](../COMMAND_PARITY.md)
 for the cross-reference of every drift NextExpress currently carries.
 
+## This round (2026-05-30): B4 + B5 + B8 together
+
+By default B8 (retiring the top-level `RP` / `FW` / `K` / `MV` / `EH`
+shortcuts) waited "one release cycle" after the sub-prompt shipped. For
+this round that deprecation window is **deliberately collapsed** at the
+sysop's direction: we land the full `R` sub-prompt (B4 scaffolding +
+B5 options) and then retire the five non-legacy top-level commands in
+the same body of work, because those five never existed as legacy menu
+commands — they are sub-prompt options the NextExpress port surfaced
+early as a stop-gap. The deletion is therefore safe to do *as soon as*
+the sub-prompt provides the equivalent options (B5), with no capability
+gap. Implementation order this round is **B4 → B5 → B6 → B8**, with the
+**B-wire** closing smoke running *after* B8 (so it asserts the retired
+shortcuts now error, rather than that they still work). **B7** (the
+`E` / `C` wire-text drift fixes) is independent of the sub-prompt and
+can land separately.
+
+**Design decisions for this round:**
+
+- **The sub-prompt loop is an application / `menu_flow` concern**, not a
+  new domain rule — the same call the project made for the `MS` listing
+  table (a "code slice, not a spec one"). The existing `ReadMail` domain
+  rule (`rust/src/domain/messaging/read_mail.rs`) is reused *per message*;
+  the loop wraps it. It lives in a new focused module
+  `rust/src/app/menu_flow/read_subprompt.rs`, driven from
+  `handle_read_mail`'s `ReadMailOutcome::Read` arm
+  (`rust/src/app/menu_flow/read_mail.rs`) — the loop needs the live
+  terminal and `self.services` to fetch the next message, which the
+  terminal-free use case in `app/menu/read_mail.rs` cannot host.
+- **A lightweight `messaging.allium` surface anchors the sub-prompt** —
+  its option set and the `D` / `M` / `EH` access gates map to existing
+  rules. The ANSI wire bytes stay in code (a surface concern the spec
+  excludes); the *option-to-rule* mapping and the gating are modelled in
+  the spec, authored before the code so the primary mail UI has a spec
+  anchor and B8's deletion has a spec justification (the top-level
+  shortcuts were never in the spec; the sub-prompt options are).
+
 ## Slice B1 — `MS` (multi-conference mail scan, was Slice 49d) — **Done**
 
 Shipped together with **B3** (the listing table): `MS` now binds to a
@@ -117,41 +154,94 @@ scan-on-join still renders just its summary line. The
 ## Slice B4 — `R` sub-prompt scaffolding
 
 - **In Scope**
-  - Once `R <num>` (or `R` no-arg → "first unread") has printed a
-    message via the existing `ReadMail` rule, the session enters the
-    sub-prompt loop modelled on `amiexpress/express.e:11972`
-    (`readMSG`).
+  - Once `R <num>` has printed a message via the existing `ReadMail`
+    rule, the session enters the sub-prompt loop modelled on
+    `amiexpress/express.e:11972` (`readMSG`). The loop lives in a new
+    `rust/src/app/menu_flow/read_subprompt.rs`, called from the
+    `ReadMailOutcome::Read` arm of `handle_read_mail`.
   - Wire text: the ANSI-coloured prompt is assembled piecewise at
     `amiexpress/express.e:12016-12021`, not a single literal. The
     always-present skeleton is
     `Msg. Options: A,F,R,L,Q,?,??,<CR> ( <range> )>: ` where `<range>`
-    is the runtime message-range string (e.g. `5+10`, built at
-    `:12010`). `D` (delete) is inserted after `A` only for callers with
-    `ACS_DELETE_MESSAGE` (`:12017`) and `M` (move) only for
-    `ACS_SYSOP_READ` (`:12018`), so a fully-privileged caller sees
-    `Msg. Options: A,D,M,F,R,L,Q,?,??,<CR> ( <range> )>: `. Carry the
-    legacy ANSI escapes verbatim. (There is no `(N>M):` literal.)
-  - `<CR>` advances to the next message in the current msgbase;
-    `Q` returns to the menu prompt.
+    is the runtime message-range string (e.g. `5+10`). `D` (delete) is
+    inserted after `A` only for callers with `ACS_DELETE_MESSAGE`
+    (`:12017`) and `M` (move) only for `ACS_SYSOP_READ` (`:12018`). B4
+    emits the **ungated** skeleton (no `D` / `M`); the gates land in B5.
+    Carry the legacy ANSI escapes verbatim. The exact ungated bytes
+    (note the doubled `ESC[36m` seam where `A` joins `F` because the
+    skipped comma-prefixed `D` / `M` fragments would otherwise sit
+    between them) are:
+    `\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m <range> \x1b[32m )\x1b[0m>: `
+  - **Range string** (`amiexpress/express.e:12010`): forward form is
+    `{msgNum}+{highest_existing}` — `highest_existing` is
+    `mailStat.highMsgNum - 1`, the highest existing message number. So
+    reading msg 1 of a 2-message base shows `1+2`; advancing onto msg 2
+    shows `2+2`.
+  - **`<CR>` / empty input** advances to the next message in the current
+    msgbase (re-reads via the same per-message path). **`Q` / `q`**
+    returns to the menu prompt. Advancing past `highest_existing` hits
+    the legacy out-of-range → `QUIT` clamp (`:12012`) and returns to the
+    menu. Any other key in B4 simply re-renders the prompt (real options
+    arrive in B5).
+  - **Spec**: add the lightweight `messaging.allium` read-sub-prompt
+    surface (option set + `D` / `M` / `EH` gates), authored before the
+    code.
 - **Out of Scope**
   - Options other than `<CR>` / `Q` — added in B5.
+  - The no-arg `R` → "first unread" entry — `R` still requires a numeric
+    arg here; the no-arg interactive entry is a later refinement.
+- **First failing test**: `rust/tests/tierb_read_subprompt_smoke.rs`,
+  in-process `TelnetListener` (reuse the `tierb_mail_scan_smoke.rs`
+  helpers). Seed a base with two public messages (1, 2); sign in; send
+  `R 1`; assert the verbatim ungated skeleton with range `1+2`; send an
+  empty line and assert message 2 surfaces with the prompt re-rendered
+  at range `2+2`; send `Q` and assert the main conference menu prompt
+  returns. Fails today because `R` reads one message and drops straight
+  back to the menu.
 - **Why split**: ship the legacy primary mail-reading loop with the
   smallest possible surface first; users get the legacy *feel*
   immediately and the remaining options accrete behind it.
 
 ## Slice B5 — `R` sub-prompt full options
 
-- **In Scope**
-  - `A`gain (re-display current), `R`eply (drops into B6 below),
-    `F`orward, `D`elete (sysop), `M`ove (sysop), `L`ist (calls into
-    B3's listing), `?` short help, `??` long help.
-  - Existing top-level `RP`, `FW`, `K`, `MV`, `EH` parsers stay for
-    one release as deprecated shortcuts; the smoke test asserts both
-    paths reach the same domain rule.
-- **Out of Scope**
-  - Retiring the top-level shortcut commands — that's a later slice
-    once the sub-prompt has shipped and the deprecation notice has
-    been in place for a release.
+- **In Scope** — each option dispatches to an **existing** domain rule;
+  no new mail rule is written (legacy dispatch at
+  `amiexpress/express.e:12092-12224`):
+  - `A`gain — re-render the current message (`displayMessage`, `:12102`).
+  - `R`eply — `ReplyMail` rule (`:12161`); refined in B6.
+  - `F`orward — `ForwardMail` rule (`:12153`); refined in B6.
+  - `D`elete — `KillMail` rule (`:12147`), gated `ACS_DELETE_MESSAGE`.
+    **This is where the top-level `K` retires** (our `K` = soft-delete =
+    legacy `D`elete; legacy `K` is the unrelated "keep and quit", which
+    we do not carry).
+  - `M`ove — `MoveMail` rule (`:12169`), gated `ACS_SYSOP_READ`.
+  - `EH` — `EditHeader` rule (`:12179-12182`), gated `ACS_MESSAGE_EDIT`.
+    `EH` is an `E`-family option shown only in the `??` long help
+    (`:12051`), not the short skeleton.
+  - `L`ist — render B3's scan listing table (`listMSGs`, `:12220`).
+  - `?` short help (`:12023-12032`) and `??` long help
+    (`:12034-12060`) — both end with the
+    `<CR>=Next ( <range> )? ` re-prompt; carry the legacy ANSI verbatim.
+  - **Access-gate modelling**: `ACS_SYSOP_READ` → existing `is_sysop()`;
+    `ACS_MESSAGE_EDIT` → existing `Right::MessageEdit`; `ACS_DELETE_MESSAGE`
+    → reuse whatever gate the current top-level `K` (`KillMail`) already
+    checks (confirm during planning — add a `Right` variant only if `K`
+    is presently ungated).
+  - Existing top-level `RP`, `FW`, `K`, `MV`, `EH` parsers stay live
+    through B5 so the B-wire smoke can assert both paths reach the same
+    rule; B8 removes them in this same round.
+- **Out of Scope** (legacy `readMSG` options NextExpress does not carry
+  here, documented so the omission is deliberate):
+  - `NS` non-stop mode — Tier A A12.
+  - `T` / `TS` / `T!` / `T*` translate (`ACS_TRANSLATION`) — niche;
+    no translation subsystem is planned.
+  - `U` account-edit-from-mail (`ACS_ACCOUNT_EDITING`) — Tier H sysop
+    console territory.
+  - `E` / `EM` body editors — deferred with the legacy screen-mode
+    editor (see `COMMAND_PARITY.md` row 20); only `EH` (header edit)
+    lands now.
+  - `K`eep-and-quit (mark-unreceived) — distinct legacy option, not
+    carried.
 
 ## Slice B6 — Sub-prompt `R`eply / `F`orward refinement
 
@@ -174,9 +264,11 @@ scan-on-join still renders just its summary line. The
 - **In Scope**
   - Item-by-item application of the drift list in
     `COMMAND_PARITY.md` §1 rows 13–21 — restoring legacy ANSI on the
-    `To` / `Subject` / `Private` prompts, flipping the default for
-    Private to **Y**, adopting the verbatim "User does not exist!!"
-    text, and so on.
+    `To` / `Subject` / `Private` prompts, adopting the verbatim "User
+    does not exist!!" text, and so on. **Do not** flip the Private
+    default: `yesNo(2)` is default-**N** and our prompt already matches
+    (the old "swap to Y" note was a misreading; see `COMMAND_PARITY.md`
+    row 16).
 - **Out of Scope**
   - The legacy screen-mode editor (rows 20 / `edit()`) — keeping the
     NextExpress line-mode editor is a deliberate divergence (see
@@ -184,26 +276,40 @@ scan-on-join still renders just its summary line. The
 
 ## Slice B-wire — Tier B wire-and-smoke
 
+Runs *after* B8 this round (see "This round" above).
+
 - **In Scope**
   - Smoke test exercises: log in, run `MS`, drop into a message via
     `R 1`, navigate forward with `<CR>`, reply via the sub-prompt,
     return to the menu.
-  - Assert the verbatim sub-prompt wire bytes and that the
-    deprecated top-level shortcuts still work.
+  - Assert the verbatim sub-prompt wire bytes, and that the retired
+    top-level shortcuts (`RP` / `FW` / `K` / `MV` / `EH`) now fall
+    through to the unknown-command notice.
 - **Out of Scope**
-  - Removing the top-level shortcuts (slice B8 below).
+  - Re-introducing the top-level shortcuts in any form.
 
 ## Slice B8 — Retire top-level `RP` / `FW` / `K` / `MV` / `EH` shortcuts
 
+Pulled forward into this round (see "This round" above): the deprecation
+window is collapsed, so B8 lands as soon as B5 has shipped the
+equivalent sub-prompt options — no release-cycle wait, no capability gap.
+
 - **In Scope**
   - Drop the `MenuCommand::Reply` / `Forward` / `Kill` / `Move` /
-    `EditHeader` arms from `menu_command.rs` and `menu_flow/mod.rs`
-    once the sub-prompt has been the released default for one
-    release cycle.
+    `EditHeader` variants and their parse arms from `menu_command.rs`
+    and their dispatch arms from `menu_flow/mod.rs`. The five commands
+    parse to `MenuCommand::Unknown` afterwards (the `N` precedent, B2).
+  - **Keep the domain rules** (`ReplyMail`, `ForwardMail`, `KillMail`,
+    `MoveMail`, `EditHeader`) — they are now reached only from the
+    sub-prompt (B5), not deleted.
   - Existing tests covering the top-level forms move to assert the
-    R sub-prompt equivalent.
-  - Add a one-line entry to `COMMAND_PARITY.md` noting the removal
-    so future readers see why typing `RP 1` now errors as unknown.
+    R sub-prompt equivalent. Mind the mapping: top-level `K` retires
+    onto the sub-prompt `D`elete; `EH` onto the sub-prompt `EH`.
+  - Drop any menu-asset lines (`Conf*/Menu*.txt`) that reference the
+    five tokens (likely none — they were never legacy menu commands).
+  - Add a `COMMAND_PARITY.md` note (rows 22–26) recording the removal
+    so future readers see why typing `RP 1` now falls through to the
+    unknown-command notice.
 - **Out of Scope**
   - Re-introducing them under a feature flag — by the time this
     slice ships, the sub-prompt is the only legitimate path.
