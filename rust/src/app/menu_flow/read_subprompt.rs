@@ -34,18 +34,18 @@ where
         session: &mut MenuSession,
         start: u32,
     ) -> Result<(), T::Error> {
-        // The upper bound of the `<number>+<highest>` range string.
-        // Stable for the duration of the read (no posting happens while
-        // a reader holds the loop), so it is read once on entry.
-        let Some(highest) = self.current_base_highest(session).await else {
-            return Ok(());
-        };
-
         let mut number = start;
         // `?` / `??` set this so the next loop turn renders the short /
         // long help list instead of the option skeleton, then it clears.
         let mut pending_help: Option<bool> = None;
         loop {
+            // The `<number>+<highest>` range bound is re-read every turn:
+            // `R`eply / `F`orward post new messages while the reader
+            // holds the loop, so a value captured on entry would go
+            // stale (the legacy reads the live `mailStat` each pass).
+            let Some(highest) = self.current_base_highest(session).await else {
+                return Ok(());
+            };
             // The `D` / `M` (and, in the long help, `EH`) options appear
             // only for callers permitted to use them on the current
             // message (legacy `checkSecurity` gates at
@@ -90,7 +90,7 @@ where
 
             // Empty input (`<CR>`) walks forward to the next message.
             if trimmed.is_empty() {
-                if !self.advance_or_quit(session, &mut number, highest).await? {
+                if !self.advance_or_quit(session, &mut number).await? {
                     return Ok(());
                 }
                 continue;
@@ -111,7 +111,7 @@ where
                 Some('r') => {
                     self.handle_reply(session, NumberArg::Number(number))
                         .await?;
-                    if !self.advance_or_quit(session, &mut number, highest).await? {
+                    if !self.advance_or_quit(session, &mut number).await? {
                         return Ok(());
                     }
                 }
@@ -130,7 +130,7 @@ where
                 // option is not theirs).
                 Some('d') if self.current_user_can_delete(session, number).await => {
                     self.handle_kill(session, NumberArg::Number(number)).await?;
-                    if !self.advance_or_quit(session, &mut number, highest).await? {
+                    if !self.advance_or_quit(session, &mut number).await? {
                         return Ok(());
                     }
                 }
@@ -142,7 +142,7 @@ where
                     let moved = self
                         .handle_move_mail(session, NumberArg::Number(number))
                         .await?;
-                    if moved && !self.advance_or_quit(session, &mut number, highest).await? {
+                    if moved && !self.advance_or_quit(session, &mut number).await? {
                         return Ok(());
                     }
                 }
@@ -172,18 +172,22 @@ where
         }
     }
 
-    /// Advances `number` to the next message and displays it. Returns
-    /// `Ok(false)` when there is no next message — the legacy
+    /// Advances `number` to the next message and displays it. Re-reads
+    /// the base's highest number so a just-posted reply is reachable.
+    /// Returns `Ok(false)` when there is no next message — the legacy
     /// out-of-range -> `QUIT` clamp (`express.e:12012`) — so the caller
     /// leaves the loop.
     async fn advance_or_quit(
         &mut self,
         session: &mut MenuSession,
         number: &mut u32,
-        highest: u32,
     ) -> Result<bool, T::Error> {
         let next = *number + 1;
-        if next > highest {
+        if self
+            .current_base_highest(session)
+            .await
+            .is_none_or(|h| next > h)
+        {
             return Ok(false);
         }
         *number = next;

@@ -1,40 +1,27 @@
-//! Phase 8 binary smoke tests (Slices 49a + 49b).
+//! Phase 8 binary smoke tests — reply / forward / kill / move / edit
+//! header via the `R` read sub-prompt.
 //!
 //! Spawns the compiled `nextexpress` binary against a temp BBS path
-//! pre-populated with a `Conf01/` and a single seed message, then
-//! drives the new Phase 8 menu commands over real telnet:
+//! pre-populated with a `Conf01/` and a single seed message, then drives
+//! the mail-management operations over real telnet. Tier B B8 retired
+//! the standalone `RP` / `FW` / `K` / `MV` / `EH` menu commands — these
+//! operations now live inside the `readMSG` sub-prompt, so each flow
+//! reads a message (`R <n>`) and then types the sub-prompt option.
 //!
-//! ## Slice 49a — `RP` (reply) and `FW` (forward)
-//!   1. Sign in as the seeded `sysop` / `sysop`.
-//!   2. Auto-rejoin attaches the session to Conf01.
-//!   3. Post a fresh original via `E sysop` so the smoke test owns
-//!      a known recipient (the existing seed mail #1 is also
-//!      authored by the sysop).
-//!   4. `RP 2` replies to the freshly-posted mail. The body editor
-//!      collects the reply text; the rule defaults the subject to
-//!      `"Re: <original.subject>"` and the addressee to the source
-//!      author. Posting reports `Message #3 saved.`.
-//!   5. `R 3` rereads the reply to confirm the spec's defaults
-//!      landed on the wire: subject prefixed `Re: `, recipient =
-//!      original author (`sysop`).
-//!   6. `FW 2 / sysop / a note / .` forwards the mail back to the
-//!      sysop with a `--`-separated note. Posting reports
-//!      `Message #4 saved.`. Reading mail #4 shows the
-//!      `Fwd: <subject>` prefix, the spec's `forward_header_for`
-//!      block (`From:` / `Date:` / `Subject:` lines) prepended to
-//!      the original body, and the note after the separator.
-//!   7. `G` ends the session cleanly.
+//! ## Reply / forward
+//!   1. Post a fresh original via `E sysop` (`Message #2 saved.`).
+//!   2. `R 2` -> `R` replies; the reply posts `Message #3 saved.` and
+//!      the loop advances onto it, showing the `Re: ` subject + body.
+//!   3. `R 2` -> `F` forwards back to the sysop with a `--`-separated
+//!      note (`Message #4 saved.`); `R 4` shows the `Fwd: ` prefix, the
+//!      `forward_header_for` block, the original body and the note.
 //!
-//! ## Slice 49b — sysop `K`, `MV`, `EH`
-//!   1. Sign in as the seeded `sysop` / `sysop`.
-//!   2. `K 1` with confirm `y` soft-deletes the seed mail.
-//!   3. `R 1` confirms the row no longer renders to ordinary
-//!      readers (the sysop sees it via its own re-read path).
-//!   4. `EH 1` rewrites the subject; `R 1` confirms.
-//!   5. `MV 1` moves mail #1 from msgbase #1 to msgbase #2
-//!      (registered ahead of time); the smoke confirms the new
-//!      number lands at `target.highest_message + 1`.
-//!   6. `G` ends the session cleanly.
+//! ## Sysop edit / move / delete
+//!   1. `R 1` -> `EH` rewrites the subject and re-displays it in place.
+//!   2. `M` moves the edited mail from msgbase #1 to #2; the new number
+//!      lands at `target.highest_message + 1`.
+//!   3. `E sysop` posts a fresh row; `R 2` -> `D` soft-deletes it, and a
+//!      re-read surfaces the deletion notice.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -117,100 +104,82 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
         ));
     }
 
-    // Step 2: reply to it. RP 2 → body editor → `.`. Subject and
-    // addressee come from the source.
-    write_line(&mut stream, b"RP 2")?;
+    // Step 2: reply via the sub-prompt (Tier B B8 retired the top-level
+    // `RP`). `R 2` -> `R` -> body -> `.`. The reply posts msg 3 and the
+    // sub-prompt advances to it, so the reply is displayed inline with
+    // the `Re: ` subject and the typed body.
+    write_line(&mut stream, b"R 2")?;
+    drain_until(&mut stream, b">: ").map_err(|e| format!("sub-prompt after R 2: {e}"))?;
+    write_line(&mut stream, b"R")?;
     drain_until(&mut stream, b"End with a single '.'")
-        .map_err(|e| format!("RP body instructions: {e}"))?;
+        .map_err(|e| format!("reply body instructions: {e}"))?;
     write_line(&mut stream, b"Replying inline.")?;
     write_line(&mut stream, b".")?;
-    let post_rp = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after RP: {e}"))?;
-    if !contains(&post_rp, b"Message #3 saved.") {
-        return Err(format!(
-            "expected `Message #3 saved.` after RP, got {:?}",
-            String::from_utf8_lossy(&post_rp)
-        ));
+    let post_reply = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("sub-prompt after reply: {e}"))?;
+    for (needle, what) in [
+        (&b"Message #3 saved."[..], "reply-saved notice"),
+        (&b"Re: Phase 8 source"[..], "`Re: ` subject"),
+        (&b"Replying inline."[..], "reply body"),
+    ] {
+        if !contains(&post_reply, needle) {
+            return Err(format!(
+                "expected {what} after the sub-prompt reply, got {:?}",
+                String::from_utf8_lossy(&post_reply)
+            ));
+        }
     }
-
-    // Step 3: read back the reply. Subject must carry the `Re: `
-    // prefix and the body must be the user's input.
-    write_line(&mut stream, b"R 3")?;
-    let post_r3 = drain_until_capturing(&mut stream, b">: ")
-        .map_err(|e| format!("read sub-prompt after R 3: {e}"))?;
-    if !contains(&post_r3, b"Re: Phase 8 source") {
-        return Err(format!(
-            "expected the reply to carry `Re: Phase 8 source`, got {:?}",
-            String::from_utf8_lossy(&post_r3)
-        ));
-    }
-    if !contains(&post_r3, b"Replying inline.") {
-        return Err(format!(
-            "expected the reply body on R 3, got {:?}",
-            String::from_utf8_lossy(&post_r3)
-        ));
-    }
-    // Tier B B4: leave the read sub-prompt with `Q`.
     write_line(&mut stream, b"Q")?;
     drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("menu prompt after R 3 sub-prompt Q: {e}"))?;
+        .map_err(|e| format!("menu after reply Q: {e}"))?;
 
-    // Step 4: forward the original to sysop with a note. FW 2 →
-    // To: sysop → note line → `.`.
-    write_line(&mut stream, b"FW 2")?;
-    drain_until(&mut stream, b"Forward to: ").map_err(|e| format!("FW To prompt: {e}"))?;
+    // Step 3: forward the original (msg 2) via the sub-prompt. `R 2` ->
+    // `F` -> To: sysop -> note -> `.`. Forward stays on msg 2.
+    write_line(&mut stream, b"R 2")?;
+    drain_until(&mut stream, b">: ").map_err(|e| format!("sub-prompt after R 2 (fwd): {e}"))?;
+    write_line(&mut stream, b"F")?;
+    drain_until(&mut stream, b"Forward to: ").map_err(|e| format!("forward To prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
     drain_until(&mut stream, b"blank line skips")
-        .map_err(|e| format!("FW note instructions: {e}"))?;
+        .map_err(|e| format!("forward note instructions: {e}"))?;
     write_line(&mut stream, b"Please look at this.")?;
     write_line(&mut stream, b".")?;
-    let post_fw = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after FW: {e}"))?;
-    if !contains(&post_fw, b"Message #4 saved.") {
+    let post_fwd = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("sub-prompt after forward: {e}"))?;
+    if !contains(&post_fwd, b"Message #4 saved.") {
         return Err(format!(
-            "expected `Message #4 saved.` after FW, got {:?}",
-            String::from_utf8_lossy(&post_fw)
+            "expected `Message #4 saved.` after the sub-prompt forward, got {:?}",
+            String::from_utf8_lossy(&post_fwd)
         ));
     }
+    write_line(&mut stream, b"Q")?;
+    drain_until_capturing(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("menu after forward Q: {e}"))?;
 
-    // Step 5: read back the forward. Subject must be prefixed
-    // `Fwd: `, the spec's `forward_header_for` block must
-    // prepend to the body, the original body must appear, and
-    // the note must follow the `--` separator.
+    // Step 4: read back the forward (msg 4): the `Fwd: ` subject, the
+    // spec's `forward_header_for` block, the original body, and the
+    // `--`-separated note.
     write_line(&mut stream, b"R 4")?;
     let post_r4 = drain_until_capturing(&mut stream, b">: ")
         .map_err(|e| format!("read sub-prompt after R 4: {e}"))?;
-    if !contains(&post_r4, b"Fwd: Phase 8 source") {
-        return Err(format!(
-            "expected the forward to carry `Fwd: Phase 8 source`, got {:?}",
-            String::from_utf8_lossy(&post_r4)
-        ));
+    for (needle, what) in [
+        (&b"Fwd: Phase 8 source"[..], "`Fwd: ` subject"),
+        (&b"From: sysop"[..], "forward_header_for `From:`"),
+        (
+            &b"Subject: Phase 8 source"[..],
+            "forward_header_for `Subject:`",
+        ),
+        (&b"Phase 8 original body."[..], "original body"),
+        (&b"--"[..], "note separator"),
+        (&b"Please look at this."[..], "note"),
+    ] {
+        if !contains(&post_r4, needle) {
+            return Err(format!(
+                "expected {what} on the forwarded message, got {:?}",
+                String::from_utf8_lossy(&post_r4)
+            ));
+        }
     }
-    if !contains(&post_r4, b"From: sysop") {
-        return Err(format!(
-            "expected forward_header_for `From: sysop` line, got {:?}",
-            String::from_utf8_lossy(&post_r4)
-        ));
-    }
-    if !contains(&post_r4, b"Subject: Phase 8 source") {
-        return Err(format!(
-            "expected forward_header_for `Subject:` line, got {:?}",
-            String::from_utf8_lossy(&post_r4)
-        ));
-    }
-    if !contains(&post_r4, b"Phase 8 original body.") {
-        return Err(format!(
-            "expected forward to include the original body, got {:?}",
-            String::from_utf8_lossy(&post_r4)
-        ));
-    }
-    if !contains(&post_r4, b"--") || !contains(&post_r4, b"Please look at this.") {
-        return Err(format!(
-            "expected forward to carry the `--` separator + note, got {:?}",
-            String::from_utf8_lossy(&post_r4)
-        ));
-    }
-    // Tier B B4: leave the read sub-prompt with `Q` before logging off.
     write_line(&mut stream, b"Q")?;
     drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("menu prompt after R 4 sub-prompt Q: {e}"))?;
@@ -403,53 +372,43 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
 
-    // Step 1: EH 1 rewrites the seed mail's subject; R 1 confirms
-    // the new subject. We do EH before K so the post-edit row is
-    // still alive to read.
-    write_line(&mut stream, b"EH 1")?;
+    // Step 1: `EH` via the sub-prompt rewrites the seed mail's subject,
+    // and the option re-displays the edited message in place (Tier B B8
+    // retired the top-level `EH`). `R 1` -> `EH`.
+    write_line(&mut stream, b"R 1")?;
+    drain_until(&mut stream, b">: ").map_err(|e| format!("sub-prompt after R 1: {e}"))?;
+    write_line(&mut stream, b"EH")?;
     drain_until(&mut stream, b"New subject (blank = unchanged): ")
         .map_err(|e| format!("EH subject prompt: {e}"))?;
     write_line(&mut stream, b"Sysop-edited subject")?;
     drain_until(&mut stream, b"New To (blank = unchanged): ")
         .map_err(|e| format!("EH To prompt: {e}"))?;
     write_line(&mut stream, b"")?; // keep current addressee
-    let post_eh = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after EH: {e}"))?;
-    if !contains(&post_eh, b"Header updated.") {
+    let post_eh = drain_until_capturing(&mut stream, b">: ")
+        .map_err(|e| format!("sub-prompt after EH: {e}"))?;
+    if !contains(&post_eh, b"Header updated.") || !contains(&post_eh, b"Sysop-edited subject") {
         return Err(format!(
-            "expected `Header updated.` after EH, got {:?}",
+            "expected `Header updated.` and the edited subject re-displayed, got {:?}",
             String::from_utf8_lossy(&post_eh)
         ));
     }
 
-    write_line(&mut stream, b"R 1")?;
-    let post_r_after_eh = drain_until_capturing(&mut stream, b">: ")
-        .map_err(|e| format!("read sub-prompt after R 1 (post-EH): {e}"))?;
-    if !contains(&post_r_after_eh, b"Sysop-edited subject") {
-        return Err(format!(
-            "expected R 1 to show the edited subject, got {:?}",
-            String::from_utf8_lossy(&post_r_after_eh)
-        ));
-    }
-    // Tier B B4: leave the read sub-prompt with `Q` before the move.
-    write_line(&mut stream, b"Q")?;
-    drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("menu prompt after R 1 sub-prompt Q: {e}"))?;
-
-    // Step 2: MV 1 moves the mail from (1,1) to (1,2). The target
-    // is empty so the new number is 1.
-    write_line(&mut stream, b"MV 1")?;
+    // Step 2: `M`ove the edited mail (still the current message) from
+    // (1,1) to (1,2). The base holds only this one message, so the
+    // post-move advance hits the out-of-range clamp and returns to the
+    // menu.
+    write_line(&mut stream, b"M")?;
     drain_until(&mut stream, b"Target conference number: ")
-        .map_err(|e| format!("MV conference prompt: {e}"))?;
+        .map_err(|e| format!("move conference prompt: {e}"))?;
     write_line(&mut stream, b"1")?;
     drain_until(&mut stream, b"Target msgbase number: ")
-        .map_err(|e| format!("MV msgbase prompt: {e}"))?;
+        .map_err(|e| format!("move msgbase prompt: {e}"))?;
     write_line(&mut stream, b"2")?;
     let post_mv = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after MV: {e}"))?;
+        .map_err(|e| format!("menu after move: {e}"))?;
     if !contains(&post_mv, b"Message moved. New number 1.") {
         return Err(format!(
-            "expected `Message moved. New number 1.` after MV, got {:?}",
+            "expected `Message moved. New number 1.` after the sub-prompt move, got {:?}",
             String::from_utf8_lossy(&post_mv)
         ));
     }
@@ -474,16 +433,20 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
         ));
     }
 
-    // Step 4: K 2 with confirm y deletes it.
-    write_line(&mut stream, b"K 2")?;
+    // Step 4: `D`elete the fresh mail via the sub-prompt. `R 2` -> `D`
+    // -> confirm `y`. With only this message in the base, the post-delete
+    // advance clamps back to the menu.
+    write_line(&mut stream, b"R 2")?;
+    drain_until(&mut stream, b">: ").map_err(|e| format!("sub-prompt after R 2: {e}"))?;
+    write_line(&mut stream, b"D")?;
     drain_until(&mut stream, b"Delete message (y/N)? ")
-        .map_err(|e| format!("Confirm delete prompt: {e}"))?;
+        .map_err(|e| format!("confirm delete prompt: {e}"))?;
     write_line(&mut stream, b"y")?;
     let post_k = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after K: {e}"))?;
+        .map_err(|e| format!("menu after delete: {e}"))?;
     if !contains(&post_k, b"Message deleted.") {
         return Err(format!(
-            "expected `Message deleted.` after K, got {:?}",
+            "expected `Message deleted.` after the sub-prompt delete, got {:?}",
             String::from_utf8_lossy(&post_k)
         ));
     }

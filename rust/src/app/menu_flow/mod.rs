@@ -158,16 +158,6 @@ where
             MenuCommand::ScanAllMail => self.handle_scan_all_mail(&mut session).await?,
             MenuCommand::Post(post) => self.handle_post_mail(&mut session, post).await?,
             MenuCommand::CommentToSysop => self.handle_comment_to_sysop(&mut session).await?,
-            MenuCommand::Reply(arg) => self.handle_reply(&mut session, arg).await?,
-            MenuCommand::Forward(arg) => self.handle_forward(&mut session, arg).await?,
-            MenuCommand::Kill(arg) => self.handle_kill(&mut session, arg).await?,
-            MenuCommand::Move(arg) => {
-                // The returned "moved?" flag only matters to the read
-                // sub-prompt's advance navigation; the top-level `MV`
-                // command ignores it.
-                self.handle_move_mail(&mut session, arg).await?;
-            }
-            MenuCommand::EditHeader(arg) => self.handle_edit_header(&mut session, arg).await?,
             MenuCommand::ShowTime => {
                 self.write_and_flush(&render_time_line(SystemTime::now()))
                     .await?;

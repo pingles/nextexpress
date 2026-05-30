@@ -21,16 +21,6 @@ pub(crate) enum MenuCommand {
     Post(PostArg),
     /// `C`: comment to sysop (Slice 44).
     CommentToSysop,
-    /// `RP <num>`: reply to message `<num>` (Slice 49a).
-    Reply(NumberArg),
-    /// `FW <num>`: forward message `<num>` (Slice 49a).
-    Forward(NumberArg),
-    /// `K <num>`: kill (soft-delete) message `<num>` (Slice 49b).
-    Kill(NumberArg),
-    /// `MV <num>`: move message `<num>` to a different msgbase (Slice 49b).
-    Move(NumberArg),
-    /// `EH <num>`: edit the header of message `<num>` (Slice 49b).
-    EditHeader(NumberArg),
     /// `T`: print the current date and time (Tier A quickwin A1).
     /// Mirrors `internalCommandT()` at
     /// `amiexpress/express.e:25622-25644`.
@@ -134,24 +124,6 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if let Some(arg) = parse_number_command(trimmed, "J") {
         return MenuCommand::Join(arg);
-    }
-    // Two-letter commands resolved before the single-letter `R`
-    // so `RP 1` doesn't get swallowed by the read parser as a
-    // bogus read argument.
-    if let Some(arg) = parse_number_command(trimmed, "RP") {
-        return MenuCommand::Reply(arg);
-    }
-    if let Some(arg) = parse_number_command(trimmed, "FW") {
-        return MenuCommand::Forward(arg);
-    }
-    if let Some(arg) = parse_number_command(trimmed, "MV") {
-        return MenuCommand::Move(arg);
-    }
-    if let Some(arg) = parse_number_command(trimmed, "EH") {
-        return MenuCommand::EditHeader(arg);
-    }
-    if let Some(arg) = parse_number_command(trimmed, "K") {
-        return MenuCommand::Kill(arg);
     }
     if let Some(arg) = parse_number_command(trimmed, "R") {
         return MenuCommand::Read(arg);
@@ -332,75 +304,18 @@ mod tests {
     }
 
     #[test]
-    fn parses_reply_command() {
-        assert_eq!(
-            parse_menu_command("RP 7"),
-            MenuCommand::Reply(NumberArg::Number(7))
-        );
-        assert_eq!(
-            parse_menu_command("rp 7"),
-            MenuCommand::Reply(NumberArg::Number(7))
-        );
-        assert_eq!(
-            parse_menu_command("RP"),
-            MenuCommand::Reply(NumberArg::Missing)
-        );
-        assert_eq!(
-            parse_menu_command("RP nope"),
-            MenuCommand::Reply(NumberArg::Invalid)
-        );
-    }
-
-    #[test]
-    fn parses_forward_command() {
-        assert_eq!(
-            parse_menu_command("FW 7"),
-            MenuCommand::Forward(NumberArg::Number(7))
-        );
-        assert_eq!(
-            parse_menu_command("fw 7"),
-            MenuCommand::Forward(NumberArg::Number(7))
-        );
-        assert_eq!(
-            parse_menu_command("FW"),
-            MenuCommand::Forward(NumberArg::Missing)
-        );
-    }
-
-    #[test]
-    fn parses_kill_command() {
-        assert_eq!(
-            parse_menu_command("K 2"),
-            MenuCommand::Kill(NumberArg::Number(2))
-        );
-        assert_eq!(
-            parse_menu_command("k 2"),
-            MenuCommand::Kill(NumberArg::Number(2))
-        );
-    }
-
-    #[test]
-    fn parses_move_command() {
-        assert_eq!(
-            parse_menu_command("MV 3"),
-            MenuCommand::Move(NumberArg::Number(3))
-        );
-        assert_eq!(
-            parse_menu_command("mv 3"),
-            MenuCommand::Move(NumberArg::Number(3))
-        );
-    }
-
-    #[test]
-    fn parses_edit_header_command() {
-        assert_eq!(
-            parse_menu_command("EH 5"),
-            MenuCommand::EditHeader(NumberArg::Number(5))
-        );
-        assert_eq!(
-            parse_menu_command("eh 5"),
-            MenuCommand::EditHeader(NumberArg::Number(5))
-        );
+    fn retired_top_level_mail_shortcuts_are_unknown() {
+        // Tier B B8: `RP` / `FW` / `K` / `MV` / `EH` were never legacy
+        // menu commands — they are options inside the `R` sub-prompt and
+        // were retired once it shipped. They now fall through to the
+        // unknown-command notice.
+        for token in ["RP 7", "rp 7", "FW 2", "K 2", "k 2", "MV 3", "EH 5", "eh 5"] {
+            assert_eq!(
+                parse_menu_command(token),
+                MenuCommand::Unknown,
+                "`{token}` must no longer parse to a top-level command",
+            );
+        }
     }
 
     #[test]
@@ -637,11 +552,6 @@ mod tests {
             MenuCommand::ScanAllMail => Some("MS"),
             MenuCommand::Post(_) => Some("E"),
             MenuCommand::CommentToSysop => Some("C"),
-            MenuCommand::Reply(_) => Some("RP"),
-            MenuCommand::Forward(_) => Some("FW"),
-            MenuCommand::Kill(_) => Some("K"),
-            MenuCommand::Move(_) => Some("MV"),
-            MenuCommand::EditHeader(_) => Some("EH"),
             MenuCommand::ShowTime => Some("T"),
             MenuCommand::ShowVersion => Some("VER"),
             MenuCommand::ShowHelp => Some("H"),
@@ -666,11 +576,6 @@ mod tests {
             MenuCommand::ScanAllMail,
             MenuCommand::Post(PostArg::Missing),
             MenuCommand::CommentToSysop,
-            MenuCommand::Reply(NumberArg::Missing),
-            MenuCommand::Forward(NumberArg::Missing),
-            MenuCommand::Kill(NumberArg::Missing),
-            MenuCommand::Move(NumberArg::Missing),
-            MenuCommand::EditHeader(NumberArg::Missing),
             MenuCommand::ShowTime,
             MenuCommand::ShowVersion,
             MenuCommand::ShowHelp,

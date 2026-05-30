@@ -210,8 +210,9 @@ async fn reply_opens_the_editor_then_advances_to_the_next_message() {
     write_line(&mut stream, b".").await;
 
     // After the reply the loop advances to message 2 and re-renders the
-    // sub-prompt at range `2+2` (legacy `R` -> `goNextMsg`,
-    // `express.e:12161-12168`).
+    // sub-prompt (legacy `R` -> `goNextMsg`, `express.e:12161-12168`).
+    // The reply itself posted message 3, so the live range upper bound
+    // is now `+3`.
     let after = drain_until(&mut stream, b">: ").await;
     assert!(
         contains(&after, b"Second Subject"),
@@ -219,8 +220,8 @@ async fn reply_opens_the_editor_then_advances_to_the_next_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"2+2", true, true)),
-        "reply must advance the sub-prompt to range 2+2, got {:?}",
+        contains(&after, &sub_prompt(b"2+3", true, true)),
+        "reply must advance to message 2 with the range reflecting the posted reply, got {:?}",
         String::from_utf8_lossy(&after)
     );
 
@@ -249,8 +250,9 @@ async fn forward_posts_then_stays_on_the_current_message() {
     write_line(&mut stream, b".").await;
 
     // The forward posts message 3, then the loop STAYS on message 1
-    // (legacy `F` -> `nextMenu`, `express.e:12153-12160`): range stays
-    // `1+2` and message 2 is not displayed.
+    // (legacy `F` -> `nextMenu`, `express.e:12153-12160`): message 2 is
+    // not displayed, and the live range upper bound is now `+3` from the
+    // just-posted forward.
     let after = drain_until(&mut stream, b">: ").await;
     assert!(
         contains(&after, b"Message #3 saved."),
@@ -258,8 +260,8 @@ async fn forward_posts_then_stays_on_the_current_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"1+2", true, true)),
-        "forward must stay on message 1 (range 1+2), got {:?}",
+        contains(&after, &sub_prompt(b"1+3", true, true)),
+        "forward must stay on message 1 with the range reflecting the posted forward, got {:?}",
         String::from_utf8_lossy(&after)
     );
     assert!(
