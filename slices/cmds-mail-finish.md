@@ -313,3 +313,40 @@ equivalent sub-prompt options — no release-cycle wait, no capability gap.
 - **Out of Scope**
   - Re-introducing them under a feature flag — by the time this
     slice ships, the sub-prompt is the only legitimate path.
+
+## Slice B9 — Faithful ACS access-flag mapping for the sub-prompt — **Todo**
+
+Reading the original `readMSG` while wiring B5c surfaced a pre-existing
+divergence (from Slice 49b, *not* introduced by the sub-prompt round):
+our `D` / `M` / `EH` gates do not map to the three distinct legacy
+`checkSecurity` flags. The original gates each option on its own flag:
+
+| Option | Legacy flag (`amiexpress/express.e`) | Our gate today |
+| --- | --- | --- |
+| `D`elete | `ACS_DELETE_MESSAGE` (`:12148`) | `is_sysop \|\| access ≥ 210 \|\| author \|\| addressee` (`delete_mail::can_delete`) |
+| `M`ove | `ACS_SYSOP_READ` (`:12170`) | `is_sysop \|\| message_edit` (`move_mail::can_move`) |
+| `EH` edit header | `ACS_MESSAGE_EDIT` (`:12179`) | `is_sysop \|\| access ≥ 210` (`edit_mail_header::can_edit_header`) |
+
+So `move` keys off `message_edit` where the legacy uses `SYSOP_READ`,
+and `EH` keys off `access ≥ 210` where the legacy uses `MESSAGE_EDIT` —
+the two flags are effectively crossed, and `D` is broadened with
+ownership disjuncts beyond the legacy's flat flag. (Note: `moveMSG`
+itself — `express.e:11827` — performs *no* ownership check, so the
+privilege-only shape of `can_move` is faithful; only the *flag* is
+wrong.)
+
+- **In Scope**
+  - Model `ACS_DELETE_MESSAGE` / `ACS_SYSOP_READ` / `ACS_MESSAGE_EDIT`
+    as three distinct rights (or a faithful tier mapping), and re-point
+    `can_delete` / `can_move` / `can_edit_header` at them.
+  - Decide whether to keep `delete`'s author/addressee ownership
+    disjuncts (a NextExpress enrichment) or drop them for legacy parity.
+  - Align the `messaging.allium:MailReadPrompt` surface gate names with
+    whatever the rules end up checking.
+- **Out of Scope**
+  - The sub-prompt wiring itself — B5c already gates each option on its
+    rule's predicate, so this slice swaps the predicate's *contents*
+    without touching the dispatch.
+- **Why deferred:** it touches the `Right` enum, the user-tier mapping
+  and three domain rules used by the top-level commands too, so it is a
+  cross-cutting access-model change rather than sub-prompt work.

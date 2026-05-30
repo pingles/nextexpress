@@ -73,21 +73,24 @@ where
     }
 
     /// Handles `MV <num>` — prompt for the target conference +
-    /// msgbase numbers, then move.
+    /// msgbase numbers, then move. Returns `true` only when the
+    /// message was actually moved, so the read sub-prompt can honour
+    /// the legacy "advance only on a successful move" navigation
+    /// (`express.e:12172`); every abort / rejection returns `false`.
     pub(super) async fn handle_move_mail(
         &mut self,
         session: &mut MenuSession,
         arg: NumberArg,
-    ) -> Result<(), T::Error> {
+    ) -> Result<bool, T::Error> {
         let number = match arg {
             NumberArg::Number(n) => n,
             NumberArg::Missing => {
                 self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
-                return Ok(());
+                return Ok(false);
             }
             NumberArg::Invalid => {
                 self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-                return Ok(());
+                return Ok(false);
             }
         };
 
@@ -95,21 +98,21 @@ where
             .read_required_line(session, MOVE_TARGET_CONFERENCE_PROMPT)
             .await?
         else {
-            return Ok(());
+            return Ok(false);
         };
         let Ok(target_conf) = conf_line.parse::<u32>() else {
             self.write_and_flush(INVALID_CONFERENCE_NUMBER_LINE).await?;
-            return Ok(());
+            return Ok(false);
         };
         let Some(mb_line) = self
             .read_required_line(session, MOVE_TARGET_MSGBASE_PROMPT)
             .await?
         else {
-            return Ok(());
+            return Ok(false);
         };
         let Ok(target_mb) = mb_line.parse::<u32>() else {
             self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-            return Ok(());
+            return Ok(false);
         };
 
         let outcome = move_mail(
@@ -122,24 +125,28 @@ where
             },
         )
         .await;
-        match outcome {
+        let moved = match outcome {
             MoveOutcome::NoMailBase => {
                 self.write_and_flush(NO_MAIL_BASE_LINE).await?;
+                false
             }
             MoveOutcome::UnknownTarget => {
                 self.write_and_flush(MOVE_UNKNOWN_TARGET_LINE).await?;
+                false
             }
             MoveOutcome::Moved(mail) => {
                 let mut line = MOVE_DONE_PREFIX.to_vec();
                 line.extend_from_slice(mail.number().to_string().as_bytes());
                 line.extend_from_slice(b".\r\n");
                 self.write_and_flush(&line).await?;
+                true
             }
             MoveOutcome::Rejected(err) => {
                 self.render_move_error(err).await?;
+                false
             }
-        }
-        Ok(())
+        };
+        Ok(moved)
     }
 
     /// Handles `EH <num>` — prompt for new subject and/or new

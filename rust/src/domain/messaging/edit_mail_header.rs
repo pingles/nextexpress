@@ -53,7 +53,7 @@ pub fn edit_mail_header(
     new_subject: Option<String>,
     new_to: Option<(String, Option<u32>)>,
 ) -> Result<(), EditMailHeaderError> {
-    if !user.is_sysop() && user.access_level() < EDIT_HEADER_ACCESS_LEVEL {
+    if !can_edit_header(user) {
         return Err(EditMailHeaderError::NotPermitted);
     }
     let Some(mut mail) = store.load(mail_number)? else {
@@ -67,6 +67,16 @@ pub fn edit_mail_header(
     }
     store.save(&mail)?;
     Ok(())
+}
+
+/// True when `user` may edit a message header — the spec disjunct
+/// `session.user.is_sysop or session.user.access_level >= 210`. The
+/// legacy `readMSG` sub-prompt uses this to gate the `EH` option (the
+/// `ACS_MESSAGE_EDIT` check at `express.e:12179`, expressed in
+/// `NextExpress`'s access-tier model).
+#[must_use]
+pub fn can_edit_header(user: &User) -> bool {
+    user.is_sysop() || user.access_level() >= EDIT_HEADER_ACCESS_LEVEL
 }
 
 #[cfg(test)]

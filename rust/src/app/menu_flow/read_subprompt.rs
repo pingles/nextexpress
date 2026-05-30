@@ -18,6 +18,9 @@ use crate::app::menu_command::NumberArg;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::render_read_subprompt;
 use crate::domain::conference::MessageBaseRef;
+use crate::domain::messaging::delete_mail::can_delete;
+use crate::domain::messaging::edit_mail_header::can_edit_header;
+use crate::domain::messaging::move_mail::can_move;
 use crate::domain::session::typed::MenuSession;
 
 impl<T> super::MenuFlow<'_, T>
@@ -85,6 +88,45 @@ where
                     self.handle_forward(session, NumberArg::Number(number))
                         .await?;
                 }
+                // `D`elete: gated on the per-message delete permission
+                // (legacy `ACS_DELETE_MESSAGE`, `express.e:12148`). When
+                // permitted the confirm-and-delete runs and the loop
+                // advances unconditionally — the legacy `goNextMsg`
+                // fires whatever the confirm answer (`:12151`). A
+                // caller without delete permission falls through (the
+                // option is not theirs).
+                Some('d') if self.current_user_can_delete(session, number).await => {
+                    self.handle_kill(session, NumberArg::Number(number)).await?;
+                    if !self.advance_or_quit(session, &mut number, highest).await? {
+                        return Ok(());
+                    }
+                }
+                // `M`ove: gated on the move permission (legacy
+                // `ACS_SYSOP_READ`, `express.e:12170`). Advances only on
+                // a successful move (`:12172`); an aborted or rejected
+                // move stays on the current message.
+                Some('m') if can_move(session.user()) => {
+                    let moved = self
+                        .handle_move_mail(session, NumberArg::Number(number))
+                        .await?;
+                    if moved && !self.advance_or_quit(session, &mut number, highest).await? {
+                        return Ok(());
+                    }
+                }
+                // `EH` edits the current header (the `E`-family option,
+                // gated on edit-header access — legacy `ACS_MESSAGE_EDIT`,
+                // `express.e:12179`), then re-displays the edited message
+                // and stays (`displayMessage` -> `nextMenu`,
+                // `:12191-12193`). Bare `E` (emacs) / `EM` (body edit)
+                // are deliberately not carried (see slice B5 Out of
+                // Scope).
+                Some('e')
+                    if trimmed.eq_ignore_ascii_case("eh") && can_edit_header(session.user()) =>
+                {
+                    self.handle_edit_header(session, NumberArg::Number(number))
+                        .await?;
+                    self.read_and_render(session, number).await?;
+                }
                 // Any other key is an unimplemented B5 option; fall
                 // through and re-render the prompt.
                 _ => {}
@@ -123,5 +165,31 @@ where
             .lock(MessageBaseRef::new(conference, msgbase))
             .await?;
         Some(guard.highest_message())
+    }
+
+    /// True when the session's user may delete the current message
+    /// (`number`). Loads the message and applies the `can_delete`
+    /// predicate, releasing the store lock before returning so the
+    /// delete handler can re-lock without self-deadlock. A missing
+    /// base, an absent message or a load error all read as "not
+    /// permitted".
+    async fn current_user_can_delete(&self, session: &MenuSession, number: u32) -> bool {
+        let Some((conference, msgbase)) = session.current_msgbase() else {
+            return false;
+        };
+        let Some(guard) = self
+            .services
+            .mail_stores()
+            .lock(MessageBaseRef::new(conference, msgbase))
+            .await
+        else {
+            return false;
+        };
+        let permitted = match guard.load(number) {
+            Ok(Some(mail)) => can_delete(session.user(), &mail),
+            _ => false,
+        };
+        drop(guard);
+        permitted
     }
 }

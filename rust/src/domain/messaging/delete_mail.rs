@@ -8,7 +8,7 @@
 //! derived getter — every read recomputes from the live
 //! visibility set, so the consequent is automatically honoured.
 
-use crate::domain::messaging::mail::MailVisibility;
+use crate::domain::messaging::mail::{Mail, MailVisibility};
 use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 use crate::domain::user::User;
 
@@ -63,11 +63,7 @@ pub fn delete_mail(
     if matches!(mail.visibility(), MailVisibility::Deleted) {
         return Err(DeleteMailError::AlreadyDeleted);
     }
-    let permitted = user.is_sysop()
-        || user.access_level() >= DELETE_ANY_ACCESS_LEVEL
-        || mail.author_slot() == user.slot_number()
-        || mail.addressee_slot() == Some(user.slot_number());
-    if !permitted {
+    if !can_delete(user, &mail) {
         return Err(DeleteMailError::NotPermitted);
     }
     // Spec consequents:
@@ -79,6 +75,20 @@ pub fn delete_mail(
     mail.clear_attachments();
     store.save(&mail)?;
     Ok(())
+}
+
+/// True when `user` may delete `mail` — the four spec disjuncts
+/// (`messaging.allium:DeleteMail`): the sysop, an `access_level >= 210`
+/// caller, the message's author, or its addressee. The legacy
+/// `readMSG` sub-prompt uses this to gate the `D`elete option (it is
+/// the `ACS_DELETE_MESSAGE` check at `express.e:12148` expressed in
+/// `NextExpress`'s per-message permission model).
+#[must_use]
+pub fn can_delete(user: &User, mail: &Mail) -> bool {
+    user.is_sysop()
+        || user.access_level() >= DELETE_ANY_ACCESS_LEVEL
+        || mail.author_slot() == user.slot_number()
+        || mail.addressee_slot() == Some(user.slot_number())
 }
 
 #[cfg(test)]

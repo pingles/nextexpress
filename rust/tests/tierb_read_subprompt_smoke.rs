@@ -87,7 +87,7 @@ async fn r_enters_sub_prompt_then_cr_advances_then_q_quits_over_telnet() {
     write_line(&mut stream, b"Q").await;
     let back = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
-        contains(&back, b"[\x1b[36m1\x1b[34m:\x1b[36mOne\x1b[0m]"),
+        contains(&back, b"[\x1b[36m1\x1b[34m:\x1b[36mOne - general\x1b[0m]"),
         "Q must return to the conference 1 menu prompt, got {:?}",
         String::from_utf8_lossy(&back)
     );
@@ -125,7 +125,7 @@ async fn cr_past_the_last_message_returns_to_the_menu() {
         String::from_utf8_lossy(&back)
     );
     assert!(
-        contains(&back, b"[\x1b[36m1\x1b[34m:\x1b[36mOne\x1b[0m]"),
+        contains(&back, b"[\x1b[36m1\x1b[34m:\x1b[36mOne - general\x1b[0m]"),
         "expected return to the conference 1 menu prompt, got {:?}",
         String::from_utf8_lossy(&back)
     );
@@ -270,6 +270,156 @@ async fn forward_posts_then_stays_on_the_current_message() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn delete_removes_the_current_message_and_advances() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `D`elete the current message (sysop is permitted), then advance to
+    // the next one (legacy `D` -> `goNextMsg`, `express.e:12147-12152`).
+    write_line(&mut stream, b"D").await;
+    drain_until(&mut stream, b"Delete message (y/N)? ").await;
+    write_line(&mut stream, b"y").await;
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"Message deleted."),
+        "`D` must delete the current message, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2")),
+        "`D` must advance to message 2 (range 2+2), got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn move_relocates_then_advances_on_success() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `M`ove message 1 to base (1,2). On success the loop advances to
+    // message 2 (legacy `M` -> `goNextMsg` on success, `express.e:12172`).
+    write_line(&mut stream, b"M").await;
+    drain_until(&mut stream, b"Target conference number: ").await;
+    write_line(&mut stream, b"1").await;
+    drain_until(&mut stream, b"Target msgbase number: ").await;
+    write_line(&mut stream, b"2").await;
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"Message moved. New number 1."),
+        "`M` must move the message, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2")),
+        "a successful `M` must advance to message 2 (range 2+2), got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn move_to_a_missing_target_stays_on_the_current_message() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // A move to a non-existent target fails; the loop STAYS on message 1
+    // (legacy `M` only jumps to `goNextMsg` on `RESULT_SUCCESS`,
+    // `express.e:12172`).
+    write_line(&mut stream, b"M").await;
+    drain_until(&mut stream, b"Target conference number: ").await;
+    write_line(&mut stream, b"9").await;
+    drain_until(&mut stream, b"Target msgbase number: ").await;
+    write_line(&mut stream, b"9").await;
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"No such target message base."),
+        "an unknown move target must be reported, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        contains(&after, &sub_prompt(b"1+2")) && !contains(&after, b"Second Subject"),
+        "a failed `M` must stay on message 1 (range 1+2), got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn edit_header_updates_the_subject_then_re_displays_and_stays() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `EH` edits the header (sysop is permitted), changing the subject
+    // and keeping the addressee, then re-displays the edited message and
+    // STAYS on it (legacy `EH` -> `displayMessage` -> `nextMenu`,
+    // `express.e:12179-12193`).
+    write_line(&mut stream, b"EH").await;
+    drain_until(&mut stream, b"New subject (blank = unchanged): ").await;
+    write_line(&mut stream, b"Edited Subject").await;
+    drain_until(&mut stream, b"New To (blank = unchanged): ").await;
+    write_line(&mut stream, b"").await;
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"Header updated."),
+        "`EH` must report the header update, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        contains(&after, b"Edited Subject"),
+        "`EH` must re-display the message with the new subject, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        contains(&after, &sub_prompt(b"1+2")) && !contains(&after, b"Second Subject"),
+        "`EH` must stay on message 1 (range 1+2), got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
 /// The verbatim ungated `readMSG` sub-prompt skeleton
 /// (`amiexpress/express.e:12016-12021`) with `range` substituted into
 /// the `( <range> )` slot. ANSI escapes are emitted literally; note the
@@ -316,10 +466,16 @@ async fn spawn_one_conference_listener(
     msgbase: &std::path::Path,
 ) -> std::net::SocketAddr {
     let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+    // Two message bases: (1,1) carries the seeded mail; (1,2) is an
+    // empty move target so the sub-prompt `M`ove option has somewhere
+    // to land.
     let conferences = vec![Conference::new(
         1,
         "One".to_string(),
-        vec![MessageBase::new(1, 1, "general".to_string())],
+        vec![
+            MessageBase::new(1, 1, "general".to_string()),
+            MessageBase::new(1, 2, "second".to_string()),
+        ],
     )
     .expect("valid conference")];
 
@@ -331,12 +487,20 @@ async fn spawn_one_conference_listener(
     let caller_log: SharedCallerLog =
         Arc::new(InMemoryCallerLog::new()) as Arc<dyn CallerLogAppender + Send + Sync>;
 
+    let msgbase2 = bbs_path.join("conf1_msgbase2");
+    std::fs::create_dir_all(&msgbase2).expect("create second msgbase");
     let mut registry = InMemoryMailStores::new();
     registry.register(
         MessageBaseRef::new(1, 1),
         Box::new(
             FileMailStore::open(msgbase.to_path_buf(), MessageBaseRef::new(1, 1))
                 .expect("open conf1 store"),
+        ),
+    );
+    registry.register(
+        MessageBaseRef::new(1, 2),
+        Box::new(
+            FileMailStore::open(msgbase2, MessageBaseRef::new(1, 2)).expect("open conf1 base 2"),
         ),
     );
     let mail_stores: SharedMailStores = Arc::new(registry) as Arc<dyn MailStores + Send + Sync>;

@@ -75,7 +75,7 @@ pub fn move_mail(
     target: &mut dyn MailStore,
     number: u32,
 ) -> Result<Mail, MoveMailError> {
-    if !user.is_sysop() && !user.has_access(Right::MessageEdit) {
+    if !can_move(user) {
         return Err(MoveMailError::NotPermitted);
     }
     if source.msgbase() == target.msgbase() {
@@ -139,6 +139,16 @@ pub fn move_mail(
     source.save(&original)?;
 
     Ok(copy)
+}
+
+/// True when `user` may move a message — the spec disjunct
+/// `has_access(user, message_edit) or session.user.is_sysop`. The
+/// legacy `readMSG` sub-prompt uses this to gate the `M`ove option
+/// (the `ACS_SYSOP_READ` check at `express.e:12170`, expressed in
+/// `NextExpress`'s right model).
+#[must_use]
+pub fn can_move(user: &User) -> bool {
+    user.is_sysop() || user.has_access(Right::MessageEdit)
 }
 
 #[cfg(test)]

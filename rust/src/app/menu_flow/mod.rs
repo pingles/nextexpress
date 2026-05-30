@@ -159,7 +159,12 @@ where
             MenuCommand::Reply(arg) => self.handle_reply(&mut session, arg).await?,
             MenuCommand::Forward(arg) => self.handle_forward(&mut session, arg).await?,
             MenuCommand::Kill(arg) => self.handle_kill(&mut session, arg).await?,
-            MenuCommand::Move(arg) => self.handle_move_mail(&mut session, arg).await?,
+            MenuCommand::Move(arg) => {
+                // The returned "moved?" flag only matters to the read
+                // sub-prompt's advance navigation; the top-level `MV`
+                // command ignores it.
+                self.handle_move_mail(&mut session, arg).await?;
+            }
             MenuCommand::EditHeader(arg) => self.handle_edit_header(&mut session, arg).await?,
             MenuCommand::ShowTime => {
                 self.write_and_flush(&render_time_line(SystemTime::now()))
