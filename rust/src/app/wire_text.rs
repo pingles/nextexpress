@@ -478,23 +478,35 @@ pub(crate) fn render_mail_header(
     out
 }
 
-/// Renders the legacy `readMSG` read sub-prompt (Slice B4), assembled
-/// piecewise at `amiexpress/express.e:12016-12021`. This is the
-/// **ungated** form: the `D` (delete) and `M` (move) options that the
-/// legacy inserts after `A` for callers with `ACS_DELETE_MESSAGE`
-/// (`:12017`) / `ACS_SYSOP_READ` (`:12018`) are not emitted — they land
-/// with their handlers in Slice B5.
+/// Renders the legacy `readMSG` read sub-prompt, assembled piecewise at
+/// `amiexpress/express.e:12016-12021`. `show_delete` inserts the `D`
+/// (delete) option after `A` (legacy `ACS_DELETE_MESSAGE`, `:12017`) and
+/// `show_move` inserts `M` (move) after it (legacy `ACS_SYSOP_READ`,
+/// `:12018`); the caller passes the gate results for the current message
+/// and user.
 ///
 /// The `( <range> )` slot carries the runtime message-range string
 /// `<number>+<highest>` (`:12010`), where `highest` is the highest
-/// existing message number (legacy `mailStat.highMsgNum - 1`). The
-/// doubled `\x1b[36m` after `A` is the seam the legacy leaves when the
-/// skipped comma-prefixed `D` / `M` fragments would otherwise sit
-/// between `A` and `F`.
-pub(crate) fn render_read_subprompt(number: u32, highest: u32) -> Vec<u8> {
-    let mut out = Vec::with_capacity(96);
+/// existing message number (legacy `mailStat.highMsgNum - 1`). When
+/// neither `D` nor `M` is shown the two `\x1b[36m` colour codes around
+/// the skipped slot collapse into the doubled-`\x1b[36m` seam the legacy
+/// leaves in that case.
+pub(crate) fn render_read_subprompt(
+    number: u32,
+    highest: u32,
+    show_delete: bool,
+    show_move: bool,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(112);
+    out.extend_from_slice(b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m");
+    if show_delete {
+        out.extend_from_slice(b",\x1b[33mD");
+    }
+    if show_move {
+        out.extend_from_slice(b",\x1b[33mM");
+    }
     out.extend_from_slice(
-        b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m ",
+        b"\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m ",
     );
     out.extend_from_slice(number.to_string().as_bytes());
     out.push(b'+');

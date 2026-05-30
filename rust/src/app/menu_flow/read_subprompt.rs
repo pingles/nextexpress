@@ -43,7 +43,14 @@ where
 
         let mut number = start;
         loop {
-            let prompt = render_read_subprompt(number, highest);
+            // The `D` / `M` options appear only for callers permitted to
+            // use them on the current message (legacy `checkSecurity`
+            // gates at `express.e:12017-12018`), matching the dispatch
+            // guards below so the prompt never advertises an option it
+            // would then refuse.
+            let show_delete = self.current_user_can_delete(session, number).await;
+            let show_move = can_move(session.user());
+            let prompt = render_read_subprompt(number, highest, show_delete, show_move);
             // A disconnected or idle caller leaves the sub-prompt; the
             // menu loop's next read applies carrier-loss / idle-timeout,
             // matching the other interactive handlers.

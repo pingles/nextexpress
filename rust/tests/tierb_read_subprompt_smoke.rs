@@ -66,7 +66,7 @@ async fn r_enters_sub_prompt_then_cr_advances_then_q_quits_over_telnet() {
         String::from_utf8_lossy(&first)
     );
     assert!(
-        contains(&first, &sub_prompt(b"1+2")),
+        contains(&first, &sub_prompt(b"1+2", true, true)),
         "missing the legacy sub-prompt at range 1+2, got {:?}",
         String::from_utf8_lossy(&first)
     );
@@ -81,7 +81,7 @@ async fn r_enters_sub_prompt_then_cr_advances_then_q_quits_over_telnet() {
         String::from_utf8_lossy(&second)
     );
     assert!(
-        contains(&second, &sub_prompt(b"2+2")),
+        contains(&second, &sub_prompt(b"2+2", true, true)),
         "missing the sub-prompt re-rendered at range 2+2, got {:?}",
         String::from_utf8_lossy(&second)
     );
@@ -111,7 +111,7 @@ async fn cr_past_the_last_message_returns_to_the_menu() {
     write_line(&mut stream, b"R 2").await;
     let at_last = drain_until(&mut stream, b">: ").await;
     assert!(
-        contains(&at_last, &sub_prompt(b"2+2")),
+        contains(&at_last, &sub_prompt(b"2+2", true, true)),
         "expected the sub-prompt at the last message, got {:?}",
         String::from_utf8_lossy(&at_last)
     );
@@ -175,7 +175,7 @@ async fn again_re_displays_the_current_message_and_stays() {
         String::from_utf8_lossy(&again)
     );
     assert!(
-        contains(&again, &sub_prompt(b"1+2")),
+        contains(&again, &sub_prompt(b"1+2", true, true)),
         "`A` must stay on the current message (range 1+2), got {:?}",
         String::from_utf8_lossy(&again)
     );
@@ -219,7 +219,7 @@ async fn reply_opens_the_editor_then_advances_to_the_next_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"2+2")),
+        contains(&after, &sub_prompt(b"2+2", true, true)),
         "reply must advance the sub-prompt to range 2+2, got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -258,7 +258,7 @@ async fn forward_posts_then_stays_on_the_current_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"1+2")),
+        contains(&after, &sub_prompt(b"1+2", true, true)),
         "forward must stay on message 1 (range 1+2), got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -297,7 +297,7 @@ async fn delete_removes_the_current_message_and_advances() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2")),
+        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2", true, true)),
         "`D` must advance to message 2 (range 2+2), got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -333,7 +333,7 @@ async fn move_relocates_then_advances_on_success() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2")),
+        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2", true, true)),
         "a successful `M` must advance to message 2 (range 2+2), got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -370,7 +370,7 @@ async fn move_to_a_missing_target_stays_on_the_current_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"1+2")) && !contains(&after, b"Second Subject"),
+        contains(&after, &sub_prompt(b"1+2", true, true)) && !contains(&after, b"Second Subject"),
         "a failed `M` must stay on message 1 (range 1+2), got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -413,7 +413,7 @@ async fn edit_header_updates_the_subject_then_re_displays_and_stays() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"1+2")) && !contains(&after, b"Second Subject"),
+        contains(&after, &sub_prompt(b"1+2", true, true)) && !contains(&after, b"Second Subject"),
         "`EH` must stay on message 1 (range 1+2), got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -448,7 +448,7 @@ async fn a_regular_user_cannot_delete_or_edit_others_mail_from_the_sub_prompt() 
         String::from_utf8_lossy(&after_d)
     );
     assert!(
-        contains(&after_d, &sub_prompt(b"1+2")),
+        contains(&after_d, &sub_prompt(b"1+2", false, true)),
         "the sub-prompt must re-render on message 1 after the ignored `D`, got {:?}",
         String::from_utf8_lossy(&after_d)
     );
@@ -463,7 +463,7 @@ async fn a_regular_user_cannot_delete_or_edit_others_mail_from_the_sub_prompt() 
         String::from_utf8_lossy(&after_eh)
     );
     assert!(
-        contains(&after_eh, &sub_prompt(b"1+2")),
+        contains(&after_eh, &sub_prompt(b"1+2", false, true)),
         "the sub-prompt must re-render on message 1 after the ignored `EH`, got {:?}",
         String::from_utf8_lossy(&after_eh)
     );
@@ -473,15 +473,23 @@ async fn a_regular_user_cannot_delete_or_edit_others_mail_from_the_sub_prompt() 
     end_session(&mut stream).await;
 }
 
-/// The verbatim ungated `readMSG` sub-prompt skeleton
+/// The verbatim `readMSG` sub-prompt skeleton
 /// (`amiexpress/express.e:12016-12021`) with `range` substituted into
-/// the `( <range> )` slot. ANSI escapes are emitted literally; note the
-/// doubled `ESC[36m` seam where `A` joins `F` (the skipped `D` / `M`
-/// fragments would otherwise sit between them).
-fn sub_prompt(range: &[u8]) -> Vec<u8> {
+/// the `( <range> )` slot. `show_delete` / `show_move` insert the `D` /
+/// `M` options after `A` for a permitted caller; with neither, the two
+/// `ESC[36m` codes collapse into the legacy doubled-seam where `A`
+/// joins `F`. ANSI escapes are emitted literally.
+fn sub_prompt(range: &[u8], show_delete: bool, show_move: bool) -> Vec<u8> {
     let mut v = Vec::new();
+    v.extend_from_slice(b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m");
+    if show_delete {
+        v.extend_from_slice(b",\x1b[33mD");
+    }
+    if show_move {
+        v.extend_from_slice(b",\x1b[33mM");
+    }
     v.extend_from_slice(
-        b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m ",
+        b"\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m ",
     );
     v.extend_from_slice(range);
     v.extend_from_slice(b" \x1b[32m )\x1b[0m>: ");
