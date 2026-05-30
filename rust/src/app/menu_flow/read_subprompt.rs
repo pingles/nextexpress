@@ -16,7 +16,7 @@ use std::time::SystemTime;
 
 use crate::app::menu_command::NumberArg;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::render_read_subprompt;
+use crate::app::wire_text::{render_read_subprompt, render_read_subprompt_help};
 use crate::domain::conference::MessageBaseRef;
 use crate::domain::messaging::delete_mail::can_delete;
 use crate::domain::messaging::edit_mail_header::can_edit_header;
@@ -42,15 +42,29 @@ where
         };
 
         let mut number = start;
+        // `?` / `??` set this so the next loop turn renders the short /
+        // long help list instead of the option skeleton, then it clears.
+        let mut pending_help: Option<bool> = None;
         loop {
-            // The `D` / `M` options appear only for callers permitted to
-            // use them on the current message (legacy `checkSecurity`
-            // gates at `express.e:12017-12018`), matching the dispatch
-            // guards below so the prompt never advertises an option it
+            // The `D` / `M` (and, in the long help, `EH`) options appear
+            // only for callers permitted to use them on the current
+            // message (legacy `checkSecurity` gates at
+            // `express.e:12017-12018` / `:12179`), matching the dispatch
+            // guards below so a prompt never advertises an option it
             // would then refuse.
             let show_delete = self.current_user_can_delete(session, number).await;
             let show_move = can_move(session.user());
-            let prompt = render_read_subprompt(number, highest, show_delete, show_move);
+            let prompt = match pending_help.take() {
+                None => render_read_subprompt(number, highest, show_delete, show_move),
+                Some(long) => render_read_subprompt_help(
+                    long,
+                    number,
+                    highest,
+                    show_delete,
+                    show_move,
+                    can_edit_header(session.user()),
+                ),
+            };
             // A disconnected or idle caller leaves the sub-prompt; the
             // menu loop's next read applies carrier-loss / idle-timeout,
             // matching the other interactive handlers.
@@ -61,6 +75,18 @@ where
             };
             session.record_input(SystemTime::now());
             let trimmed = line.trim();
+
+            // `??` requests the long help, any other `?`-prefixed input
+            // the short help (legacy `:12071-12078`); the next loop turn
+            // renders it.
+            if trimmed == "??" {
+                pending_help = Some(true);
+                continue;
+            }
+            if trimmed.starts_with('?') {
+                pending_help = Some(false);
+                continue;
+            }
 
             // Empty input (`<CR>`) walks forward to the next message.
             if trimmed.is_empty() {

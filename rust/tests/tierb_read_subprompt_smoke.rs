@@ -468,6 +468,77 @@ async fn a_regular_user_cannot_delete_or_edit_others_mail_from_the_sub_prompt() 
         String::from_utf8_lossy(&after_eh)
     );
 
+    // The long help is gated the same way: this caller sees `M`ove but
+    // neither the `D`elete entry (not their message) nor the `EH`
+    // entry (below the edit-header access tier).
+    write_line(&mut stream, b"??").await;
+    let help = drain_until(&mut stream, b")\x1b[0m? ").await;
+    assert!(
+        contains(&help, b"\x1b[33mM\x1b[32m>\x1b[36move Message\x1b[0m"),
+        "the regular user's long help must still offer `M`ove, got {:?}",
+        String::from_utf8_lossy(&help)
+    );
+    assert!(
+        !contains(&help, b"Delete Message") && !contains(&help, b"Edit Message Header"),
+        "the regular user's help must omit the ungranted `D` / `EH` entries, got {:?}",
+        String::from_utf8_lossy(&help)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn question_mark_shows_the_short_help_then_double_shows_the_long_help() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `?` renders the short help (`express.e:12023-12032`) as the next
+    // prompt. The sysop sees the gated `D` / `M` entries; the short
+    // forms spell `Move` / `List` tersely and the long-only strings are
+    // absent.
+    write_line(&mut stream, b"?").await;
+    let short = drain_until(&mut stream, b")\x1b[0m? ").await;
+    assert!(
+        contains(&short, b"\x1b[33mA\x1b[32m>\x1b[36mgain\x1b[0m")
+            && contains(&short, b"\x1b[33mD\x1b[32m>\x1b[36melete Message\x1b[0m")
+            && contains(&short, b"\x1b[33mM\x1b[32m>\x1b[36move\x1b[0m")
+            && contains(&short, b"\x1b[33mL\x1b[32m>\x1b[36mist\x1b[0m")
+            && contains(&short, b"\x1b[33mQ\x1b[32m>\x1b[36muit\x1b[0m")
+            && contains(&short, b"Next \x1b[32m(\x1b[0m 1+2 \x1b[32m )\x1b[0m? "),
+        "short help must list the gated options + range, got {:?}",
+        String::from_utf8_lossy(&short)
+    );
+    assert!(
+        !contains(&short, b"Move Message") && !contains(&short, b"Edit Message Header"),
+        "short help must not carry the long-only wording, got {:?}",
+        String::from_utf8_lossy(&short)
+    );
+
+    // `??` renders the long help (`:12034-12060`): fuller wording for
+    // `Move` / `List` and the sysop-gated `EH` entry.
+    write_line(&mut stream, b"??").await;
+    let long = drain_until(&mut stream, b")\x1b[0m? ").await;
+    assert!(
+        contains(&long, b"\x1b[33mM\x1b[32m>\x1b[36move Message\x1b[0m")
+            && contains(&long, b"\x1b[33mL\x1b[32m>\x1b[36mist all messages\x1b[0m")
+            && contains(
+                &long,
+                b"\x1b[33mEH\x1b[32m>\x1b[36m Edit Message Header\x1b[0m"
+            )
+            && contains(&long, b"Next \x1b[32m(\x1b[0m 1+2 \x1b[32m )\x1b[0m? "),
+        "long help must list the fuller wording + EH, got {:?}",
+        String::from_utf8_lossy(&long)
+    );
+
     write_line(&mut stream, b"Q").await;
     drain_until(&mut stream, b"mins. left): ").await;
     end_session(&mut stream).await;

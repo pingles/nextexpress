@@ -515,6 +515,65 @@ pub(crate) fn render_read_subprompt(
     out
 }
 
+/// Renders the `readMSG` sub-prompt help list shown when the caller
+/// types `?` (short, `long = false`, `express.e:12023-12032`) or `??`
+/// (long, `long = true`, `:12034-12060`). The list is gated like the
+/// skeleton: `D`elete / `M`ove appear per `show_delete` / `show_move`,
+/// and the long list adds `EH` (edit header) per `show_edit`. The long
+/// list spells `Move`/`List` out more fully (`Move Message` /
+/// `List all messages`). It ends with the legacy
+/// `<CR>=Next ( <range> )? ` tail (`:12031` / `:12058`).
+///
+/// `NextExpress` deliberately omits the legacy `NS` / translate / `Keep`
+/// / `E` / `EM` / account-edit entries (see slice B5 Out of Scope), so
+/// the long list is a faithful subset rather than the full legacy menu.
+// The four flags map one-to-one to the legacy `helplist` / `checkSecurity`
+// switches; grouping them into a struct would obscure that correspondence
+// for no real call-site benefit (there is a single caller).
+#[allow(clippy::fn_params_excessive_bools)]
+pub(crate) fn render_read_subprompt_help(
+    long: bool,
+    number: u32,
+    highest: u32,
+    show_delete: bool,
+    show_move: bool,
+    show_edit: bool,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(256);
+    // `A`gain has no leading newline — the caller's echoed `?` / `??`
+    // CRLF already put the cursor on a fresh line (legacy `:12024`).
+    out.extend_from_slice(b"\x1b[33mA\x1b[32m>\x1b[36mgain\x1b[0m");
+    if show_delete {
+        out.extend_from_slice(b"\r\n\x1b[33mD\x1b[32m>\x1b[36melete Message\x1b[0m");
+    }
+    if show_move {
+        out.extend_from_slice(if long {
+            b"\r\n\x1b[33mM\x1b[32m>\x1b[36move Message\x1b[0m".as_slice()
+        } else {
+            b"\r\n\x1b[33mM\x1b[32m>\x1b[36move\x1b[0m".as_slice()
+        });
+    }
+    out.extend_from_slice(b"\r\n\x1b[33mF\x1b[32m>\x1b[36morward\x1b[0m");
+    out.extend_from_slice(b"\r\n\x1b[33mR\x1b[32m>\x1b[36meply\x1b[0m");
+    if long {
+        out.extend_from_slice(b"\r\n\x1b[33mL\x1b[32m>\x1b[36mist all messages\x1b[0m");
+        if show_edit {
+            out.extend_from_slice(b"\r\n\x1b[33mEH\x1b[32m>\x1b[36m Edit Message Header\x1b[0m");
+        }
+    } else {
+        out.extend_from_slice(b"\r\n\x1b[33mL\x1b[32m>\x1b[36mist\x1b[0m");
+    }
+    out.extend_from_slice(b"\r\n\x1b[33mQ\x1b[32m>\x1b[36muit\x1b[0m");
+    out.extend_from_slice(
+        b"\r\n\x1b[32m<\x1b[33mCR\x1b[32m>\x1b[0m=\x1b[33mNext \x1b[32m(\x1b[0m ",
+    );
+    out.extend_from_slice(number.to_string().as_bytes());
+    out.push(b'+');
+    out.extend_from_slice(highest.to_string().as_bytes());
+    out.extend_from_slice(b" \x1b[32m )\x1b[0m? ");
+    out
+}
+
 /// Formats the mail-scan summary line (Slice 40 / 41). Mirrors the
 /// legacy `searchNewMail` output's "New Mail" notice and the
 /// "No New Mail" fallback at `amiexpress/express.e:26499`.
