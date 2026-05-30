@@ -104,17 +104,17 @@ pub(crate) const COPYRIGHT_LINES: &[u8] = concat!(
 /// trailing `NextExpress <version> (<sha>) Copyright ©2026` line is
 /// appended so the operator can tell which Rust port build is running.
 pub(crate) const VERSION_BANNER: &[u8] = concat!(
-    "\r\nAmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
-    "\r\n",
-    "Original Version:\r\n",
-    "  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n",
-    "  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n",
-    "\r\n",
     "NextExpress ",
     env!("CARGO_PKG_VERSION"),
     " (",
     env!("NEXTEXPRESS_GIT_SHA"),
-    ") Copyright \u{00A9}2026\r\n",
+    ") Copyright \u{00A9}2026 Paul Ingles\r\n",
+    "\r\n",
+    "Based on Versions:\r\n",
+    "  AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
+    "  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n",
+    "  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n",
+    "\r\n",
 )
 .as_bytes();
 
