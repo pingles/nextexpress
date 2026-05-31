@@ -272,7 +272,10 @@ thin orchestrator:
    `Onboarded | LoggingOff`.
 4. `auto_rejoin` — apply `conferences.allium:JoinConference`, render
    `JOINED` + any name-type promotion screen, fire
-   `mail_scan_on_join::scan_mail_on_join` in `FollowPointer` mode.
+   `mail_scan_on_join::scan_mail_on_join` in `FollowPointer` mode, then
+   render the user-stats screen (`render_stats_screen`, the same block
+   `S` emits) — the legacy logon shows it between the mail scan and the
+   menu.
 5. `MenuFlow::run` — the command loop above, returns `LoggingOffSession`.
 6. `finalise` — apply `finalise_logoff` and persist via
    `session_flow::typed`.

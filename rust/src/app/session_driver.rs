@@ -28,7 +28,7 @@ use crate::app::services::AppServices;
 use crate::app::session_flow;
 use crate::app::session_presenter::{format_auto_rejoin_line, render_name_type_promotion};
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::{COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
+use crate::app::wire_text::{render_stats_screen, COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
 use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
     MenuSession, OnboardedSession,
@@ -131,6 +131,7 @@ where
         let logging_off = match signed_in {
             SignInResult::Onboarded(onboarded) => match self.auto_rejoin(onboarded).await? {
                 AutoRejoinResult::Joined(onboarded) => {
+                    self.render_login_stats(&onboarded).await?;
                     let menu = self.enter_menu(onboarded);
                     MenuFlow::new(&mut self.terminal, &self.services)
                         .run(menu)
@@ -210,6 +211,25 @@ where
         self.terminal.write(&banner).await?;
         self.terminal.write(COPYRIGHT_LINES).await?;
         Ok(connecting.prompt_for_name())
+    }
+
+    /// Renders the user-stats screen during login, mirroring the
+    /// legacy logon sequence which shows the `internalCommandS()`
+    /// block between the mail scan and the menu. Reuses the same
+    /// [`render_stats_screen`] bytes the `S` command emits, read from
+    /// the just-onboarded user.
+    async fn render_login_stats(&mut self, onboarded: &OnboardedSession) -> Result<(), T::Error> {
+        let user = onboarded.user();
+        let screen = render_stats_screen(
+            user.slot_number(),
+            user.last_call(),
+            user.access_level(),
+            user.times_called(),
+            user.times_called_today(),
+            user.messages_posted(),
+        );
+        self.terminal.write(&screen).await?;
+        self.terminal.flush().await
     }
 
     fn enter_menu(&mut self, onboarded: OnboardedSession) -> MenuSession {
@@ -465,6 +485,71 @@ mod tests {
             .entries()
             .iter()
             .any(|entry| entry.text.contains("Logoff:") && entry.text.contains("alice")));
+    }
+
+    #[tokio::test]
+    async fn login_renders_user_stats_screen_before_the_menu() {
+        // The legacy login sequence renders the user-stats screen
+        // (`internalCommandS()` layout) between the mail scan and the
+        // menu (`amiexpress/express.e` logon path). NextExpress shows
+        // the same six-row block at login, without the user typing `S`.
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
+        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+        let caller_log = Arc::new(InMemoryCallerLog::new());
+        let screens = Arc::new(StaticScreens);
+        let gate = NewUserGateConfig {
+            allow_new_users: true,
+            new_user_password: None,
+            max_new_user_password_attempts: 3,
+        };
+        let ratio = DefaultRatio {
+            mode: RatioMode::ByFiles,
+            value: 3,
+        };
+        let services = AppServices::new(
+            repo,
+            hasher,
+            caller_log,
+            screens,
+            Arc::new(conferences),
+            test_mail_stores(),
+            SessionPolicy::default(),
+            ratio,
+            gate,
+            "TestBBS".to_string(),
+        );
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("G".to_string()),
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver.run().await.expect("driver completes");
+
+        let terminal = driver.into_terminal();
+        let output = terminal.output();
+        let stats_pos = output
+            .windows(b"Security Lv".len())
+            .position(|w| w == b"Security Lv")
+            .expect("user-stats screen should render at login");
+        let menu_pos = output
+            .windows(b"MENU".len())
+            .position(|w| w == b"MENU")
+            .expect("menu should render");
+        assert!(
+            stats_pos < menu_pos,
+            "the user-stats screen must precede the menu at login"
+        );
     }
 
     #[tokio::test]
