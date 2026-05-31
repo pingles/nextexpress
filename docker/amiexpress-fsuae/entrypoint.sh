@@ -5,6 +5,12 @@ readonly DEFAULT_ARCHIVE=/opt/amiexpress/source/AmiExpress.lha
 readonly RUNTIME_DIR=/run/amiexpress-fsuae
 
 TELNET_PORT="${TELNET_PORT:-6023}"
+NODE_COUNT="${NODE_COUNT:-4}"
+# DoS connection-throttling window in seconds (ACP DOSCHECKTIME). AmiExpress
+# defaults to 60s with a 5-connection trigger and a 60-minute ban. Behind
+# Docker NAT every host connection shares one source IP, so any concurrency
+# trips that ban; default to 0 (disabled) for this localhost reference harness.
+DOSCHECKTIME="${DOSCHECKTIME:-0}"
 KICKSTART_FILE="${KICKSTART_FILE:-/roms/kick.rom}"
 KICKSTART_EXT_FILE="${KICKSTART_EXT_FILE:-}"
 WORKBENCH_DIR="${WORKBENCH_DIR:-/amiga/workbench}"
@@ -216,35 +222,22 @@ install_amiexpress() {
     fi
 }
 
-write_amiexpress_config() {
-    local config_file=$BBS_DIR/docker/aeicon-docker.json
+# Emit the JSON for a single `bbs:NodeN` config object (no leading comma).
+# Every node is telnet-enabled (`TELNET`) and idle-started (`IDLENODE`) so the
+# StartAmiExpress script owns process spawning; ACP just routes accepted telnet
+# sockets to whichever node is awaiting a connection.
+node_config_block() {
+    local i=$1
 
-    mkdir -p "$BBS_DIR/docker"
-    cat >"$config_file" <<EOF
-{
-  "acp": {
-    "BBS_NAME": "NextExpress Reference",
-    "BBS_STACK": 65535,
-    "BBS_LOCATION": "BBS:",
-    "BBS_GEOGRAPHIC": "Docker",
-    "NODES": 1,
-    "SYSOP_NAME": "${SYSOP_USERNAME}",
-    "PRIORITY": 2,
-    "DONOTWAIT": null,
-    "ICONIFIED": null,
-    "MULTICOM_PORT": null,
-    "NEW_ACCOUNTS": "APPEND",
-    "LANGUAGE_BASE": "bbs:languages",
-    "TELNETPORT": ${TELNET_PORT}
-  },
-  "bbs:Node0": {
+    cat <<EOF
+  "bbs:Node${i}": {
     "NODESTART": "BBS:express",
     "PRIORITY": 0,
     "CAPITOL_FILES": null,
     "SYSOP_CHAT_COLOR": 33,
     "USER_CHAT_COLOR": 32,
     "KEEP_UPLOAD_CREDIT": 1,
-    "SCREENS": "BBS:Node0/Screens/",
+    "SCREENS": "BBS:Node${i}/Screens/",
     "FREE_RESUMING": null,
     "HDTRANSBUFFER": 1,
     "RINGCOUNT": 1,
@@ -305,15 +298,55 @@ write_amiexpress_config() {
       "WINDOW.ICONIFIED": null
     }
   }
-}
 EOF
+}
+
+write_amiexpress_config() {
+    local config_file=$BBS_DIR/docker/aeicon-docker.json
+    local i
+
+    mkdir -p "$BBS_DIR/docker"
+    {
+        cat <<EOF
+{
+  "acp": {
+    "BBS_NAME": "NextExpress Reference",
+    "BBS_STACK": 65535,
+    "BBS_LOCATION": "BBS:",
+    "BBS_GEOGRAPHIC": "Docker",
+    "NODES": ${NODE_COUNT},
+    "SYSOP_NAME": "${SYSOP_USERNAME}",
+    "PRIORITY": 2,
+    "DONOTWAIT": null,
+    "ICONIFIED": null,
+    "MULTICOM_PORT": null,
+    "NEW_ACCOUNTS": "APPEND",
+    "LANGUAGE_BASE": "bbs:languages",
+    "DOSCHECKTIME": ${DOSCHECKTIME},
+    "TELNETPORT": ${TELNET_PORT}
+  },
+EOF
+        for ((i = 0; i < NODE_COUNT; i++)); do
+            node_config_block "$i"
+            if ((i < NODE_COUNT - 1)); then
+                echo "  ,"
+            fi
+        done
+        echo "}"
+    } >"$config_file"
 }
 
 write_amiga_startup() {
     local startup=$BBS_DIR/docker/StartAmiExpress
+    local i
 
-    mkdir -p "$BBS_DIR/docker" "$BBS_DIR/Node0/Screens"
-    cat >"$startup" <<'EOF'
+    mkdir -p "$BBS_DIR/docker"
+    for ((i = 0; i < NODE_COUNT; i++)); do
+        mkdir -p "$BBS_DIR/Node${i}/Screens"
+    done
+
+    {
+        cat <<'EOF'
 Assign Doors: BBS:Doors
 Path BBS: ADD
 Path BBS:Utils ADD
@@ -334,12 +367,19 @@ EndIf
 
 Wait 5 SECS
 
+EOF
+        # Each node runs its own `express N` idle process; ACP dispatches an
+        # accepted telnet socket to whichever node is awaiting a connection.
+        for ((i = 0; i < NODE_COUNT; i++)); do
+            cat <<EOF
 If EXISTS BBS:express
-  Run >NIL: BBS:express 0
+  Run >NIL: BBS:express ${i}
 Else
   Echo "BBS:express was not found"
 EndIf
 EOF
+        done
+    } >"$startup"
 }
 
 append_workbench_startup() {
@@ -389,6 +429,7 @@ EOF
 
 main() {
     [[ "$TELNET_PORT" =~ ^[0-9]+$ ]] || fail "TELNET_PORT must be numeric"
+    [[ "$NODE_COUNT" =~ ^[0-9]+$ ]] && ((NODE_COUNT >= 1)) || fail "NODE_COUNT must be a positive integer"
 
     mkdir -p "$RUNTIME_DIR" "$BBS_DIR" "$WORKBENCH_DIR"
     maybe_bootstrap_aros
