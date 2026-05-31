@@ -208,8 +208,8 @@ module under `app::menu_flow/`):
 | `G` | `Logoff` | dispatch |
 | `J <n>` | `Join(NumberArg)` | `join` |
 | `R <n>` | `Read(NumberArg)` | `read_mail` → `read_subprompt` |
-| `E` / `E <to>` | `Post(PostArg)` | `post_mail` |
-| `C` | `CommentToSysop` | `post_mail` |
+| `E` / `E <to>` | `Post(PostArg)` | `post_mail` (body via `read_editor_body` — the ruler / numbered-line editor + `Msg. Options:` save menu) |
+| `C` | `CommentToSysop` | `post_mail` (same ruler editor) |
 | `RP <n>` | `Reply(NumberArg)` | `reply_forward` |
 | `FW <n>` | `Forward(NumberArg)` | `reply_forward` |
 | `K <n>` | `Kill(NumberArg)` | `sysop_admin` |

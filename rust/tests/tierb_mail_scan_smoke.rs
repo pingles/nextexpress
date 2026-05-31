@@ -234,6 +234,233 @@ async fn n_is_an_unknown_command_and_no_longer_scans_mail_over_telnet() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn e_uses_the_ruler_line_editor_with_a_msg_options_save_menu() {
+    // Tier B / Fix 4: `E` replaces the minimal `.`-terminated editor
+    // with AmiExpress's ruler + numbered-line editor
+    // (`amiexpress/express.e:10148-10165`), ending on a blank line and
+    // offering the `Msg. Options:` save menu (`:10375-10379`); `S`
+    // saves. (The full-screen editor is still skipped.)
+    let dir = tempfile::tempdir().expect("tempdir");
+    let conf1_msgbase = dir.path().join("conf1_msgbase");
+    let conf2_msgbase = dir.path().join("conf2_msgbase");
+    std::fs::create_dir_all(&conf1_msgbase).expect("create conf1 msgbase");
+    std::fs::create_dir_all(&conf2_msgbase).expect("create conf2 msgbase");
+
+    let addr =
+        spawn_two_conference_listener(dir.path().to_path_buf(), &conf1_msgbase, &conf2_msgbase)
+            .await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"E sysop").await;
+    drain_until(&mut stream, b"Subject: ").await;
+    write_line(&mut stream, b"Greetings").await;
+    drain_until(&mut stream, b"Private (y/N)? ").await;
+    write_line(&mut stream, b"N").await;
+
+    // The ruler intro, ruler line, and first numbered prompt appear
+    // (75 chars/line; line 1 prompt is `1 > `).
+    let intro = drain_until(&mut stream, b"\r\n1 > ").await;
+    assert!(
+        contains(
+            &intro,
+            b"   Enter your text. (Enter) alone to end. (75 chars/line)\r\n"
+        ),
+        "missing the ruler editor intro, got {:?}",
+        String::from_utf8_lossy(&intro)
+    );
+    assert!(
+        contains(&intro, b"   (|-------|-------|"),
+        "missing the editor ruler, got {:?}",
+        String::from_utf8_lossy(&intro)
+    );
+
+    // One body line, then a blank line ends input and shows the menu.
+    write_line(&mut stream, b"Hello from the ruler editor.").await;
+    write_line(&mut stream, b"").await;
+    let menu = drain_until(&mut stream, b"Msg. Options:").await;
+    assert!(
+        contains(
+            &menu,
+            b"\x1b[32mMsg. Options: \x1b[33mA\x1b[36m,\x1b[33mC\x1b[36m,\x1b[33mD\x1b[36m,\x1b[33mE\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mS\x1b[36m,\x1b[33m? \x1b[0m>:"
+        ),
+        "missing the Msg. Options save menu, got {:?}",
+        String::from_utf8_lossy(&menu)
+    );
+
+    // `S` saves; the message lands as #1 in the (empty) conference 1.
+    write_line(&mut stream, b"S").await;
+    let saved = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&saved, b"Message #1 saved."),
+        "expected the save confirmation, got {:?}",
+        String::from_utf8_lossy(&saved)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn bare_e_prompts_for_recipient_then_uses_the_ruler_editor() {
+    // A bare `E` (no inline recipient) prompts `To: ` before the ruler
+    // editor; the typed recipient is used (not rerouted to ALL).
+    let dir = tempfile::tempdir().expect("tempdir");
+    let conf1_msgbase = dir.path().join("conf1_msgbase");
+    let conf2_msgbase = dir.path().join("conf2_msgbase");
+    std::fs::create_dir_all(&conf1_msgbase).expect("create conf1 msgbase");
+    std::fs::create_dir_all(&conf2_msgbase).expect("create conf2 msgbase");
+
+    let addr =
+        spawn_two_conference_listener(dir.path().to_path_buf(), &conf1_msgbase, &conf2_msgbase)
+            .await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Bare `E` must prompt for the recipient.
+    write_line(&mut stream, b"E").await;
+    drain_until(&mut stream, b"To: ").await;
+    write_line(&mut stream, b"sysop").await;
+    drain_until(&mut stream, b"Subject: ").await;
+    write_line(&mut stream, b"Bare E").await;
+    drain_until(&mut stream, b"Private (y/N)? ").await;
+    write_line(&mut stream, b"N").await;
+    drain_until(&mut stream, b"\r\n1 > ").await;
+    write_line(&mut stream, b"Addressed to the sysop.").await;
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b"Msg. Options:").await;
+    write_line(&mut stream, b"S").await;
+    let saved = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&saved, b"Message #1 saved."),
+        "expected save confirmation for bare E, got {:?}",
+        String::from_utf8_lossy(&saved)
+    );
+
+    // Read it back: it is addressed to the typed recipient, not ALL.
+    write_line(&mut stream, b"R 1").await;
+    let read = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&read, b"To     \x1b[33m:\x1b[0m ALL"),
+        "bare E with a typed recipient must not reroute to ALL, got {:?}",
+        String::from_utf8_lossy(&read)
+    );
+    assert!(
+        contains(&read, b"Addressed to the sysop."),
+        "expected the body on read-back, got {:?}",
+        String::from_utf8_lossy(&read)
+    );
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn e_editor_help_list_continue_and_save_round_trip() {
+    // Exercises the save-menu verbs `?` (help list), `L` (list lines),
+    // `C` (continue editing) and `S` (save) in one editor session.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let conf1_msgbase = dir.path().join("conf1_msgbase");
+    let conf2_msgbase = dir.path().join("conf2_msgbase");
+    std::fs::create_dir_all(&conf1_msgbase).expect("create conf1 msgbase");
+    std::fs::create_dir_all(&conf2_msgbase).expect("create conf2 msgbase");
+
+    let addr =
+        spawn_two_conference_listener(dir.path().to_path_buf(), &conf1_msgbase, &conf2_msgbase)
+            .await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"E sysop").await;
+    drain_until(&mut stream, b"Subject: ").await;
+    write_line(&mut stream, b"Verbs").await;
+    drain_until(&mut stream, b"Private (y/N)? ").await;
+    write_line(&mut stream, b"N").await;
+    drain_until(&mut stream, b"   (|-------|-------|").await;
+
+    // First line, then a blank line opens the save menu.
+    write_line(&mut stream, b"Line one").await;
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b"Msg. Options:").await;
+
+    // `?` swaps in the verb help list (`C>ontinue` is unique to it).
+    write_line(&mut stream, b"?").await;
+    drain_until(&mut stream, b"ontinue").await;
+
+    // `L` lists the line entered so far.
+    write_line(&mut stream, b"L").await;
+    drain_until(&mut stream, b"1 > Line one").await;
+
+    // `C` resumes input; add a second line, blank, then save with `S`.
+    write_line(&mut stream, b"C").await;
+    write_line(&mut stream, b"Line two").await;
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b"Msg. Options:").await;
+    write_line(&mut stream, b"S").await;
+    let saved = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&saved, b"Message #1 saved."),
+        "expected save confirmation, got {:?}",
+        String::from_utf8_lossy(&saved)
+    );
+
+    // Read it back: both lines (continue resumed input) are present.
+    write_line(&mut stream, b"R 1").await;
+    let read = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&read, b"Line one") && contains(&read, b"Line two"),
+        "expected both saved lines on read-back, got {:?}",
+        String::from_utf8_lossy(&read)
+    );
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn e_editor_abort_confirmation_abandons_the_message() {
+    // `A` from the save menu confirms with `Abort message entry (y/n)?`
+    // (`amiexpress/express.e:10568`); a `y` abandons the message — no
+    // mail is saved and the `Message aborted.` notice appears.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let conf1_msgbase = dir.path().join("conf1_msgbase");
+    let conf2_msgbase = dir.path().join("conf2_msgbase");
+    std::fs::create_dir_all(&conf1_msgbase).expect("create conf1 msgbase");
+    std::fs::create_dir_all(&conf2_msgbase).expect("create conf2 msgbase");
+
+    let addr =
+        spawn_two_conference_listener(dir.path().to_path_buf(), &conf1_msgbase, &conf2_msgbase)
+            .await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"E sysop").await;
+    drain_until(&mut stream, b"Subject: ").await;
+    write_line(&mut stream, b"Throwaway").await;
+    drain_until(&mut stream, b"Private (y/N)? ").await;
+    write_line(&mut stream, b"N").await;
+    drain_until(&mut stream, b"   (|-------|-------|").await;
+    write_line(&mut stream, b"Never mind.").await;
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b"Msg. Options:").await;
+
+    // `A` then `y` abandons.
+    write_line(&mut stream, b"A").await;
+    drain_until(&mut stream, b"Abort message entry (y/n)? ").await;
+    write_line(&mut stream, b"y").await;
+    let aborted = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&aborted, b"Message aborted."),
+        "expected the abort notice, got {:?}",
+        String::from_utf8_lossy(&aborted)
+    );
+    assert!(
+        !contains(&aborted, b"saved."),
+        "an aborted message must not be saved, got {:?}",
+        String::from_utf8_lossy(&aborted)
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// JSON payload for one public message addressed to the seeded sysop
 /// (slot 1, handle "sysop"), in the [`FileMailStore`] on-disk format.
 fn seeded_mail_json(conference: u32, msgbase: u32, from: &str, subject: &str) -> String {

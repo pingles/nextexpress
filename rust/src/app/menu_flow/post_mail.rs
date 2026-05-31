@@ -15,8 +15,11 @@ use crate::app::menu::post_mail::{
 };
 use crate::app::menu_command::PostArg;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::render_post_success;
 use crate::app::wire_text::{
+    render_editor_line_prompt, render_editor_listing, render_post_success,
+};
+use crate::app::wire_text::{
+    EDITOR_ABORT_CONFIRM_PROMPT, EDITOR_INTRO, EDITOR_MSG_OPTIONS_HELP, EDITOR_MSG_OPTIONS_PROMPT,
     MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, NO_SYSOP_LINE, POST_ABORTED_LINE,
     POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE, POST_BODY_PROMPT,
     POST_PRIVATE_PROMPT, POST_RECIPIENT_NO_ACCESS_LINE, POST_SUBJECT_PROMPT, POST_TO_PROMPT,
@@ -82,11 +85,10 @@ where
             }
         };
 
-        // Step 4: body. Slice 42 ships a minimal line-mode editor —
-        // each line is read until the user types `.` on its own line,
-        // or `/A` to abort. The full editor (numbered line edits,
-        // `/S` save, quoting) arrives in Phase 8.
-        let Some(body) = self.read_post_body(session, false).await? else {
+        // Step 4: body via the ruler / numbered-line editor with the
+        // `Msg. Options:` save menu (Fix 4). The full-screen editor fork
+        // is skipped.
+        let Some(body) = self.read_editor_body(session).await? else {
             return Ok(());
         };
 
@@ -124,7 +126,7 @@ where
             return Ok(());
         };
 
-        let Some(body) = self.read_post_body(session, false).await? else {
+        let Some(body) = self.read_editor_body(session).await? else {
             return Ok(());
         };
 
@@ -259,6 +261,110 @@ where
                 self.write_and_flush(POST_ABORTED_LINE).await?;
                 Ok(None)
             }
+        }
+    }
+
+    /// Drives the `E` / `C` ruler / numbered-line editor (Fix 4):
+    /// prints the ruler intro, reads numbered lines until a blank line
+    /// ends input, then offers the `Msg. Options:` save menu. Returns
+    /// the assembled body on `S`ave, and `None` on a confirmed `A`bort,
+    /// EOF, idle, or an over-length body — writing the
+    /// `Message aborted.` notice on those paths. `C`ontinue resumes
+    /// input, `L`ist shows the entered lines, `?` shows the verb help;
+    /// `D`/`E`/`F`/`X` are advertised but deferred, and the full-screen
+    /// editor fork (`amiexpress/express.e:10095-10100`) is skipped.
+    pub(super) async fn read_editor_body(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> Result<Option<String>, T::Error> {
+        self.write_and_flush(EDITOR_INTRO).await?;
+        // `lines` drives the numbered prompts and the `L`ist view;
+        // `body` is the assembled message, capped by the same helper the
+        // `.` editor uses (the PostMail `BodyTooLong` gate is the
+        // backstop, so an over-length body yields the same notice).
+        let mut lines: Vec<String> = Vec::new();
+        let mut body = String::new();
+        'editor: loop {
+            // Input phase: numbered lines until a blank line ends input
+            // (the legacy "(Enter) alone to end").
+            loop {
+                let prompt = render_editor_line_prompt(lines.len() + 1);
+                match self.read_prompted(&prompt, TerminalEcho::Visible).await? {
+                    TerminalRead::Line(line) => {
+                        session.record_input(SystemTime::now());
+                        if line.is_empty() {
+                            break;
+                        }
+                        if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
+                            self.write_and_flush(POST_ABORTED_LINE).await?;
+                            return Ok(None);
+                        }
+                        lines.push(line);
+                    }
+                    TerminalRead::Eof | TerminalRead::IdleTimedOut => {
+                        self.write_and_flush(POST_ABORTED_LINE).await?;
+                        return Ok(None);
+                    }
+                }
+            }
+
+            // Save-menu phase. `?` swaps the next prompt for the verb
+            // help list, which carries its own ` >: ` prompt.
+            let mut show_help = false;
+            loop {
+                let prompt: &[u8] = if show_help {
+                    EDITOR_MSG_OPTIONS_HELP
+                } else {
+                    EDITOR_MSG_OPTIONS_PROMPT
+                };
+                show_help = false;
+                match self.read_prompted(prompt, TerminalEcho::Visible).await? {
+                    TerminalRead::Line(verb) => {
+                        session.record_input(SystemTime::now());
+                        match verb.trim().chars().next().map(|c| c.to_ascii_lowercase()) {
+                            // S>ave: return the body assembled so far.
+                            Some('s') => return Ok(Some(body)),
+                            // A>bort: confirm, then abandon on a `y`.
+                            Some('a') => {
+                                if self.confirm_editor_abort(session).await? {
+                                    self.write_and_flush(POST_ABORTED_LINE).await?;
+                                    return Ok(None);
+                                }
+                            }
+                            // C>ontinue: resume the input phase.
+                            Some('c') => continue 'editor,
+                            // L>ist the lines entered so far.
+                            Some('l') => {
+                                self.write_and_flush(&render_editor_listing(&lines)).await?;
+                            }
+                            // `?` shows the verb help as the next prompt.
+                            Some('?') => show_help = true,
+                            // D/E/F/X and anything else: deferred — re-prompt.
+                            _ => {}
+                        }
+                    }
+                    TerminalRead::Eof | TerminalRead::IdleTimedOut => {
+                        self.write_and_flush(POST_ABORTED_LINE).await?;
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reads the `Abort message entry (y/n)?` answer from the save menu
+    /// (`amiexpress/express.e:10568`). Returns `true` (abandon) on a
+    /// `y`/`Y` answer or a disconnect; any other answer keeps editing.
+    async fn confirm_editor_abort(&mut self, session: &mut MenuSession) -> Result<bool, T::Error> {
+        match self
+            .read_prompted(EDITOR_ABORT_CONFIRM_PROMPT, TerminalEcho::Visible)
+            .await?
+        {
+            TerminalRead::Line(line) => {
+                session.record_input(SystemTime::now());
+                Ok(matches!(line.trim().chars().next(), Some('y' | 'Y')))
+            }
+            TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(true),
         }
     }
 

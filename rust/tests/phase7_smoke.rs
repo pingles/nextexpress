@@ -174,12 +174,15 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
     write_line(&mut stream, b"Hello from the smoke test")?;
     drain_until(&mut stream, b"Private (y/N)? ").map_err(|e| format!("Private prompt: {e}"))?;
     write_line(&mut stream, b"N")?;
-    // Body prompt instructs and asks for the first line.
-    drain_until(&mut stream, b"End with a single '.'")
+    // The ruler editor prompts for numbered lines; a blank line ends
+    // input and opens the `Msg. Options:` save menu (`S` saves).
+    drain_until(&mut stream, b"Enter your text. (Enter) alone to end.")
         .map_err(|e| format!("Body instructions: {e}"))?;
     write_line(&mut stream, b"Body line one.")?;
     write_line(&mut stream, b"Body line two.")?;
-    write_line(&mut stream, b".")?;
+    write_line(&mut stream, b"")?;
+    drain_until(&mut stream, b"Msg. Options:").map_err(|e| format!("save menu: {e}"))?;
+    write_line(&mut stream, b"S")?;
 
     let post_e = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E: {e}"))?;
@@ -334,10 +337,12 @@ fn post_all_message(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"Notice to everyone")?;
     drain_until(stream, b"Private (y/N)? ").map_err(|e| format!("ALL private prompt: {e}"))?;
     write_line(stream, b"N")?;
-    drain_until(stream, b"End with a single '.'")
+    drain_until(stream, b"Enter your text. (Enter) alone to end.")
         .map_err(|e| format!("ALL body instructions: {e}"))?;
     write_line(stream, b"Hi everyone.")?;
-    write_line(stream, b".")?;
+    write_line(stream, b"")?;
+    drain_until(stream, b"Msg. Options:").map_err(|e| format!("ALL save menu: {e}"))?;
+    write_line(stream, b"S")?;
     let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E ALL: {e}"))?;
     if !contains(&after, b"Message #1 saved.") {
@@ -378,10 +383,12 @@ fn reject_eall_post(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"Echo")?;
     drain_until(stream, b"Private (y/N)? ").map_err(|e| format!("EALL private prompt: {e}"))?;
     write_line(stream, b"N")?;
-    drain_until(stream, b"End with a single '.'")
+    drain_until(stream, b"Enter your text. (Enter) alone to end.")
         .map_err(|e| format!("EALL body instructions: {e}"))?;
     write_line(stream, b"Cross-conference notice.")?;
-    write_line(stream, b".")?;
+    write_line(stream, b"")?;
+    drain_until(stream, b"Msg. Options:").map_err(|e| format!("EALL save menu: {e}"))?;
+    write_line(stream, b"S")?;
     let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E EALL: {e}"))?;
     if !contains(&after, b"This message base does not accept that addressee.") {
@@ -403,10 +410,12 @@ fn post_comment_to_sysop(stream: &mut TcpStream) -> Result<(), String> {
     write_line(stream, b"C")?;
     drain_until(stream, b"Subject: ").map_err(|e| format!("C subject prompt: {e}"))?;
     write_line(stream, b"Welcome screen typo")?;
-    drain_until(stream, b"End with a single '.'")
+    drain_until(stream, b"Enter your text. (Enter) alone to end.")
         .map_err(|e| format!("C body instructions: {e}"))?;
     write_line(stream, b"There's a typo on the welcome screen.")?;
-    write_line(stream, b".")?;
+    write_line(stream, b"")?;
+    drain_until(stream, b"Msg. Options:").map_err(|e| format!("C save menu: {e}"))?;
+    write_line(stream, b"S")?;
     let after = drain_until_capturing(stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after C: {e}"))?;
     // The rejected EALL did not advance highest_message, so the

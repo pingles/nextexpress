@@ -94,10 +94,12 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
     write_line(&mut stream, b"Phase 8 source")?;
     drain_until(&mut stream, b"Private (y/N)? ").map_err(|e| format!("Private prompt: {e}"))?;
     write_line(&mut stream, b"N")?;
-    drain_until(&mut stream, b"End with a single '.'")
+    drain_until(&mut stream, b"Enter your text. (Enter) alone to end.")
         .map_err(|e| format!("Body instructions: {e}"))?;
     write_line(&mut stream, b"Phase 8 original body.")?;
-    write_line(&mut stream, b".")?;
+    write_line(&mut stream, b"")?;
+    drain_until(&mut stream, b"Msg. Options:").map_err(|e| format!("E save menu: {e}"))?;
+    write_line(&mut stream, b"S")?;
     let post_e = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E: {e}"))?;
     if !contains(&post_e, b"Message #2 saved.") {
@@ -426,10 +428,12 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
     write_line(&mut stream, b"To be killed")?;
     drain_until(&mut stream, b"Private (y/N)? ").map_err(|e| format!("Private prompt: {e}"))?;
     write_line(&mut stream, b"N")?;
-    drain_until(&mut stream, b"End with a single '.'")
+    drain_until(&mut stream, b"Enter your text. (Enter) alone to end.")
         .map_err(|e| format!("Body instructions: {e}"))?;
     write_line(&mut stream, b"Doomed.")?;
-    write_line(&mut stream, b".")?;
+    write_line(&mut stream, b"")?;
+    drain_until(&mut stream, b"Msg. Options:").map_err(|e| format!("E save menu: {e}"))?;
+    write_line(&mut stream, b"S")?;
     let post_e = drain_until_capturing(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after E: {e}"))?;
     if !contains(&post_e, b"Message #2 saved.") {
