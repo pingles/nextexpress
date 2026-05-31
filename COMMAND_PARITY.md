@@ -1,92 +1,731 @@
 # Command Parity — NextExpress vs AmiExpress
 
-Wire-text comparison of every menu command NextExpress currently dispatches
-against the equivalent path in the legacy AmiExpress source
-(`amiexpress/express.e`). Lives at the repo root so it sits beside
-[`SLICES.md`](./SLICES.md) and the design docs — a contributor working a
-slice that touches a menu command can use this file to pin the wire
-format against the legacy without re-deriving it.
+Live-telnet behaviour & wire-format comparison of NextExpress (the Rust port)
+against the genuine AmiExpress 5.6.0 binary. This file lives at the repo root so
+it sits beside [`SLICES.md`](./SLICES.md) and the design docs — a contributor
+working a slice that touches a menu command can use it to pin the wire format
+against the legacy. It supersedes the earlier source-derived parity table:
+every claim here is checked against **live telnet transcripts of both systems**
+(under [`comparison/`](./comparison/)), and the actionable roadmap that table
+carried is preserved in [Recommended fixes & sequencing](#recommended-fixes--sequencing)
+at the end.
 
-Notation:
+## Introduction
 
-- The legacy source uses `\b\n` for `CR LF` (Amiga E convention); on the
-  wire that maps directly to `\r\n`. ANSI SGR escapes (`[32m` etc.) are
-  written into the same string and emitted verbatim when the user has
-  ANSI graphics enabled.
-- "—" means nothing is emitted for that path.
-- `internalCommandX` references resolve to procedures in
-  `amiexpress/express.e`; line numbers are given for every claim.
+This document compares **NextExpress**, the Rust port of the AmiExpress BBS, against the **legacy AmiExpress 5.6.0** binary it ports. Both systems were exercised **live, over telnet**, and the comparison is grounded in actual on-the-wire transcripts rather than source reading alone:
 
-## 1. Commands NextExpress currently dispatches
+- **NextExpress** was run from the Rust project on `127.0.0.1:2323`.
+- **AmiExpress 5.6.0** was run unmodified inside FS-UAE (Amiga emulation) on `127.0.0.1:6023` (binary identifies itself as `AmiExpress 5.6.0 Copyright (c)2018-2023 Darren Coles`), via the repo's `docker/amiexpress-fsuae` harness configured for **4 telnet nodes** (`NODE_COUNT=4`) so multiple sessions can connect concurrently. The harness's per-IP DoS throttle is disabled for the localhost test (`DOSCHECKTIME=0`); see that directory's entrypoint.
 
-| # | Command (form) | AmiExpress experience (source) | Our experience | Verdict / what to change |
-|---|---|---|---|---|
-| 1 | `G` (logoff) | `internalCommandG` (`express.e:25047`) optionally prompts to confirm flagged-file abandonment; sets `REQ_STATE_LOGOFF`; the listener emits SCREEN_LOGOFF then `Goodbye!\r\n\r\n` (`express.e:17792, 20231`). | SCREEN_LOGOFF (`Screens/LOGOFF.txt`) rendered when present, then `Goodbye!\r\n` (`GOODBYE_LINE`). No flagged-file confirm (no files yet); single trailing CRLF. | **Minor.** Add a second trailing `\r\n` to match. Flagged-file confirm needs Phase 9. SCREEN_LOGOFF wiring ✓ (`ScreenRepository::logoff_screen`, written from the menu-loop Logoff branch before the Goodbye line; absent asset = silent skip, matching the spirit of the legacy `displayScreen` gate). |
-| 2 | `J` (no arg) | Displays SCREEN_JOINCONF asset, then prompts `Conference Number (1-N): ` via `lineInput` (`express.e:25143-25151`). Blank input returns to menu silently. | Rejects: `\r\nUsage: J <conference-number>\r\n`. | **Significant gap.** Legacy is *interactive*. New slice: implement the no-arg `J` prompt sub-flow (mirror `lineInput` contract: blank = abort to menu). |
-| 3 | `J <invalid token>` | Legacy `Val()` parses non-numeric as `0`, then the prompt re-asks; never surfaces "invalid". | `\r\nInvalid conference number.\r\n`. | Conditioned on (2): silently fall through to the prompt instead of emitting a notice. |
-| 4 | `J <num>` no access | `\b\nYou do not have access to the requested conference\b\n\b\n` (`express.e:25157`). | `\r\nYou do not have access to the requested conference\r\n\r\n` (`NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE`). | ✓ Matches verbatim. |
-| 5 | `J <num>` join (success) | `[32mJoining Conference[33m:[0m <name>` (`express.e:5083`). | `\r\n[32mJoining Conference[33m:[0m <name>\r\n`. | ✓ Matches. |
-| 6 | Auto-rejoin on logon | `\b\nConference <n>: <name> Auto-ReJoined\b\n` (`express.e:5071-5073`). | `\r\nConference <n>: <name> Auto-ReJoined\r\n`. | ✓ Matches. |
-| 7 | `R` (no arg) | Enters `readMSG` sub-prompt loop (`express.e:11972`). Shows the ANSI-coloured prompt `Msg. Options: A,F,R,L,Q,?,??,<CR> ( <range> )>: ` assembled at `express.e:12016-12021`, where `<range>` is the runtime message-range string (e.g. `5+10`, built at `:12010`) and the `D` (delete, gated on `ACS_DELETE_MESSAGE` at `:12017`) / `M` (move, gated on `ACS_SYSOP_READ` at `:12018`) options appear after `A` only for callers with those flags. CR advances to next message; `?` shows short help, `??` long. **The R sub-prompt is the legacy's primary mail-reading UI.** | `\r\nUsage: R <message-number>\r\n` — still rejects the no-arg form, but `R <num>` now enters the full sub-prompt. | **Resolved (Tier B B4–B5d).** The `R` sub-prompt is implemented with the gated `A`/`D`/`M`/`F`/`R`/`L`/`Q`/`?`/`??` (and `EH`) options. Remaining: the bare no-arg `R` interactive entry (defaults to first unread) is still a usage line, not the prompt. |
-| 8 | `R <num>` | Reads the message via `displayMessage` then drops into the R sub-prompt. Header block uses ANSI labels `Date / Number / To / Recv'd / From / Status / Subject` (`express.e:8900-8938`). | Reads the message with `render_mail_header` (matching label block) then enters the `readMSG` sub-prompt. | **Resolved (Tier B B4–B5d).** Header block matches ✓ and the post-read sub-prompt is now implemented. |
-| 9 | `R <num>` not found | Legacy: the read loop iterates past missing message files — no explicit "not found" line. (No `Msg #X not found` string in `express.e`.) | `\r\nMessage not found.\r\n` (`MESSAGE_NOT_FOUND_LINE`). | **Drift / acceptable.** Legacy is silent; we emit a notice. Recommend: keep notice, document divergence. |
-| 10 | `R <num>` deleted | `\b\nThat message has been deleted.\b\n\b\n` (`express.e:8890`). | `\r\nThat message has been deleted.\r\n\r\n` (`DELETED_MESSAGE_LINE`). | ✓ Verbatim match (both trailing CRLFs included). |
-| 11 | `MS` (scan all) | Bare `M` is the ANSI toggle (`internalCommandM`, `:25239`); scan-all is `MS` (`internalCommandMS`, `:25250`), which prints `\b\nScanning conferences for mail...\b\n\b\n` (`:25258`) then loops `joinConf(..,FORCE_MAILSCAN_ALL)` over every accessible conf/msgbase. Per base, `searchNewMail` (`:11651`) has two **mutually-exclusive** branches: `currentConf=0` (the MS path) prints a column-padded `Type/From/Subject/Msg` header + dashes row + `[0m` (`:11713-11715`) and one row per unread (`:11720`); `currentConf<>0` (single-conf / auto-join) prints **no** table, only `\b\nFound Mail!` (`:11737`). Both end with `\b\nWould you like to read it now ` (`yesNo(1)`, `:11739`). | `MS` (`MenuCommand::ScanAllMail`) walks every accessible conference, printing the `Scanning conferences for mail...` header, a per-conference banner, and the `Type/From/Subject/Msg` listing table per base (or `No mail today!`). | **Resolved (B1 + B3).** Deferred to B4/B5: the `Would you like to read it now ` prompt + drop-into-read (`R` sub-prompt territory). |
-| 12 | `N` (scan new) | Legacy `N` is **not** a mail scan: `internalCommandN` (`:25275`) gates on `ACS_FILE_LISTINGS` and tail-calls `myNewFiles` — the new-**files** listing. There is no legacy `N`→mail binding. | `N` is now an **unknown command** — the mail-scan binding (`Scan(ScanArg::New)`) was removed entirely. (`MS = ScanAllMail` — the multi-conference scan; bare `M` = ANSI toggle.) | **Resolved (B2).** The mail-scan drift is gone; the legacy `N` = new-files scan lands in Tier D, which restores `N` and its menu line. |
-| 13 | `E` (no arg) | Decoration line `\b\n                       [32m([33m------------------------------[32m)[0m\b\n` then `     [36mTo[33m: [32m([33mEnter[32m)[0m=[32m'[33mALL[32m'[32m?[0m ` (`express.e:9999-10000`). Blank input → addresses ALL. | `\r\nTo: ` — plain, no decoration, no ANSI, no ALL default. | **Significant.** Wire format differs sharply. Update `POST_TO_PROMPT`; implement "blank = ALL" semantics. |
-| 14 | `E <to>` | Skips the To prompt, echoes the typed name on its own line via `aePuts(mailHeader.toName); aePuts('\b\n')` (`express.e:10770-10771`). | Skips the To prompt; no echo. | **Minor.** Add the echo so the user sees who their mail will go to before being asked for Subject. |
-| 15 | `E` — Subject prompt | `[36mSubject[33m: [32m([33mBlank[32m)[0m=[33mabort[32m?[0m ` (`express.e:10847`). Blank → silent abort. | `Subject: ` then on blank: `\r\nMessage aborted.\r\n`. | **Significant.** Missing ANSI + abort hint; legacy is silent on abort while we emit a notice. Update `POST_SUBJECT_PROMPT`; keep or drop `POST_ABORTED_LINE` as a deliberate choice. |
-| 16 | `E` — Private prompt | `         [36mPrivate ` + `yesNo(2)` renders `[32m([33my[32m/[33mN[32m)[32m?[0m ` (i.e. `(y/N)? `) with default **N** — CR maps to "n" (`express.e:10861-10862`; `yesNo` at `:2129`, CR-default at `:2145`). | `Private (y/N)? ` — default **N**. | **Minor (text only).** Default already matches legacy (No / public) — the earlier "swap to Y" note was a misreading of `yesNo(2)`, which is default-**N**, not default-Y. Only gap is the missing ANSI colour. Add ANSI; do **not** change the default. |
-| 17 | `E` — unknown user | `\b\nUser does not exist!!\b\n\b\n` (double bang) (`express.e:10814`). | `\r\nUnknown user.\r\n`. | **Drift.** Adopt legacy text verbatim. |
-| 18 | `E` — recipient no access | `\b\nUser does not have access to this conference!\b\n\b\n` (`express.e:10838`). | `\r\nUser does not have access to this conference.\r\n`. | **Drift.** Swap `.` for `!` + add trailing blank line. |
-| 19 | `E` — addressing not allowed | `\b\nCan't use EALL in external message bases!!\b\n\b\n` (`express.e:10806`). | `\r\nThis message base does not accept that addressee.\r\n`. | **Drift.** Need separate notices per addressing kind (EALL / ALL) matching legacy. |
-| 20 | `E` — body editor | Drops into `edit()` line editor (`express.e:10962`). On success prints `Saving...` with no message number. | Custom line-mode editor with `\r\nEnter your message. End with a single '.' on a line by itself; '/A' aborts.\r\n` then `\r\nMessage #N saved.\r\n`. | **Drift / acceptable.** Our editor protocol is *not* legacy parity. The legacy editor is a screen-mode editor with `B>`/`E>`/numeric line commands. Treat ours as a placeholder until Phase 9 lands the legacy editor. Echoing the message number on save is a UX improvement worth keeping. |
-| 21 | `C` (comment to sysop) | `commentToSYSOP` prints decoration line + `     [36mTo[33m: [32m([33mEnter[32m)[0m=[32m'[33mALL[32m'[32m?[0m <sysop-name>` (the sysop name appears at the end of the line, pre-filled) then Subject prompt, then routes through `enterMSG` (`express.e:8779-8782`). | Routes directly into post handler with To pre-set; user sees `Subject: ` immediately, never sees the To: line. | **Significant.** Legacy *shows* the sysop name on a printed To: line. Update the flow to print the decoration line + `To: <sysop>` echo before the Subject prompt. |
-| 22 | `RP <num>` (reply) | **Not a menu command.** `R>eply` lives inside the R sub-prompt (`express.e:11017, 11039`). | Retired (Tier B B8): `RP` is now an unknown command. `R>eply` is the `R` sub-prompt's `R` option (defaults subject `Re: <original>` / addressee from source). | **Resolved (B8).** The non-legacy top-level form was removed once the sub-prompt shipped it; typing `RP 1` falls through to the unknown-command notice. |
-| 23 | `FW <num>` (forward) | Same as 22 — `F>orward` is an R sub-prompt option. `forwardMSG` (`express.e:9807`) reuses the standard To-header via `msgToHeader()` (the `To: (Enter)='ALL'? ` prompt), then copies the original body after `\b\nSaving...` — there is **no** `Forward to:` string and **no** `edit()` note. | Retired (Tier B B8): `FW` is now an unknown command. `F>orward` is the sub-prompt's `F` option. | **Resolved (B8).** Top-level form removed. The remaining `Forward to:` / note wire-text drift versus the legacy `msgToHeader` flow is tracked for Slice B6. |
-| 24 | `K <num>` (kill / delete) | Same as 22 — `D>elete Message` is an R sub-prompt option. Legacy confirms with a `Y/N` prompt. | Retired (Tier B B8): `K` is now unknown. `D>elete` is the sub-prompt option (sysop / owner). | **Resolved (B8).** Top-level form removed. |
-| 25 | `MV <num>` (move) | Same as 22 — `M>ove Message` is an R sub-prompt option (sysop only). Legacy prompts for target conf / msgbase. | Retired (Tier B B8): `MV` is now unknown. `M>ove` is the sub-prompt option (sysop). | **Resolved (B8).** Top-level form removed. |
-| 26 | `EH <num>` (edit header) | Same as 22 — `EH` is an R sub-prompt option (sysop). | Retired (Tier B B8): `EH` is now unknown. `EH` is the sub-prompt option (sysop). | **Resolved (B8).** Top-level form removed. |
-| 27 | Unknown command | The legacy command dispatcher first searches menu tooltype overrides and `BBS:Commands` external commands; if nothing matches, it falls through with no notice and re-prints the menu prompt. There is no `Unknown command.` string in `express.e`. | `Unknown command. Type G to log off.\r\n` (`UNKNOWN_COMMAND_LINE`). | **Drift / acceptable.** Either drop the notice to match legacy or keep it as a usability improvement. Recommend keeping — silently swallowing typos is unfriendly. |
+**Method.** A scripted telnet driver drove both systems through the same login and main-menu command sequence, capturing each side's raw wire bytes. NextExpress already ships four seeded messages in conference 1; AmiExpress's bundled conferences were empty, so the driver also **created content live** — it logged in and *posted real messages* through AmiExpress's own line editor (declining the full-screen editor), then read them back — so the comparison shows how the legacy system actually renders a message header, body, message list, and save flow, not just empty-base skeletons. The captures under `comparison/transcripts/` are the primary evidence:
 
-## 2. Wire-format infrastructure differences (cross-cutting)
+- `rust_sysop.txt` — NextExpress full command battery.
+- `amiexpress_sysop.txt` — AmiExpress full command battery.
+- `amiexpress_login.txt` — AmiExpress login + full menu screen.
+- `amiexpress_post_and_list.txt` — AmiExpress live message *posting* (line editor) + list.
+- `amiexpress_read_messages.txt` — AmiExpress live message *read* (header + body).
 
-| Item | AmiExpress | Ours | Verdict |
+The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` modules are cited only to explain *why* the wire bytes look the way they do. The driver scripts are under `comparison/harness/`.
+
+**Key caveat — data vs. behaviour.** The two installs carry **different seeded data**: different conference names and numbers (Rust auto-rejoins `Conference 1: Main`, AE `Conference 2: Amiga`), different user records, different clocks, different message bases, and a different configured BBS name (the AE fixture's board name is `"NextExpress Reference"`, which is *not* the software — it is the genuine AmiExpress binary with that board name configured). Consequently this comparison is about **behaviour and wire format**, not data values. Wherever a difference reduces to a seeded name, number, clock, or build string, it is tagged **COSMETIC** and explicitly attributed to seed data.
+
+**Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference join (`J`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), and logoff (`G`). AmiExpress carries many more top-level commands (new-files scan `N`/AquaScan, `ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
+
+**Tag legend.** Each finding is tagged **MATCH** (byte-for-byte or behaviourally identical), **COSMETIC** (differs only in wording, spacing, ANSI byte-encoding, or seed data), or **BEHAVIOURAL** (a difference in control flow, an output line present in one and absent in the other, or an interactive step missing on one side).
+
+---
+
+## Summary of differences
+
+### Behavioural differences
+
+| Command | NextExpress | AmiExpress |
+|---|---|---|
+| Login (graphics prompt) | Never asks; banner flows straight to `Enter your Name:` | Asks `ANSI, RIP or No graphics (A/r/n)? ` at connect (timed input sets terminal caps) |
+| Login (`Authenticated.`) | Emits `Authenticated.\r\n` on correct password | No equivalent; transitions silently into mail scan |
+| Login (mail-scan / pagination) | Emits only `No new mail.`; never paginates | `Scanning conferences for mail...` + per-conf stats block + two `(Pause)...Space To Resume` gates |
+| Login (user-stats screen) | None at login (`S` is a separate action) | Auto-renders full Area/Caller/Security/Uploads/Downloads/Ratio screen |
+| `VER` (registration line) | Omits `Registered to ...` entirely (no reg-key concept) | Prints `Registered to NONE.` |
+| `S` (lower screen) | Stops after `Msgs Posted` — no baud/CPS/protocol/sysop block, no ratio table | Full screen incl. `Online Baud`...`Sysop Here` + Uploads/Downloads ratio table |
+| `S` (lead-in rows) | Always leads with `User Number` | Leads with config-gated `Area Name` + always-present `Caller Num.`; no `User Number` row (USERNUMBER_LOGIN unset) |
+| `Q` (security gate) | Toggles unconditionally | Gated behind `checkSecurity(ACS_QUIET_NODE)`; denies for low security |
+| `Q` (node broadcast) | Flips in-session flag only | Calls `sendQuietFlag()` to suppress OLM/online messages node-wide |
+| `H` (return code) | Returns `Ok(())` on unavailable path | Returns `RESULT_FAILURE` (latent, not wire-visible) |
+| `^ <topic>` (pause on hit) | Writes screen bytes, no pause, no trailing newline | `displayFile` + `(Pause)...Space To Resume` + trailing newline |
+| `^ <topic>` (sanitisation) | Rejects topics outside `[A-Za-z0-9_-]` (path-traversal guard) | Passes raw param into `help/<param>`, no sanitisation |
+| `J` (no argument) | One-line rejection `Usage: J <conference-number>`; stays put | Interactive `Conference Number (1-2): ` sub-prompt; blank aborts |
+| `J abc` (invalid) | Dedicated `Invalid conference number.` | Same interactive `Conference Number (1-2):` re-prompt (no such string in AE) |
+| `J 99` (out of range) | Prints no-access notice then **silently falls through to join Main** | Interactive `Conference Number (1-2):` re-prompt; stays in current conf; never reaches access check |
+| `R` (no argument) | One-line `Usage: R <message-number>`; redraws menu | Enters readMSG loop at first/computed unread; shows live sub-prompt |
+| `R <num>` not found | Single `Message not found.` for any bad number | Out-of-range → `The last message in this conference is <high>` (live); mid-base gap → silent |
+| `MS` (read-it-now) | Renders table, returns to menu | `Would you like to read it now` -> `yesNo(1)` -> drops into read/reply on Yes |
+| `MS` (`Found Mail!`) | Emitted nowhere | Prints `Found Mail!` on single-conf/auto-join path |
+| `MS` (pagination) | Builds whole output, flushes once; never pauses | Paginates with `checkForPause()` after each row |
+| `E <to>` (inline) | Skips To-echo/box; no visible recipient confirmation | Always echoes `To: ... SYSOP` (visible resolved recipient) |
+| `E`/`C` (blank subject) | Writes `Message aborted.` | Aborts silently (bare newline) |
+| `C` (recipient display) | Straight to `Subject:`; never shows it is addressed to sysop | Prints decoration box + `To: (Enter)='ALL'? SYSOP` |
+| `E` (body editor/save) | Minimal `.`/`/A`-terminated line editor; prints `Message #N saved.` | `FullScreen Editor (y/N)?` fork → ruler/line-number editor + `Msg. Options: A,C,D,E,F,L,S,X,?` save menu; `Saving...Message Number N...done!` |
+| `N` | `MenuCommand::Unknown` (new-files binding removed, deferred to Tier D) | Real command — `ACS_FILE_LISTINGS`-gated new-files scan / `AquaScan v1.0` |
+| `RP`/`FW`/`K`/`MV`/`EH` (top-level) | Menu **still advertises** all five, but every one is rejected as Unknown (internal inconsistency) | Never top-level; menu and dispatcher agree (they live in the `R` sub-prompt) |
+| `G` (plain) | Always logs off immediately | Plain `G` runs `checkFlagged()`: confirms if files flagged, else returns to menu without logging off |
+| `G` (side effects) | No flagged-file or history persistence | Runs `saveFlagged()` + `saveHistory()` on logoff |
+
+### Cosmetic differences
+
+| Command | NextExpress | AmiExpress |
+|---|---|---|
+| Login (password label) | `PassWord: ` | `Password: ` |
+| Login (menu art) | Fixed small ASCII block + figlet "Main Menu"; no "Now attending" trailer | Large per-conference ANSI art ending `Now attending to user: sysop` |
+| Login (mins. left) | Prompt shows `0` (seed `time_limit_per_call = 0`) | Prompt shows `599` |
+| `VER` (product line) | `NextExpress 0.1.0 (93e5d36) Copyright ©2026 Paul Ingles` | `AmiExpress 5.6.0 (02-Jan-2024) Copyright ©2018-2023 Darren Coles` |
+| `VER` (lineage block) | Labelled `Based on Versions:`; folds extra `AmiExpress 5` line | Labelled `Original Version:`; Coles attribution in header |
+| `VER` / `S` (© encoding) | UTF-8 `\xc2\xa9` | Latin-1 single byte `\xa9` |
+| `T` (trailing blank) | `\r\nIt is ...\r\n`, menu follows immediately | Trailing blank line after the time (`...\r\n\r\n`) |
+| `S` (`Lst Date On`) | `31-May-2026 09:45:19` (no weekday) | `Sun 31-May-2026 10:15:56` (leading weekday) |
+| `Q`/`M`/`X` (prompt spacing) | Goes straight into prompt | One extra trailing `\r\n` after every toggle status line |
+| `?` (menu content) | Plain `.oO(==[ NextExpress :: MAIN MENU ]==)Oo.` box, uncoloured list | /X ANSI logo + bracketed coloured command grid |
+| `H` (unavailable trailer) | Auto-redisplays full menu (expert-off) | Shows only prompt preceded by extra `\r\n` (expert-on) |
+| `J <num>` (post-join body) | `No new mail.` | `Total messages` stats block |
+| `R <num>` (header extras) | Appends `Conf   : [1] Main` line; RFC3339 dates | No `Conf` line in read view; `formatLongDateTime` long dates |
+| `R` `??` (long help) | Omits legacy `NS`/`T`/`K`/`E`/`EM`/`U` entries (intentional subset) | Full verb set |
+| `E` (To: prompt) | Bare `\r\nTo: `, no box/ANSI | Boxed ANSI `To` prompt with `(Enter)='ALL'?` hint |
+| `E`/`C` (Subject: prompt) | Bare `Subject: ` | ANSI `Subject: (Blank)=abort?` hint |
+| `E` (Private prompt) | `Private (y/N)? ` full-line read | ANSI `Private (y/N)?` single-keystroke, echoes `Yes`/`No` |
+| `E` (unknown recipient) | `Unknown user.` | `User does not exist!!` |
+| Unknown command | `Unknown command. Type G to log off.` + full menu redraw | `No such command!!  Use '?' for command list.` (blank-line framed), prompt only |
+| `G` (closing text) | `Goodbye!` | `** AutoSaving File Flags **` + `<BEL>` + `Click...` |
+
+### Exact matches
+
+- **Login:** name prompt `Enter your Name: `; masked password echo (one `*` per char); auto-rejoin line format `Conference <n>: <name> Auto-ReJoined`; menu-prompt format (identical SGR codes, brackets, `mins. left): ` suffix).
+- **`VER`:** the two original-author credit lines (Thomas / Synthetic Technologies, Hodge / LightSpeed) are byte-identical.
+- **`T`:** `It is <MM-DD-YY HH:MM:SS>` line — `It is ` prefix and `FORMAT_USA` date/time layout byte-identical.
+- **`S`:** the six shared rows (`User Number`, `Lst Date On`, `Security Lv`, `# Times On `, `Times Today`, `Msgs Posted`) — label text, 11-char padding, and per-line `[32m…[33m:[0m ` ANSI all match.
+- **`Q` / `M` / `X`:** all status lines byte-identical — `Quiet Mode On`/`Off`, `Ansi Color On`/`Off`, `Expert mode enabled`/`disabled`; expert-mode menu suppression and M's ANSI stripping match in effect.
+- **`?`:** expert-mode gating and net "menu is shown" effect identical.
+- **`H`:** `\r\n\r\nSorry Help is unavailable at this time.\r\n\r\n` byte-identical.
+- **`J <num>`:** success announcement `\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m <name>` byte-identical (ANSI codes match).
+- **`R <num>`:** header block (`Date`/`To`/`Recv'd`/`From`/`Status`/`Subject` labels + ANSI), `Recv'd` `N/A`-vs-timestamp logic, deleted-message notice `That message has been deleted.`, the `Msg. Options:` sub-prompt skeleton (incl. doubled-`[36m` seam and range), `<CR>`/`A`gain/`L`ist/`Q`uit behaviour, and the shared `?`/`??` help entries — all byte-for-byte.
+- **`MS`:** scan header, conference banner, message-base sub-line, `No mail today!`, and the full listing table (`Type/From/Subject/Msg` columns + rule + status rows) — all byte-for-byte.
+- **`E`/`C`:** default-N private flag, unknown-user rejection, conference-access gating, blank-subject abort *trigger* — same behaviour.
+
+---
+
+## Login, Post-Login Flow & Menu Prompt
+
+Both systems follow the same skeleton — name prompt -> masked password -> auto-rejoin home conference -> scan for mail -> menu screen -> menu prompt — and the **menu prompt itself is byte-for-byte identical**. The divergences are concentrated in the front-door (graphics question, password-label case) and in how much post-login presentation AmiExpress streams (pagination, a rich stats screen, an elaborate ANSI menu file) versus Rust's terse path.
+
+### Graphics prompt (ANSI/RIP/None)
+- **AmiExpress** asks `ANSI, RIP or No graphics (A/r/n)? ` at connect (`express.e:29528`) via a timed `lineInput`; the answer sets `ansiColour` (N=off), `ripMode` (R), `quickFlag` (Q).
+- **Rust** never asks — the banner flows straight into `\r\nEnter your Name: `. A constant `ANSI_PROMPT = b"Use ANSI graphics? (Y/n) "` exists (`wire_text.rs:54`) but is **not emitted** in the login transcript.
+- **BEHAVIOURAL.** An interactive step (and the terminal-capability state it sets) is present in AE and absent in Rust.
+
+### Name prompt
+- Both: `Enter your Name: ` (AE `namePrompt` default at `express.e:31774` + trailing space; Rust `NAME_PROMPT = b"\r\nEnter your Name: "`).
+- **MATCH.**
+
+### Password prompt label
+- **AmiExpress:** `Password: ` (`express.e:31778`). (Inconsistently, AE's failure path still says `Invalid PassWord`, `express.e:29209`.)
+- **Rust:** `PassWord: ` (`wire_text.rs:19`).
+- **COSMETIC.** Capitalisation only; both read one masked password line.
+
+### Password echo
+- Both echo exactly one `*` per typed character (AE `serPuts('*')` / `conPuts('*')` at `express.e:1545-1546`; Rust `TerminalEcho::Masked`). A 5-char `sysop` renders `*****\r\n` in both transcripts.
+- **MATCH.**
+
+### "Authenticated." line
+- **Rust** emits `Authenticated.\r\n` (`wire_text.rs:197`) on the correct-password transition.
+- **AmiExpress** has no equivalent (`grep Authenticated express.e` is empty); it transitions silently from password into the mail scan.
+- **BEHAVIOURAL.** Extra acknowledgement notice present only in Rust.
+
+### Auto-rejoin
+- Both print `Conference <n>: <name> Auto-ReJoined\r\n` (AE `express.e:5073`; Rust `format_auto_rejoin_line`). Transcripts show `Conference 2: Amiga Auto-ReJoined` (AE) vs `Conference 1: Main Auto-ReJoined` (Rust) — differing values are **seed data**, not an implementation difference.
+- **MATCH** (format).
+
+### Mail-scan-on-login & pagination
+- **AmiExpress** prints `Scanning conferences for mail...` (`express.e:25258`), then paginates with `\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32mSpace To Resume\x1b[33m: \x1b[0m` (`express.e:5144`) — **two** such pauses in the transcript — and renders a per-conference stats block (`Total messages` / `Last message auto scanned` / `Last message read`).
+- **Rust** emits only `No new mail.\r\n` (`render_scan_summary`, `wire_text.rs:585`) and **never paginates**; the whole login streams to the menu prompt.
+- **BEHAVIOURAL.** Different scan output (header + counters vs one line) and AE's `(Pause)` gates are interactive steps Rust lacks.
+
+### Rich user-stats / ratio screen
+- **AmiExpress** auto-renders a full Area Name / Caller Num / Security Lv / #Times On / Online Baud / Protocol / Sysop Here block plus an Uploads/Downloads/Bytes-Avail/Ratio table during login.
+- **Rust** prints none of this at login (its `S` command is a separate menu action).
+- **BEHAVIOURAL.** Login-path feature present only in AE.
+
+### Menu screen (art)
+- Both gate the menu art on expert mode (AE `express.e:28583`; Rust `menu_flow/mod.rs:80`).
+- **AmiExpress** loads a large configurable per-conference ANSI art file via `displayScreen(SCREEN_MENU)` -> `displayFile` (`express.e:6560,28586`), ending with `Now attending to user: sysop` between `- -- --- ---` rules.
+- **Rust** embeds a fixed small ASCII block (`.oO(===[ NextExpress :: MAIN MENU ]===)Oo.` + figlet "Main Menu" + a plain-text command list) and has **no** "Now attending" trailer.
+- **COSMETIC.** Both are "the menu screen" shown to non-expert users; content/styling differs and Rust omits the "Now attending" line.
+
+### Menu prompt (mins. left)
+- Both render `\x1b[0m\x1b[35m<bbsName> \x1b[0m[\x1b[36m<n>\x1b[34m:\x1b[36m<name>\x1b[0m] Menu (\x1b[33m<mins>\x1b[0m mins. left): ` (AE `displayMenuPrompt` `express.e:28417-28419`; Rust `render_menu_prompt` `wire_text.rs:920`). Same `ESC[35m/36m/34m/33m` codes, same brackets, same `mins. left): ` suffix.
+- The minutes value differs (AE `599`, Rust `0`). Both compute `(timeTotal - timeUsed)/60`; the Rust default sysop seed leaves `time_limit_per_call = Duration::ZERO` (`usage_accounting.rs:40`, `seed.rs`), so the prompt shows `0`. The rendering and arithmetic are identical.
+- **MATCH** (format); the differing number is **COSMETIC** (seed data), not behavioural.
+
+---
+
+## VER (version)
+
+**Behaviour.** Both BBSes respond to `VER` by echoing the command, emitting a leading blank line, printing a multi-line version/lineage banner, then returning directly to the menu prompt (no pause or "continue?" gate). The banners are plain text — neither wraps any line in ANSI colour. The two original-author credit lines are byte-identical between implementations.
+
+**Wire-format comparison.**
+
+AmiExpress (`amiexpress_sysop.txt:116-124`, source `express.e:25688-25698`):
+```
+VER\r\n
+\r\n
+AmiExpress 5.6.0 (02-Jan-2024) Copyright \xa92018-2023 Darren Coles\r\n
+\r\n
+Original Version:\r\n
+  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n
+  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n
+\r\n
+Registered to NONE.\r\n
+\r\n
+```
+
+NextExpress (`rust_sysop.txt:121-127`, source `wire_text.rs:102-116`):
+```
+VER\r\n
+\r\n
+NextExpress 0.1.0 (93e5d36) Copyright \xc2\xa92026 Paul Ingles\r\n
+\r\n
+Based on Versions:\r\n
+  AmiExpress 5 Copyright \xc2\xa92018-2023 Darren Coles\r\n
+  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n
+  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n
+\r\n
+```
+
+**Differences.**
+
+- **COSMETIC — lead product line.** AE: `AmiExpress 5.6.0 (02-Jan-2024) Copyright ©2018-2023 Darren Coles`; Rust: `NextExpress 0.1.0 (93e5d36) Copyright ©2026 Paul Ingles`. Same `Product Version (Build) Copyright ©Years Author` shape; the values differ only because these are different products with different seed/build data. Not an implementation difference.
+
+- **COSMETIC — lineage label & structure.** AE labels the block `Original Version:` and keeps the Darren Coles / AmiExpress attribution in the header line. Rust labels it `Based on Versions:` and folds an extra `  AmiExpress 5 Copyright ©2018-2023 Darren Coles` line in as the first lineage entry. The credited parties (Coles, Thomas, Hodge) and years are the same; only the grouping and label wording change, so the behaviour (display lineage) is equivalent.
+
+- **COSMETIC (with a wire-bytes caveat) — © encoding.** AE emits a bare `\xa9` (Amiga/Latin-1 single byte; RENDER shows `⟨a9⟩`). Rust emits `\xc2\xa9` (UTF-8 encoding of U+00A9; RENDER shows `⟨c2⟩⟨a9⟩`). The glyph © is identical; the on-wire byte encoding is not. This recurs in the Rust lineage line. Pure glyph-level cosmetic, but worth flagging for Latin-1-decoding clients.
+
+- **BEHAVIOURAL — registration status line.** AE prints `Registered to NONE.` from `internalCommandVER` (`express.e:25696-25697`, `StringF(...,'Registered to \s.\b\n',regKey)`). Rust **omits this line entirely** — `VERSION_BANNER` has no registration field and the banner ends after the author lines plus a trailing blank line. NextExpress has no registration-key concept, so this is a feature present in AE and absent in Rust. The `wire_text.rs` doc comment states the elision is deliberate (per `slices/cmds-quickwins.md` A2 "Out of Scope"). Classified BEHAVIOURAL because a line of output present in one system is absent in the other, not merely reworded.
+
+**Verdict: mixed** — the banner framing and © encoding are cosmetic, but the missing `Registered to` line is a deliberate behavioural omission.
+
+---
+
+## T (time) and S (user stats)
+
+Legacy procedures: `internalCommandT()` (`amiexpress/express.e:25622-25644`) and `internalCommandS()` (`amiexpress/express.e:25540-25606`). Rust: `render_time_line` / `render_stats_screen` in `rust/src/app/wire_text.rs:802` and `:851`.
+
+> Note on the transcripts: the files labelled `ae_*.txt` are the genuine AmiExpress 5.6.0 binary; their banner reads "NextExpress Reference" only because that is the BBS name configured in the legacy install, not because they are the Rust port. The Rust port's transcript is `rust_sysop.txt` (distinct ASCII-art Main Menu).
+
+### T — current time
+
+**Behaviour:** both echo the command, emit a `It is <date> <time>` line, then redisplay the prompt. **Wire format matches.** Both render the legacy `FORMAT_USA` two-digit-year layout `MM-DD-YY HH:MM:SS`:
+
+- Rust: `b"T\r\n\r\nIt is 05-31-26 10:02:42\r\n…"`
+- AmiExpress: `b'T\r\n\r\nIt is 05-31-26 10:19:37\r\n\r\n…'`
+
+The `It is ` prefix and date/time literal are byte-identical (differing values are just different clocks). Rust's `TIME_FORMAT` `[month]-[day]-[year repr:last_two] [hour]:[minute]:[second]` reproduces the legacy `DateToStr`/`FORMAT_USA` output. The legacy `aePuts('\b\nIt is …\b\n')` backspace+newline pair collapses to a single CRLF on the wire on both sides.
+
+- **COSMETIC:** AmiExpress emits a trailing blank line after the time (`…10:19:37\r\n\r\n` before the prompt, from the closing `\b\n` at `express.e:25640`); Rust's `render_time_line` returns `\r\nIt is …\r\n` with no trailing blank, so the menu follows immediately. Vertical-spacing only.
+
+### S — user stats
+
+**Behaviour:** Rust renders a compact six-row block; AmiExpress renders a full stats screen plus an Uploads/Downloads ratio table. **The shared rows match exactly; AE has many rows Rust lacks.**
+
+Shared rows (byte-identical label text, 11-char column padding, and ANSI):
+
+```
+\x1b[32mUser Number\x1b[33m:\x1b[0m …   (Rust always; AE only when USERNUMBER_LOGIN tooltype set — absent in these AE captures)
+\x1b[32mLst Date On\x1b[33m:\x1b[0m …
+\x1b[32mSecurity Lv\x1b[33m:\x1b[0m …
+\x1b[32m# Times On \x1b[33m:\x1b[0m …
+\x1b[32mTimes Today\x1b[33m:\x1b[0m …
+\x1b[32mMsgs Posted\x1b[33m:\x1b[0m …
+```
+
+Every shared label's wording, the trailing-space pad on `# Times On `, the leading/trailing CRLF framing, and the per-line `[32m…[33m:[0m ` ANSI wrapper match the legacy `StringF` templates (`express.e:25551-25569`). The `Lst Date On` value uses the same `DD-Mon-YYYY HH:MM:SS` core on both.
+
+Differences:
+
+- **COSMETIC:** `Lst Date On` — AE prepends the abbreviated weekday (`Sun 31-May-2026 10:15:56`); Rust omits it (`31-May-2026 09:45:19`). Same date/time core, leading `Sun ` only.
+- **BEHAVIOURAL:** Rust omits the entire lower half of the legacy screen — `Online Baud`, `Rate CPS UP`, `Rate CPS DN`, `Screen  Clr`, `Protocol`, `Sysop  Here` (`express.e:25571-25597`), the conditional `Credit Account` / `Sysop Pages Remaining` rows, and the full `fileStatus(1)` Uploads/Downloads ratio table (`Conf / Files / Bytes` up & down / `Bytes Avail` / `Ratio`, with `Infinite`/`DSBLD` markers). Rust's doc-comment defers these to "slice A11". Evidence — AE: `…Sysop  Here\x1b[33m:\x1b[0m NO\r\n\r\n\x1b[32m              Uploads                 Downloads\r\n…\x1b[33m       2\x1b[0m> …\x1b[31mDSBLD`; Rust stops after `Msgs Posted` and goes straight to the menu.
+- **BEHAVIOURAL:** leading-row divergence. Rust always leads with `User Number`; AE (with `USERNUMBER_LOGIN` unset, as captured) has no `User Number` row and instead leads with the config-gated `Area Name  : <conf>` and always-present `Caller Num.: <callerNum>` rows (`express.e:25550-25559`), which Rust does not emit at all.
+- **BEHAVIOURAL (flow context):** in the legacy login/auto-rejoin path the S screen is long enough to feed the `(Pause)...Space To Resume` pager; Rust's six-row S never paginates.
+
+**Verdict:** T = match (one cosmetic spacing nit). S = behavioural — the shared rows are an exact wire match, but Rust implements only a subset of the legacy screen (missing Area Name/Caller Num. lead-in, the baud/CPS/protocol/sysop block, and the ratio table).
+
+---
+
+## Session Toggles: Q (quiet), M (ANSI), X (expert)
+
+All three toggles emit byte-identical status lines in both systems. Rust's `wire_text.rs` constants are direct ports of the `express.e` `aePuts` literals, with the Amiga `\b\n` backspace-newline mapped to the telnet `\r\n`. The observable behavioural effects (expert-mode menu suppression, M's ANSI stripping) also match. Two latent behavioural gaps exist in Rust's `Q` but are invisible in the sysop transcripts because the sysop passes all gates.
+
+### Q — Toggle quiet mode
+
+**Wire format (matches exactly):**
+- On — Rust `b'Q\r\n\r\nQuiet Mode On\r\n...'`; AE `b'Q\r\n\r\nQuiet Mode On\r\n\r\n...'`
+- Off — Rust `b'Q\r\n\r\nQuiet Mode Off\r\n...'`; AE `b'Q\r\n\r\nQuiet Mode Off\r\n\r\n...'`
+
+The status strings `Quiet Mode On` / `Quiet Mode Off` are identical. Source: legacy `express.e:25509/25511`; Rust `wire_text.rs` `QUIET_MODE_ON_LINE`/`QUIET_MODE_OFF_LINE`.
+
+- **BEHAVIOURAL:** Legacy `internalCommandQ` (`express.e:25505`) gates the toggle behind `checkSecurity(ACS_QUIET_NODE)` and returns `RESULT_NOT_ALLOWED` when denied. Rust (`menu_flow/mod.rs:167`) toggles unconditionally — no security gate. Sysop (level 255) passes either way, so the wire output is identical here; divergence would only show for a lower-security user.
+- **BEHAVIOURAL:** Legacy also calls `sendQuietFlag(quietFlag)` (`express.e:25507`) to broadcast the flag to the node (suppressing OLM/online messages). Rust flips only the in-session flag; the broadcast effect is explicitly deferred (comment at `mod.rs:171`). Not observable in a single-session capture.
+
+### M — Toggle ANSI colour
+
+**Wire format (matches exactly):**
+- On — AE `b'M\r\n\r\nAnsi Color On\r\n\r\n...'`; Rust `ANSI_COLOR_ON_LINE = b"\r\nAnsi Color On\r\n"`
+- Off — AE `b'M\r\n\r\nAnsi Color Off\r\n\r\n...'`; Rust `ANSI_COLOR_OFF_LINE = b"\r\nAnsi Color Off\r\n"`
+
+The status strings match (note the American spelling "Color" preserved from the legacy). The Rust command battery (`rust_sysop.txt`) does not exercise `M`, but the source constants are confirmed.
+
+**EFFECT matches:** After M turns colour off, the immediately following prompt is rendered with *no* SGR escapes — AE REPR line 203 shows the plain `NextExpress Reference [2:Amiga] Menu (599 mins. left): `. Rust's `ColourTerminal` decorator (`colour_terminal.rs:32/79`, `strip_ansi_sgr`) strips SGR from every subsequent write while colour is off, reproducing the same behaviour. Source: `express.e:25241-25247`.
+
+### X — Toggle expert mode
+
+**Wire format (matches exactly):**
+- Enabled — Rust `b'X\r\n\r\nExpert mode enabled\r\n...'`; AE `b'X\r\n\r\nExpert mode enabled\r\n\r\n...'`
+- Disabled — Rust `b'X\r\n\r\nExpert mode disabled\r\n...'`; AE `express.e:26115`
+
+The status strings `Expert mode enabled` / `Expert mode disabled` match. Source: legacy `express.e:26113`; Rust `wire_text.rs` `EXPERT_MODE_ENABLED_LINE`/`EXPERT_MODE_DISABLED_LINE`.
+
+**EFFECT matches:** In expert mode the menu loop stops auto-printing the full menu before each prompt and `?` is what redisplays it. Rust gates this at `menu_flow/mod.rs:80` (auto-display) and `mod.rs:213` (`?` only redraws in expert mode); the legacy gate is `displayMenuPrompt` at `express.e:28583`. Both transcripts confirm: after X enabled, subsequent AE commands return straight to the prompt with no menu (AE lines 113-214), and Rust's X-on capture (line 356) shows the bare prompt while `?` after X-on (line 398) redraws the whole menu.
+
+### Cross-cutting cosmetic note
+
+- **COSMETIC:** AE emits one extra trailing `\r\n` (blank line) after every toggle status line before re-issuing the prompt, whereas Rust goes straight into the prompt. This is AE's global prompt-spacing convention, not specific to Q/M/X. Compare Rust `...enabled\r\n\x1b[0m...` vs AE `...enabled\r\n\r\n\x1b[0m...`.
+- **COSMETIC:** The prompt's BBS-name label text differs by seeded config only ("NextExpress Reference" in the AE Docker fixture vs "NextExpress" in the Rust fixture); both wrap the name in identical `\x1b[35m...\x1b[0m` framing and use the identical `[<n>:<conf>] Menu (<mins> mins. left): ` structure with the same SGR colours.
+
+---
+
+## `?`, `H`, `^` — Menu Redisplay & Help
+
+All three are real, dispatched commands in **both** systems. Note up front: the AE menu art screen advertises neither `H` nor `^`, but both are still handled by AE's command dispatcher (`express.e:28346` for `H`, `:28394` for `^`). The framing that "AE has no such caret command" and that `H` may not be an AE command is contradicted by the source — both exist in AE.
+
+### `?` — Re-display menu (MATCH, behaviour)
+
+Both systems gate `?` on expert mode identically:
+
+- **AE** `internalCommandQuestionMark` (`express.e:24594-24599`): `IF loggedOnUser.expert="X"` then `displayScreen(SCREEN_MENU)`. Outside expert mode it is a no-op — because in non-expert mode the menu is already redrawn before every prompt.
+- **Rust** `MenuCommand::ShowMenu` (`menu_flow/mod.rs:208-217`): `if session.user().expert_mode()` then `render_menu_screen`. The menu loop auto-displays the menu before the prompt when `!expert_mode()` (`mod.rs:80-82`).
+
+Net user-visible effect is the same in both modes: `?` results in the menu being shown. Live evidence — Rust shows the full menu after `?` in expert-off (`rust_sysop.txt:77-112`) and expert-on (`:361-396`); AE shows the full menu after `?` with expert on (`amiexpress_sysop.txt:219-242`).
+
+**COSMETIC:** the *content* of the redisplayed menu differs completely — AE is the /X ANSI logo + bracketed command grid (`\x1b[31m[\x1b[33mR\x1b[31m]\x1b[34m.......\x1b[32mrEAD MESSAGES`, `amiexpress_sysop.txt:221-240`); Rust is a plain `.oO(==[ NextExpress :: MAIN MENU ]==)Oo.` box with a categorised, uncoloured list (`rust_sysop.txt:78-111`). This is a screen-asset difference, not control flow.
+
+### `H` — Help (MATCH, wire-level)
+
+Both try an on-disk help asset first (AE `BBSHelp` via `findSecurityScreen`, `express.e:25079-25081`; Rust `bbs_help_screen`), and on a miss emit the **byte-identical** line:
+
+```
+\r\n\r\nSorry Help is unavailable at this time.\r\n\r\n
+```
+
+(AE `amiexpress_sysop.txt:257`; Rust `rust_sysop.txt:488`; Rust's `HELP_UNAVAILABLE_LINE` at `wire_text.rs:122-123` is a verbatim port of `express.e:25083`.)
+
+**COSMETIC:** What follows the line differs — Rust (tested expert-OFF) auto-redisplays the full menu; AE (tested expert-ON) shows only the prompt preceded by an extra `\r\n`. This is the same expert-gating both share, not an `H`-specific difference.
+
+**BEHAVIOURAL (latent, not wire-visible):** AE returns `RESULT_FAILURE` on the unavailable path (`express.e:25084`); Rust returns `Ok(())` (`mod.rs:285-286`). No observable transcript difference.
+
+### `^ <topic>` — Topic help (MIXED)
+
+Exists in both (AE `internalCommandUpHat`, `express.e:25089-25111`; Rust `MenuCommand::TopicHelp`, `mod.rs:218-227`). Both do the same lookup: try `help/<topic>`, and on a miss truncate the topic one character at a time, retrying, until a screen matches; a total miss is a **silent no-op**. Live Rust confirms the silent miss for both `^ test` (`rust_sysop.txt:493`) and `^ zzznope` (`:535`) — no topic body, just the echoed input and the auto-redisplayed menu (no `help/` screens are seeded). AE's transcript has no `^` rows, so the AE side is source-only here.
+
+**BEHAVIOURAL:**
+
+1. *No pause on a hit.* AE does `displayFile(screen); doPause(); aePuts('\b\n')` after a successful match (`express.e:25097-25101`) — i.e. a `(Pause)...Space To Resume` prompt and a trailing newline. Rust just writes the screen bytes (`mod.rs:224-226`), no pause, no trailing newline; the user drops straight back to the menu. Not exercised on a real hit in either live transcript.
+2. *Topic sanitisation.* Rust rejects any topic outside `[A-Za-z0-9_-]` as a silent no-op (`is_safe_topic_help_name`, `file_screen_repository.rs:287-313`) — a path-traversal guard. AE passes the raw param straight into the `help/<param>` path (`express.e:25094`) with no sanitisation. Divergent only for hostile/punctuated topics; benign for normal alphanumeric ones.
+
+---
+
+## J — Join Conference
+
+The `J` command switches the caller's active conference. The successful-join wire format matches exactly between the two systems; every error/edge path diverges behaviourally, and the no-arg case is a known parity gap (the interactive no-arg prompt is unimplemented in Rust). Legacy reference: `express.e` `internalCommandJ` (~25113) and `joinConf` (~4975, announcement at 5083). Rust: `app/menu_flow/mod.rs:141-152`, `app/menu_flow/join.rs`, `app/menu/join.rs`, `app/wire_text.rs:228-243`.
+
+### `J <num>` (successful join) — MATCH
+
+Both emit an identical announcement. The legacy `StringF` at `express.e:5083` is `'[32mJoining Conference[33m:[0m \s'`; the Rust constant in `wire_text.rs:972` is `b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m "`. The ANSI codes match byte-for-byte: green `ESC[32m` label, yellow `ESC[33m` colon, reset `ESC[0m` before the name.
+
+- Rust (transcript 662): `J 2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Programming\r\n`
+- AE (transcript 289): `J 2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Amiga\r\n`
+
+The differing conference names (Programming vs Amiga) and the post-join body (Rust `No new mail.` vs AE's `Total messages` stats block) come from the different seeded data and the mail-scan-on-join path, not from a format difference. **COSMETIC** (data/line-ending only).
+
+### `J` (no argument) — BEHAVIOURAL
+
+- **Rust:** rejects non-interactively — `J\r\n\r\nUsage: J <conference-number>\r\n` then redraws the menu, staying in the current conference (transcript 574-616; `mod.rs:150`, `NumberArg::Missing -> JOIN_REQUIRES_NUMBER_LINE`).
+- **AmiExpress:** interactive — `Val("")` yields an out-of-range number, so it runs `displayScreen(SCREEN_JOINCONF)` then `lineInput` with `Conference Number (1-2): ` (`express.e:25142-25151`); blank input aborts silently to the menu. Transcript 301-309: `J\r\nConference Number (1-2): \r\n`.
+
+The legacy is a prompt sub-flow; Rust is a one-line rejection. **BEHAVIOURAL.**
+
+### `J abc` (invalid argument) — BEHAVIOURAL
+
+- **Rust:** `J abc\r\n\r\nInvalid conference number.\r\n` then menu (transcript 808-850; `mod.rs:151`, `NumberArg::Invalid -> INVALID_CONFERENCE_NUMBER_LINE`). Rust's parser distinguishes "missing" from "invalid" and emits a dedicated message.
+- **AmiExpress:** `Val("abc")=0` → out-of-range → the *same* interactive `Conference Number (1-2): ` re-prompt as the no-arg case (`express.e:25131`, `:25142`). AE has no "invalid conference number" string at all.
+
+Different control flow (one-shot rejection vs re-prompt) and a Rust-only message with no legacy counterpart. **BEHAVIOURAL.**
+
+### `J 99` (out of range / "no access") — BEHAVIOURAL
+
+- **Rust:** `J 99\r\n\r\nYou do not have access to the requested conference\r\n\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Main\r\n\r\nNo new mail.\r\n` — it prints the no-access notice and then **silently falls through to join the first accessible conference (Main)**, rendering a full announcement + mail scan + menu (transcript 759-806; `join.rs:55-59`, `matched_request=false`).
+- **AmiExpress:** `99 > numConf (2)` is out-of-range, so AE re-prompts interactively `J 99\r\nConference Number (1-2): \r\n` and stays in the current conference (transcript 291-299). It **never reaches the access check** — the legacy `You do not have access to the requested conference` string (`express.e:25157`) only fires for an *in-range* conference that fails `checkConfAccess`.
+
+Note the subtlety: Rust reuses the exact legacy "no access" string but reaches it under a different condition (out-of-range request) and then performs a fall-through join, whereas AE re-prompts. The live AE transcript contradicts treating `J 99` as a no-access notice. **BEHAVIOURAL** (different control flow: silent fall-through-to-Main vs interactive re-prompt).
+
+---
+
+## R (Read Message) and the readMSG Sub-Prompt
+
+The `R <num>` read path plus its post-read sub-prompt is one of the most faithful ports in the system: the message-header block, the `Msg. Options:` skeleton, the `?`/`??` help lists and the `L`ist view all reproduce the legacy `express.e` strings byte-for-byte (modulo data values). Two real behavioural gaps remain at the edges — bare-`R` entry and the not-found notice.
+
+> Note on the test setup: the legacy transcript is genuine **AmiExpress 5.6.0** ("Running AmiExpress 5.6.0 Copyright (c)2018-2023 Darren Coles", `amiexpress_login.txt:12`); "NextExpress Reference" there is merely the *board name* configured on that AmiExpress instance, not the software. AmiExpress's bundled conferences started empty, so the driver **posted a real message live** through AmiExpress's line editor and read it back: `amiexpress_read_messages.txt` carries the live header + body + sub-prompt for message 1, and `amiexpress_post_and_list.txt` carries the live editor / save / list flow. The read view below is therefore a **live-vs-live** comparison.
+
+### R `<num>` (read an existing message)
+
+**Behaviour:** both systems run `displayMessage` (the header + body) and then drop into the readMSG sub-prompt. Matches.
+
+**Header block — labels + ANSI MATCH; layout differs.** Both label the header `Date / Number / To / Recv'd / From / Status / Subject` with the same `[32m`label`[33m:`colon`[0m`value colouring. Live evidence (both reading a *private* message addressed to the sysop):
+
+AmiExpress (`amiexpress_read_messages.txt`, live read of the message the driver posted):
+```
+Date   : Sun 31-May-2026 10:47:54         Number: 1
+To     : SYSOP                            Recv'd: Sun 31-May-2026 10:50:32
+From   : SYSOP                            Status: Private Message
+Subject: Comparison harness: private no
+
+This is a PRIVATE message addressed to sysop.
+Posted live via the comparison harness to show
+how AmiExpress renders message bodies.
+```
+NextExpress (`rust_sysop.txt`, reading seeded message 1):
+```
+Date   : 2026-05-12T21:48:50.679071Z  Number: 1
+To     : sysop  Recv'd: 2026-05-12T21:48:56.974019Z
+From   : sysop  Status: Private Message
+Subject: hello
+Conf   : [1] Main
+
+Hello
+This is a test
+```
+
+The label set, the `Recv'd` `N/A`-vs-timestamp logic (Rust live msg 2 EALL → `N/A`, msg 1 received → timestamp; legacy `:8920-8926`), the `Status` wording (`Private Message`), and the body-then-sub-prompt flow all match. The divergences:
+
+- **COSMETIC (layout):** AmiExpress **column-aligns** the right-hand fields — `Number` / `Recv'd` / `Status` start at a fixed offset (~col 42), the left value space-padded to fill. NextExpress packs them with a fixed two-space gap (`<value>  Number:`), so the second column floats. Same labels, different alignment.
+- **COSMETIC (truncation):** AmiExpress truncates header values to fixed widths — the live `Subject` shows `Comparison harness: private no` (clipped at 30 chars from `…private note`); the `To`/`From` names are padded to a 30-char column. NextExpress does not truncate (`Subject: hello`).
+- **COSMETIC (dates):** Rust dates are RFC3339 with microseconds (`2026-05-12T21:48:50.679071Z`); AmiExpress uses `formatLongDateTime` weekday long dates (`Sun 31-May-2026 10:47:54`). Same labelled/coloured field, different value format.
+- **COSMETIC (extra line):** Rust appends a `Conf   : [1] Main` line that the legacy read view omits (legacy only prints `Conf` in the QWK export path, `:26470`).
+
+### R (no argument) — BEHAVIOURAL gap
+
+- Rust: `R\r\n\r\nUsage: R <message-number>\r\n` then redraws the menu (`READ_REQUIRES_NUMBER_LINE`, `mod.rs:155`, `NumberArg::Missing`).
+- AmiExpress: enters the readMSG loop at the first/computed unread and shows the live sub-prompt. On the empty conf the range collapses to `QUIT`: `R\r\n\r\n\r\n\x1b[32mMsg. Options: …\x1b[32m(\x1b[0m QUIT\x1b[32m )\x1b[0m>: ` (`amiexpress_sysop.txt:357-360`; loop entry `express.e:11984-11985, 12008-12012`).
+
+This is **BEHAVIOURAL** — the interactive entry point (`msgNum := lastMsgReadConf+1`, clamped to `mailStat.lowestKey`) is unimplemented in Rust. It is the sole remaining gap for this command family.
+
+### R `<num>` out of range / not found — BEHAVIOURAL
+
+- Rust: `R 99\r\n\r\nMessage not found.\r\n` (`MESSAGE_NOT_FOUND_LINE`) for any number with no message.
+- AmiExpress distinguishes two cases (live `amiexpress_read_messages.txt`): reading **past the last message** emits `\r\nThe last message in this conference is <high>\r\n` — the live `R 2` (only msg 1 exists) returned `The last message in this conference is 1` and bounced to the menu; a **gap in the middle** (a deleted/missing file between valid messages) is silent, the read loop simply iterates past it.
+
+So AmiExpress is *not* uniformly silent on a bad number (a live-data correction to the earlier source-derived parity note, which described only the silent mid-gap case): the out-of-range case is a distinct notice. Rust collapses both to a single `Message not found.`. **BEHAVIOURAL** — different control flow and a different (Rust-only-uniform) notice.
+
+### R `<num>` deleted — MATCH
+
+Both emit the deleted notice. Rust `DELETED_MESSAGE_LINE` = `\r\nThat message has been deleted.\r\n\r\n` equals legacy `[..]That message has been deleted.\b\n\b\n` (`express.e:8890`).
+
+### Sub-prompt option string + range — MATCH
+
+- Rust: `\x1b[32mMsg. Options: \x1b[33mA\x1b[36m[,\x1b[33mD][,\x1b[33mM]\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m 1+4 \x1b[32m )\x1b[0m>: ` (`render_read_subprompt`, `wire_text.rs:491`).
+- Legacy: assembled at `express.e:12016-12021`, including the doubled-`[36m` seam when `D`/`M` are suppressed and the `<msgNum>+<highMsgNum-1>` range (`:12010`).
+
+`D` is gated on delete-access (`ACS_DELETE_MESSAGE`, `:12017`) and `M` on sysop-read (`ACS_SYSOP_READ`, `:12018`) in both. The AE live prompt shows `A,D,F,R,L,Q,…` (no `M`) because that test sysop lacks `ACS_SYSOP_READ`; Rust shows `A,D,M,…` because its sysop has it. Same gating, different seeded access — not an implementation difference. The range value differs (`QUIT` on the live AE read vs `1+4` on Rust) because the AE read had landed on/after the last message in its base, where `msgNum > highMsgNum-1` collapses the range to `QUIT` (`express.e:12012`); Rust was positioned on message 1 of 4.
+
+### Sub-prompt `<CR>` / `A`gain / `L`ist / `Q`uit — MATCH
+
+- `<CR>` advances to the next message (legacy `goNextMsg`, `:12082`); Rust live CR moved msg 1 → msg 2.
+- `A`gain re-renders the current message and re-prompts.
+- `L`ist: Rust `\x1b[32mStarting message \x1b[33m[\x1b[0m1\x1b[33m]\x1b[0m: ` == legacy `:8831`; empty input defaults to lowest-not-deleted; the `Msg    Type     From … Subject` header + `------ …` rule + `Public `/`Private` rows match `:8857-8864`.
+- `Q`uit returns to the menu.
+
+### Sub-prompt `?` / `??` help — MATCH (implemented subset)
+
+- Short (`?`): `A>gain / D>elete Message / M>ove / F>orward / R>eply / L>ist / Q>uit / <CR>=Next ( <range> )?` reproduces `express.e:12024-12031` verbatim.
+- Long (`??`): adds `M>ove Message`, `L>ist all messages`, `EH> Edit Message Header` (`:12035-12059`).
+- **COSMETIC (intentional subset):** the long list omits the legacy `NS`, `T/TS/T!/T*`, `K`, `E`, `EM`, `U` entries (`:12041-12056`), documented as out-of-scope in slice B5. Every shared entry matches byte-for-byte.
+
+---
+
+## MS — Mail Scan (multi-conference)
+
+**Command identity.** `MS` is the *same* command in both systems — legacy `internalCommandMS` (`amiexpress/express.e:25250`, dispatched at `:28350`) and Rust `MenuCommand::ScanAllMail`. It is not a renamed or relocated command. (Bare `M` is the ANSI toggle in both; AE also has a distinct `ZOOM` = gather-mail command at `:28390`, unrelated to `MS`.)
+
+**Behaviour summary.** `MS` walks every accessible conference. AE's `internalCommandMS` calls `joinConf(..,FORCE_MAILSCAN_ALL)` over every conf/msgbase; Rust's `scan_all_mail` walks the same set by coordinate. Per base, the legacy `searchNewMail` `currentConf=0` branch (the MS path) prints a `Type/From/Subject/Msg` column table when there is matching unread mail, or `No mail today!` when there is none. Rust reproduces this exactly.
+
+**Wire-format comparison (matches).**
+
+- Header: AE `'\b\nScanning conferences for mail...\b\n\b\n'` (`:25258`) vs Rust `b"\r\nScanning conferences for mail...\r\n\r\n"` — identical text.
+- Conference banner: both emit `\x1b[32mScanning Conference\x1b[33m: \x1b[0m<name> - ` (`:11670`; `render_scan_conference_banner`). Green label / yellow colon / reset all match.
+- Message-base sub-line: both emit ` \x1b[32mMessage Base\x1b[33m: \x1b[0m<base> - `, with a leading CRLF only for the first base (`IF msgBaseNum=1 THEN \b\n`, `:11676`; `render_scan_msgbase_banner` `first_base`).
+- `No mail today!`: identical wording and identical branch (`:11689`; `MAIL_SCAN_NO_MAIL_TODAY`).
+- Listing table: identical — two leading CRLFs, green `Type     From                           Subject                Msg    `, yellow `-------  -----------------------------  ---------------------  -------`, a standalone `\x1b[0m`, then `status(7)  from(29)  subject(21)  \x1b[0m<6-digit msg>` rows (`:11713-11720`; `render_scan_listing_table`). Status is `Public ` for public mail, `Private` otherwise (`:11719`; `scan_row_status`).
+
+In the live transcripts both correctly show `Scanning Conference: <name> - ` / `Message Base: <base> - No mail today!` for empty bases; only the seed values differ (Rust conf 1 lists Main + Programming, AE conf 2 lists New Users + Amiga), which is data, not behaviour.
+
+**Differences.**
+
+- **COSMETIC — line endings.** AE source uses Amiga `\b\n`; Rust emits telnet `\r\n`. Universal translation, not MS-specific.
+- **BEHAVIOURAL — read-it-now prompt is absent in Rust.** When mail is found AE prints `\b\nWould you like to read it now ` and runs `yesNo(1)` (`:11738-11739`); on *Yes* it loops over each matched message via `displayMessage` + `replyPrompt`, dropping the caller into the read/reply flow. Rust's `handle_scan_all_mail` renders the table and returns straight to the menu — no prompt, no drop-into-read. This is an explicit deferral to slices B4/B5.
+- **BEHAVIOURAL — `Found Mail!` line absent in Rust.** AE's single-conf/auto-join path prints `\b\nFound Mail!` (`:11736`); Rust emits this string nowhere.
+- **BEHAVIOURAL — no pagination during the scan.** AE pages the scan: `lineCount:=2` (`:25257`) and `checkForPause()` after each listing row (`:11722`), shown stopping at `(Pause)...Space To Resume: ` in `amiexpress_login.txt`. Rust builds the whole output and flushes once — no `checkForPause`, no `lineCount`, so the scan never pauses regardless of length.
+
+**Verdict:** behavioural — wire format of the scan output matches byte-for-byte, but Rust omits AE's read-it-now prompt/drop-into-read, the `Found Mail!` line, and the mid-scan pagination.
+
+---
+
+## E (Enter Message) and C (Comment to Sysop)
+
+Both systems implement `E` and `C` as line-mode mail composition reached from the main menu: a `To` -> `Subject` -> (`Private`) -> body sequence for `E`, and a sysop-addressed `Subject` -> body sequence for `C`. The composition *behaviour* is broadly equivalent — recipient resolution, unknown-user rejection, conference-access gating, blank-subject abort, default-N private flag — but the rendered prompts and a few control-flow signals diverge. The comparison-test battery deliberately aborts before the editor body on the AmiExpress side, so the editor/save path is only exercised live on the Rust side.
+
+### E — To: prompt
+
+AmiExpress paints a boxed header and an ANSI-coloured `To` prompt with an `(Enter)='ALL'?` default hint, via `msgToHeader()` (`express.e:9999-10000`). It does this for a bare `E`, for an inline `E <to>` (echoing the typed name), and inside `C`. Rust emits a bare `\r\nTo: ` only for a prompted bare `E`, with no box, no ANSI, and no name echo.
+
+- Rust REPR: `b'\r\nTo: '`
+- AE REPR: `b"...\x1b[32m(\x1b[33m------------------------------\x1b[32m)\x1b[0m\r\n     \x1b[36mTo\x1b[33m: \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[0m=\x1b[32m'\x1b[33mALL\x1b[32m'\x1b[32m?\x1b[0m "`
+
+The blank-line `->` `ALL` default is equivalent on both sides, so the prompt decoration/ANSI/box is **COSMETIC**. However, the fact that Rust skips the To-echo/box for inline `E <to>` (AE always shows `To: ... SYSOP` per `express.e:10769-10771`, live `amiexpress_sysop.txt:329-333`) is **BEHAVIOURAL** — the user never gets a visible confirmation of the resolved recipient.
+
+### E / C — Subject: prompt
+
+- Rust REPR: `b'Subject: '`
+- AE REPR: `b"\x1b[36mSubject\x1b[33m: \x1b[32m(\x1b[33mBlank\x1b[32m)\x1b[0m=\x1b[33mabort\x1b[32m?\x1b[0m "` (`express.e:10847` / `8783`)
+
+The ANSI colour and `(Blank)=abort?` hint are **COSMETIC**. The abort *outcome* differs: AE aborts a blank subject silently (bare `\b\n`, `express.e:10855-10856` / `8788-8789`), while Rust writes `\r\nMessage aborted.\r\n` (`POST_ABORTED_LINE`). That silent-vs-notice difference is **BEHAVIOURAL**. (Neither live transcript actually submits a blank subject — AE stops at the prompt, Rust submits a real subject — so this rests on source, not live wire.)
+
+### E — Private (y/N)? prompt
+
+- Rust REPR: `b'Private (y/N)? '`
+- AE: `'         \x1b[36mPrivate '` then `yesNo(2)` renders `\x1b[32m(\x1b[33my\x1b[32m/\x1b[33mN\x1b[32m)\x1b[32m?\x1b[0m ` (`express.e:10861-10862`, `2134`)
+
+Both default to **N** (AE `yesNo(2)` maps CR->`n` at `express.e:2145`; Rust treats only `y`/`Y` as private). The ANSI colour, and the input mechanism (AE single-keystroke `readChar` echoing `Yes`/`No` vs Rust full-line read), are **COSMETIC** — same question, same default, same effect. `C` never shows a Private prompt on either side (the sysop comment is fixed private/`R`).
+
+### E — unknown recipient
+
+- Rust REPR: `b'\r\nUnknown user.\r\n'` (`POST_UNKNOWN_USER_LINE`)
+- AE REPR (live `amiexpress_sysop.txt:319`): `b'User does not exist!!\r\n'` (`express.e:10814`)
+
+Same behaviour (reject, return to menu, no compose). Wording/bang-count differ — **COSMETIC**.
+
+### E — recipient lacks conference access
+
+Not exercised live (the battery only drove the unknown-user path); source-derived.
+
+- AmiExpress: `\b\nUser does not have access to this conference!\b\n\b\n` (`express.e:10838`).
+- NextExpress: `\r\nUser does not have access to this conference.\r\n` (`POST_RECIPIENT_NO_ACCESS_LINE`).
+
+Same behaviour (reject the addressee). **COSMETIC** — AE ends the sentence with `!` and a trailing blank line; Rust uses `.` and no trailing blank.
+
+### E — addressing not allowed (EALL in an external base)
+
+Not exercised live; source-derived.
+
+- AmiExpress: `\b\nCan't use EALL in external message bases!!\b\n\b\n` (`express.e:10806`) — a per-addressing-kind notice.
+- NextExpress: `\r\nThis message base does not accept that addressee.\r\n` (`POST_ADDRESSING_NOT_ALLOWED_LINE`) — one generic notice for all disallowed addressees.
+
+**BEHAVIOURAL (text granularity):** AE emits distinct notices per addressing kind (EALL / ALL); Rust collapses them into a single generic line.
+
+### C — recipient display
+
+AE's `commentToSYSOP` prints the decoration box plus a pre-filled `To: (Enter)='ALL'? SYSOP` line before the Subject prompt (`express.e:8779-8783`, live `amiexpress_sysop.txt:343-347`). Rust's `handle_comment_to_sysop` goes straight to `Subject: ` (`post_mail.rs:116-125`) — the user is never shown that the comment is addressed to the sysop. **BEHAVIOURAL** (a visible step present in one, absent in the other).
+
+### E — body editor and save (LIVE on both sides)
+
+The driver drove a real post all the way through on AmiExpress (`amiexpress_post_and_list.txt`), so the editor UX is now a live-vs-live comparison. They are wholly different — **BEHAVIOURAL**.
+
+AmiExpress first offers its **full-screen editor** and, on decline, drops into a **line editor** with a ruler and line numbers, ending in a save menu:
+```
+         Private (y/N)? Yes
+FullScreen Editor (y/N)? No
+
+   Enter your text. (Enter) alone to end. (75 chars/line)
+   (|-------|-------|-------|-------|-------|-------|-------|-------|-------|--)
+1 > This is a PRIVATE message addressed to sysop.
+2 > Posted live via the comparison harness to show
+3 > how AmiExpress renders message bodies.
+4 >
+
+Msg. Options: A,C,D,E,F,L,S,X,? >:S
+
+Saving...Message Number 1...done!
+```
+(The save menu `Msg. Options: A,C,D,E,F,L,S,X,?` — A>bort, C>ontinue, D>elete lines, E>dit, F>ile attach, L>ist, S>ave, X>fer, `express.e:10375-10389` — is a *different* `Msg. Options:` prompt from the read sub-prompt that shares the prefix.)
+
+NextExpress ships a minimal line editor with a single terminator and prints the saved number:
+```
+Enter your message. End with a single '.' on a line by itself; '/A' aborts.
+...
+Message #N saved.
+```
+(`rust_sysop.txt`; `POST_BODY_PROMPT`, `render_post_success`.)
+
+Both end-states match in spirit (the message is saved and the user is told). The editors differ entirely: AmiExpress is a ruler-and-line-number editor with a multi-option save menu and a `FullScreen Editor (y/N)?` fork (`yesNo(2)`, default N, `express.e:10099-10100`) and reports `Saving...Message Number <n>...done!`; NextExpress is a `.`/`/A`-terminated line editor reporting `Message #<n> saved.`. The message-number echo is a NextExpress UX addition (AmiExpress's `forwardMSG`/`Saving...` paths print no number).
+
+### Notes / corrections vs the earlier source-derived parity table
+
+The live transcripts corroborate the earlier source-derived notes for the `E`/`C` family: plain Rust prompts vs ANSI-decorated AE prompts, `Unknown user.` vs `User does not exist!!`, and the missing To/decoration echo for inline `E <to>` and for `C`. The private-flag default is confirmed **N** on both sides (not the Y/N mismatch an early reading suggested) — against `yesNo(2)` and the Rust matcher. The AE menu prompt is labelled `NextExpress Reference` — this is the reference AmiExpress build used as the parity oracle, not a separate system.
+
+---
+
+## Unknown Command, Retired RP/FW/K/MV/EH, and N
+
+Logged in as sysop on both sides (Rust conf 1 "Main", AE conf 2 "Amiga"). The probes were `RP 1`, `FW 1`, `K 1`, `MV 1`, `EH 1`, `N`, and a genuinely-bogus `FOObar`/`FOOBAR`.
+
+**IMPORTANT correction to the earlier source-derived parity note.** It claimed AmiExpress is *silent* on unknown commands ("no `Unknown command.` string in express.e"). The live AE transcript and the source both refute this: AE emits a notice. The real difference here is the *string*, not silent-vs-notice.
+
+### Unknown command (`FOObar` / `FOOBAR`)
+
+Both reject and re-prompt; the session continues. The notice strings differ:
+
+- Rust: `b"FOObar\r\nUnknown command. Type G to log off.\r\n..."` (`UNKNOWN_COMMAND_LINE`, `wire_text.rs:203`), notice on the line immediately after the echo.
+- AE: `b"FOOBAR\r\n\r\nNo such command!!  Use '?' for command list.\r\n\r\n\r\n..."` (`express.e:28397`: `aePuts('\b\nNo such command!!  Use ''?'' for command list.\b\n\b\n')`), wrapped in blank lines.
+
+**COSMETIC** — different wording and blank-line framing; both notify and re-prompt.
+
+After the notice, **Rust redraws the entire ASCII-art menu** (banner + all sections, ~30 lines) before the prompt (`menu_flow/mod.rs:80-83`, non-expert), whereas **AE prints only the notice + the one-line prompt** — no full menu re-draw. **COSMETIC** for this group (it is the same redraw cadence for every command, not specific to unknown), but it sharply changes screen volume.
+
+AE additionally runs `IF res=RESULT_NOT_ALLOWED AND privcmd=FALSE THEN higherAccess()` on the fall-through (`express.e:28400`); Rust's `MenuCommand::Unknown` arm has no such hook. Not observable for a plain bogus token but a **BEHAVIOURAL** branch present only in AE.
+
+### `N`
+
+**BEHAVIOURAL.** AE: `N` is a real command — `internalCommandN` (`express.e:28352 → :25275`) gates on `ACS_FILE_LISTINGS` and tail-calls `myNewFiles` (the new-**files** scan / AquaScan). The AE menu advertises `[N]......nEW FILES SCAN` and the transcript drops into the interactive `--[ AquaScan v1.0 ... ]` date/directory prompts. Rust: `parse_menu_command("N") == MenuCommand::Unknown` (`menu_command.rs:260`), so `N` yields the unknown-command notice. This is the intentional Tier B B2 removal of the old `N`→mail-scan binding; the legacy `N`=new-files scan is deferred to Tier D.
+
+### `RP 1`, `FW 1`, `K 1`, `MV 1`, `EH 1` (retired top-level forms)
+
+Both sides reject all five at the top level — but for different reasons and with one Rust inconsistency:
+
+- AE never had them as top-level commands; `R>eply`, `F>orward`, `D>elete`, `M>ove`, and `EH` live inside the `R`/`readMSG` sub-prompt. AE's menu does not list them, so AE's menu and dispatcher agree.
+- Rust retired them from the dispatcher in Tier B B8, so `RP 1`/`FW 1`/`K 1`/`MV 1`/`EH 1` all hit `MenuCommand::Unknown` → `Unknown command. Type G to log off.`
+
+**BEHAVIOURAL (Rust internal inconsistency).** The Rust main menu **still advertises** all five as top-level commands — the transcript shows `RP <n>   Reply to message number <n>`, `FW <n>   Forward message number <n>` in MESSAGES and `K <n>   Kill/delete message number <n>`, `MV <n>   Move message number <n>`, `EH <n>   Edit message header for number <n>` in MAIL ADMIN — yet every one is rejected as unknown. The menu text was not updated when the commands were retired. AE has no equivalent menu/dispatcher mismatch.
+
+### Net
+
+- Unknown-command handling: **COSMETIC** (both notify; AE's `No such command!!  Use '?' for command list.` vs Rust's `Unknown command. Type G to log off.`). The "AE is silent" claim in the brief/parity doc is wrong per live data.
+- `N`: **BEHAVIOURAL** (real new-files scan in AE; Unknown in Rust, deferred to Tier D).
+- `RP/FW/K/MV/EH`: both reject, but Rust **advertises-then-rejects** — a **BEHAVIOURAL** internal inconsistency absent in AE.
+
+---
+
+## G — Goodbye / Log Off
+
+Logs the user out of the BBS from the main menu and drops the connection.
+
+### G (immediate logoff)
+
+**Behaviour.** Both implementations echo the typed command, optionally display a sysop-supplied logoff splash screen, then terminate the session and close the connection. Beyond that the sequences diverge.
+
+**Wire format (Rust, sysop, `comparison/transcripts/rust_sysop.txt:1701`):**
+```
+b'G\r\nGoodbye!\r\n'
+```
+After echoing `G\r\n`, Rust looks up the optional logoff screen (`menu_flow/mod.rs:134`, `Screens/LOGOFF.txt`). On a fresh install the asset is absent and `FALLBACK_LOGOFF = b""` (`file_screen_repository.rs:66`), so it is skipped. Rust then writes the literal `Goodbye!\r\n` (`wire_text.rs:206`, `GOODBYE_LINE`) and closes.
+
+**Wire format (AmiExpress, sysop, `comparison/transcripts/amiexpress_sysop.txt:408`, `comparison/transcripts/amiexpress_login.txt:111`):**
+```
+G Y\r\n
+\r\n
+** AutoSaving File Flags **\r\n
+<BEL>\r\n
+Click...<ESC[0m>
+```
+AE emits **no** "Goodbye!" text. After the optional `SCREEN_LOGOFF` splash (gated at `express.e:8187`), `internalCommandG` calls `saveFlagged()` (`express.e:25064`), which prints `'\b\n** AutoSaving File Flags **\b\n'` (rendered `\r\n…\r\n`) and rings the bell via `sendBELL()` (`express.e:2803-2804`). It then prints `Click...` (`express.e:8191`) and drops carrier.
+
+- **COSMETIC** — Closing wording. Rust's `Goodbye!\r\n` vs AE's `** AutoSaving File Flags **` + `<BEL>` + `Click...`. Entirely different closing text, but both merely mark end-of-session ahead of the identical carrier drop.
+- **COSMETIC** — AE rings the bell (`<BEL>`) on logoff; Rust does not. Audible only.
+- **COSMETIC** — AE prints a `Click...` teardown notice before dropping DTR; Rust prints nothing equivalent.
+
+### G vs `G Y` — the flagged-file confirm (BEHAVIOURAL)
+
+The battery forces logoff with `G Y`, and that argument matters.
+
+In AE, `internalCommandG` (`express.e:25047`) sets `auto:=paramsContains('Y')` (`25053`). When `auto=FALSE` (plain `G`) it calls `checkFlagged()` (`25058`):
+- if files are flagged, the user is **prompted to confirm/abort** the logoff;
+- if nothing is flagged (`mystat=0`), it prints `\b\n` and **RETURNs to the menu without logging off** (`25059-25062`).
+
+Only `G Y` (or flagged files + confirm) reaches the unconditional `saveFlagged()` / `setEnvStat(ENV_LOGOFF)` path.
+
+Rust's `MenuCommand::Logoff` (`menu_flow/mod.rs:125-139`) has no flagged-file model, no confirm prompt, and no menu-return branch — `G` always logs off immediately.
+
+- **BEHAVIOURAL** — Plain `G` in Rust behaves like AE's `G Y` (immediate logoff), never like AE's plain `G` (which confirms, or returns to the menu when nothing is flagged). Different control flow and a missing prompt.
+- **BEHAVIOURAL** — AE runs `saveFlagged()` (persist/clear `Partdownload` flag files, `express.e:25064/2798`) and `saveHistory()` (`25065`) on logoff. Rust performs neither. Because Rust has no flagged-file or history feature yet, this is a no-op functional gap today rather than data loss — but it is a missing side effect, not just cosmetic text.
+
+### Note on the sysop gate
+
+In AE, both `SCREEN_LOGOFF` and the `Click...` line are guarded by `logonType<>LOGON_TYPE_SYSOP` (`express.e:8187`, `8191`). The live `amiexpress_sysop.txt` transcript nonetheless shows `Click...`, so the observed teardown notice is taken from the live wire (authoritative) rather than the source gate. Rust gates its logoff splash on asset presence (empty fallback) rather than on logon type; the practical result on a fresh install — no splash shown — matches.
+
+---
+
+## Notable findings
+
+The most important behavioural gaps, in rough order of user impact:
+
+1. **No-arg `J` / `R` are one-line rejections in Rust, interactive sub-flows in AE.** `J` with no/invalid/out-of-range argument and bare `R` all drop into interactive prompts in AmiExpress (`Conference Number (1-2): `, the readMSG loop at the first unread). Rust replaces these with single-line usage/error messages (`Usage: J <conference-number>`, `Invalid conference number.`, `Usage: R <message-number>`) and returns to the menu. This is the single largest interaction-model divergence.
+
+2. **`J 99` (out of range): silent fall-through-to-Main vs interactive re-prompt.** Rust prints the legacy "no access" string and then *silently joins the first accessible conference*, whereas AE re-prompts and stays put. Rust reaches a legacy string under a condition the legacy never uses for it. The live AE transcript contradicts treating `J 99` as a no-access notice.
+
+3. **Unknown-command handling is a NOTICE on both sides — not silent-vs-notice.** Correcting the earlier source-derived parity note (which described AE as silent): AE emits `No such command!!  Use '?' for command list.` (blank-line framed); Rust emits `Unknown command. Type G to log off.`. The difference is wording and framing (COSMETIC), not presence-vs-absence.
+
+4. **`N` is a real new-files scan (AquaScan) in AE, but `Unknown` in Rust.** AE drops into the interactive `--[ AquaScan v1.0 ]` new-files flow; Rust rejects `N`. This is the intentional Tier B removal of the old `N`→mail-scan binding, with the legacy new-files scan deferred to Tier D.
+
+5. **The Rust menu advertises retired commands it then rejects.** `RP`/`FW`/`K`/`MV`/`EH` are still listed in the Rust main menu (MESSAGES and MAIL ADMIN sections) but every one now returns `Unknown command.`. The menu text was not updated when Tier B B8 retired them — an internal menu/dispatcher inconsistency with no equivalent in AE.
+
+6. **`mins. left` shows `0` in Rust vs `599` in AE — seed data, not logic.** Both use identical arithmetic and rendering; the Rust sysop seed leaves `time_limit_per_call = 0`, so the prompt reads `0`. Cosmetic, but visually jarring.
+
+7. **AE streams rich post-login presentation that Rust omits entirely.** AmiExpress paginates the login mail scan (two `(Pause)...Space To Resume` gates), renders a per-conference stats block (`Total messages` / `Last message auto scanned` / `Last message read`) and a full user-stats / Uploads-Downloads-Ratio screen — none of which Rust emits. Rust's login streams straight to the menu with a single `No new mail.` line.
+
+8. **AE's menu is an elaborate per-conference ANSI art file; Rust's is a compact embedded ASCII block.** AE loads a configurable `/X`-style ANSI logo + bracketed coloured command grid ending in `Now attending to user: sysop`; Rust embeds a fixed `.oO(===[ NextExpress :: MAIN MENU ]===)Oo.` box + figlet + uncoloured list, with no "Now attending" trailer.
+
+9. **`MS` matches byte-for-byte but stops short of AE's interactivity.** The scan output (header, conference/message-base banners, `No mail today!`, listing table) is an exact wire match, but Rust omits AE's `Would you like to read it now` prompt and drop-into-read, the `Found Mail!` line, and the mid-scan `checkForPause()` pagination.
+
+10. **`S` shares an exact six-row core but Rust implements only a subset.** The shared rows are byte-identical, yet Rust omits the `Area Name`/`Caller Num.` lead-in, the `Online Baud`/CPS/`Protocol`/`Sysop Here` block, and the entire Uploads/Downloads ratio table (deferred to slice A11).
+
+11. **`VER` drops AE's `Registered to NONE.` line.** A deliberate omission (NextExpress has no registration-key concept); the rest of the banner is cosmetic re-framing plus a UTF-8-vs-Latin-1 `©` byte-encoding difference worth noting for Latin-1-decoding clients.
+
+12. **`G` (plain) always logs off in Rust, but AE's plain `G` confirms or returns to the menu.** Rust's `G` behaves like AE's `G Y` unconditionally; AE's plain `G` runs `checkFlagged()` and returns to the menu when nothing is flagged. Rust also performs none of AE's logoff side effects (`saveFlagged()`, `saveHistory()`) — a no-op gap today, but a missing side effect.
+
+13. **Several Rust-only notice lines have no legacy counterpart.** `Authenticated.` (post-login), `Message not found.` (failed `R <num>`), `Invalid conference number.` (`J abc`), and `Message aborted.` (blank subject) are all notices Rust emits where AE is silent or interactive. Individually minor; collectively they make Rust chattier than the legacy on edge paths.
+
+---
+
+## Cross-cutting wire-format notes
+
+| Item | AmiExpress | NextExpress | Verdict |
 |---|---|---|---|
-| Line terminator | `\b\n` (CR LF) | `\r\n` (CR LF) | ✓ Identical on the wire. |
-| ANSI colour escapes | Liberally used in prompts (`[32m` green / `[33m` yellow / `[36m` cyan / `[0m` reset) | Used in header / explicit-join blocks only; missing from most prompts | **Significant.** Add ANSI to To/Subject/Private prompts. |
-| Trailing blank lines | Legacy notices often end with `\b\n\b\n` (double CRLF, vertical breathing room) | Mixed — some have it, some don't | **Drift.** Audit and normalise. |
-| Yes/No prompt default | `yesNo(1)` → `(Y/n)?` default **Y** (CR→"y", `:2136,2144`); `yesNo(2)` → `(y/N)?` default **N** (CR→"n", `:2134,2145`). `(y/N)?`/default-N is the common case (e.g. Private, `:10862`). | Hard-coded `(y/N)?` everywhere | **Minor.** Default-N already matches the common `yesNo(2)` sites; the gap is ANSI colour and the few `yesNo(1)` (default-Y) sites, e.g. searchNewMail's "read it now" (`:11740`). |
-| "Sysop only" denied | (Varies per gate) | `\r\nYou do not have permission to perform that operation.\r\n` | The legacy notice depends on the gate; we use a single string. Acceptable. |
-| Source-not-found for K/MV/EH/RP/FW | (n/a — these aren't menu commands in legacy) | `\r\nNo such message in this base.\r\n` | Greenfield text. Keep. |
+| Line terminator | `\b\n` (Amiga E CR LF) | `\r\n` | ✓ Identical on the wire. |
+| ANSI colour in prompts | Liberal (`[32m`/`[33m`/`[36m` in To/Subject/Private/menu) | Present in header/join/toggles/menu-prompt; **plain** on the `E`/`C` To/Subject/Private prompts | Gap — add ANSI to the compose prompts. |
+| Trailing blank lines | Notices often end `\b\n\b\n`; one extra `\r\n` after toggles | Mixed — some notices have it, some don't | Audit & normalise. |
+| Yes/No default | `yesNo(2)` → `(y/N)?` default **N** (the common case, e.g. Private) | Hard-coded `(y/N)?`, default **N** | ✓ Default matches; gap is ANSI + the rarer `yesNo(1)` default-Y sites (e.g. scan's "read it now"). |
+| "Sysop only" denied | Varies per gate | Single `You do not have permission to perform that operation.` | Acceptable. |
+| Source-not-found for K/MV/EH | n/a (these are R-sub-prompt verbs in AE, not menu commands) | `No such message in this base.` (now reachable only inside the `R` sub-prompt) | Greenfield; keep. |
 
-## 3. Summary
+## Recommended fixes & sequencing
 
-- **Verbatim matches:** auto-rejoin, explicit join, J no-access, deleted-message read, SCREEN_LOGOFF rendering on G.
-- **Drift to fix verbatim (text-only, easy):** unknown user (17), recipient no-access (18), Goodbye trailing CRLF (1), Subject prompt's ANSI (15), Private prompt's ANSI (16).
-- **Behaviour mismatches (semantic, harder):** Subject blank silent vs notice (15), unknown command silent vs notice (27), `J` / `R` no-arg interactive prompts (2, 7). (The Private default is *not* a mismatch — both sides default No; see row 16.)
-- **Major missing surface:** R sub-prompt (7, 8) — the legacy's *primary* mail UI and the natural home for K/MV/EH/FW/RP. **Slice candidate (Tier B, B4–B5).**
-- **`MS` multi-conf walk + listing rows (11) — Done (Slices B1 + B3):** `MS` now walks every accessible conference and prints the `Type/From/Subject/Msg` table per base. Deferred to B4/B5: the `Would you like to read it now ` prompt + drop-into-read. `N` rebind off mail (12) — Done (Slice B2): `N` is now an unknown command pending the Tier D new-files scan.
-- **Acceptable greenfield divergences:** message-number echo on save (20); source-not-found notices for K/MV/EH (placeholder until the R sub-prompt lands).
+Carried over and updated from the original parity table (the R sub-prompt and the
+`MS` multi-conf walk it listed as pending have since shipped). Roughly in order of
+effort vs. parity gain:
 
-## 4. Recommended sequencing
+1. **Quick text fixes** (`wire_text.rs`, byte-for-byte parity, tiny diffs): E recipient-no-access → end with `!` + trailing blank (`express.e:10838`); EALL/ALL → distinct per-addressing notices (`:10806`); add the second trailing `\r\n` to `Goodbye`.
+2. **ANSI on the compose prompts** — decorate the `E`/`C` `To:` / `Subject:` / `Private` prompts to match the legacy `(Enter)='ALL'?` / `(Blank)=abort?` boxes. Defaults already match; do **not** flip them.
+3. **Interactive no-arg sub-flows** (largest interaction-model gap): bare `J` → `Conference Number (1-N): ` prompt (blank = abort); bare `R` → enter the readMSG loop at the first unread instead of the usage line.
+4. **Menu hygiene** — stop advertising retired `RP`/`FW`/`K`/`MV`/`EH` in the menu asset (they now reject as Unknown), and reconsider the chatty Rust-only notices (item 13 above).
+5. **`mins. left`** — seed a real per-call time budget so the prompt stops showing `0`.
+6. **Login / `S` parity** (larger): flagged-file confirm on plain `G` (+ `saveFlagged`/`saveHistory`); the richer `S` screen (Area/Caller lead-in, baud/CPS/protocol/sysop block, Uploads/Downloads ratio table); login mail-scan pagination + the post-login stats screen.
+7. **Tier D** — restore `N` as the new-files scan (currently Unknown).
 
-1. **Quick wins** (text-only edits in `wire_text.rs`): items 1, 14, 17, 18, 19 — small diff, brings several notices to verbatim parity.
-2. **ANSI gap** (15, 16, plus the cross-cutting ANSI / `yesNo(1)` sites): one slice — add ANSI to the To/Subject/Private prompts. Defaults already match; do not flip them.
-3. **R sub-prompt** — substantial; lands the natural home for K/MV/EH/FW/RP. Phase 9 slice or dedicated sub-phase.
-4. **Interactive `J` no-arg prompt** (2): one small slice once the JOINCONF asset story is settled.
-5. **Slices B1 / B3 — Done:** the `MS` multi-conf walk and its listing table shipped together.
+## Methodology / sources of truth
 
-## 5. Methodology
-
-- Source of truth on our side: `rust/src/app/menu_command.rs` (parser),
-  `rust/src/app/menu_flow/mod.rs` (dispatch), `rust/src/app/wire_text.rs`
-  (byte literals).
-- Source of truth on the legacy side: `amiexpress/express.e`,
-  procedures starting with `PROC internalCommand…` and the helpers they
-  call (`enterMSG`, `readMSG`, `commentToSYSOP`, `searchNewMail`,
-  `joinConf`).
-- Each row reflects a manual cross-check of the exact byte sequence
-  each side emits; behavioural notes (silent vs notice, default Y vs N)
-  come from reading the surrounding control flow, not just the prompt
-  string.
+- **Our side:** `rust/src/app/menu_command.rs` (parser), `rust/src/app/menu_flow/` (dispatch + sub-flows), `rust/src/app/wire_text.rs` (byte literals).
+- **Legacy side:** `amiexpress/express.e` — `PROC internalCommand…` procedures and the helpers they call (`enterMSG`, `readMSG`, `commentToSYSOP`, `searchNewMail`, `joinConf`, `edit`).
+- **Live evidence:** the segmented telnet transcripts in [`comparison/transcripts/`](./comparison/transcripts/), captured by the drivers in [`comparison/harness/`](./comparison/harness/). Each row reflects the exact byte sequence each side emits live; where the live wire contradicts a source reading, the live transcript wins (noted inline).

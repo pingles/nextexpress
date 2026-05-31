@@ -1,0 +1,1708 @@
+
+@@@@@ CONNECT / banner @@@@@
+----- RENDER -----
+                               .\r\n
+                               :________\r\n
+  _____ ______ ___________ ____|       / __________\r\n
+  \_   \      \    ______/     |      /       ____/\r\n
+ _/   \ \      \_     /  \_    _      \_        \_\r\n
+ \____ \________/ ________/    |_______/ ________/\r\n
+         next express   \______:\r\n
+                               :\r\n
+NextExpress (93e5d36) Copyright ⟨c2⟩⟨a9⟩2026\r\n
+AmiExpress 5 Copyright ⟨c2⟩⟨a9⟩2018-2023 Darren Coles\r\n
+\r\n
+Enter your Name: 
+----- REPR -----
+b'                               .\r\n                               :________\r\n  _____ ______ ___________ ____|       / __________\r\n  \\_   \\      \\    ______/     |      /       ____/\r\n _/   \\ \\      \\_     /  \\_    _      \\_        \\_\r\n \\____ \\________/ ________/    |_______/ ________/\r\n         next express   \\______:\r\n                               :\r\nNextExpress (93e5d36) Copyright \xc2\xa92026\r\nAmiExpress 5 Copyright \xc2\xa92018-2023 Darren Coles\r\n\r\nEnter your Name: '
+
+@@@@@ LOGIN name @@@@@
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+PassWord: 
+----- REPR -----
+b'sysop\r\nPassWord: '
+
+@@@@@ LOGIN password -> menu @@@@@
+>>> SENT b'sysop\r'
+----- RENDER -----
+*****\r\n
+Authenticated.\r\n
+\r\n
+Conference 1: Main Auto-ReJoined\r\n
+\r\n
+No new mail.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"*****\r\nAuthenticated.\r\n\r\nConference 1: Main Auto-ReJoined\r\n\r\nNo new mail.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ ? (redisplay menu, expert off) @@@@@
+>>> SENT b'?\r'
+----- RENDER -----
+?\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"?\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ VER @@@@@
+>>> SENT b'VER\r'
+----- RENDER -----
+VER\r\n
+\r\n
+NextExpress 0.1.0 (93e5d36) Copyright ⟨c2⟩⟨a9⟩2026 Paul Ingles\r\n
+\r\n
+Based on Versions:\r\n
+  AmiExpress 5 Copyright ⟨c2⟩⟨a9⟩2018-2023 Darren Coles\r\n
+  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n
+  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n
+\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"VER\r\n\r\nNextExpress 0.1.0 (93e5d36) Copyright \xc2\xa92026 Paul Ingles\r\n\r\nBased on Versions:\r\n  AmiExpress 5 Copyright \xc2\xa92018-2023 Darren Coles\r\n  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ T (time) @@@@@
+>>> SENT b'T\r'
+----- RENDER -----
+T\r\n
+\r\n
+It is 05-31-26 10:02:42\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"T\r\n\r\nIt is 05-31-26 10:02:42\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ S (stats) @@@@@
+>>> SENT b'S\r'
+----- RENDER -----
+S\r\n
+\r\n
+⟨ESC[32m⟩User Number⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩Lst Date On⟨ESC[33m⟩:⟨ESC[0m⟩ 31-May-2026 09:45:19\r\n
+⟨ESC[32m⟩Security Lv⟨ESC[33m⟩:⟨ESC[0m⟩ 255\r\n
+⟨ESC[32m⟩# Times On ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+⟨ESC[32m⟩Times Today⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩Msgs Posted⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"S\r\n\r\n\x1b[32mUser Number\x1b[33m:\x1b[0m 1\r\n\x1b[32mLst Date On\x1b[33m:\x1b[0m 31-May-2026 09:45:19\r\n\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\x1b[32m# Times On \x1b[33m:\x1b[0m 2\r\n\x1b[32mTimes Today\x1b[33m:\x1b[0m 1\r\n\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 0\r\n\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ Q on @@@@@
+>>> SENT b'Q\r'
+----- RENDER -----
+Q\r\n
+\r\n
+Quiet Mode On\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"Q\r\n\r\nQuiet Mode On\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ Q off @@@@@
+>>> SENT b'Q\r'
+----- RENDER -----
+Q\r\n
+\r\n
+Quiet Mode Off\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"Q\r\n\r\nQuiet Mode Off\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ X on @@@@@
+>>> SENT b'X\r'
+----- RENDER -----
+X\r\n
+\r\n
+Expert mode enabled\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'X\r\n\r\nExpert mode enabled\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): '
+
+@@@@@ ? (redisplay menu, expert ON) @@@@@
+>>> SENT b'?\r'
+----- RENDER -----
+?\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"?\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ X off @@@@@
+>>> SENT b'X\r'
+----- RENDER -----
+X\r\n
+\r\n
+Expert mode disabled\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"X\r\n\r\nExpert mode disabled\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ H (help) @@@@@
+>>> SENT b'H\r'
+----- RENDER -----
+H\r\n
+\r\n
+\r\n
+Sorry Help is unavailable at this time.\r\n
+\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"H\r\n\r\n\r\nSorry Help is unavailable at this time.\r\n\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ ^ test (topic help) @@@@@
+>>> SENT b'^ test\r'
+----- RENDER -----
+^ test\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"^ test\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ ^ nonexistent (topic miss) @@@@@
+>>> SENT b'^ zzznope\r'
+----- RENDER -----
+^ zzznope\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"^ zzznope\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ J (no arg) @@@@@
+>>> SENT b'J\r'
+----- RENDER -----
+J\r\n
+\r\n
+Usage: J <conference-number>\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"J\r\n\r\nUsage: J <conference-number>\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ J 2 (join Programming) @@@@@
+>>> SENT b'J 2\r'
+----- RENDER -----
+J 2\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Programming\r\n
+\r\n
+No new mail.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Programming⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"J 2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Programming\r\n\r\nNo new mail.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mProgramming\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ MS in conf 2 (empty) @@@@@
+>>> SENT b'MS\r'
+----- RENDER -----
+MS\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Main - \r\n
+ ⟨ESC[32m⟩Message Base⟨ESC[33m⟩: ⟨ESC[0m⟩main - No mail today!\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Programming - \r\n
+ ⟨ESC[32m⟩Message Base⟨ESC[33m⟩: ⟨ESC[0m⟩main - No mail today!\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Programming⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"MS\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mMain - \r\n \x1b[32mMessage Base\x1b[33m: \x1b[0mmain - No mail today!\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mProgramming - \r\n \x1b[32mMessage Base\x1b[33m: \x1b[0mmain - No mail today!\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mProgramming\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ J 1 (back to Main) @@@@@
+>>> SENT b'J 1\r'
+----- RENDER -----
+J 1\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Main\r\n
+\r\n
+No new mail.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"J 1\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Main\r\n\r\nNo new mail.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ J 99 (no access) @@@@@
+>>> SENT b'J 99\r'
+----- RENDER -----
+J 99\r\n
+\r\n
+You do not have access to the requested conference\r\n
+\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Main\r\n
+\r\n
+No new mail.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"J 99\r\n\r\nYou do not have access to the requested conference\r\n\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Main\r\n\r\nNo new mail.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ J abc (invalid) @@@@@
+>>> SENT b'J abc\r'
+----- RENDER -----
+J abc\r\n
+\r\n
+Invalid conference number.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"J abc\r\n\r\nInvalid conference number.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ R (no arg) @@@@@
+>>> SENT b'R\r'
+----- RENDER -----
+R\r\n
+\r\n
+Usage: R <message-number>\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"R\r\n\r\nUsage: R <message-number>\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ R 99 (not found) @@@@@
+>>> SENT b'R 99\r'
+----- RENDER -----
+R 99\r\n
+\r\n
+Message not found.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"R 99\r\n\r\nMessage not found.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ R 4 (deleted) @@@@@
+>>> SENT b'R 4\r'
+----- RENDER -----
+R 4\r\n
+\r\n
+That message has been deleted.\r\n
+\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"R 4\r\n\r\nThat message has been deleted.\r\n\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ R 1 (read -> sub-prompt) @@@@@
+>>> SENT b'R 1\r'
+----- RENDER -----
+R 1\r\n
+\r\n
+⟨ESC[32m⟩Date   ⟨ESC[33m⟩:⟨ESC[0m⟩ 2026-05-12T21:48:50.679071Z  ⟨ESC[32m⟩Number⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩To     ⟨ESC[33m⟩:⟨ESC[0m⟩ sysop  ⟨ESC[32m⟩Recv'd⟨ESC[33m⟩:⟨ESC[0m⟩ 2026-05-12T21:48:56.974019Z\r\n
+⟨ESC[32m⟩From   ⟨ESC[33m⟩:⟨ESC[0m⟩ sysop  ⟨ESC[32m⟩Status⟨ESC[33m⟩:⟨ESC[0m⟩ Private Message\r\n
+⟨ESC[32m⟩Subject⟨ESC[33m⟩:⟨ESC[0m⟩ hello\r\n
+⟨ESC[32m⟩Conf   ⟨ESC[33m⟩:⟨ESC[0m⟩ [1] Main\r\n
+\r\n
+Hello\r\n
+This is a test\r\n
+\r\n
+⟨ESC[32m⟩Msg. Options: ⟨ESC[33m⟩A⟨ESC[36m⟩,⟨ESC[33m⟩D,⟨ESC[33m⟩M⟨ESC[36m⟩,⟨ESC[33m⟩F⟨ESC[36m⟩,⟨ESC[33m⟩R⟨ESC[36m⟩,⟨ESC[33m⟩L⟨ESC[36m⟩,⟨ESC[33m⟩Q⟨ESC[36m⟩,⟨ESC[33m⟩?⟨ESC[36m⟩,⟨ESC[33m⟩??⟨ESC[36m⟩,⟨ESC[32m⟩<⟨ESC[33m⟩CR⟨ESC[32m⟩> ⟨ESC[32m⟩(⟨ESC[0m⟩ 1+4 ⟨ESC[32m⟩ )⟨ESC[0m⟩>: 
+----- REPR -----
+b"R 1\r\n\r\n\x1b[32mDate   \x1b[33m:\x1b[0m 2026-05-12T21:48:50.679071Z  \x1b[32mNumber\x1b[33m:\x1b[0m 1\r\n\x1b[32mTo     \x1b[33m:\x1b[0m sysop  \x1b[32mRecv'd\x1b[33m:\x1b[0m 2026-05-12T21:48:56.974019Z\r\n\x1b[32mFrom   \x1b[33m:\x1b[0m sysop  \x1b[32mStatus\x1b[33m:\x1b[0m Private Message\r\n\x1b[32mSubject\x1b[33m:\x1b[0m hello\r\n\x1b[32mConf   \x1b[33m:\x1b[0m [1] Main\r\n\r\nHello\r\nThis is a test\r\n\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m,\x1b[33mD,\x1b[33mM\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m 1+4 \x1b[32m )\x1b[0m>: "
+
+@@@@@   sub: ? (short help) @@@@@
+>>> SENT b'?\r'
+----- RENDER -----
+?\r\n
+⟨ESC[33m⟩A⟨ESC[32m⟩>⟨ESC[36m⟩gain⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩D⟨ESC[32m⟩>⟨ESC[36m⟩elete Message⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩M⟨ESC[32m⟩>⟨ESC[36m⟩ove⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩F⟨ESC[32m⟩>⟨ESC[36m⟩orward⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩R⟨ESC[32m⟩>⟨ESC[36m⟩eply⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩L⟨ESC[32m⟩>⟨ESC[36m⟩ist⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩Q⟨ESC[32m⟩>⟨ESC[36m⟩uit⟨ESC[0m⟩\r\n
+⟨ESC[32m⟩<⟨ESC[33m⟩CR⟨ESC[32m⟩>⟨ESC[0m⟩=⟨ESC[33m⟩Next ⟨ESC[32m⟩(⟨ESC[0m⟩ 1+4 ⟨ESC[32m⟩ )⟨ESC[0m⟩? 
+----- REPR -----
+b'?\r\n\x1b[33mA\x1b[32m>\x1b[36mgain\x1b[0m\r\n\x1b[33mD\x1b[32m>\x1b[36melete Message\x1b[0m\r\n\x1b[33mM\x1b[32m>\x1b[36move\x1b[0m\r\n\x1b[33mF\x1b[32m>\x1b[36morward\x1b[0m\r\n\x1b[33mR\x1b[32m>\x1b[36meply\x1b[0m\r\n\x1b[33mL\x1b[32m>\x1b[36mist\x1b[0m\r\n\x1b[33mQ\x1b[32m>\x1b[36muit\x1b[0m\r\n\x1b[32m<\x1b[33mCR\x1b[32m>\x1b[0m=\x1b[33mNext \x1b[32m(\x1b[0m 1+4 \x1b[32m )\x1b[0m? '
+
+@@@@@   sub: ?? (long help) @@@@@
+>>> SENT b'??\r'
+----- RENDER -----
+??\r\n
+⟨ESC[33m⟩A⟨ESC[32m⟩>⟨ESC[36m⟩gain⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩D⟨ESC[32m⟩>⟨ESC[36m⟩elete Message⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩M⟨ESC[32m⟩>⟨ESC[36m⟩ove Message⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩F⟨ESC[32m⟩>⟨ESC[36m⟩orward⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩R⟨ESC[32m⟩>⟨ESC[36m⟩eply⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩L⟨ESC[32m⟩>⟨ESC[36m⟩ist all messages⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩EH⟨ESC[32m⟩>⟨ESC[36m⟩ Edit Message Header⟨ESC[0m⟩\r\n
+⟨ESC[33m⟩Q⟨ESC[32m⟩>⟨ESC[36m⟩uit⟨ESC[0m⟩\r\n
+⟨ESC[32m⟩<⟨ESC[33m⟩CR⟨ESC[32m⟩>⟨ESC[0m⟩=⟨ESC[33m⟩Next ⟨ESC[32m⟩(⟨ESC[0m⟩ 1+4 ⟨ESC[32m⟩ )⟨ESC[0m⟩? 
+----- REPR -----
+b'??\r\n\x1b[33mA\x1b[32m>\x1b[36mgain\x1b[0m\r\n\x1b[33mD\x1b[32m>\x1b[36melete Message\x1b[0m\r\n\x1b[33mM\x1b[32m>\x1b[36move Message\x1b[0m\r\n\x1b[33mF\x1b[32m>\x1b[36morward\x1b[0m\r\n\x1b[33mR\x1b[32m>\x1b[36meply\x1b[0m\r\n\x1b[33mL\x1b[32m>\x1b[36mist all messages\x1b[0m\r\n\x1b[33mEH\x1b[32m>\x1b[36m Edit Message Header\x1b[0m\r\n\x1b[33mQ\x1b[32m>\x1b[36muit\x1b[0m\r\n\x1b[32m<\x1b[33mCR\x1b[32m>\x1b[0m=\x1b[33mNext \x1b[32m(\x1b[0m 1+4 \x1b[32m )\x1b[0m? '
+
+@@@@@   sub: A (again) @@@@@
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+⟨ESC[32m⟩Date   ⟨ESC[33m⟩:⟨ESC[0m⟩ 2026-05-12T21:48:50.679071Z  ⟨ESC[32m⟩Number⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩To     ⟨ESC[33m⟩:⟨ESC[0m⟩ sysop  ⟨ESC[32m⟩Recv'd⟨ESC[33m⟩:⟨ESC[0m⟩ 2026-05-12T21:48:56.974019Z\r\n
+⟨ESC[32m⟩From   ⟨ESC[33m⟩:⟨ESC[0m⟩ sysop  ⟨ESC[32m⟩Status⟨ESC[33m⟩:⟨ESC[0m⟩ Private Message\r\n
+⟨ESC[32m⟩Subject⟨ESC[33m⟩:⟨ESC[0m⟩ hello\r\n
+⟨ESC[32m⟩Conf   ⟨ESC[33m⟩:⟨ESC[0m⟩ [1] Main\r\n
+\r\n
+Hello\r\n
+This is a test\r\n
+\r\n
+⟨ESC[32m⟩Msg. Options: ⟨ESC[33m⟩A⟨ESC[36m⟩,⟨ESC[33m⟩D,⟨ESC[33m⟩M⟨ESC[36m⟩,⟨ESC[33m⟩F⟨ESC[36m⟩,⟨ESC[33m⟩R⟨ESC[36m⟩,⟨ESC[33m⟩L⟨ESC[36m⟩,⟨ESC[33m⟩Q⟨ESC[36m⟩,⟨ESC[33m⟩?⟨ESC[36m⟩,⟨ESC[33m⟩??⟨ESC[36m⟩,⟨ESC[32m⟩<⟨ESC[33m⟩CR⟨ESC[32m⟩> ⟨ESC[32m⟩(⟨ESC[0m⟩ 1+4 ⟨ESC[32m⟩ )⟨ESC[0m⟩>: 
+----- REPR -----
+b"A\r\n\r\n\x1b[32mDate   \x1b[33m:\x1b[0m 2026-05-12T21:48:50.679071Z  \x1b[32mNumber\x1b[33m:\x1b[0m 1\r\n\x1b[32mTo     \x1b[33m:\x1b[0m sysop  \x1b[32mRecv'd\x1b[33m:\x1b[0m 2026-05-12T21:48:56.974019Z\r\n\x1b[32mFrom   \x1b[33m:\x1b[0m sysop  \x1b[32mStatus\x1b[33m:\x1b[0m Private Message\r\n\x1b[32mSubject\x1b[33m:\x1b[0m hello\r\n\x1b[32mConf   \x1b[33m:\x1b[0m [1] Main\r\n\r\nHello\r\nThis is a test\r\n\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m,\x1b[33mD,\x1b[33mM\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m 1+4 \x1b[32m )\x1b[0m>: "
+
+@@@@@   sub: L (list) @@@@@
+>>> SENT b'L\r'
+----- RENDER -----
+L\r\n
+⟨ESC[32m⟩Starting message ⟨ESC[33m⟩[⟨ESC[0m⟩1⟨ESC[33m⟩]⟨ESC[0m⟩: 
+----- REPR -----
+b'L\r\n\x1b[32mStarting message \x1b[33m[\x1b[0m1\x1b[33m]\x1b[0m: '
+
+@@@@@   sub: L start prompt CR @@@@@
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+\r\n
+⟨ESC[32m⟩Msg    Type     From                           Subject              \r\n
+⟨ESC[33m⟩------ -------  -----------------------------  ---------------------\r\n
+⟨ESC[0m⟩000001 Private  sysop                          hello                  ⟨ESC[0m⟩\r\n
+000002 Public   sysop                          Hello                  ⟨ESC[0m⟩\r\n
+000003 Private  sysop                          hello                  ⟨ESC[0m⟩\r\n
+\r\n
+⟨ESC[32m⟩Msg. Options: ⟨ESC[33m⟩A⟨ESC[36m⟩,⟨ESC[33m⟩D,⟨ESC[33m⟩M⟨ESC[36m⟩,⟨ESC[33m⟩F⟨ESC[36m⟩,⟨ESC[33m⟩R⟨ESC[36m⟩,⟨ESC[33m⟩L⟨ESC[36m⟩,⟨ESC[33m⟩Q⟨ESC[36m⟩,⟨ESC[33m⟩?⟨ESC[36m⟩,⟨ESC[33m⟩??⟨ESC[36m⟩,⟨ESC[32m⟩<⟨ESC[33m⟩CR⟨ESC[32m⟩> ⟨ESC[32m⟩(⟨ESC[0m⟩ 1+4 ⟨ESC[32m⟩ )⟨ESC[0m⟩>: 
+----- REPR -----
+b'\r\n\r\n\r\n\x1b[32mMsg    Type     From                           Subject              \r\n\x1b[33m------ -------  -----------------------------  ---------------------\r\n\x1b[0m000001 Private  sysop                          hello                  \x1b[0m\r\n000002 Public   sysop                          Hello                  \x1b[0m\r\n000003 Private  sysop                          hello                  \x1b[0m\r\n\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m,\x1b[33mD,\x1b[33mM\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m 1+4 \x1b[32m )\x1b[0m>: '
+
+@@@@@   sub: CR (advance to next) @@@@@
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+⟨ESC[32m⟩Date   ⟨ESC[33m⟩:⟨ESC[0m⟩ 2026-05-13T19:44:36.302535Z  ⟨ESC[32m⟩Number⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+⟨ESC[32m⟩To     ⟨ESC[33m⟩:⟨ESC[0m⟩ EALL  ⟨ESC[32m⟩Recv'd⟨ESC[33m⟩:⟨ESC[0m⟩ N/A\r\n
+⟨ESC[32m⟩From   ⟨ESC[33m⟩:⟨ESC[0m⟩ sysop  ⟨ESC[32m⟩Status⟨ESC[33m⟩:⟨ESC[0m⟩ Public Message\r\n
+⟨ESC[32m⟩Subject⟨ESC[33m⟩:⟨ESC[0m⟩ Hello\r\n
+⟨ESC[32m⟩Conf   ⟨ESC[33m⟩:⟨ESC[0m⟩ [1] Main\r\n
+\r\n
+hello there!!\r\n
+do you read?\r\n
+\r\n
+⟨ESC[32m⟩Msg. Options: ⟨ESC[33m⟩A⟨ESC[36m⟩,⟨ESC[33m⟩D,⟨ESC[33m⟩M⟨ESC[36m⟩,⟨ESC[33m⟩F⟨ESC[36m⟩,⟨ESC[33m⟩R⟨ESC[36m⟩,⟨ESC[33m⟩L⟨ESC[36m⟩,⟨ESC[33m⟩Q⟨ESC[36m⟩,⟨ESC[33m⟩?⟨ESC[36m⟩,⟨ESC[33m⟩??⟨ESC[36m⟩,⟨ESC[32m⟩<⟨ESC[33m⟩CR⟨ESC[32m⟩> ⟨ESC[32m⟩(⟨ESC[0m⟩ 2+4 ⟨ESC[32m⟩ )⟨ESC[0m⟩>: 
+----- REPR -----
+b"\r\n\r\n\x1b[32mDate   \x1b[33m:\x1b[0m 2026-05-13T19:44:36.302535Z  \x1b[32mNumber\x1b[33m:\x1b[0m 2\r\n\x1b[32mTo     \x1b[33m:\x1b[0m EALL  \x1b[32mRecv'd\x1b[33m:\x1b[0m N/A\r\n\x1b[32mFrom   \x1b[33m:\x1b[0m sysop  \x1b[32mStatus\x1b[33m:\x1b[0m Public Message\r\n\x1b[32mSubject\x1b[33m:\x1b[0m Hello\r\n\x1b[32mConf   \x1b[33m:\x1b[0m [1] Main\r\n\r\nhello there!!\r\ndo you read?\r\n\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m,\x1b[33mD,\x1b[33mM\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m 2+4 \x1b[32m )\x1b[0m>: "
+
+@@@@@   sub: Q (quit to menu) @@@@@
+>>> SENT b'Q\r'
+----- RENDER -----
+Q\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"Q\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ R 2 (public msg) -> sub-prompt @@@@@
+>>> SENT b'R 2\r'
+----- RENDER -----
+R 2\r\n
+\r\n
+⟨ESC[32m⟩Date   ⟨ESC[33m⟩:⟨ESC[0m⟩ 2026-05-13T19:44:36.302535Z  ⟨ESC[32m⟩Number⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+⟨ESC[32m⟩To     ⟨ESC[33m⟩:⟨ESC[0m⟩ EALL  ⟨ESC[32m⟩Recv'd⟨ESC[33m⟩:⟨ESC[0m⟩ N/A\r\n
+⟨ESC[32m⟩From   ⟨ESC[33m⟩:⟨ESC[0m⟩ sysop  ⟨ESC[32m⟩Status⟨ESC[33m⟩:⟨ESC[0m⟩ Public Message\r\n
+⟨ESC[32m⟩Subject⟨ESC[33m⟩:⟨ESC[0m⟩ Hello\r\n
+⟨ESC[32m⟩Conf   ⟨ESC[33m⟩:⟨ESC[0m⟩ [1] Main\r\n
+\r\n
+hello there!!\r\n
+do you read?\r\n
+\r\n
+⟨ESC[32m⟩Msg. Options: ⟨ESC[33m⟩A⟨ESC[36m⟩,⟨ESC[33m⟩D,⟨ESC[33m⟩M⟨ESC[36m⟩,⟨ESC[33m⟩F⟨ESC[36m⟩,⟨ESC[33m⟩R⟨ESC[36m⟩,⟨ESC[33m⟩L⟨ESC[36m⟩,⟨ESC[33m⟩Q⟨ESC[36m⟩,⟨ESC[33m⟩?⟨ESC[36m⟩,⟨ESC[33m⟩??⟨ESC[36m⟩,⟨ESC[32m⟩<⟨ESC[33m⟩CR⟨ESC[32m⟩> ⟨ESC[32m⟩(⟨ESC[0m⟩ 2+4 ⟨ESC[32m⟩ )⟨ESC[0m⟩>: 
+----- REPR -----
+b"R 2\r\n\r\n\x1b[32mDate   \x1b[33m:\x1b[0m 2026-05-13T19:44:36.302535Z  \x1b[32mNumber\x1b[33m:\x1b[0m 2\r\n\x1b[32mTo     \x1b[33m:\x1b[0m EALL  \x1b[32mRecv'd\x1b[33m:\x1b[0m N/A\r\n\x1b[32mFrom   \x1b[33m:\x1b[0m sysop  \x1b[32mStatus\x1b[33m:\x1b[0m Public Message\r\n\x1b[32mSubject\x1b[33m:\x1b[0m Hello\r\n\x1b[32mConf   \x1b[33m:\x1b[0m [1] Main\r\n\r\nhello there!!\r\ndo you read?\r\n\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m,\x1b[33mD,\x1b[33mM\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m 2+4 \x1b[32m )\x1b[0m>: "
+
+@@@@@   sub: Q @@@@@
+>>> SENT b'Q\r'
+----- RENDER -----
+Q\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"Q\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ MS (scan all, conf 1) @@@@@
+>>> SENT b'MS\r'
+----- RENDER -----
+MS\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Main - \r\n
+ ⟨ESC[32m⟩Message Base⟨ESC[33m⟩: ⟨ESC[0m⟩main - No mail today!\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Programming - \r\n
+ ⟨ESC[32m⟩Message Base⟨ESC[33m⟩: ⟨ESC[0m⟩main - No mail today!\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"MS\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mMain - \r\n \x1b[32mMessage Base\x1b[33m: \x1b[0mmain - No mail today!\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mProgramming - \r\n \x1b[32mMessage Base\x1b[33m: \x1b[0mmain - No mail today!\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ E (enter msg) To prompt @@@@@
+>>> SENT b'E\r'
+----- RENDER -----
+E\r\n
+\r\n
+To: 
+----- REPR -----
+b'E\r\n\r\nTo: '
+
+@@@@@   E To: sysop @@@@@
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+Subject: 
+----- REPR -----
+b'sysop\r\nSubject: '
+
+@@@@@   E Subject @@@@@
+>>> SENT b'cmp test subject\r'
+----- RENDER -----
+cmp test subject\r\n
+Private (y/N)? 
+----- REPR -----
+b'cmp test subject\r\nPrivate (y/N)? '
+
+@@@@@   E Private? @@@@@
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+Enter your message. End with a single '.' on a line by itself; '/A' aborts.\r\n
+
+----- REPR -----
+b"\r\nEnter your message. End with a single '.' on a line by itself; '/A' aborts.\r\n"
+
+@@@@@   E body line1 @@@@@
+>>> SENT b'comparison body line one\r'
+----- RENDER -----
+comparison body line one\r\n
+
+----- REPR -----
+b'comparison body line one\r\n'
+
+@@@@@   E body end '.' @@@@@
+>>> SENT b'.\r'
+----- RENDER -----
+.\r\n
+\r\n
+Message #5 saved.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b".\r\n\r\nMessage #5 saved.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ C (comment to sysop) Subject @@@@@
+>>> SENT b'C\r'
+----- RENDER -----
+C\r\n
+Subject: 
+----- REPR -----
+b'C\r\nSubject: '
+
+@@@@@   C Subject @@@@@
+>>> SENT b'cmp comment subj\r'
+----- RENDER -----
+cmp comment subj\r\n
+Enter your message. End with a single '.' on a line by itself; '/A' aborts.\r\n
+
+----- REPR -----
+b"cmp comment subj\r\nEnter your message. End with a single '.' on a line by itself; '/A' aborts.\r\n"
+
+@@@@@   C body @@@@@
+>>> SENT b'a comment body\r'
+----- RENDER -----
+a comment body\r\n
+
+----- REPR -----
+b'a comment body\r\n'
+
+@@@@@   C body end '.' @@@@@
+>>> SENT b'.\r'
+----- RENDER -----
+.\r\n
+\r\n
+Message #6 saved.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b".\r\n\r\nMessage #6 saved.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ RP 1 (retired) @@@@@
+>>> SENT b'RP 1\r'
+----- RENDER -----
+RP 1\r\n
+Unknown command. Type G to log off.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"RP 1\r\nUnknown command. Type G to log off.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ FW 1 (retired) @@@@@
+>>> SENT b'FW 1\r'
+----- RENDER -----
+FW 1\r\n
+Unknown command. Type G to log off.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"FW 1\r\nUnknown command. Type G to log off.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ K 1 (retired) @@@@@
+>>> SENT b'K 1\r'
+----- RENDER -----
+K 1\r\n
+Unknown command. Type G to log off.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"K 1\r\nUnknown command. Type G to log off.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ MV 1 (retired) @@@@@
+>>> SENT b'MV 1\r'
+----- RENDER -----
+MV 1\r\n
+Unknown command. Type G to log off.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"MV 1\r\nUnknown command. Type G to log off.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ EH 1 (retired) @@@@@
+>>> SENT b'EH 1\r'
+----- RENDER -----
+EH 1\r\n
+Unknown command. Type G to log off.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"EH 1\r\nUnknown command. Type G to log off.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ N (unimplemented) @@@@@
+>>> SENT b'N\r'
+----- RENDER -----
+N\r\n
+Unknown command. Type G to log off.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"N\r\nUnknown command. Type G to log off.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ FOObar (unknown) @@@@@
+>>> SENT b'FOObar\r'
+----- RENDER -----
+FOObar\r\n
+Unknown command. Type G to log off.\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+    RP <n>   Reply to message number <n>\r\n
+    FW <n>   Forward message number <n>\r\n
+\r\n
+  MAIL ADMIN\r\n
+    K <n>    Kill/delete message number <n>\r\n
+    MV <n>   Move message number <n>\r\n
+    EH <n>   Edit message header for number <n>\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"FOObar\r\nUnknown command. Type G to log off.\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n    RP <n>   Reply to message number <n>\r\n    FW <n>   Forward message number <n>\r\n\r\n  MAIL ADMIN\r\n    K <n>    Kill/delete message number <n>\r\n    MV <n>   Move message number <n>\r\n    EH <n>   Edit message header for number <n>\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ G (logoff) @@@@@
+>>> SENT b'G\r'
+----- RENDER -----
+G\r\n
+Goodbye!\r\n
+
+----- REPR -----
+b'G\r\nGoodbye!\r\n'
