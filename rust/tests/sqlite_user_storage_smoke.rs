@@ -101,6 +101,8 @@ fn run_session(config_path: &Path, walk: &dyn Fn(&mut TcpStream) -> Result<(), S
 }
 
 fn sign_in_as_sysop(stream: &mut TcpStream) -> Result<(), String> {
+    drain_until(stream, b"ANSI Graphics (Y/n)? ").map_err(|e| format!("Graphics prompt: {e}"))?;
+    write_line(stream, b"Y")?;
     drain_until(stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(stream, b"sysop")?;
     drain_until(stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;

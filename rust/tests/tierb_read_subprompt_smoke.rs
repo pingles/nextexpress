@@ -898,6 +898,8 @@ async fn sign_in_seeded_sysop(addr: &std::net::SocketAddr) -> TcpStream {
 
 async fn sign_in(addr: &std::net::SocketAddr, handle: &[u8], password: &[u8]) -> TcpStream {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
+    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ").await;
+    write_line(&mut stream, b"Y").await;
     drain_until(&mut stream, b"Enter your Name: ").await;
     write_line(&mut stream, handle).await;
     drain_until(&mut stream, b"PassWord: ").await;

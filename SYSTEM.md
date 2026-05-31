@@ -265,8 +265,11 @@ and constructs a per-connection `SessionDriver`. `SessionDriver` is a
 thin orchestrator:
 
 1. `start` — write banner + copyright, return an `IdentifyingSession`.
-2. `LoginFlow::identify` — prompt for name, dispatch to register, verify
-   password, return `Onboarded | LoggingOff | Ended | NeedsRegistration`.
+2. `LoginFlow::identify` — ask the graphics question (`ANSI_PROMPT`;
+   `n`/`N` turns the terminal's live colour mode off so screens render
+   with ANSI stripped), then prompt for name, dispatch to register,
+   verify password, return
+   `Onboarded | LoggingOff | Ended | NeedsRegistration`.
 3. `RegistrationFlow::run` — only on `NeedsRegistration`. Owns the
    new-user gate, profile collection, hash + persist, returns
    `Onboarded | LoggingOff`.

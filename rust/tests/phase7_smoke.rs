@@ -155,6 +155,9 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
         .set_read_timeout(Some(PER_READ_TIMEOUT))
         .map_err(|e| format!("set_read_timeout: {e}"))?;
 
+    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ")
+        .map_err(|e| format!("Graphics prompt: {e}"))?;
+    write_line(&mut stream, b"Y")?;
     drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
     drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
@@ -314,6 +317,8 @@ fn walk_phase7_broadcast_and_comment_flow(addr: &str) -> Result<(), String> {
 }
 
 fn sign_in_as_sysop(stream: &mut TcpStream) -> Result<(), String> {
+    drain_until(stream, b"ANSI Graphics (Y/n)? ").map_err(|e| format!("Graphics prompt: {e}"))?;
+    write_line(stream, b"Y")?;
     drain_until(stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(stream, b"sysop")?;
     drain_until(stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;

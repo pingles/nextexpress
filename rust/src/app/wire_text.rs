@@ -48,10 +48,14 @@ pub(crate) const REGISTRATION_PASSWORD_CONFIRM_PROMPT: &[u8] = b"Reenter the Pas
 /// before asking).
 pub(crate) const LINE_LENGTH_PROMPT: &[u8] = b"Enter line length (or 0 for Auto): ";
 
-/// Prompt asking whether the user wants ANSI graphics. Simplified from
-/// `amiexpress/express.e:29528`'s `ANSI, RIP or No graphics (A/r/n)?`
-/// — RIP rendering lands in a future toggles slice.
-pub(crate) const ANSI_PROMPT: &[u8] = b"Use ANSI graphics? (Y/n) ";
+/// Prompt asking whether the user wants ANSI graphics, asked at connect
+/// before the name prompt. Simplified from
+/// `amiexpress/express.e:29528`'s `ANSI, RIP or No graphics (A/r/n)?` —
+/// RIP is dropped, so the choice collapses to ANSI (default) vs. ASCII.
+/// An answer beginning `n`/`N` selects ASCII and turns the terminal's
+/// live colour mode off, so subsequent screens render with ANSI SGR
+/// stripped.
+pub(crate) const ANSI_PROMPT: &[u8] = b"ANSI Graphics (Y/n)? ";
 
 /// Prompt for the sysop-set new-user password gate. Verbatim from
 /// `amiexpress/express.e:30018`.

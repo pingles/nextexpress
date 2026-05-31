@@ -75,6 +75,9 @@ fn walk_phase8_reply_forward_flow(addr: &str) -> Result<(), String> {
         .set_read_timeout(Some(PER_READ_TIMEOUT))
         .map_err(|e| format!("set_read_timeout: {e}"))?;
 
+    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ")
+        .map_err(|e| format!("Graphics prompt: {e}"))?;
+    write_line(&mut stream, b"Y")?;
     drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
     drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
@@ -365,6 +368,9 @@ fn walk_phase8_sysop_admin_flow(addr: &str) -> Result<(), String> {
         .set_read_timeout(Some(PER_READ_TIMEOUT))
         .map_err(|e| format!("set_read_timeout: {e}"))?;
 
+    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ")
+        .map_err(|e| format!("Graphics prompt: {e}"))?;
+    write_line(&mut stream, b"Y")?;
     drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
     drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;

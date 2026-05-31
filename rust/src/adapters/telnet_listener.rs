@@ -609,6 +609,23 @@ mod tests {
     /// the default kernel buffering, a broken server will simply leave
     /// us blocked on `read` forever. With this we surface the failure
     /// in a couple of seconds instead.
+    /// Answers the connect-time graphics prompt (`Y`, keeping ANSI on)
+    /// and drains through to the name prompt, returning every byte
+    /// received: the connection banner, the graphics prompt, and the
+    /// name prompt. Replaces the bare
+    /// `drain_until(.., b"Enter your Name: ")` *initial* drain now that
+    /// the graphics question (`app::wire_text::ANSI_PROMPT`) precedes
+    /// the name prompt. Name *re-prompts* (e.g. after an unknown
+    /// handle) still use `drain_until` directly — the graphics question
+    /// is asked once per connection.
+    async fn drain_to_name_prompt(stream: &mut TcpStream) -> Vec<u8> {
+        let mut buf = drain_until(stream, b"ANSI Graphics (Y/n)? ").await;
+        stream.write_all(b"Y\r\n").await.unwrap();
+        stream.flush().await.unwrap();
+        buf.extend(drain_until(stream, b"Enter your Name: ").await);
+        buf
+    }
+
     async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
         let mut chunk = [0u8; 256];
@@ -643,7 +660,7 @@ mod tests {
         // wire.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        let buf = drain_to_name_prompt(&mut stream).await;
         assert!(
             contains(&buf, b"\r\nEnter your Name: "),
             "expected CRLF-prefixed AmiExpress name prompt: {buf:?}"
@@ -655,7 +672,7 @@ mod tests {
         // Mirrors express.e:25690 's 'AmiExpress \s Copyright ©<years> Darren Coles'.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        let buf = drain_to_name_prompt(&mut stream).await;
         assert!(
             contains(
                 &buf,
@@ -672,7 +689,7 @@ mod tests {
         // `app::wire_text::COPYRIGHT_LINES`.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        let buf = drain_to_name_prompt(&mut stream).await;
         let needle = format!(
             "NextExpress ({}) Copyright \u{00A9}2026\r\n",
             env!("NEXTEXPRESS_GIT_SHA")
@@ -687,7 +704,7 @@ mod tests {
     async fn nextexpress_copyright_appears_above_amiexpress_copyright() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let buf = drain_until(&mut stream, b"Enter your Name: ").await;
+        let buf = drain_to_name_prompt(&mut stream).await;
         let nx_index = find_subslice(&buf, b"NextExpress ").expect("NextExpress line present");
         let ax_index = find_subslice(&buf, b"AmiExpress 5 ").expect("AmiExpress line present");
         assert!(
@@ -708,7 +725,7 @@ mod tests {
         // means the client suppresses local echo, so we have to.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice").await.unwrap();
         let buf = drain_until(&mut stream, b"alice").await;
         assert!(
@@ -725,7 +742,7 @@ mod tests {
         // console, never the wire.
         let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret").await.unwrap();
@@ -744,7 +761,7 @@ mod tests {
     async fn password_prompt_echoes_only_ascii_asterisk_bytes() {
         let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
 
@@ -761,7 +778,7 @@ mod tests {
     async fn password_prompt_ignores_control_bytes_without_mask_echo() {
         let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
 
@@ -784,7 +801,7 @@ mod tests {
         // classic '<BS><SPACE><BS>' triplet. We mirror that.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"a\x08").await.unwrap();
         let buf = drain_until(&mut stream, b"a\x08 \x08").await;
         assert!(
@@ -799,7 +816,7 @@ mod tests {
         // from what the server eventually submits to `name_typed`.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         // 'aliceX' + BS + Enter -> handle should be 'alice', advancing
         // to the password prompt instead of "Unknown user".
         stream.write_all(b"aliceX\x08\r\n").await.unwrap();
@@ -816,7 +833,7 @@ mod tests {
         // the start of the line.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"\x08\x08alice\r\n").await.unwrap();
         let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
@@ -834,7 +851,7 @@ mod tests {
         // twice before the server reacts.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r").await.unwrap();
         let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
@@ -847,7 +864,7 @@ mod tests {
     async fn bare_lf_at_name_prompt_advances() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\n").await.unwrap();
         let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
@@ -860,7 +877,7 @@ mod tests {
     async fn queued_bytes_after_bare_cr_are_preserved_for_next_prompt() {
         let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\rsecret\r\n").await.unwrap();
         let buf = drain_until(&mut stream, b"Authenticated").await;
         assert!(
@@ -879,7 +896,7 @@ mod tests {
         // must accept that as a single line break.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\0").await.unwrap();
         let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
@@ -895,7 +912,7 @@ mod tests {
         // next line on the client display.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         // We expect bytes between the echoed 'e' (last char of alice)
         // and the next "Password: " prompt to include "\r\n".
@@ -915,7 +932,7 @@ mod tests {
     async fn telnet_negotiation_is_stripped_from_name_input() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(&[0xFF, 0xFB, 0x1F]).await.unwrap();
         stream.write_all(b"alice\r\n").await.unwrap();
         let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
@@ -929,7 +946,7 @@ mod tests {
     async fn telnet_subnegotiation_is_stripped_from_name_input() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream
             .write_all(&[0xFF, 0xFA, 0x18, b'X', 0xFF, 0xF0])
             .await
@@ -946,7 +963,7 @@ mod tests {
     async fn existing_handle_advances_to_password_prompt() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let buf = drain_until(&mut stream, PASSWORD_PROMPT).await;
         assert!(
@@ -959,7 +976,7 @@ mod tests {
     async fn correct_password_authenticates_user() {
         let addr = spawn_listener_with(repo_with(alice_with_password("secret"))).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
@@ -978,7 +995,7 @@ mod tests {
         let log = Arc::new(InMemoryCallerLog::new());
         let addr = spawn_listener_with_log(repo_with_alice(), test_config(1), log.clone()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         drop(stream);
         // Wait for the listener task to observe EOF and finalise.
         let mut entries = vec![];
@@ -1005,7 +1022,7 @@ mod tests {
         )
         .await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         drop(stream);
@@ -1035,7 +1052,7 @@ mod tests {
         };
         let addr = spawn_listener_with_config(repo_with_alice(), config).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         // Don't type anything; the listener will time out.
         let buf = drain_until(&mut stream, b"Idle timeout").await;
         assert!(
@@ -1053,7 +1070,7 @@ mod tests {
         let addr =
             spawn_listener_with_config(repo_with(alice_with_password("secret")), config).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         // Don't send a password.
@@ -1092,7 +1109,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
@@ -1114,7 +1131,7 @@ mod tests {
         user.lock_account();
         let addr = spawn_listener_with(repo_with(user)).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
@@ -1129,7 +1146,12 @@ mod tests {
     async fn five_unknown_handles_end_session() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        for _ in 0..5 {
+        // The graphics question is asked once; answer it, then submit
+        // five unknown handles — the first at the initial name prompt,
+        // the next four at each re-prompt.
+        let _ = drain_to_name_prompt(&mut stream).await;
+        stream.write_all(b"nobody\r\n").await.unwrap();
+        for _ in 0..4 {
             let _ = drain_until(&mut stream, b"Enter your Name: ").await;
             stream.write_all(b"nobody\r\n").await.unwrap();
         }
@@ -1149,7 +1171,7 @@ mod tests {
         // with.
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         let buf =
             drain_until_both(&mut stream, b"New user registration.", b"Enter your Name: ").await;
@@ -1196,7 +1218,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         let buf = drain_until(&mut stream, b"WELCOME NEW USER").await;
         assert!(
@@ -1239,7 +1261,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
@@ -1328,7 +1350,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"alice\r\n").await.unwrap();
         let _ = drain_until(&mut stream, PASSWORD_PROMPT).await;
         stream.write_all(b"secret\r\n").await.unwrap();
@@ -1398,7 +1420,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         let _ = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
         stream.write_all(b"newbie\r\n").await.unwrap();
@@ -1492,7 +1514,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         let _ = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
         stream.write_all(b"newbie\r\n").await.unwrap();
@@ -1524,7 +1546,7 @@ mod tests {
     async fn registration_rejects_existing_handle_and_reprompts() {
         let addr = spawn_listener_with(repo_with_alice()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         let _ = drain_until(&mut stream, REGISTRATION_HANDLE_PROMPT).await;
         // alice is already registered.
@@ -1548,7 +1570,7 @@ mod tests {
         };
         let addr = spawn_listener_with_log(repo_with_alice(), config, log.clone()).await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         let buf = drain_until(&mut stream, b"not available").await;
         assert!(
@@ -1597,7 +1619,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         // Gate prompt must appear before the registration handle prompt.
         let buf = drain_until(&mut stream, NEW_USER_PASSWORD_PROMPT).await;
@@ -1632,7 +1654,7 @@ mod tests {
         )
         .await;
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         for _ in 0..3 {
             let _ = drain_until(&mut stream, NEW_USER_PASSWORD_PROMPT).await;
@@ -1692,7 +1714,7 @@ mod tests {
         tokio::spawn(async move { listener.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let _ = drain_until(&mut stream, b"Enter your Name: ").await;
+        let _ = drain_to_name_prompt(&mut stream).await;
         stream.write_all(b"NEW\r\n").await.unwrap();
         // First: wrong password → re-prompt.
         let _ = drain_until(&mut stream, NEW_USER_PASSWORD_PROMPT).await;

@@ -99,6 +99,9 @@ fn walk_signin_loop(addr: &str) -> Result<(), String> {
         .set_read_timeout(Some(PER_READ_TIMEOUT))
         .map_err(|e| format!("set_read_timeout: {e}"))?;
 
+    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ")
+        .map_err(|e| format!("Graphics prompt: {e}"))?;
+    write_line(&mut stream, b"Y")?;
     drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
 

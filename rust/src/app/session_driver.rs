@@ -284,6 +284,7 @@ mod tests {
         inputs: VecDeque<TerminalRead>,
         output: Vec<u8>,
         echo_modes: Vec<TerminalEcho>,
+        ansi_colour: bool,
     }
 
     impl FakeTerminal {
@@ -292,6 +293,7 @@ mod tests {
                 inputs: inputs.into_iter().collect(),
                 output: Vec::new(),
                 echo_modes: Vec::new(),
+                ansi_colour: true,
             }
         }
 
@@ -323,6 +325,14 @@ mod tests {
                 self.echo_modes.push(echo);
                 Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof))
             })
+        }
+
+        fn ansi_colour(&self) -> bool {
+            self.ansi_colour
+        }
+
+        fn set_ansi_colour(&mut self, enabled: bool) {
+            self.ansi_colour = enabled;
         }
     }
 
@@ -436,6 +446,7 @@ mod tests {
             "TestBBS".to_string(),
         );
         let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
             TerminalRead::Line("secret".to_string()),
             TerminalRead::Line("G".to_string()),
@@ -472,6 +483,8 @@ mod tests {
         assert_eq!(
             terminal.echo_modes,
             vec![
+                // graphics prompt, name, password, menu command (G)
+                TerminalEcho::Visible,
                 TerminalEcho::Visible,
                 TerminalEcho::Masked,
                 TerminalEcho::Visible
@@ -528,6 +541,7 @@ mod tests {
             "TestBBS".to_string(),
         );
         let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
             TerminalRead::Line("secret".to_string()),
             TerminalRead::Line("G".to_string()),
@@ -549,6 +563,106 @@ mod tests {
         assert!(
             stats_pos < menu_pos,
             "the user-stats screen must precede the menu at login"
+        );
+    }
+
+    /// Builds the services + alice/Main fixture shared by the
+    /// graphics-prompt tests.
+    fn graphics_test_services() -> AppServices {
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
+        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+        let caller_log = Arc::new(InMemoryCallerLog::new());
+        let screens = Arc::new(StaticScreens);
+        let gate = NewUserGateConfig {
+            allow_new_users: true,
+            new_user_password: None,
+            max_new_user_password_attempts: 3,
+        };
+        let ratio = DefaultRatio {
+            mode: RatioMode::ByFiles,
+            value: 3,
+        };
+        AppServices::new(
+            repo,
+            hasher,
+            caller_log,
+            screens,
+            Arc::new(conferences),
+            test_mail_stores(),
+            SessionPolicy::default(),
+            ratio,
+            gate,
+            "TestBBS".to_string(),
+        )
+    }
+
+    #[tokio::test]
+    async fn login_asks_for_graphics_before_the_name_prompt() {
+        // AmiExpress asks `ANSI, RIP or No graphics (A/r/n)?` at connect,
+        // before the name prompt (`amiexpress/express.e:29528`).
+        // NextExpress asks the RIP-less `ANSI Graphics (Y/n)? ` in the
+        // same slot.
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("G".to_string()),
+        ]);
+        let mut driver =
+            SessionDriver::new(terminal, 1, LogonChannel::Remote, graphics_test_services());
+
+        driver.run().await.expect("driver completes");
+
+        let terminal = driver.into_terminal();
+        // Answering `Y` keeps ANSI on (only `n`/`N` disables it).
+        assert!(
+            terminal.ansi_colour(),
+            "answering Y at the graphics prompt must keep colour on"
+        );
+        let output = terminal.output().to_vec();
+        let graphics_pos = output
+            .windows(b"ANSI Graphics (Y/n)? ".len())
+            .position(|w| w == b"ANSI Graphics (Y/n)? ")
+            .expect("graphics prompt should be asked at login");
+        let name_pos = output
+            .windows(b"Enter your Name: ".len())
+            .position(|w| w == b"Enter your Name: ")
+            .expect("name prompt should follow");
+        assert!(
+            graphics_pos < name_pos,
+            "the graphics prompt must precede the name prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn choosing_ascii_at_login_disables_ansi_colour() {
+        // Answering with `n` (no graphics) sets the terminal's live
+        // colour mode off, so the ColourTerminal decorator strips ANSI
+        // SGR from every subsequent screen (the legacy `ansiColour`
+        // flag, `amiexpress/express.e:29543`).
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("n".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("G".to_string()),
+        ]);
+        let mut driver =
+            SessionDriver::new(terminal, 1, LogonChannel::Remote, graphics_test_services());
+
+        driver.run().await.expect("driver completes");
+
+        assert!(
+            !driver.into_terminal().ansi_colour(),
+            "choosing ASCII at login must turn the terminal's colour mode off"
         );
     }
 
@@ -585,6 +699,8 @@ mod tests {
             "TestBBS".to_string(),
         );
         let terminal = FakeTerminal::new([
+            // Answer the graphics prompt, then drive registration.
+            TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("NEW".to_string()),
             // First registration handle attempt — should be rejected.
             TerminalRead::Line("NEW".to_string()),

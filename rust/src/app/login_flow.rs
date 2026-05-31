@@ -12,9 +12,9 @@ use crate::app::services::AppServices;
 use crate::app::session_flow;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    ACCOUNT_LOCKED_LINE, AUTHENTICATED_LINE, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE, NAME_PROMPT,
-    PASSWORD_PROMPT, TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE, UNKNOWN_USER_LINE,
-    WRONG_PASSWORD_LINE,
+    ACCOUNT_LOCKED_LINE, ANSI_PROMPT, AUTHENTICATED_LINE, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE,
+    NAME_PROMPT, PASSWORD_PROMPT, TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE,
+    UNKNOWN_USER_LINE, WRONG_PASSWORD_LINE,
 };
 use crate::domain::session::typed::{
     AuthenticatingSession, EndedSession, IdentifyingSession, LoggingOffSession,
@@ -73,6 +73,34 @@ where
         &mut self,
         mut session: IdentifyingSession,
     ) -> Result<LoginOutcome, T::Error> {
+        // Graphics question, asked at connect before the name prompt
+        // (legacy `amiexpress/express.e:29528`). An answer beginning
+        // `n`/`N` selects ASCII and turns the terminal's live colour
+        // mode off; the default (CR / `Y`) keeps ANSI. EOF / idle here
+        // close the session exactly as they do at the name prompt.
+        match self
+            .read_prompted(ANSI_PROMPT, TerminalEcho::Visible)
+            .await?
+        {
+            TerminalRead::Line(line) => {
+                session.record_input(SystemTime::now());
+                if matches!(line.trim().chars().next(), Some('n' | 'N')) {
+                    self.terminal.set_ansi_colour(false);
+                }
+            }
+            TerminalRead::Eof => {
+                return Ok(LoginOutcome::LoggingOff(
+                    session.into_active().apply_carrier_loss(),
+                ));
+            }
+            TerminalRead::IdleTimedOut => {
+                let logoff = session
+                    .into_active()
+                    .apply_idle_timeout(self.services.session_policy().treat_timeout_as_logoff());
+                self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                return Ok(LoginOutcome::LoggingOff(logoff));
+            }
+        }
         loop {
             let read = self
                 .read_prompted(NAME_PROMPT, TerminalEcho::Visible)

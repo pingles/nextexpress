@@ -266,6 +266,8 @@ async fn spawn_two_conference_listener(
 
 async fn sign_in_seeded_sysop(addr: &std::net::SocketAddr) -> TcpStream {
     let mut stream = TcpStream::connect(addr).await.expect("connect");
+    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ").await;
+    write_line(&mut stream, b"Y").await;
     drain_until(&mut stream, b"Enter your Name: ").await;
     write_line(&mut stream, b"sysop").await;
     drain_until(&mut stream, b"PassWord: ").await;
