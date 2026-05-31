@@ -33,6 +33,18 @@ impl Session {
         self.activity.current_visit()
     }
 
+    /// Points the session's single open visit at `(conference_number,
+    /// msgbase_number)` without the join bookkeeping — no
+    /// `User.last_joined` update, no name-type promotion, no bulletin
+    /// suppression. The `MS` read-it-now path uses it to aim the read
+    /// flow at a base it found mail in, then restores the caller's home
+    /// coordinate, mirroring the legacy transient `currentConf:=cn ...
+    /// currentConf:=oldcn` around `displayMessage`/`replyPrompt`
+    /// (`amiexpress/express.e:11750-11758`).
+    pub fn attach_visit(&mut self, conference_number: u32, msgbase_number: u32, now: SystemTime) {
+        self.activity.attach(conference_number, msgbase_number, now);
+    }
+
     /// Resolves the auto-rejoin path of
     /// `conferences.allium:JoinConference` (Slice 30).
     ///

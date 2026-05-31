@@ -323,6 +323,22 @@ impl MenuSession {
         self.session.time_remaining()
     }
 
+    /// Points the open visit at `(conference_number, msgbase_number)`
+    /// so the read flow targets that base. The `MS` read-it-now path
+    /// attaches the base it found mail in, runs the read sub-prompt,
+    /// then re-attaches the caller's home coordinate — the legacy
+    /// transient `currentConf:=cn ... :=oldcn`
+    /// (`amiexpress/express.e:11750-11758`).
+    pub(crate) fn attach_read_visit(
+        &mut self,
+        conference_number: u32,
+        msgbase_number: u32,
+        now: SystemTime,
+    ) {
+        self.session
+            .attach_visit(conference_number, msgbase_number, now);
+    }
+
     /// Toggles the session's quiet-mode flag and returns the new
     /// value. Implements the `Q` menu command's mutation step
     /// (Tier A quickwin A9, `amiexpress/express.e:25506`'s

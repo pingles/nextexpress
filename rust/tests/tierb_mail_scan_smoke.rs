@@ -65,7 +65,13 @@ async fn ms_scans_every_accessible_conference_over_telnet() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"MS").await;
-    let out = drain_until(&mut stream, b"mins. left): ").await;
+    // Conference 2's matched mail triggers the read-it-now prompt; drain
+    // up to it, then decline so the scan returns to the menu.
+    let out = drain_until(
+        &mut stream,
+        b"Would you like to read it now \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m)\x1b[32m?\x1b[0m ",
+    )
+    .await;
 
     // The opening header (`amiexpress/express.e:25258`).
     assert!(
@@ -109,12 +115,74 @@ async fn ms_scans_every_accessible_conference_over_telnet() {
         String::from_utf8_lossy(&out)
     );
 
+    // Decline the read-it-now offer; the scan returns to the menu.
+    write_line(&mut stream, b"N").await;
+    let menu = drain_until(&mut stream, b"mins. left): ").await;
+
     // Restore invariant: the menu prompt that follows `MS` still shows
     // conference 1 ("One") — the scan never moved the session.
     assert!(
-        contains(&out, b"[\x1b[36m1\x1b[34m:\x1b[36mOne\x1b[0m]"),
+        contains(&menu, b"[\x1b[36m1\x1b[34m:\x1b[36mOne\x1b[0m]"),
         "MS must leave the session in conference 1, got {:?}",
-        String::from_utf8_lossy(&out)
+        String::from_utf8_lossy(&menu)
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn ms_offers_to_read_found_mail_now_and_drops_into_the_read_subprompt() {
+    // Legacy `searchNewMail` getOUT (`amiexpress/express.e:11738-11765`):
+    // once a base's listing shows matched mail, AmiExpress asks
+    // `Would you like to read it now ` (`yesNo(1)`, default Yes) and, on
+    // Yes, drops into the read/reply sub-prompt for the found message,
+    // restoring the caller's home conference afterwards.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let conf1_msgbase = dir.path().join("conf1_msgbase");
+    let conf2_msgbase = dir.path().join("conf2_msgbase");
+    std::fs::create_dir_all(&conf1_msgbase).expect("create conf1 msgbase");
+    std::fs::create_dir_all(&conf2_msgbase).expect("create conf2 msgbase");
+    std::fs::write(
+        conf2_msgbase.join("0000001.json"),
+        seeded_mail_json(2, 1, "Carol", "Tier B Greetings"),
+    )
+    .expect("seed conf2 message");
+
+    let addr =
+        spawn_two_conference_listener(dir.path().to_path_buf(), &conf1_msgbase, &conf2_msgbase)
+            .await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"MS").await;
+    // After conference 2's listing table, the read-it-now prompt appears
+    // (`yesNo(1)`, default Yes).
+    drain_until(
+        &mut stream,
+        b"Would you like to read it now \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m)\x1b[32m?\x1b[0m ",
+    )
+    .await;
+
+    // Yes: the found message's body renders and the read sub-prompt opens.
+    write_line(&mut stream, b"Y").await;
+    let read = drain_until(&mut stream, b"Msg. Options:").await;
+    assert!(
+        contains(&read, b"Welcome to Tier B."),
+        "expected the found message body to be displayed, got {:?}",
+        String::from_utf8_lossy(&read)
+    );
+    assert!(
+        contains(&read, b"Msg. Options:"),
+        "expected the read sub-prompt, got {:?}",
+        String::from_utf8_lossy(&read)
+    );
+
+    // Quitting the sub-prompt returns to the menu, restored to conf 1.
+    write_line(&mut stream, b"Q").await;
+    let after = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after, b"[\x1b[36m1\x1b[34m:\x1b[36mOne\x1b[0m]"),
+        "MS read-it-now must restore the home conference (1), got {:?}",
+        String::from_utf8_lossy(&after)
     );
 
     end_session(&mut stream).await;

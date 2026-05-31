@@ -614,6 +614,14 @@ pub(crate) const MAIL_SCAN_ALL_HEADER: &[u8] = b"\r\nScanning conferences for ma
 /// `currentConf=0` branch).
 pub(crate) const MAIL_SCAN_NO_MAIL_TODAY: &[u8] = b"No mail today!\r\n";
 
+/// The read-it-now prompt the multi-conference scan shows after a base
+/// whose listing matched unread mail (`amiexpress/express.e:11739`'s
+/// `'\b\nWould you like to read it now '` followed by `yesNo(1)`'s
+/// default-Yes `(Y/n)?` render at `:2136`). On a `y`/CR the caller is
+/// dropped into the read/reply sub-prompt for the found message.
+pub(crate) const MAIL_SCAN_READ_IT_NOW_PROMPT: &[u8] =
+    b"\r\nWould you like to read it now \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m)\x1b[32m?\x1b[0m ";
+
 /// Renders the per-conference banner the multi-conference scan prints
 /// before each conference's listing (`amiexpress/express.e:11670`).
 /// No trailing newline — the message-base sub-line or the listing

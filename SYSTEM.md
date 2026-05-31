@@ -224,7 +224,7 @@ module under `app::menu_flow/`):
 | `?` | `ShowMenu` | dispatch (`render_menu_screen`, expert mode only) |
 | `^<topic>` | `TopicHelp(String)` | dispatch (`screens().topic_help`) |
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
-| `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail` |
+| `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail`; per base with matched mail, offers `Would you like to read it now` and (on Yes) attaches that base as a transient read visit and drops into `read_subprompt`, restoring the home conference after |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 After `R <n>` displays a message, `read_mail` hands off to
