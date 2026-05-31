@@ -101,6 +101,12 @@ where
                 return Ok(LoginOutcome::LoggingOff(logoff));
             }
         }
+        // Banner / title screen, rendered after the graphics answer so
+        // an ASCII caller gets it ANSI-stripped — the legacy
+        // `SCREEN_BBSTITLE` order (`amiexpress/express.e:29552`, shown
+        // after the `A/r/n` question).
+        let banner = self.services.screens().banner().await;
+        self.terminal.write(&banner).await?;
         loop {
             let read = self
                 .read_prompted(NAME_PROMPT, TerminalEcho::Visible)

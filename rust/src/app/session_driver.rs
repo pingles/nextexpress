@@ -207,8 +207,12 @@ where
         &mut self,
         connecting: ConnectingSession,
     ) -> Result<IdentifyingSession, T::Error> {
-        let banner = self.services.screens().banner().await;
-        self.terminal.write(&banner).await?;
+        // Plain connection preamble (the legacy "Running AmiExpress..."
+        // lines, `amiexpress/express.e:29514`), shown before the
+        // graphics question. The banner / title screen is rendered
+        // afterwards by `LoginFlow` so an ASCII caller gets it
+        // ANSI-stripped, mirroring the legacy `SCREEN_BBSTITLE` order
+        // (`:29552`, after the `A/r/n` question).
         self.terminal.write(COPYRIGHT_LINES).await?;
         Ok(connecting.prompt_for_name())
     }
@@ -640,6 +644,39 @@ mod tests {
         assert!(
             graphics_pos < name_pos,
             "the graphics prompt must precede the name prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_asks_for_graphics_before_the_banner() {
+        // The legacy renders the BBS title screen (`SCREEN_BBSTITLE`,
+        // `amiexpress/express.e:29552`) only *after* the graphics
+        // question (`:29528`), so an ASCII caller's title art is
+        // ANSI-stripped. NextExpress likewise asks the question before
+        // the banner. (The plain copyright preamble stays before it.)
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("G".to_string()),
+        ]);
+        let mut driver =
+            SessionDriver::new(terminal, 1, LogonChannel::Remote, graphics_test_services());
+
+        driver.run().await.expect("driver completes");
+
+        let output = driver.into_terminal().output().to_vec();
+        let graphics_pos = output
+            .windows(b"ANSI Graphics (Y/n)? ".len())
+            .position(|w| w == b"ANSI Graphics (Y/n)? ")
+            .expect("graphics prompt should be asked");
+        let banner_pos = output
+            .windows(b"BANNER".len())
+            .position(|w| w == b"BANNER")
+            .expect("banner should render");
+        assert!(
+            graphics_pos < banner_pos,
+            "the graphics question must precede the banner/title screen"
         );
     }
 

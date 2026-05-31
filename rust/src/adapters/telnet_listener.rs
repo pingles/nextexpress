@@ -431,7 +431,10 @@ mod tests {
         let _loop_task = tokio::spawn(async move { l.run().await });
 
         let mut stream = TcpStream::connect(addr).await.unwrap();
-        let buf = read_until_banner(&mut stream, b"WELCOME TO TESTBBS").await;
+        // The BBSTITLE banner now follows the graphics question (legacy
+        // `SCREEN_BBSTITLE` order); `drain_to_name_prompt` answers the
+        // question and drains past the banner to the name prompt.
+        let buf = drain_to_name_prompt(&mut stream).await;
         assert!(
             buf.windows(b"WELCOME TO TESTBBS".len())
                 .any(|w| w == b"WELCOME TO TESTBBS"),
