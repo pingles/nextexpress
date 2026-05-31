@@ -58,7 +58,7 @@ where
         // Step 2: subject prompt. Empty subject aborts (mirrors
         // `amiexpress/express.e:10854-10857`).
         let Some(subject) = self
-            .read_required_line(session, POST_SUBJECT_PROMPT)
+            .read_required_line(session, POST_SUBJECT_PROMPT, false)
             .await?
         else {
             return Ok(());
@@ -86,7 +86,7 @@ where
         // each line is read until the user types `.` on its own line,
         // or `/A` to abort. The full editor (numbered line edits,
         // `/S` save, quoting) arrives in Phase 8.
-        let Some(body) = self.read_post_body(session).await? else {
+        let Some(body) = self.read_post_body(session, false).await? else {
             return Ok(());
         };
 
@@ -118,13 +118,13 @@ where
         session: &mut MenuSession,
     ) -> Result<(), T::Error> {
         let Some(subject) = self
-            .read_required_line(session, POST_SUBJECT_PROMPT)
+            .read_required_line(session, POST_SUBJECT_PROMPT, false)
             .await?
         else {
             return Ok(());
         };
 
-        let Some(body) = self.read_post_body(session).await? else {
+        let Some(body) = self.read_post_body(session, false).await? else {
             return Ok(());
         };
 
@@ -205,29 +205,40 @@ where
     }
 
     /// Reads a single non-empty trimmed line in response to `prompt`,
-    /// stamping the idle clock. Returns `None` (and writes the abort
-    /// notice) when the user submits an empty line, an EOF, or an
-    /// idle timeout — the post-mail composer treats these the same.
+    /// stamping the idle clock. Returns `None` when the user submits an
+    /// empty line, an EOF, or an idle timeout. `silent = false` writes
+    /// the `Message aborted.` notice on that path (the `E` / `C`
+    /// composer); `silent = true` suppresses it (the `readMSG` sub-prompt
+    /// reply / forward, which abort silently — B6).
     pub(super) async fn read_required_line(
         &mut self,
         session: &mut MenuSession,
         prompt: &[u8],
+        silent: bool,
     ) -> Result<Option<String>, T::Error> {
         match self.read_prompted(prompt, TerminalEcho::Visible).await? {
             TerminalRead::Line(line) => {
                 session.record_input(SystemTime::now());
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
-                    self.write_and_flush(POST_ABORTED_LINE).await?;
+                    self.write_abort_notice(silent).await?;
                     return Ok(None);
                 }
                 Ok(Some(trimmed.to_string()))
             }
             TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                self.write_and_flush(POST_ABORTED_LINE).await?;
+                self.write_abort_notice(silent).await?;
                 Ok(None)
             }
         }
+    }
+
+    /// Writes the `Message aborted.` notice unless `silent`.
+    async fn write_abort_notice(&mut self, silent: bool) -> Result<(), T::Error> {
+        if !silent {
+            self.write_and_flush(POST_ABORTED_LINE).await?;
+        }
+        Ok(())
     }
 
     /// Reads a single trimmed line in response to `prompt`, returning
@@ -252,11 +263,13 @@ where
     }
 
     /// Drives the line-mode editor's body input loop. Returns the
-    /// concatenated body on `.`-on-its-own-line, and `None` (after
-    /// writing the abort notice) on `/A`, EOF, or idle timeout.
+    /// concatenated body on `.`-on-its-own-line, and `None` on `/A`, EOF,
+    /// or idle timeout. `silent = false` writes the abort notice on that
+    /// path; `silent = true` suppresses it (the sub-prompt reply — B6).
     pub(super) async fn read_post_body(
         &mut self,
         session: &mut MenuSession,
+        silent: bool,
     ) -> Result<Option<String>, T::Error> {
         self.write_and_flush(POST_BODY_PROMPT).await?;
         let mut body = String::new();
@@ -266,19 +279,19 @@ where
                     session.record_input(SystemTime::now());
                     let trimmed = line.trim();
                     if trimmed.eq_ignore_ascii_case("/A") {
-                        self.write_and_flush(POST_ABORTED_LINE).await?;
+                        self.write_abort_notice(silent).await?;
                         return Ok(None);
                     }
                     if trimmed == "." {
                         return Ok(Some(body));
                     }
                     if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
-                        self.write_and_flush(POST_ABORTED_LINE).await?;
+                        self.write_abort_notice(silent).await?;
                         return Ok(None);
                     }
                 }
                 TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                    self.write_and_flush(POST_ABORTED_LINE).await?;
+                    self.write_abort_notice(silent).await?;
                     return Ok(None);
                 }
             }

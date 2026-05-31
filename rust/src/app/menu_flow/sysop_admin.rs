@@ -47,7 +47,7 @@ where
         };
 
         let Some(line) = self
-            .read_required_line(session, CONFIRM_DELETE_PROMPT)
+            .read_required_line(session, CONFIRM_DELETE_PROMPT, false)
             .await?
         else {
             return Ok(());
@@ -95,7 +95,7 @@ where
         };
 
         let Some(conf_line) = self
-            .read_required_line(session, MOVE_TARGET_CONFERENCE_PROMPT)
+            .read_required_line(session, MOVE_TARGET_CONFERENCE_PROMPT, false)
             .await?
         else {
             return Ok(false);
@@ -105,7 +105,7 @@ where
             return Ok(false);
         };
         let Some(mb_line) = self
-            .read_required_line(session, MOVE_TARGET_MSGBASE_PROMPT)
+            .read_required_line(session, MOVE_TARGET_MSGBASE_PROMPT, false)
             .await?
         else {
             return Ok(false);

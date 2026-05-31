@@ -52,7 +52,7 @@ where
             }
         };
 
-        let Some(body) = self.read_post_body(session).await? else {
+        let Some(body) = self.read_post_body(session, true).await? else {
             return Ok(());
         };
 
@@ -95,7 +95,10 @@ where
             }
         };
 
-        let Some(typed_to) = self.read_required_line(session, FORWARD_TO_PROMPT).await? else {
+        let Some(typed_to) = self
+            .read_required_line(session, FORWARD_TO_PROMPT, true)
+            .await?
+        else {
             return Ok(());
         };
 
@@ -192,12 +195,14 @@ where
         let mut note = String::new();
         let mut first_line = true;
         loop {
+            // The sub-prompt forward aborts silently (B6), so `/A`,
+            // an oversize note, EOF and idle all return no-note without a
+            // `Message aborted.` notice.
             match self.read_prompted(b"", TerminalEcho::Visible).await? {
                 TerminalRead::Line(line) => {
                     session.record_input(SystemTime::now());
                     let trimmed = line.trim();
                     if trimmed.eq_ignore_ascii_case("/A") {
-                        self.write_and_flush(POST_ABORTED_LINE).await?;
                         return Ok(None);
                     }
                     if trimmed == "." {
@@ -208,12 +213,10 @@ where
                     }
                     first_line = false;
                     if !append_line_with_newline(&mut note, &line, MAX_MAIL_BODY_BYTES) {
-                        self.write_and_flush(POST_ABORTED_LINE).await?;
                         return Ok(None);
                     }
                 }
                 TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                    self.write_and_flush(POST_ABORTED_LINE).await?;
                     return Ok(None);
                 }
             }

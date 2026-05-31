@@ -690,6 +690,72 @@ fn mail_json(
     )
 }
 
+#[tokio::test]
+async fn sub_prompt_reply_and_forward_abort_silently() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `R`eply, then `/A` aborts the body. The legacy `readMSG` reply is
+    // silent on abort (B6) — no `Message aborted.` notice. `R` still
+    // advances afterwards (legacy `goNextMsg`).
+    write_line(&mut stream, b"R").await;
+    drain_until(&mut stream, b"End with a single '.'").await;
+    write_line(&mut stream, b"/A").await;
+    let after_reply = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&after_reply, b"Message aborted"),
+        "an aborted sub-prompt reply must be silent, got {:?}",
+        String::from_utf8_lossy(&after_reply)
+    );
+
+    // `F`orward, then a blank `Forward to:` aborts — also silent.
+    write_line(&mut stream, b"F").await;
+    drain_until(&mut stream, b"Forward to: ").await;
+    write_line(&mut stream, b"").await;
+    let after_forward = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&after_forward, b"Message aborted"),
+        "an aborted sub-prompt forward must be silent, got {:?}",
+        String::from_utf8_lossy(&after_forward)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn entering_mail_with_a_blank_subject_still_shows_the_abort_notice() {
+    // The silent-abort change (B6) is scoped to the sub-prompt reply /
+    // forward; the top-level `E` composer keeps its `Message aborted.`
+    // notice on a blank subject.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"E sysop").await;
+    drain_until(&mut stream, b"Subject: ").await;
+    write_line(&mut stream, b"").await;
+    let after = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after, b"Message aborted."),
+        "a blank `E` subject must still report `Message aborted.`, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// The verbatim `readMSG` sub-prompt skeleton
 /// (`amiexpress/express.e:12016-12021`) with `range` substituted into
 /// the `( <range> )` slot. `show_delete` / `show_move` insert the `D` /
