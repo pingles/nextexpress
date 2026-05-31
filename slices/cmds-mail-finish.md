@@ -14,7 +14,26 @@ the BBS's primary mail-reading UI — to NextExpress so the top-level
 See [SLICES.md](../SLICES.md) and [COMMAND_PARITY.md](../COMMAND_PARITY.md)
 for the cross-reference of every drift NextExpress currently carries.
 
-## This round (2026-05-30): B4 + B5 + B8 together
+## This round (2026-05-30): B4 + B5 + B6 + B8 — **Done**
+
+The full `R` sub-prompt shipped and the five non-legacy top-level
+shortcuts were retired, in this commit sequence on `tier-b-read-subprompt`:
+
+- **B4** scaffolding (`<CR>`/`Q`); **B5a** dispatch + `A`gain; **B5b**
+  `R`eply / `F`orward; **B5c** `D`/`M`/`EH` (gated); **B5d** skeleton
+  `D`/`M` insertion + `?`/`??` help + `L`ist with `checkForPause`
+  pagination.
+- **B6** sub-prompt reply / forward abort silently.
+- **B8** retired `RP`/`FW`/`K`/`MV`/`EH` (now unknown commands); the
+  `phase8` binary smokes drive the operations through the sub-prompt. A
+  latent stale-`highest` bug (reply/forward post mid-loop) was fixed:
+  the range bound is now re-read live each turn.
+
+Still open: **B7** (`E` / `C` wire-text drift, independent), **B9** (the
+`ACS_*` access-flag fidelity), the no-arg `R` interactive entry, and the
+deeper `forwardMSG` To-header / body-copy parity (COMMAND_PARITY row 23).
+
+The original framing of the round follows.
 
 By default B8 (retiring the top-level `RP` / `FW` / `K` / `MV` / `EH`
 shortcuts) waited "one release cycle" after the sub-prompt shipped. For
