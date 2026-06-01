@@ -35,54 +35,16 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 
 ---
 
-## Update — four behaviours changed since this capture
-
-Four gaps recorded below have since been closed in NextExpress. The
-transcripts under `comparison/transcripts/` (notably `rust_sysop.txt`)
-predate these changes, so where the wire evidence cited below is from the
-NextExpress side it reflects the *old* behaviour; the rows and prose have
-been updated to describe the **current** NextExpress code, with the legacy
-side unchanged. The four:
-
-1. **Login renders the user-stats screen.** After the auto-rejoin mail
-   scan and before the menu, the driver now emits the six-row `S` block
-   (`render_stats_screen`, `session_driver.rs::run`). The fuller
-   Area/Caller/baud/ratio screen is still deferred.
-2. **Login asks the graphics question.** `LoginFlow::identify` now emits
-   `ANSI Graphics (Y/n)? ` after the plain copyright preamble but before
-   the banner/title screen and the name prompt — matching the legacy
-   order where `SCREEN_BBSTITLE` is shown only after the `A/r/n` question
-   (`express.e:29528`/`:29552`). An `n`/`N` answer selects ASCII and turns
-   the terminal colour mode off, so the `ColourTerminal` strips ANSI SGR
-   from every subsequent screen (the banner included). RIP is dropped (vs
-   the legacy `A/r/n`).
-3. **`MS` offers read-it-now.** Per base with matched mail, `MS` now
-   prints `Would you like to read it now ` (`yesNo(1)`, default Yes) and,
-   on Yes, attaches that base as a transient read visit and drops into the
-   read/reply sub-prompt for the found message, restoring the home
-   conference after (`menu_flow/scan_all_mail.rs`). `Found Mail!` and the
-   mid-scan pagination remain absent.
-4. **`E`/`C` use the ruler / numbered-line editor.** Body composition now
-   runs the ruler + `N > ` numbered-line editor (blank line ends input)
-   with the `Msg. Options: A,C,D,E,L,S,?` save menu — `S` saves, `A`
-   aborts (with the `Abort message entry (y/n)?` confirm), `C` continues,
-   `L` lists, `?` helps; `D`/`E` are advertised but deferred and the
-   full-screen editor fork is skipped (`read_editor_body`,
-   `menu_flow/post_mail.rs`). The save confirmation stays `Message #N
-   saved.`. Reply / forward keep the minimal `.`-terminated editor.
-
----
-
 ## Summary of differences
 
 ### Behavioural differences
 
 | Command | NextExpress | AmiExpress |
 |---|---|---|
-| Login (graphics prompt) | *(updated)* Asks `ANSI Graphics (Y/n)? ` after the copyright preamble, before the banner; `n`/`N` selects ASCII and strips ANSI from later screens. RIP dropped | Asks `ANSI, RIP or No graphics (A/r/n)? ` at connect (timed input sets terminal caps) |
+| Login (graphics prompt) | Asks `ANSI Graphics (Y/n)? ` (RIP-less); `n`/`N` selects ASCII and strips ANSI from later screens | Asks `ANSI, RIP or No graphics (A/r/n)? ` at connect — three-way incl. RIP (timed input sets terminal caps) |
 | Login (`Authenticated.`) | Emits `Authenticated.\r\n` on correct password | No equivalent; transitions silently into mail scan |
 | Login (mail-scan / pagination) | Emits only `No new mail.`; never paginates | `Scanning conferences for mail...` + per-conf stats block + two `(Pause)...Space To Resume` gates |
-| Login (user-stats screen) | *(updated)* Renders the six-row `S` block at login (after the scan, before the menu); the fuller Area/Caller/baud/ratio screen is still deferred | Auto-renders full Area/Caller/Security/Uploads/Downloads/Ratio screen |
+| Login (user-stats screen) | Renders only the six-row `S` block at login; the fuller Area/Caller/baud/ratio screen is still deferred (slice A11) | Auto-renders full Area/Caller/Security/Uploads/Downloads/Ratio screen |
 | `VER` (registration line) | Omits `Registered to ...` entirely (no reg-key concept) | Prints `Registered to NONE.` |
 | `S` (lower screen) | Stops after `Msgs Posted` — no baud/CPS/protocol/sysop block, no ratio table | Full screen incl. `Online Baud`...`Sysop Here` + Uploads/Downloads ratio table |
 | `S` (lead-in rows) | Always leads with `User Number` | Leads with config-gated `Area Name` + always-present `Caller Num.`; no `User Number` row (USERNUMBER_LOGIN unset) |
@@ -96,13 +58,12 @@ side unchanged. The four:
 | `J 99` (out of range) | Prints no-access notice then **silently falls through to join Main** | Interactive `Conference Number (1-2):` re-prompt; stays in current conf; never reaches access check |
 | `R` (no argument) | One-line `Usage: R <message-number>`; redraws menu | Enters readMSG loop at first/computed unread; shows live sub-prompt |
 | `R <num>` not found | Single `Message not found.` for any bad number | Out-of-range → `The last message in this conference is <high>` (live); mid-base gap → silent |
-| `MS` (read-it-now) | *(updated)* Now matches — per base with matched mail, prints `Would you like to read it now ` (`yesNo(1)`, default Yes); on Yes drops into the read/reply sub-prompt, restoring the home conference after | `Would you like to read it now` -> `yesNo(1)` -> drops into read/reply on Yes |
 | `MS` (`Found Mail!`) | Emitted nowhere | Prints `Found Mail!` on single-conf/auto-join path |
 | `MS` (pagination) | Builds whole output, flushes once; never pauses | Paginates with `checkForPause()` after each row |
 | `E <to>` (inline) | Skips To-echo/box; no visible recipient confirmation | Always echoes `To: ... SYSOP` (visible resolved recipient) |
 | `E`/`C` (blank subject) | Writes `Message aborted.` | Aborts silently (bare newline) |
 | `C` (recipient display) | Straight to `Subject:`; never shows it is addressed to sysop | Prints decoration box + `To: (Enter)='ALL'? SYSOP` |
-| `E` (body editor/save) | *(updated)* Ruler / numbered-line editor (blank line ends input) + `Msg. Options: A,C,D,E,L,S,?` save menu (`S` saves, `A` aborts w/ confirm, `C`/`L`/`?`; `D`/`E` deferred, no full-screen fork); still prints `Message #N saved.`. Reply/forward keep the `.`/`/A` editor | `FullScreen Editor (y/N)?` fork → ruler/line-number editor + `Msg. Options: A,C,D,E,F,L,S,X,?` save menu; `Saving...Message Number N...done!` |
+| `E` (body editor/save) | Ruler / `Msg. Options: A,C,D,E,L,S,?` editor matches structurally, but skips the `FullScreen Editor (y/N)?` fork and the `F`/`X` file-attach verbs, and prints `Message #N saved.` (not `Saving...Message Number N...done!`); `D`/`E` deferred. Reply/forward keep the `.`/`/A` editor | `FullScreen Editor (y/N)?` fork → ruler/line-number editor + `Msg. Options: A,C,D,E,F,L,S,X,?` save menu; `Saving...Message Number N...done!` |
 | `N` | `MenuCommand::Unknown` (new-files binding removed, deferred to Tier D) | Real command — `ACS_FILE_LISTINGS`-gated new-files scan / `AquaScan v1.0` |
 | `RP`/`FW`/`K`/`MV`/`EH` (top-level) | Menu **still advertises** all five, but every one is rejected as Unknown (internal inconsistency) | Never top-level; menu and dispatcher agree (they live in the `R` sub-prompt) |
 | `G` (plain) | Always logs off immediately | Plain `G` runs `checkFlagged()`: confirms if files flagged, else returns to menu without logging off |
@@ -155,8 +116,8 @@ Both systems follow the same skeleton — name prompt -> masked password -> auto
 
 ### Graphics prompt (ANSI/RIP/None)
 - **AmiExpress** asks `ANSI, RIP or No graphics (A/r/n)? ` at connect (`express.e:29528`) via a timed `lineInput`; the answer sets `ansiColour` (N=off), `ripMode` (R), `quickFlag` (Q).
-- **Rust** *(updated; post-dates `rust_sysop.txt`)* now asks `ANSI Graphics (Y/n)? ` (`ANSI_PROMPT`, `wire_text.rs`) at the head of `LoginFlow::identify` — after the plain copyright preamble, before the banner/title screen and the name prompt. An `n`/`N` answer turns the terminal's live colour mode off, so the `ColourTerminal` strips ANSI SGR from every subsequent screen (banner included); the default (`Y`/CR) keeps ANSI. RIP is dropped, so the choice collapses to ANSI vs. ASCII (no `ripMode`/`quickFlag`).
-- **BEHAVIOURAL (now largely matched).** The interactive step and the colour-capability state it sets are present in both; the residual difference is the dropped RIP option and the `(Y/n)` vs. `(A/r/n)` wording.
+- **Rust** asks `ANSI Graphics (Y/n)? ` (`ANSI_PROMPT`, `wire_text.rs`) at the head of `LoginFlow::identify` — after the plain copyright preamble, before the banner/title screen and the name prompt. An `n`/`N` answer turns the terminal's live colour mode off, so the `ColourTerminal` strips ANSI SGR from every subsequent screen (banner included); the default (`Y`/CR) keeps ANSI. RIP is dropped, so the choice collapses to ANSI vs. ASCII (no `ripMode`/`quickFlag`).
+- **BEHAVIOURAL (residual).** The interactive step and the colour-capability state are present in both; the residual divergence is the deliberately dropped RIP option and the `(Y/n)` vs. `(A/r/n)` wording (NextExpress is RIP-less by design). The banner-after-graphics ordering rests on the legacy `:29552` source order — the reference install's title screen was empty in the capture, so it is not observable on the live wire.
 
 ### Name prompt
 - Both: `Enter your Name: ` (AE `namePrompt` default at `express.e:31774` + trailing space; Rust `NAME_PROMPT = b"\r\nEnter your Name: "`).
@@ -187,8 +148,8 @@ Both systems follow the same skeleton — name prompt -> masked password -> auto
 
 ### Rich user-stats / ratio screen
 - **AmiExpress** auto-renders a full Area Name / Caller Num / Security Lv / #Times On / Online Baud / Protocol / Sysop Here block plus an Uploads/Downloads/Bytes-Avail/Ratio table during login.
-- **Rust** *(updated; post-dates `rust_sysop.txt`)* now renders the six-row `S` block (`render_stats_screen`) at login — after the auto-rejoin mail scan, before the menu (`session_driver.rs::run`). The fuller Area Name/Caller Num lead-in, the Online Baud/CPS/Protocol/Sysop block, and the Uploads/Downloads ratio table are still deferred.
-- **BEHAVIOURAL (partially closed).** A user-stats screen is now shown at login on both sides; Rust still renders only the shared six-row subset, not AE's fuller screen.
+- **Rust** renders only the six-row `S` block (`render_stats_screen`) at login — after the auto-rejoin mail scan, before the menu (`session_driver.rs::run`). The fuller Area Name/Caller Num lead-in, the Online Baud/CPS/Protocol/Sysop block, and the Uploads/Downloads ratio table are still deferred (slice A11).
+- **BEHAVIOURAL.** Rust renders only the shared six-row subset at login, not AE's fuller screen.
 
 ### Menu screen (art)
 - Both gate the menu art on expert mode (AE `express.e:28583`; Rust `menu_flow/mod.rs:80`).
@@ -514,11 +475,10 @@ In the live transcripts both correctly show `Scanning Conference: <name> - ` / `
 **Differences.**
 
 - **COSMETIC — line endings.** AE source uses Amiga `\b\n`; Rust emits telnet `\r\n`. Universal translation, not MS-specific.
-- **~~BEHAVIOURAL — read-it-now prompt is absent in Rust.~~ Now implemented** *(post-dates `rust_sysop.txt`)*. When mail is found AE prints `\b\nWould you like to read it now ` and runs `yesNo(1)` (`:11738-11739`); on *Yes* it loops over each matched message via `displayMessage` + `replyPrompt`, dropping the caller into the read/reply flow. Rust's `handle_scan_all_mail` now does the same per base with matched mail: it prints `Would you like to read it now ` (`yesNo(1)`, default Yes) and, on Yes, attaches that base as a transient read visit and drops into `read_and_render` + the `read_subprompt` loop at the first matched message, restoring the caller's home conference afterwards (`menu_flow/scan_all_mail.rs`).
 - **BEHAVIOURAL — `Found Mail!` line absent in Rust.** AE's single-conf/auto-join path prints `\b\nFound Mail!` (`:11736`); Rust emits this string nowhere.
 - **BEHAVIOURAL — no pagination during the scan.** AE pages the scan: `lineCount:=2` (`:25257`) and `checkForPause()` after each listing row (`:11722`), shown stopping at `(Pause)...Space To Resume: ` in `amiexpress_login.txt`. Rust builds the whole output and flushes once — no `checkForPause`, no `lineCount`, so the scan never pauses regardless of length.
 
-**Verdict:** *(updated)* the scan output matches byte-for-byte and the read-it-now prompt + drop-into-read now matches too; the residual gaps are the `Found Mail!` line (AE's single-conf/auto-join path, gated on `currentConf<>0`, which `MS` never hits) and the mid-scan `checkForPause()` pagination.
+**Verdict:** the scan output matches byte-for-byte and the read-it-now prompt + drop-into-read matches; the residual gap is the mid-scan `checkForPause()` pagination. (The `Found Mail!` line belongs to AE's single-conf/auto-join path, gated on `currentConf<>0`, which `MS` never hits — a non-issue for MS parity.)
 
 ---
 
@@ -580,7 +540,7 @@ AE's `commentToSYSOP` prints the decoration box plus a pre-filled `To: (Enter)='
 
 ### E — body editor and save (LIVE on both sides)
 
-The driver drove a real post all the way through on AmiExpress (`amiexpress_post_and_list.txt`). *(Updated; post-dates `rust_sysop.txt`.)* `E`/`C` now use the ruler / numbered-line editor with the `Msg. Options:` save menu, so the editors are now structurally aligned — the residual differences are the dropped full-screen fork, the `F`/`X` (file-attach) menu verbs, and the save-confirmation wording.
+The driver drove a real post all the way through on AmiExpress (`amiexpress_post_and_list.txt`). `E`/`C` use the ruler / numbered-line editor with the `Msg. Options:` save menu, structurally aligned with the legacy. The residual differences are the dropped full-screen fork, the `F`/`X` (file-attach) menu verbs, and the save-confirmation wording.
 
 AmiExpress first offers its **full-screen editor** and, on decline, drops into a **line editor** with a ruler and line numbers, ending in a save menu:
 ```
@@ -600,7 +560,7 @@ Saving...Message Number 1...done!
 ```
 (The save menu `Msg. Options: A,C,D,E,F,L,S,X,?` — A>bort, C>ontinue, D>elete lines, E>dit, F>ile attach, L>ist, S>ave, X>fer, `express.e:10375-10389` — is a *different* `Msg. Options:` prompt from the read sub-prompt that shares the prefix.)
 
-NextExpress now drives the same shape via `read_editor_body` (`menu_flow/post_mail.rs`): the ruler intro, `N > ` numbered prompts (blank line ends input), then the save menu — rendered for the no-file-attach case, so `F`/`X` are absent:
+NextExpress drives this via `read_editor_body` (`menu_flow/post_mail.rs`): the ruler intro, `N > ` numbered prompts (blank line ends input), then the save menu — rendered for the no-file-attach case, so `F`/`X` are absent:
 ```
    Enter your text. (Enter) alone to end. (75 chars/line)
    (|-------|-------|-------|-------|-------|-------|-------|-------|-------|--)
@@ -726,11 +686,11 @@ The most important behavioural gaps, in rough order of user impact:
 
 6. **`mins. left` shows `0` in Rust vs `599` in AE — seed data, not logic.** Both use identical arithmetic and rendering; the Rust sysop seed leaves `time_limit_per_call = 0`, so the prompt reads `0`. Cosmetic, but visually jarring.
 
-7. **AE streams richer post-login presentation than Rust.** *(Partially closed.)* Rust now asks the graphics question at the front of login and renders the six-row user-stats screen after the mail scan. AmiExpress still streams more that Rust omits: the paginated login mail scan (two `(Pause)...Space To Resume` gates), the per-conference stats block (`Total messages` / `Last message auto scanned` / `Last message read`), and the *fuller* user-stats / Uploads-Downloads-Ratio screen (Rust renders only the six-row subset).
+7. **AE streams richer post-login presentation than Rust.** AmiExpress streams more than Rust during login: the paginated login mail scan (two `(Pause)...Space To Resume` gates), the per-conference stats block (`Total messages` / `Last message auto scanned` / `Last message read`), and the *fuller* user-stats / Uploads-Downloads-Ratio screen (Rust renders only the six-row subset). (The graphics question and the six-row login user-stats screen are already in place.)
 
 8. **AE's menu is an elaborate per-conference ANSI art file; Rust's is a compact embedded ASCII block.** AE loads a configurable `/X`-style ANSI logo + bracketed coloured command grid ending in `Now attending to user: sysop`; Rust embeds a fixed `.oO(===[ NextExpress :: MAIN MENU ]===)Oo.` box + figlet + uncoloured list, with no "Now attending" trailer.
 
-9. **`MS` matches byte-for-byte and now also offers read-it-now.** *(Partially closed.)* The scan output (header, conference/message-base banners, `No mail today!`, listing table) is an exact wire match, and Rust now emits the `Would you like to read it now` prompt and drops into the read/reply sub-prompt on Yes. The residual gaps are the `Found Mail!` line (AE's single-conf/auto-join path, which `MS` never reaches) and the mid-scan `checkForPause()` pagination.
+9. **`MS` pagination is the remaining gap.** The scan output (header, conference/message-base banners, `No mail today!`, listing table) and the read-it-now prompt + drop-into-read are an exact wire match; the residual gap is the mid-scan `checkForPause()` pagination. (The `Found Mail!` line belongs to AE's single-conf/auto-join path, which `MS` never reaches — a non-issue for MS parity.)
 
 10. **`S` shares an exact six-row core but Rust implements only a subset.** The shared rows are byte-identical, yet Rust omits the `Area Name`/`Caller Num.` lead-in, the `Online Baud`/CPS/`Protocol`/`Sysop Here` block, and the entire Uploads/Downloads ratio table (deferred to slice A11).
 
@@ -749,25 +709,24 @@ The most important behavioural gaps, in rough order of user impact:
 | Line terminator | `\b\n` (Amiga E CR LF) | `\r\n` | ✓ Identical on the wire. |
 | ANSI colour in prompts | Liberal (`[32m`/`[33m`/`[36m` in To/Subject/Private/menu) | Present in header/join/toggles/menu-prompt; **plain** on the `E`/`C` To/Subject/Private prompts | Gap — add ANSI to the compose prompts. |
 | Trailing blank lines | Notices often end `\b\n\b\n`; one extra `\r\n` after toggles | Mixed — some notices have it, some don't | Audit & normalise. |
-| Yes/No default | `yesNo(2)` → `(y/N)?` default **N** (the common case, e.g. Private) | Hard-coded `(y/N)?`, default **N** | ✓ Default matches; gap is ANSI + the rarer `yesNo(1)` default-Y sites (e.g. scan's "read it now"). |
+| Yes/No default | `yesNo(2)` → `(y/N)?` default **N** (the common case, e.g. Private) | Hard-coded `(y/N)?`, default **N** | ✓ Default matches; gap is ANSI + the rarer `yesNo(1)` default-Y sites still to decorate. |
 | "Sysop only" denied | Varies per gate | Single `You do not have permission to perform that operation.` | Acceptable. |
 | Source-not-found for K/MV/EH | n/a (these are R-sub-prompt verbs in AE, not menu commands) | `No such message in this base.` (now reachable only inside the `R` sub-prompt) | Greenfield; keep. |
 
 ## Recommended fixes & sequencing
 
-Carried over and updated from the original parity table (the R sub-prompt and the
-`MS` multi-conf walk it listed as pending have since shipped). **Also now shipped**
-(see the [update note](#update--four-behaviours-changed-since-this-capture)): the
-login graphics question, the login user-stats screen, the `MS` read-it-now
-prompt + drop-into-read, and the ruler / `Msg. Options:` editor for `E`/`C`.
-Roughly in order of effort vs. parity gain:
+Carried over from the original parity table. The R sub-prompt, the `MS`
+multi-conf walk, the login graphics question, the login user-stats screen, the
+`MS` read-it-now prompt + drop-into-read, and the ruler / `Msg. Options:` editor
+for `E`/`C` — all once listed as pending — have since shipped. What remains,
+roughly in order of effort vs. parity gain:
 
 1. **Quick text fixes** (`wire_text.rs`, byte-for-byte parity, tiny diffs): E recipient-no-access → end with `!` + trailing blank (`express.e:10838`); EALL/ALL → distinct per-addressing notices (`:10806`); add the second trailing `\r\n` to `Goodbye`.
 2. **ANSI on the compose prompts** — decorate the `E`/`C` `To:` / `Subject:` / `Private` prompts to match the legacy `(Enter)='ALL'?` / `(Blank)=abort?` boxes. Defaults already match; do **not** flip them.
 3. **Interactive no-arg sub-flows** (largest interaction-model gap): bare `J` → `Conference Number (1-N): ` prompt (blank = abort); bare `R` → enter the readMSG loop at the first unread instead of the usage line.
 4. **Menu hygiene** — stop advertising retired `RP`/`FW`/`K`/`MV`/`EH` in the menu asset (they now reject as Unknown), and reconsider the chatty Rust-only notices (item 13 above).
 5. **`mins. left`** — seed a real per-call time budget so the prompt stops showing `0`.
-6. **Login / `S` parity** (larger; *partially shipped*): the login user-stats screen now renders (six-row subset). Still pending — flagged-file confirm on plain `G` (+ `saveFlagged`/`saveHistory`); the richer `S` screen (Area/Caller lead-in, baud/CPS/protocol/sysop block, Uploads/Downloads ratio table); login mail-scan pagination.
+6. **Login / `S` parity** (larger): flagged-file confirm on plain `G` (+ `saveFlagged`/`saveHistory`); the richer `S` screen (Area/Caller lead-in, baud/CPS/protocol/sysop block, Uploads/Downloads ratio table) beyond the six-row subset already shown at login; login mail-scan pagination.
 7. **Tier D** — restore `N` as the new-files scan (currently Unknown).
 
 ## Methodology / sources of truth
