@@ -8,6 +8,7 @@
 pub mod bytes;
 pub mod caller_log;
 pub mod conference;
+pub mod conference_flags;
 pub mod conference_repository;
 pub mod conference_visit;
 pub mod messaging;
