@@ -274,6 +274,17 @@ entity ConferenceMembership {
     ratio_mode: RatioMode               -- overrides user.ratio_mode if non-disabled
     ratio_value: Integer
 
+    -- Per-conference scan preferences, edited by the CF command (legacy
+    -- internalCommandCF, express.e:24672; mask bits in axconsts.e:45-48).
+    -- mail_scan/file_scan default on so a fresh membership is swept for new
+    -- mail and files out of the box. The legacy seeds these from per-conf
+    -- DEFAULT_NEWSCAN/DEFAULT_NEW_FILES tooltypes (file-config, out of scope)
+    -- — see docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md, D2.
+    mail_scan: Boolean = true           -- include in the new-mail scan (M; CS/MS)
+    mailscan_all: Boolean = false       -- scan all messages, not just addressed (A)
+    file_scan: Boolean = true           -- include in the new-files scan (F; N)
+    zoom_scan: Boolean = false          -- include in the ZOOM/QWK gather (Z)
+
     -- Read pointers. Per (user, msgbase), updated as the user reads messages.
     pointers: ReadPointers with membership = this
 

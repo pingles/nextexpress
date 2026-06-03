@@ -51,6 +51,23 @@ enum JoinReason {
     conf_scan_walk        -- the conf-scan stepped them through each conf
 }
 
+-- The per-conference scan preference a CF edit targets (the M/A/F/Z
+-- columns of internalCommandCF). Legacy mask bits: mail_scan=4,
+-- mailscan_all=128, file_scan=8, zoom_scan=2 (axconsts.e:45-48).
+enum ConferenceScanFlag {
+    mail_scan
+    mailscan_all
+    file_scan
+    zoom_scan
+}
+
+-- How a CF edit changes the chosen flag across the selected conferences.
+enum ScanFlagEdit {
+    set                   -- '+' : turn the flag on for the selection
+    clear                 -- '-' : turn the flag off for the selection
+    toggle                -- '*' or an explicit conference list : flip it
+}
+
 ------------------------------------------------------------
 -- Entities and Variants
 ------------------------------------------------------------
@@ -216,6 +233,30 @@ rule FinishConferenceScan {
             )
 }
 
+-- The user edits their own per-conference scan flags (legacy CF /
+-- internalCommandCF, express.e:24672). They choose one flag (M/A/F/Z),
+-- then a conference selection and an operation; the operation is applied
+-- to that flag on each selected, granted membership of the caller. Only
+-- the caller's own memberships are touched — CF is a personal-preferences
+-- command, not a sysop-edits-others command.
+--
+-- The legacy expression prompt advertises '*' toggle-all but its code has
+-- no '*' branch (validated live against the FS-UAE reference) — NextExpress
+-- honours the advertised toggle-all (design D1).
+rule EditConferenceScanFlags {
+    when: EditConferenceScanFlagsRequested(session, flag, edit, selection)
+    requires: has_access(session.user, edit_conference_flags)
+
+    ensures:
+        for m in ConferenceMemberships
+                where user = session.user and m.granted
+                and conference_selected(selection, m.conference):
+            if flag = mail_scan:    m.mail_scan    = next_flag(edit, m.mail_scan)
+            if flag = mailscan_all: m.mailscan_all = next_flag(edit, m.mailscan_all)
+            if flag = file_scan:    m.file_scan    = next_flag(edit, m.file_scan)
+            if flag = zoom_scan:    m.zoom_scan    = next_flag(edit, m.zoom_scan)
+}
+
 ------------------------------------------------------------
 -- Sysop conference administration
 ------------------------------------------------------------
@@ -324,8 +365,18 @@ invariant VisitedMsgBaseBelongsToVisitedConference {
 -- The mail-scan mode the original join request asked for.
 -- scan_mode_for(visit)
 
--- True when the user has a particular access right (e.g. create_conference).
+-- True when the user has a particular access right (e.g. create_conference,
+-- edit_conference_flags).
 -- has_access(user, right)
+
+-- True when a CF edit's conference selection includes this conference. For
+-- the '+' / '-' / '*' forms this is every accessible conference; for an
+-- explicit conference-number list it is the listed ones.
+-- conference_selected(selection, conference)
+
+-- The flag's new value under a CF edit operation: set -> true,
+-- clear -> false, toggle -> not current.
+-- next_flag(edit, current)
 
 ------------------------------------------------------------
 -- Open questions
