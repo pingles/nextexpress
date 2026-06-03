@@ -20,6 +20,7 @@
 
   CONFERENCES
     J <n>    Join conference number <n>
+    CF       Edit conference scan flags
 
   SESSION
     S        User stats

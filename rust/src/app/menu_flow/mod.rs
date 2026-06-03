@@ -12,6 +12,7 @@
 //! blocks, so this file stays focused on the dispatch loop plus the
 //! shared terminal-I/O helpers.
 
+mod conf_flags;
 mod join;
 mod list_messages;
 mod pager;
@@ -36,6 +37,7 @@ use crate::app::wire_text::{
     VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
+use crate::domain::user::Right;
 
 use self::join::ExplicitJoinResult;
 
@@ -241,6 +243,18 @@ where
                     ANSI_COLOR_OFF_LINE
                 };
                 self.write_and_flush(line).await?;
+            }
+            MenuCommand::ConferenceFlags => {
+                // Tier C C5 (`CF`): edit the caller's own per-conference
+                // scan flags, gated on the legacy `ACS_CONFFLAGS` right
+                // (`amiexpress/express.e:24686`). A user without it — an
+                // awaiting-validation new user — sees the unknown-command
+                // notice, since `CF` is not part of their menu.
+                if session.user().has_access(Right::EditConferenceFlags) {
+                    self.handle_conference_flags(&mut session).await?;
+                } else {
+                    self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
+                }
             }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }

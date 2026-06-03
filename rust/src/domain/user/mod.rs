@@ -79,13 +79,16 @@ pub enum Right {
     EditFiles,
     /// `conferences.allium:CreateConference` precondition.
     CreateConference,
+    /// `conferences.allium:EditConferenceScanFlags` precondition — the
+    /// `CF` command's `ACS_CONFFLAGS` gate (`amiexpress/express.e:24686`).
+    EditConferenceFlags,
 }
 
 impl Right {
     /// Returns every variant in declaration order. Useful for tests
     /// and any callers that need to iterate the full rights catalogue.
     #[must_use]
-    pub fn all() -> [Self; 10] {
+    pub fn all() -> [Self; 11] {
         [
             Self::ReadMessage,
             Self::EnterMessage,
@@ -97,6 +100,7 @@ impl Right {
             Self::OverrideTimeLimit,
             Self::EditFiles,
             Self::CreateConference,
+            Self::EditConferenceFlags,
         ]
     }
 }
@@ -1203,6 +1207,8 @@ mod tests {
         assert!(!user.has_access(Right::EditFiles));
         assert!(!user.has_access(Right::AttachFiles));
         assert!(!user.has_access(Right::OverrideTimeLimit));
+        // C5: an awaiting-validation new user cannot edit conference flags.
+        assert!(!user.has_access(Right::EditConferenceFlags));
     }
 
     #[test]

@@ -59,6 +59,9 @@ pub(crate) enum MenuCommand {
     /// A8). Mirrors `internalCommandM()` at
     /// `amiexpress/express.e:25239-25247`.
     AnsiToggle,
+    /// `CF`: edit the caller's per-conference scan flags (Tier C C5).
+    /// Mirrors `internalCommandCF()` at `amiexpress/express.e:24672`.
+    ConferenceFlags,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -94,6 +97,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("C") {
         return MenuCommand::CommentToSysop;
+    }
+    if trimmed.eq_ignore_ascii_case("CF") {
+        return MenuCommand::ConferenceFlags;
     }
     if trimmed.eq_ignore_ascii_case("T") {
         return MenuCommand::ShowTime;
@@ -335,6 +341,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_cf_as_the_conference_flags_command() {
+        // Tier C C5: `CF` (case-insensitive) is the conference-flags
+        // editor (`internalCommandCF`, `amiexpress/express.e:24672`).
+        assert_eq!(parse_menu_command("CF"), MenuCommand::ConferenceFlags);
+        assert_eq!(parse_menu_command("cf"), MenuCommand::ConferenceFlags);
+    }
+
+    #[test]
+    fn conference_flags_rejects_extra_tokens() {
+        // The mask key and conference list are entered at the editor's
+        // own prompts, not as command-line arguments.
+        assert_eq!(parse_menu_command("CF 1"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("CF M"), MenuCommand::Unknown);
+    }
+
+    #[test]
     fn parses_show_time_command() {
         // Tier A quickwin A1: a bare `T` (case-insensitive) routes to
         // `internalCommandT()` at `amiexpress/express.e:25622-25644`.
@@ -561,6 +583,7 @@ mod tests {
             MenuCommand::ShowMenu => Some("?"),
             MenuCommand::TopicHelp(_) => Some("^"),
             MenuCommand::AnsiToggle => Some("M"),
+            MenuCommand::ConferenceFlags => Some("CF"),
             MenuCommand::Unknown => None,
         }
     }
@@ -585,6 +608,7 @@ mod tests {
             MenuCommand::ShowMenu,
             MenuCommand::TopicHelp(String::new()),
             MenuCommand::AnsiToggle,
+            MenuCommand::ConferenceFlags,
             MenuCommand::Unknown,
         ]
     }

@@ -7,7 +7,7 @@
 //! Mirrors `internalCommandCF`'s expression handling
 //! (`amiexpress/express.e:24769-24838`).
 
-use crate::domain::conference::{ConferenceMembership, ScanFlag};
+use crate::domain::conference::{Conference, ConferenceMembership, ScanFlag};
 
 /// A parsed `CF` edit expression. The legacy prompt is
 /// `Enter Conference Numbers,'*' toggle all,'-' All off,'+' All on`
@@ -24,7 +24,7 @@ pub enum ScanFlagSelection {
     ///
     /// Design D1: the legacy advertises `*` in the prompt but its code
     /// has no `*` branch (validated live against the FS-UAE reference),
-    /// so the legacy `*` is a no-op. NextExpress honours the advertised
+    /// so the legacy `*` is a no-op. `NextExpress` honours the advertised
     /// toggle-all.
     ToggleAll,
     /// A comma-separated list of conference numbers — toggle each named
@@ -56,6 +56,21 @@ pub fn parse_scan_flag_selection(input: &str) -> Option<ScanFlagSelection> {
                 .collect(),
         ),
     })
+}
+
+/// Maps a `CF` mask-selection keystroke to the [`ScanFlag`] it edits, or
+/// `None` for any other key — the legacy exits the editor on a
+/// non-M/A/F/Z key (`express.e:24751-24762`). Case-insensitive; only the
+/// first non-blank character is consulted (the legacy `readChar`).
+#[must_use]
+pub fn parse_scan_flag_mask(input: &str) -> Option<ScanFlag> {
+    match input.trim().chars().next()?.to_ascii_uppercase() {
+        'M' => Some(ScanFlag::MailScan),
+        'A' => Some(ScanFlag::MailScanAll),
+        'F' => Some(ScanFlag::FileScan),
+        'Z' => Some(ScanFlag::Zoom),
+        _ => None,
+    }
 }
 
 /// Applies a parsed `CF` edit to the caller's memberships
@@ -100,10 +115,125 @@ pub fn apply_scan_flag_edit(
     }
 }
 
+/// One render-ready row of the `CF` listing: a conference the caller can
+/// access, with its four scan-flag values. Built by [`conf_flag_rows`]
+/// and rendered by `wire_text::render_conf_flags_listing`.
+// The four glyph cells are independent M/A/F/Z flags, not a state enum.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfFlagRow {
+    /// The conference number shown in the `[ n]` column.
+    pub conference_number: u32,
+    /// The conference name (left-justified to 23 columns when rendered).
+    pub conference_name: String,
+    /// `M` column — the new-mail scan flag.
+    pub mail_scan: bool,
+    /// `A` column — the all-messages scan flag.
+    pub mailscan_all: bool,
+    /// `F` column — the new-files scan flag.
+    pub file_scan: bool,
+    /// `Z` column — the ZOOM/QWK gather flag.
+    pub zoom_scan: bool,
+}
+
+/// Builds the `CF` listing rows: one per conference the caller has a
+/// granted membership for, in ascending conference-number order, joined
+/// with the conference catalogue for names (legacy
+/// `FOR i:=1 TO numConf IF checkConfAccess(i)`, `express.e:24695-24696`).
+/// A membership whose conference is absent from the catalogue (a stale
+/// row) is skipped.
+#[must_use]
+pub fn conf_flag_rows(
+    memberships: &[ConferenceMembership],
+    conferences: &[Conference],
+) -> Vec<ConfFlagRow> {
+    let mut rows: Vec<ConfFlagRow> = memberships
+        .iter()
+        .filter(|m| m.is_granted())
+        .filter_map(|m| {
+            let conference = conferences
+                .iter()
+                .find(|c| c.number() == m.conference_number())?;
+            Some(ConfFlagRow {
+                conference_number: m.conference_number(),
+                conference_name: conference.name().to_string(),
+                mail_scan: m.scan_flag(ScanFlag::MailScan),
+                mailscan_all: m.scan_flag(ScanFlag::MailScanAll),
+                file_scan: m.scan_flag(ScanFlag::FileScan),
+                zoom_scan: m.scan_flag(ScanFlag::Zoom),
+            })
+        })
+        .collect();
+    rows.sort_by_key(|row| row.conference_number);
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::conference::{ConferenceMembership, ScanFlag};
+    use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, ScanFlag};
+
+    fn catalogue() -> Vec<Conference> {
+        vec![
+            Conference::new(
+                1,
+                "New Users".to_string(),
+                vec![MessageBase::new(1, 1, "main".to_string())],
+            )
+            .expect("conference"),
+            Conference::new(
+                2,
+                "Amiga".to_string(),
+                vec![MessageBase::new(2, 1, "main".to_string())],
+            )
+            .expect("conference"),
+            Conference::new(
+                3,
+                "Three".to_string(),
+                vec![MessageBase::new(3, 1, "main".to_string())],
+            )
+            .expect("conference"),
+        ]
+    }
+
+    #[test]
+    fn rows_cover_only_granted_conferences_in_ascending_order() {
+        let confs = catalogue();
+        let ms = vec![
+            ConferenceMembership::new(3, true),
+            ConferenceMembership::new(1, true),
+            ConferenceMembership::new(2, false),
+        ];
+        let rows = conf_flag_rows(&ms, &confs);
+        assert_eq!(
+            rows.iter().map(|r| r.conference_number).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert_eq!(rows[0].conference_name, "New Users");
+        assert_eq!(rows[1].conference_name, "Three");
+    }
+
+    #[test]
+    fn rows_reflect_each_flag_value_and_the_joined_name() {
+        let confs = catalogue();
+        let mut m = ConferenceMembership::new(2, true);
+        m.set_scan_flag(ScanFlag::MailScan, false);
+        m.set_scan_flag(ScanFlag::Zoom, true);
+        let rows = conf_flag_rows(&[m], &confs);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].conference_name, "Amiga");
+        assert!(!rows[0].mail_scan);
+        assert!(!rows[0].mailscan_all);
+        assert!(rows[0].file_scan, "file_scan defaults on");
+        assert!(rows[0].zoom_scan);
+    }
+
+    #[test]
+    fn a_membership_absent_from_the_catalogue_is_skipped() {
+        let confs = catalogue();
+        let ms = vec![ConferenceMembership::new(9, true)];
+        assert!(conf_flag_rows(&ms, &confs).is_empty());
+    }
 
     fn memberships() -> Vec<ConferenceMembership> {
         // Conferences 1, 2, 3 granted; conference 4 revoked. All scan
@@ -121,6 +251,22 @@ mod tests {
             .find(|m| m.conference_number() == conf)
             .expect("membership present")
             .scan_flag(flag)
+    }
+
+    #[test]
+    fn mask_key_maps_letters_to_flags_case_insensitively() {
+        assert_eq!(parse_scan_flag_mask("M"), Some(ScanFlag::MailScan));
+        assert_eq!(parse_scan_flag_mask("m"), Some(ScanFlag::MailScan));
+        assert_eq!(parse_scan_flag_mask("A"), Some(ScanFlag::MailScanAll));
+        assert_eq!(parse_scan_flag_mask("f"), Some(ScanFlag::FileScan));
+        assert_eq!(parse_scan_flag_mask("Z"), Some(ScanFlag::Zoom));
+    }
+
+    #[test]
+    fn mask_key_returns_none_for_a_non_mafz_key_or_empty() {
+        assert_eq!(parse_scan_flag_mask("Q"), None);
+        assert_eq!(parse_scan_flag_mask(""), None);
+        assert_eq!(parse_scan_flag_mask("   "), None);
     }
 
     #[test]

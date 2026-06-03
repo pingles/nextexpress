@@ -331,6 +331,9 @@ impl Conference {
 /// The per-conference scan preferences (`mail_scan`, `mailscan_all`,
 /// `file_scan`, `zoom_scan`) are the M/A/F/Z columns the legacy `CF`
 /// command edits (`amiexpress/express.e:24672`); see [`ScanFlag`].
+// The four scan flags plus `granted` are independent legacy bits, not a
+// state that collapses to an enum — the bitmask is the legacy storage.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceMembership {
     conference_number: u32,
