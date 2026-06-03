@@ -136,7 +136,7 @@ flowchart LR
     Driver --> Presenter["session_presenter\n+ wire_text"]
 
     Menu --> Parse["menu_command::parse"]
-    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle, ShowMenu,\nTopicHelp, AnsiToggle, Unknown}"]
+    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle, ShowMenu,\nTopicHelp, AnsiToggle, ConferenceFlags, Unknown}"]
     Menu --> MenuFlowHandlers["menu_flow/*\n(terminal handlers)"]
     MenuFlowHandlers --> MenuUseCases["menu/*\n(terminal-free use cases)"]
 
@@ -225,6 +225,7 @@ module under `app::menu_flow/`):
 | `^<topic>` | `TopicHelp(String)` | dispatch (`screens().topic_help`) |
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
 | `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail`; per base with matched mail, offers `Would you like to read it now` and (on Yes) attaches that base as a transient read visit and drops into `read_subprompt`, restoring the home conference after |
+| `CF` | `ConferenceFlags` | `conf_flags` — the M/A/F/Z scan-flag editor (legacy `internalCommandCF`); redraws the listing, reads a mask key then a conference expression (`+`/`-`/`*`/list) and applies it to the caller's own `ConferenceMembership` flags via `domain::conference_flags`. Gated on `Right::EditConferenceFlags`. |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 `read_subprompt` is the legacy `readMSG` sub-prompt loop (Tier B). `R <n>`
@@ -380,7 +381,7 @@ The current top files by line count:
 | `adapters/sqlite_user_repository.rs` | 1062 | Schema init + row codec + queries + ~30 tests. |
 | `adapters/file_mail_store.rs` | 1033 | Per-msgbase JSON store + lock + tests. |
 | `domain/messaging/scan_mail.rs` | 833 | Scan rule + extensive test fixtures. |
-| `domain/conference.rs` | 794 | `Conference`, `MessageBase`, `ConferenceMembership`, `NameType`, `AllowedAddressing`, `AllScanScope`. |
+| `domain/conference.rs` | 860 | `Conference`, `MessageBase`, `ConferenceMembership` (incl. the M/A/F/Z `ScanFlag` accessors), `NameType`, `AllowedAddressing`, `AllScanScope`. The `CF` edit semantics live in the focused `domain/conference_flags.rs`. |
 | `domain/messaging/post_mail.rs` | 784 | Post rule + helpers + tests. |
 | `domain/session/typed.rs` | 647 | Phase-typed wrappers and their constructors. |
 

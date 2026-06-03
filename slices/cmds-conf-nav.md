@@ -12,6 +12,17 @@ asset inventory.
 
 ## Slice C1 — `CS` (surface the existing `ConferenceScan` rule)
 
+**Re-scoped (2026-06-03).** Validation against the legacy source and the
+live FS-UAE reference found there is **no legacy `CS` command** — the
+runtime multi-conference scan is `MS` (`internalCommandMS`), and the
+per-step `Conference <n>:` / `<CR>=next, S=stop` UX below was invented.
+A faithful `CS` is byte-identical to the shipped `MS` until per-base scan
+flags exist, so this slice was deferred behind C5 (now done). When picked
+up, `CS` should be the on-demand **flag-gated** new-mail scan (consulting
+`ConferenceMembership.mail_scan`), distinct from `MS`'s force-all, and
+must render only legacy-sourced strings. The In/Out scope below is
+superseded by that framing.
+
 - **In Scope**
   - Parser: `MenuCommand::ConferenceScan`.
   - Dispatches to the already-shipped `Session::start_conference_scan`
@@ -81,6 +92,15 @@ asset inventory.
     does not split).
 
 ## Slice C5 — `CF` (conference flags editor)
+
+**Status: Done (2026-06-03), landed first in this tier** to unblock `CS`.
+Full design and the live FS-UAE behaviour assessment:
+[`docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md`](../docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md).
+Decisions: flags live on `ConferenceMembership` (per-conference; every
+shipped conference is single-base) and persist through SQLite; `mail_scan`
+/ `file_scan` default on (D2); `*` honours the advertised toggle-all the
+legacy no-ops (D1); the mask key is read as a line (Enter required), not a
+single `readChar` — the wire echo is identical.
 
 - **In Scope**
   - Adds `ConferenceMembership.mail_scan`,

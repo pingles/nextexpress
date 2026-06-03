@@ -1,8 +1,9 @@
 # Slice C5 — `CF` (Conference Flags Editor): Design & Plan
 
 Date: 2026-06-03
-Status: design approved in principle; legacy behaviour validated live; awaiting
-spec-doc review before writing the implementation plan.
+Status: **implemented** — C5 shipped on branch `c5-conference-flags` across the
+nine TDD cycles below; full test suite, doctests, clippy (`-D warnings`) and
+focused `cargo mutants` all green. Legacy behaviour validated live (§2).
 
 ## 1. Context
 

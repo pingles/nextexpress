@@ -74,12 +74,12 @@ done.
 | Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B3, shipped with B1's `MS`) |
 | Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B8 — `RP`/`FW`/`K`/`MV`/`EH` now parse to unknown) |
 | **C. Conference navigation** ||||
-| `CS` (surface) | spec rule `conferences.allium:ConferenceScan` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (rule done, command missing) |
+| `CS` (surface) | spec rule `conferences.allium:ConferenceScan` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (re-scoped — there is no legacy `CS`; the runtime multi-conference scan is `MS`. Now unblocked by C5: a flag-gated new-mail scan distinct from `MS`'s force-all. See the C5 design doc.) |
 | `<` / `>` | `express.e:24529, 24548` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo |
 | `JM <n>` | `express.e:25185` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4a) |
 | `<<` / `>>`, `JM` interactive | `express.e:24566, 24580, 25197` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4b) |
 | `J` no-arg prompt | `express.e:25143-25151` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (parity gap on shipped `J`) |
-| `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo |
+| `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C5 — landed first to unblock `CS`; M/A/F/Z editor, flags on `ConferenceMembership` (SQLite-persisted), `*` honours the advertised toggle-all the legacy no-ops) |
 | **D. Files — browsing first, transfer second** ||||
 | `F` (file listings) | `express.e:24877` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
 | `FR` (reverse listings) | `express.e:24883` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
