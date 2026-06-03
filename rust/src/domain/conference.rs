@@ -327,12 +327,42 @@ impl Conference {
 /// than by an owned [`Conference`] reference; the conference
 /// catalogue is loaded once at startup and indexed by number, so
 /// duplicating the entity here would just invite drift.
+///
+/// The per-conference scan preferences (`mail_scan`, `mailscan_all`,
+/// `file_scan`, `zoom_scan`) are the M/A/F/Z columns the legacy `CF`
+/// command edits (`amiexpress/express.e:24672`); see [`ScanFlag`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConferenceMembership {
     conference_number: u32,
     granted: bool,
     pointers: Vec<ReadPointers>,
     messages_posted: u32,
+    mail_scan: bool,
+    mailscan_all: bool,
+    file_scan: bool,
+    zoom_scan: bool,
+}
+
+/// A per-conference scan preference flag — the M/A/F/Z columns of the
+/// legacy `CF` command (`internalCommandCF`, `amiexpress/express.e:24672`).
+///
+/// Each variant notes the legacy bitmask value it corresponds to
+/// (`amiexpress/axconsts.e:45-48`), kept for parity reference; the Rust
+/// model stores one boolean per flag rather than packing a bitfield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScanFlag {
+    /// `M` — include the conference in the new-mail scan
+    /// (`MAIL_SCAN_MASK` = 4).
+    MailScan,
+    /// `A` — scan all messages, not just those addressed to the caller
+    /// (`MAILSCAN_ALL` = 128).
+    MailScanAll,
+    /// `F` — include the conference in the new-files scan
+    /// (`FILE_SCAN_MASK` = 8).
+    FileScan,
+    /// `Z` — include the conference in the ZOOM/QWK gather
+    /// (`ZOOM_SCAN_MASK` = 2).
+    Zoom,
 }
 
 impl ConferenceMembership {
@@ -355,7 +385,42 @@ impl ConferenceMembership {
             granted,
             pointers: Vec::new(),
             messages_posted: 0,
+            // Design D2: mail/file scans default on so a fresh membership
+            // is swept out of the box; "all messages" and ZOOM are opt-in.
+            mail_scan: true,
+            mailscan_all: false,
+            file_scan: true,
+            zoom_scan: false,
         }
+    }
+
+    /// Returns whether the per-conference [`ScanFlag`] is set (spec:
+    /// `core.allium:ConferenceMembership.mail_scan` and siblings).
+    #[must_use]
+    pub fn scan_flag(&self, flag: ScanFlag) -> bool {
+        match flag {
+            ScanFlag::MailScan => self.mail_scan,
+            ScanFlag::MailScanAll => self.mailscan_all,
+            ScanFlag::FileScan => self.file_scan,
+            ScanFlag::Zoom => self.zoom_scan,
+        }
+    }
+
+    /// Sets the per-conference [`ScanFlag`] to `on`. Used by the `CF`
+    /// editor (`conferences.allium:EditConferenceScanFlags`).
+    pub fn set_scan_flag(&mut self, flag: ScanFlag, on: bool) {
+        match flag {
+            ScanFlag::MailScan => self.mail_scan = on,
+            ScanFlag::MailScanAll => self.mailscan_all = on,
+            ScanFlag::FileScan => self.file_scan = on,
+            ScanFlag::Zoom => self.zoom_scan = on,
+        }
+    }
+
+    /// Flips the per-conference [`ScanFlag`] (the `*` / conference-list
+    /// toggle of the `CF` editor).
+    pub fn toggle_scan_flag(&mut self, flag: ScanFlag) {
+        self.set_scan_flag(flag, !self.scan_flag(flag));
     }
 
     /// Returns the running count of messages this user has posted to
@@ -654,6 +719,40 @@ mod tests {
         assert!(!m.is_granted());
         m.set_granted(true);
         assert!(m.is_granted());
+    }
+
+    #[test]
+    fn new_membership_defaults_mail_and_file_scan_on() {
+        // C5 / design D2: a fresh membership is swept for new mail and new
+        // files out of the box; the "all messages" and ZOOM masks are
+        // opt-in (`core.allium:ConferenceMembership` inline defaults).
+        let m = ConferenceMembership::new(2, true);
+        assert!(m.scan_flag(ScanFlag::MailScan), "mail_scan defaults on");
+        assert!(m.scan_flag(ScanFlag::FileScan), "file_scan defaults on");
+        assert!(
+            !m.scan_flag(ScanFlag::MailScanAll),
+            "mailscan_all defaults off"
+        );
+        assert!(!m.scan_flag(ScanFlag::Zoom), "zoom_scan defaults off");
+    }
+
+    #[test]
+    fn set_and_toggle_scan_flag_round_trip_for_every_flag() {
+        let mut m = ConferenceMembership::new(2, true);
+        for flag in [
+            ScanFlag::MailScan,
+            ScanFlag::MailScanAll,
+            ScanFlag::FileScan,
+            ScanFlag::Zoom,
+        ] {
+            let before = m.scan_flag(flag);
+            m.toggle_scan_flag(flag);
+            assert_eq!(m.scan_flag(flag), !before, "{flag:?} toggles");
+            m.set_scan_flag(flag, true);
+            assert!(m.scan_flag(flag), "{flag:?} set on");
+            m.set_scan_flag(flag, false);
+            assert!(!m.scan_flag(flag), "{flag:?} set off");
+        }
     }
 
     #[test]

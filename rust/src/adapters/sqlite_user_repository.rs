@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use crate::domain::conference::{ConferenceMembership, MessageBaseRef};
+use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::user::{NewUserDraft, PersistedUser, RatioMode, User, UserError, UserFlag};
@@ -138,6 +138,10 @@ impl SqliteUserRepository {
                  conference_number INTEGER NOT NULL,
                  granted           INTEGER NOT NULL,
                  messages_posted   INTEGER NOT NULL DEFAULT 0,
+                 mail_scan         INTEGER NOT NULL DEFAULT 1,
+                 mailscan_all      INTEGER NOT NULL DEFAULT 0,
+                 file_scan         INTEGER NOT NULL DEFAULT 1,
+                 zoom_scan         INTEGER NOT NULL DEFAULT 0,
                  PRIMARY KEY (slot_number, conference_number)
              );
              CREATE TABLE IF NOT EXISTS read_pointers (
@@ -306,13 +310,18 @@ impl SqliteUserRepository {
         for membership in &snapshot.memberships {
             conn.execute(
                 "INSERT INTO conference_memberships (
-                     slot_number, conference_number, granted, messages_posted
-                 ) VALUES (?1, ?2, ?3, ?4)",
+                     slot_number, conference_number, granted, messages_posted,
+                     mail_scan, mailscan_all, file_scan, zoom_scan
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     snapshot.slot_number,
                     membership.conference_number(),
                     i64::from(membership.is_granted()),
                     membership.messages_posted(),
+                    i64::from(membership.scan_flag(ScanFlag::MailScan)),
+                    i64::from(membership.scan_flag(ScanFlag::MailScanAll)),
+                    i64::from(membership.scan_flag(ScanFlag::FileScan)),
+                    i64::from(membership.scan_flag(ScanFlag::Zoom)),
                 ],
             )?;
             for pointer in membership.pointers() {
@@ -367,29 +376,47 @@ impl SqliteUserRepository {
         conn: &Connection,
         slot_number: u32,
     ) -> rusqlite::Result<Vec<ConferenceMembership>> {
+        struct MembershipRow {
+            conference_number: u32,
+            granted: bool,
+            messages_posted: u32,
+            mail_scan: bool,
+            mailscan_all: bool,
+            file_scan: bool,
+            zoom_scan: bool,
+        }
         let mut stmt = conn.prepare(
-            "SELECT conference_number, granted, messages_posted
+            "SELECT conference_number, granted, messages_posted,
+                    mail_scan, mailscan_all, file_scan, zoom_scan
              FROM conference_memberships
              WHERE slot_number = ?1
              ORDER BY conference_number",
         )?;
         let raw_rows = stmt
             .query_map(params![slot_number], |row| {
-                Ok((
-                    row.get::<_, u32>(0)?,
-                    row.get::<_, i64>(1)? != 0,
-                    row.get::<_, u32>(2)?,
-                ))
+                Ok(MembershipRow {
+                    conference_number: row.get::<_, u32>(0)?,
+                    granted: row.get::<_, i64>(1)? != 0,
+                    messages_posted: row.get::<_, u32>(2)?,
+                    mail_scan: row.get::<_, i64>(3)? != 0,
+                    mailscan_all: row.get::<_, i64>(4)? != 0,
+                    file_scan: row.get::<_, i64>(5)? != 0,
+                    zoom_scan: row.get::<_, i64>(6)? != 0,
+                })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut memberships = Vec::with_capacity(raw_rows.len());
-        for (conference_number, granted, messages_posted) in raw_rows {
-            let mut membership = ConferenceMembership::new(conference_number, granted);
-            for _ in 0..messages_posted {
+        for row in raw_rows {
+            let mut membership = ConferenceMembership::new(row.conference_number, row.granted);
+            for _ in 0..row.messages_posted {
                 membership.bump_messages_posted();
             }
-            for pointer in Self::load_pointers(conn, slot_number, conference_number)? {
+            membership.set_scan_flag(ScanFlag::MailScan, row.mail_scan);
+            membership.set_scan_flag(ScanFlag::MailScanAll, row.mailscan_all);
+            membership.set_scan_flag(ScanFlag::FileScan, row.file_scan);
+            membership.set_scan_flag(ScanFlag::Zoom, row.zoom_scan);
+            for pointer in Self::load_pointers(conn, slot_number, row.conference_number)? {
                 membership.upsert_pointers(pointer);
             }
             memberships.push(membership);
@@ -877,6 +904,43 @@ mod tests {
                     .expect("pointer row");
                 assert_eq!(pointer.last_read(), 3);
                 assert_eq!(pointer.last_scanned(), 5);
+            }
+            NameLookupResult::NotFound => panic!("expected to find alice"),
+        }
+    }
+
+    #[test]
+    fn scan_flags_round_trip_through_sqlite() {
+        // C5: the per-conference M/A/F/Z scan flags must survive the
+        // on-logoff save (legacy "** AutoSaving File Flags **"). Every flag
+        // is inverted away from its default (mail/file on, all/zoom off) so
+        // a missing column surfaces as the wrong value on reload, not a
+        // coincidental match.
+        use crate::domain::conference::ScanFlag;
+        let repo = SqliteUserRepository::in_memory().expect("open");
+        let mut alice = repo.create_user(draft_with("alice")).expect("create");
+        let mut membership = ConferenceMembership::new(1, true);
+        membership.set_scan_flag(ScanFlag::MailScan, false);
+        membership.set_scan_flag(ScanFlag::FileScan, false);
+        membership.set_scan_flag(ScanFlag::MailScanAll, true);
+        membership.set_scan_flag(ScanFlag::Zoom, true);
+        alice.upsert_membership(membership);
+        repo.save(alice.clone()).expect("save");
+
+        match repo.find_by_handle("alice") {
+            NameLookupResult::Found(loaded) => {
+                let m = loaded
+                    .memberships()
+                    .iter()
+                    .find(|m| m.conference_number() == 1)
+                    .expect("membership row");
+                assert!(!m.scan_flag(ScanFlag::MailScan), "mail_scan persisted off");
+                assert!(!m.scan_flag(ScanFlag::FileScan), "file_scan persisted off");
+                assert!(
+                    m.scan_flag(ScanFlag::MailScanAll),
+                    "mailscan_all persisted on"
+                );
+                assert!(m.scan_flag(ScanFlag::Zoom), "zoom_scan persisted on");
             }
             NameLookupResult::NotFound => panic!("expected to find alice"),
         }
