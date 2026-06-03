@@ -65,13 +65,14 @@ done.
 | `Q` | `express.e:25504` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Done |
 | `^` | `express.e:25089` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Done |
 | `S` extended report | `express.e:25540` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A11, after Tier I) |
-| `NS` non-stop pagination | `express.e:24627, 24644, 26170` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A12) |
+| `NS` non-stop pagination | `express.e:24627, 24644, 26170` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A12 — runtime `ns` keystroke + pause suppression already done in `pager.rs`; the `NS` argument-token plumbing and a paginated consumer remain) |
 | **B. Mail UI completion** ||||
 | `MS` | `express.e:25250` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (folded B3's listing table in) |
 | `N` (mail) | NextExpress-only drift — no legacy `N`→mail (legacy `N` = new-files, `express.e:25275`, see Tier D) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (`N` → unknown; new-files scan deferred to Tier D) |
-| `R` sub-prompt | `express.e:11972` (`readMSG`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo |
+| `R` sub-prompt | `express.e:11972` (`readMSG`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B4–B6: the `A`/`F`/`R`/`D`/`M`/`EH`/`L`/`?`/`??`/`<CR>`/`Q` loop, gated, 15 telnet smokes) |
+| `R` no-arg entry + legacy `readMSG` loop | `express.e:11984, 12008-12230` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B10 — prompt-first bare `R` at the read-pointer; next-to-read range + `( QUIT )` exhausted prompt; reshaped the shared loop, so `R <num>` matches too) |
 | Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B3, shipped with B1's `MS`) |
-| Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (B8) |
+| Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B8 — `RP`/`FW`/`K`/`MV`/`EH` now parse to unknown) |
 | **C. Conference navigation** ||||
 | `CS` (surface) | spec rule `conferences.allium:ConferenceScan` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (rule done, command missing) |
 | `<` / `>` | `express.e:24529, 24548` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo |

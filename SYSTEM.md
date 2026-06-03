@@ -207,7 +207,7 @@ module under `app::menu_flow/`):
 |---|---|---|
 | `G` | `Logoff` | dispatch |
 | `J <n>` | `Join(NumberArg)` | `join` |
-| `R <n>` | `Read(NumberArg)` | `read_mail` → `read_subprompt` |
+| `R` / `R <n>` | `Read(NumberArg)` | `read_mail` → `read_subprompt` (bare `R` = prompt-first at the read-pointer resume point; `R <n>` = read-first) |
 | `E` / `E <to>` | `Post(PostArg)` | `post_mail` (body via `read_editor_body` — the ruler / numbered-line editor + `Msg. Options:` save menu) |
 | `C` | `CommentToSysop` | `post_mail` (same ruler editor) |
 | `RP <n>` | `Reply(NumberArg)` | `reply_forward` |
@@ -227,8 +227,12 @@ module under `app::menu_flow/`):
 | `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail`; per base with matched mail, offers `Would you like to read it now` and (on Yes) attaches that base as a transient read visit and drops into `read_subprompt`, restoring the home conference after |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
-After `R <n>` displays a message, `read_mail` hands off to
-`read_subprompt`, the legacy `readMSG` sub-prompt loop (Tier B): `<CR>`
+`read_subprompt` is the legacy `readMSG` sub-prompt loop (Tier B). `R <n>`
+and the `MS` read-it-now flow enter it read-first (display the message,
+then loop with the pointer past it); bare `R` enters prompt-first at the
+read-pointer resume point and reads the first message on the first `<CR>`
+(slice B10). The range lower bound is the next message to read and
+collapses to `( QUIT )` once the pointer passes the last message; `<CR>`
 walks forward to the next message and `Q` returns to the menu. The
 message-action options dispatch to their existing rules, preserving the
 legacy post-action navigation: `A`gain re-displays (stays), `R`eply

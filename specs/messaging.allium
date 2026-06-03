@@ -591,9 +591,12 @@ surface MailReadPrompt {
             when has_access(session.user, message_edit) or session.user.is_sysop
 
     @guarantee NavigationWalksForward
-        -- Empty input (`<CR>`) advances to the next message in the base;
-        -- `Q` returns to the menu. Advancing past `mail.msgbase.highest_message`
-        -- returns to the menu rather than wrapping.
+        -- Empty input (`<CR>`) reads and displays the next message in the
+        -- base, then the read pointer advances past it; `Q` returns to the
+        -- menu. When the next-to-read pointer passes
+        -- `mail.msgbase.highest_message` the prompt's range collapses to
+        -- `QUIT` and a further `<CR>` / `Q` returns to the menu rather than
+        -- wrapping.
 
     @guidance
         -- `<CR>` / `Q` navigation and the short (`?`) / long (`??`) help
@@ -601,6 +604,21 @@ surface MailReadPrompt {
         -- models the option -> rule dispatch and the three access gates,
         -- not the prompt rendering. Tier B slice B4 ships only the prompt
         -- plus `<CR>` / `Q` navigation; slice B5 wires the options and gates.
+        --
+        -- No-arg entry (Tier B slice B10 — `R` with no message number):
+        -- the loop opens PROMPT-FIRST at the caller's read-resume point.
+        -- Unlike `R <num>`, no message is displayed before the prompt; the
+        -- prompt's range lower bound is the next message to read,
+        -- `read_pointers_for(session.user, msgbase).last_read + 1` clamped
+        -- up to the base's lowest key (legacy `msgNum := lastMsgReadConf + 1`,
+        -- `amiexpress/express.e:11984-11985`, where `lastMsgReadConf :=
+        -- cb.confYM`, `:4912`). This is the sequential read-resume pointer
+        -- ("where I got up to"), NOT the first unread message addressed to
+        -- the user. The first `<CR>` then displays that message. When the
+        -- resume point is past `mail.msgbase.highest_message` (pointer
+        -- exhausted or empty base) the prompt still opens, rendering the
+        -- `( QUIT )` range; a `<CR>` / `Q` there returns to the menu
+        -- (legacy out-of-range clamp, `:12012`).
 }
 
 ------------------------------------------------------------

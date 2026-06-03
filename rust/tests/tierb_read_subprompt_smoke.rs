@@ -57,7 +57,9 @@ async fn r_enters_sub_prompt_then_cr_advances_then_q_quits_over_telnet() {
     let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
-    // `R 1` reads message 1 and drops into the sub-prompt.
+    // `R 1` displays message 1, then the sub-prompt opens at range `2+2`
+    // — the lower bound is the NEXT message to read (legacy increments
+    // `msgNum` after `displayMessage`, `express.e:12372`).
     write_line(&mut stream, b"R 1").await;
     let first = drain_until(&mut stream, b">: ").await;
     assert!(
@@ -66,13 +68,14 @@ async fn r_enters_sub_prompt_then_cr_advances_then_q_quits_over_telnet() {
         String::from_utf8_lossy(&first)
     );
     assert!(
-        contains(&first, &sub_prompt(b"1+2", true, true)),
-        "missing the legacy sub-prompt at range 1+2, got {:?}",
+        contains(&first, &sub_prompt(b"2+2", true, true)),
+        "missing the legacy sub-prompt at range 2+2, got {:?}",
         String::from_utf8_lossy(&first)
     );
 
-    // `<CR>` (an empty line) advances to message 2, which is displayed
-    // and followed by the sub-prompt re-rendered at range 2+2.
+    // `<CR>` reads the next message (2), which is displayed; the pointer
+    // then advances past the last message so the prompt collapses to the
+    // `( QUIT )` form (`express.e:12012`).
     write_line(&mut stream, b"").await;
     let second = drain_until(&mut stream, b">: ").await;
     assert!(
@@ -81,8 +84,8 @@ async fn r_enters_sub_prompt_then_cr_advances_then_q_quits_over_telnet() {
         String::from_utf8_lossy(&second)
     );
     assert!(
-        contains(&second, &sub_prompt(b"2+2", true, true)),
-        "missing the sub-prompt re-rendered at range 2+2, got {:?}",
+        contains(&second, &sub_prompt(b"QUIT", true, true)),
+        "missing the QUIT sub-prompt after the last message, got {:?}",
         String::from_utf8_lossy(&second)
     );
 
@@ -107,19 +110,21 @@ async fn cr_past_the_last_message_returns_to_the_menu() {
     let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
-    // Read the last message (2 of 2): the sub-prompt range is `2+2`.
+    // Read the last message (2 of 2): the pointer advances to 3, past
+    // the highest, so the sub-prompt opens at the `( QUIT )` form
+    // (`express.e:12012`).
     write_line(&mut stream, b"R 2").await;
     let at_last = drain_until(&mut stream, b">: ").await;
     assert!(
-        contains(&at_last, &sub_prompt(b"2+2", true, true)),
-        "expected the sub-prompt at the last message, got {:?}",
+        contains(&at_last, &sub_prompt(b"QUIT", true, true)),
+        "expected the QUIT sub-prompt at the last message, got {:?}",
         String::from_utf8_lossy(&at_last)
     );
 
-    // `<CR>` past the highest existing message returns to the menu —
-    // the legacy out-of-range -> `QUIT` clamp (`express.e:12012`). It
-    // must NOT probe a non-existent message 3 or re-render the
-    // sub-prompt.
+    // `<CR>` at the QUIT prompt returns silently to the menu — the
+    // legacy implicit-advance path sets `noDirF = 1`, so `noMorePlus`
+    // prints nothing (`express.e:12082`/`:12302`). It must NOT probe a
+    // non-existent message 3.
     write_line(&mut stream, b"").await;
     let back = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
@@ -152,6 +157,261 @@ fn seed_two_message_base(msgbase: &std::path::Path) {
     .expect("seed message 2");
 }
 
+/// Tier B B10: bare `R` (no message number) opens the read sub-prompt
+/// PROMPT-FIRST at the caller's resume point instead of emitting the
+/// usage error. With a fresh read-pointer (nothing read yet) the resume
+/// point is the base's lowest message, so the prompt opens at range
+/// `1+2` WITHOUT displaying a message; the first `<CR>` then reads
+/// message 1 (legacy `msgNum := lastMsgReadConf + 1`,
+/// `amiexpress/express.e:11984-12021`).
+#[tokio::test]
+async fn bare_r_with_a_fresh_pointer_opens_at_the_lowest_message() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R").await;
+    let out = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&out, b"Usage: R <message-number>"),
+        "bare R must not emit the usage error, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    // Prompt-first: the entry blank line + the prompt's own CRLF give the
+    // legacy three-CRLF prefix, and no message body precedes the prompt.
+    assert!(
+        contains(&out, b"R\r\n\r\n\r\n\x1b[32mMsg. Options:"),
+        "bare R must render the prompt first (3-CRLF prefix), got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        contains(&out, &sub_prompt(b"1+2", true, true)),
+        "bare R must show the sub-prompt at range 1+2, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        !contains(&out, b"First Subject"),
+        "bare R must NOT display a message before the prompt, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    // The first `<CR>` reads message 1 and re-prompts at `2+2`.
+    write_line(&mut stream, b"").await;
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"First Subject") && contains(&after, &sub_prompt(b"2+2", true, true)),
+        "the first <CR> must display message 1 and re-prompt at 2+2, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+/// Tier B B10: bare `R` resumes from the read-pointer, not the lowest
+/// message. After reading message 1 the resume pointer sits at 1, so a
+/// later bare `R` opens at message 2 (range `2+2`) and does not replay
+/// message 1. The start is `last_read + 1` (`amiexpress/express.e:11984`),
+/// the sequential read-resume pointer.
+#[tokio::test]
+async fn bare_r_resumes_from_the_read_pointer() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Read message 1 (advances the read-pointer to 1), then return to
+    // the menu.
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    // Bare `R` now resumes at range `2+2` (next = last_read + 1 = 2),
+    // prompt-first and WITHOUT replaying message 1.
+    write_line(&mut stream, b"R").await;
+    let out = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&out, &sub_prompt(b"2+2", true, true)),
+        "bare R must resume at range 2+2, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        !contains(&out, b"First Subject") && !contains(&out, b"Second Subject"),
+        "bare R must not display (or replay) a message before the prompt, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    // The resume `<CR>` reads message 2, not message 1.
+    write_line(&mut stream, b"").await;
+    let after = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after, b"Second Subject") && !contains(&after, b"First Subject"),
+        "the resume <CR> must display message 2, not replay 1, got {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+/// Tier B B10: once every message has been read the resume pointer is
+/// past the highest message, so bare `R` opens the prompt-first
+/// sub-prompt at the `( QUIT )` range (`express.e:12012`) — it must NOT
+/// wrap back to message 1, nor leak a `Message not found.` probe. `Q`
+/// then returns silently to the menu. This also pins the read-pointer
+/// seam: routing through `scan_mail::first_unread_number_for` would
+/// return `None` here (no unread mail addressed to the reader) and a
+/// lowest-key fallback would wrongly replay message 1.
+#[tokio::test]
+async fn bare_r_with_an_exhausted_pointer_returns_to_the_menu_without_replaying() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Read both messages so the pointer is exhausted (last_read = 2):
+    // `R 1` displays message 1, `<CR>` reads message 2, `Q` to the menu.
+    write_line(&mut stream, b"R 1").await;
+    drain_until(&mut stream, b">: ").await;
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b">: ").await;
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    // Bare `R` with the pointer exhausted (start = 3 > highest 2) opens
+    // the prompt-first sub-prompt at the `( QUIT )` range. With no current
+    // message, D/M are hidden (per-message gating). It must NOT replay a
+    // message nor leak the `Message not found.` probe.
+    write_line(&mut stream, b"R").await;
+    let out = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&out, &sub_prompt(b"QUIT", false, false)),
+        "exhausted bare R must show the QUIT prompt (D/M hidden), got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        !contains(&out, b"First Subject") && !contains(&out, b"Second Subject"),
+        "exhausted bare R must not replay a message, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        !contains(&out, b"Message not found.") && !contains(&out, b"Usage: R <message-number>"),
+        "exhausted bare R must not leak a notice, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    // `Q` at the QUIT prompt returns silently to the menu (no
+    // "last message" text — `noDirF = 1`, `express.e:12227`/`:12302`).
+    write_line(&mut stream, b"Q").await;
+    let back = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        !contains(&back, b"The last message in this conference"),
+        "Q at the QUIT prompt must be silent, got {:?}",
+        String::from_utf8_lossy(&back)
+    );
+
+    end_session(&mut stream).await;
+}
+
+/// Tier B B10: at the prompt-first bare-R prompt no message has been
+/// displayed yet (legacy `tempFlag = 0`, `express.e:12087`), so the
+/// message-operating options are inert — only `<CR>`/`L`/`Q`/`?` act.
+/// `A` must not display a message and `R` must not open the reply editor.
+#[tokio::test]
+async fn bare_r_options_are_inert_before_the_first_message_is_read() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"R").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `A` before any read is inert: no message body, prompt re-renders.
+    write_line(&mut stream, b"A").await;
+    let after_a = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&after_a, b"First Subject")
+            && contains(&after_a, &sub_prompt(b"1+2", true, true)),
+        "`A` before the first read must be inert, got {:?}",
+        String::from_utf8_lossy(&after_a)
+    );
+
+    // `R` (reply) before any read is inert: no editor prompt.
+    write_line(&mut stream, b"R").await;
+    let after_r = drain_until(&mut stream, b">: ").await;
+    assert!(
+        !contains(&after_r, b"End with a single '.'")
+            && contains(&after_r, &sub_prompt(b"1+2", true, true)),
+        "`R` before the first read must be inert, got {:?}",
+        String::from_utf8_lossy(&after_r)
+    );
+
+    // `L`, by contrast, DOES work before the first read (it lists the
+    // base, needing no loaded message): the starting-message prompt
+    // appears and the table renders.
+    write_line(&mut stream, b"L").await;
+    drain_until(
+        &mut stream,
+        b"Starting message \x1b[33m[\x1b[0m1\x1b[33m]\x1b[0m: ",
+    )
+    .await;
+    write_line(&mut stream, b"").await;
+    let after_l = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&after_l, b"\x1b[32mMsg    Type"),
+        "`L` before the first read must list the base, got {:?}",
+        String::from_utf8_lossy(&after_l)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+/// Tier B B10: at the `( QUIT )` prompt the `?` help reuses the same
+/// range, so its `<CR>=Next ( ... )?` tail reads `QUIT` too (legacy
+/// reuses `str`, `express.e:12031`/`:12059`).
+#[tokio::test]
+async fn help_tail_shows_quit_when_out_of_range() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let msgbase = dir.path().join("conf1_msgbase");
+    seed_two_message_base(&msgbase);
+
+    let addr = spawn_one_conference_listener(dir.path().to_path_buf(), &msgbase).await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // `R 2` reads the last message; the pointer is now past the end, so
+    // the prompt is `( QUIT )`.
+    write_line(&mut stream, b"R 2").await;
+    drain_until(&mut stream, b">: ").await;
+
+    // `?` short help reuses the QUIT range in its Next-tail.
+    write_line(&mut stream, b"?").await;
+    let help = drain_until(&mut stream, b")\x1b[0m? ").await;
+    assert!(
+        contains(&help, b"Next \x1b[32m(\x1b[0m QUIT \x1b[32m )\x1b[0m? "),
+        "the help tail must carry the QUIT range, got {:?}",
+        String::from_utf8_lossy(&help)
+    );
+
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
 #[tokio::test]
 async fn again_re_displays_the_current_message_and_stays() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -175,8 +435,8 @@ async fn again_re_displays_the_current_message_and_stays() {
         String::from_utf8_lossy(&again)
     );
     assert!(
-        contains(&again, &sub_prompt(b"1+2", true, true)),
-        "`A` must stay on the current message (range 1+2), got {:?}",
+        contains(&again, &sub_prompt(b"2+2", true, true)),
+        "`A` must stay on the current message (range 2+2), got {:?}",
         String::from_utf8_lossy(&again)
     );
     assert!(
@@ -220,7 +480,7 @@ async fn reply_opens_the_editor_then_advances_to_the_next_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"2+3", true, true)),
+        contains(&after, &sub_prompt(b"3+3", true, true)),
         "reply must advance to message 2 with the range reflecting the posted reply, got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -260,7 +520,7 @@ async fn forward_posts_then_stays_on_the_current_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"1+3", true, true)),
+        contains(&after, &sub_prompt(b"2+3", true, true)),
         "forward must stay on message 1 with the range reflecting the posted forward, got {:?}",
         String::from_utf8_lossy(&after)
     );
@@ -299,8 +559,8 @@ async fn delete_removes_the_current_message_and_advances() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2", true, true)),
-        "`D` must advance to message 2 (range 2+2), got {:?}",
+        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"QUIT", true, true)),
+        "`D` must advance to message 2, then collapse to the QUIT prompt, got {:?}",
         String::from_utf8_lossy(&after)
     );
 
@@ -335,8 +595,8 @@ async fn move_relocates_then_advances_on_success() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"2+2", true, true)),
-        "a successful `M` must advance to message 2 (range 2+2), got {:?}",
+        contains(&after, b"Second Subject") && contains(&after, &sub_prompt(b"QUIT", true, true)),
+        "a successful `M` must advance to message 2, then collapse to the QUIT prompt, got {:?}",
         String::from_utf8_lossy(&after)
     );
 
@@ -372,8 +632,8 @@ async fn move_to_a_missing_target_stays_on_the_current_message() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"1+2", true, true)) && !contains(&after, b"Second Subject"),
-        "a failed `M` must stay on message 1 (range 1+2), got {:?}",
+        contains(&after, &sub_prompt(b"2+2", true, true)) && !contains(&after, b"Second Subject"),
+        "a failed `M` must stay on message 1 (range 2+2), got {:?}",
         String::from_utf8_lossy(&after)
     );
 
@@ -415,8 +675,8 @@ async fn edit_header_updates_the_subject_then_re_displays_and_stays() {
         String::from_utf8_lossy(&after)
     );
     assert!(
-        contains(&after, &sub_prompt(b"1+2", true, true)) && !contains(&after, b"Second Subject"),
-        "`EH` must stay on message 1 (range 1+2), got {:?}",
+        contains(&after, &sub_prompt(b"2+2", true, true)) && !contains(&after, b"Second Subject"),
+        "`EH` must stay on message 1 (range 2+2), got {:?}",
         String::from_utf8_lossy(&after)
     );
 
@@ -450,7 +710,7 @@ async fn a_regular_user_cannot_delete_or_edit_others_mail_from_the_sub_prompt() 
         String::from_utf8_lossy(&after_d)
     );
     assert!(
-        contains(&after_d, &sub_prompt(b"1+2", false, true)),
+        contains(&after_d, &sub_prompt(b"2+2", false, true)),
         "the sub-prompt must re-render on message 1 after the ignored `D`, got {:?}",
         String::from_utf8_lossy(&after_d)
     );
@@ -465,7 +725,7 @@ async fn a_regular_user_cannot_delete_or_edit_others_mail_from_the_sub_prompt() 
         String::from_utf8_lossy(&after_eh)
     );
     assert!(
-        contains(&after_eh, &sub_prompt(b"1+2", false, true)),
+        contains(&after_eh, &sub_prompt(b"2+2", false, true)),
         "the sub-prompt must re-render on message 1 after the ignored `EH`, got {:?}",
         String::from_utf8_lossy(&after_eh)
     );
@@ -515,7 +775,7 @@ async fn question_mark_shows_the_short_help_then_double_shows_the_long_help() {
             && contains(&short, b"\x1b[33mM\x1b[32m>\x1b[36move\x1b[0m")
             && contains(&short, b"\x1b[33mL\x1b[32m>\x1b[36mist\x1b[0m")
             && contains(&short, b"\x1b[33mQ\x1b[32m>\x1b[36muit\x1b[0m")
-            && contains(&short, b"Next \x1b[32m(\x1b[0m 1+2 \x1b[32m )\x1b[0m? "),
+            && contains(&short, b"Next \x1b[32m(\x1b[0m 2+2 \x1b[32m )\x1b[0m? "),
         "short help must list the gated options + range, got {:?}",
         String::from_utf8_lossy(&short)
     );
@@ -536,7 +796,7 @@ async fn question_mark_shows_the_short_help_then_double_shows_the_long_help() {
                 &long,
                 b"\x1b[33mEH\x1b[32m>\x1b[36m Edit Message Header\x1b[0m"
             )
-            && contains(&long, b"Next \x1b[32m(\x1b[0m 1+2 \x1b[32m )\x1b[0m? "),
+            && contains(&long, b"Next \x1b[32m(\x1b[0m 2+2 \x1b[32m )\x1b[0m? "),
         "long help must list the fuller wording + EH, got {:?}",
         String::from_utf8_lossy(&long)
     );

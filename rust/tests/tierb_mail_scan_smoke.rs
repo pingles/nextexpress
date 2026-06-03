@@ -147,6 +147,28 @@ async fn ms_offers_to_read_found_mail_now_and_drops_into_the_read_subprompt() {
         seeded_mail_json(2, 1, "Carol", "Tier B Greetings"),
     )
     .expect("seed conf2 message");
+    // A second unread message so the found base's highest is 2: reading
+    // the found message 1 opens the sub-prompt at the NEXT message (2),
+    // pinning the read-first `start + 1` entry (slice B10).
+    std::fs::write(
+        conf2_msgbase.join("0000002.json"),
+        r#"{
+            "conference_number": 2,
+            "msgbase_number": 1,
+            "number": 2,
+            "visibility": "public",
+            "from_name": "Dave",
+            "to_name": "sysop",
+            "broadcast_to": "none",
+            "subject": "Tier B Follow-up",
+            "posted_at": "1970-01-01T00:00:02Z",
+            "received_at": null,
+            "author_slot": 2,
+            "addressee_slot": 1,
+            "body": "Second.\n"
+        }"#,
+    )
+    .expect("seed conf2 message 2");
 
     let addr =
         spawn_two_conference_listener(dir.path().to_path_buf(), &conf1_msgbase, &conf2_msgbase)
@@ -162,17 +184,19 @@ async fn ms_offers_to_read_found_mail_now_and_drops_into_the_read_subprompt() {
     )
     .await;
 
-    // Yes: the found message's body renders and the read sub-prompt opens.
+    // Yes: the found message (1) renders, then the read sub-prompt opens
+    // at the NEXT message — range `2+2` of the 2-message base (read-first
+    // `start + 1` entry, slice B10).
     write_line(&mut stream, b"Y").await;
-    let read = drain_until(&mut stream, b"Msg. Options:").await;
+    let read = drain_until(&mut stream, b">: ").await;
     assert!(
         contains(&read, b"Welcome to Tier B."),
         "expected the found message body to be displayed, got {:?}",
         String::from_utf8_lossy(&read)
     );
     assert!(
-        contains(&read, b"Msg. Options:"),
-        "expected the read sub-prompt, got {:?}",
+        contains(&read, b"\x1b[0m 2+2 \x1b[32m )\x1b[0m>: "),
+        "expected the read sub-prompt at range 2+2, got {:?}",
         String::from_utf8_lossy(&read)
     );
 

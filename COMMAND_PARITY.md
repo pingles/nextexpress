@@ -56,7 +56,6 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `J` (no argument) | One-line rejection `Usage: J <conference-number>`; stays put | Interactive `Conference Number (1-2): ` sub-prompt; blank aborts |
 | `J abc` (invalid) | Dedicated `Invalid conference number.` | Same interactive `Conference Number (1-2):` re-prompt (no such string in AE) |
 | `J 99` (out of range) | Prints no-access notice then **silently falls through to join Main** | Interactive `Conference Number (1-2):` re-prompt; stays in current conf; never reaches access check |
-| `R` (no argument) | One-line `Usage: R <message-number>`; redraws menu | Enters readMSG loop at first/computed unread; shows live sub-prompt |
 | `R <num>` not found | Single `Message not found.` for any bad number | Out-of-range → `The last message in this conference is <high>` (live); mid-base gap → silent |
 | `MS` (`Found Mail!`) | Emitted nowhere | Prints `Found Mail!` on single-conf/auto-join path |
 | `MS` (pagination) | Builds whole output, flushes once; never pauses | Paginates with `checkForPause()` after each row |
@@ -376,7 +375,7 @@ Note the subtlety: Rust reuses the exact legacy "no access" string but reaches i
 
 ## R (Read Message) and the readMSG Sub-Prompt
 
-The `R <num>` read path plus its post-read sub-prompt is one of the most faithful ports in the system: the message-header block, the `Msg. Options:` skeleton, the `?`/`??` help lists and the `L`ist view all reproduce the legacy `express.e` strings byte-for-byte (modulo data values). Two real behavioural gaps remain at the edges — bare-`R` entry and the not-found notice.
+The `R <num>` read path plus its post-read sub-prompt is one of the most faithful ports in the system: the message-header block, the `Msg. Options:` skeleton (now prompt-first for bare `R`, with the next-to-read range and `( QUIT )` collapse — slice B10), the `?`/`??` help lists and the `L`ist view all reproduce the legacy `express.e` strings byte-for-byte (modulo data values). One real behavioural gap remains at the edges — the `R <num>` not-found notice (bare-`R` entry was closed in slice B10).
 
 > Note on the test setup: the legacy transcript is genuine **AmiExpress 5.6.0** ("Running AmiExpress 5.6.0 Copyright (c)2018-2023 Darren Coles", `amiexpress_login.txt:12`); "NextExpress Reference" there is merely the *board name* configured on that AmiExpress instance, not the software. AmiExpress's bundled conferences started empty, so the driver **posted a real message live** through AmiExpress's line editor and read it back: `amiexpress_read_messages.txt` carries the live header + body + sub-prompt for message 1, and `amiexpress_post_and_list.txt` carries the live editor / save / list flow. The read view below is therefore a **live-vs-live** comparison.
 
@@ -416,19 +415,19 @@ The label set, the `Recv'd` `N/A`-vs-timestamp logic (Rust live msg 2 EALL → `
 - **COSMETIC (dates):** Rust dates are RFC3339 with microseconds (`2026-05-12T21:48:50.679071Z`); AmiExpress uses `formatLongDateTime` weekday long dates (`Sun 31-May-2026 10:47:54`). Same labelled/coloured field, different value format.
 - **COSMETIC (extra line):** Rust appends a `Conf   : [1] Main` line that the legacy read view omits (legacy only prints `Conf` in the QWK export path, `:26470`).
 
-### R (no argument) — BEHAVIOURAL gap
+### R (no argument) — MATCH (slice B10)
 
-- Rust: `R\r\n\r\nUsage: R <message-number>\r\n` then redraws the menu (`READ_REQUIRES_NUMBER_LINE`, `mod.rs:155`, `NumberArg::Missing`).
-- AmiExpress: enters the readMSG loop at the first/computed unread and shows the live sub-prompt. On the empty conf the range collapses to `QUIT`: `R\r\n\r\n\r\n\x1b[32mMsg. Options: …\x1b[32m(\x1b[0m QUIT\x1b[32m )\x1b[0m>: ` (`amiexpress_sysop.txt:357-360`; loop entry `express.e:11984-11985, 12008-12012`).
+- Rust: bare `R` opens the readMSG loop **prompt-first** at the caller's resume point and shows the live sub-prompt — no message is displayed before the prompt; the first `<CR>` reads the resume message (`handle_read_mail_at_pointer`, `read_mail.rs`). The resume start is `read_pointers_for(...).last_read + 1` clamped up to the base's lowest key (legacy `msgNum := lastMsgReadConf+1`, `express.e:11984-11985`; `lastMsgReadConf := cb.confYM`, `:4912`) — the sequential read pointer, **not** `scan_mail::first_unread_number_for`. On an exhausted/empty base the range collapses to `QUIT`: `R\r\n\r\n\r\n\x1b[32mMsg. Options: …\x1b[32m(\x1b[0m QUIT\x1b[32m )\x1b[0m>: ` and a `<CR>` / `Q` returns to the menu (`amiexpress_sysop.txt:357-365`; loop entry `express.e:11984-11985, 12008-12012`).
+- The old one-line `Usage: R <message-number>` rejection (`READ_REQUIRES_NUMBER_LINE`) is gone for bare `R`.
 
-This is **BEHAVIOURAL** — the interactive entry point (`msgNum := lastMsgReadConf+1`, clamped to `mailStat.lowestKey`) is unimplemented in Rust. It is the sole remaining gap for this command family.
+**Deferred (B9):** at the `QUIT`-from-start prompt (no current message) Rust hides the `D`/`M` columns, since it gates them per-message; legacy gates them on the per-user `checkSecurity` ACS flags and would still show them. Faithful per-user ACS gating is slice B9.
 
 ### R `<num>` out of range / not found — BEHAVIOURAL
 
 - Rust: `R 99\r\n\r\nMessage not found.\r\n` (`MESSAGE_NOT_FOUND_LINE`) for any number with no message.
 - AmiExpress distinguishes two cases (live `amiexpress_read_messages.txt`): reading **past the last message** emits `\r\nThe last message in this conference is <high>\r\n` — the live `R 2` (only msg 1 exists) returned `The last message in this conference is 1` and bounced to the menu; a **gap in the middle** (a deleted/missing file between valid messages) is silent, the read loop simply iterates past it.
 
-So AmiExpress is *not* uniformly silent on a bad number (a live-data correction to the earlier source-derived parity note, which described only the silent mid-gap case): the out-of-range case is a distinct notice. Rust collapses both to a single `Message not found.`. **BEHAVIOURAL** — different control flow and a different (Rust-only-uniform) notice.
+So AmiExpress is *not* uniformly silent on a bad number (a live-data correction to the earlier source-derived parity note, which described only the silent mid-gap case): the out-of-range case is a distinct notice. Rust collapses both to a single `Message not found.`. **BEHAVIOURAL** — different control flow and a different (Rust-only-uniform) notice. (This applies only to an explicit `R <num>`; slice B10 fixed the bare-`R` exhausted path, which now shows the `( QUIT )` prompt and returns silently rather than leaking `Message not found.`.)
 
 ### R `<num>` deleted — MATCH
 
@@ -439,7 +438,9 @@ Both emit the deleted notice. Rust `DELETED_MESSAGE_LINE` = `\r\nThat message ha
 - Rust: `\x1b[32mMsg. Options: \x1b[33mA\x1b[36m[,\x1b[33mD][,\x1b[33mM]\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m 1+4 \x1b[32m )\x1b[0m>: ` (`render_read_subprompt`, `wire_text.rs:491`).
 - Legacy: assembled at `express.e:12016-12021`, including the doubled-`[36m` seam when `D`/`M` are suppressed and the `<msgNum>+<highMsgNum-1>` range (`:12010`).
 
-`D` is gated on delete-access (`ACS_DELETE_MESSAGE`, `:12017`) and `M` on sysop-read (`ACS_SYSOP_READ`, `:12018`) in both. The AE live prompt shows `A,D,F,R,L,Q,…` (no `M`) because that test sysop lacks `ACS_SYSOP_READ`; Rust shows `A,D,M,…` because its sysop has it. Same gating, different seeded access — not an implementation difference. The range value differs (`QUIT` on the live AE read vs `1+4` on Rust) because the AE read had landed on/after the last message in its base, where `msgNum > highMsgNum-1` collapses the range to `QUIT` (`express.e:12012`); Rust was positioned on message 1 of 4.
+`D` is gated on delete-access (`ACS_DELETE_MESSAGE`, `:12017`) and `M` on sysop-read (`ACS_SYSOP_READ`, `:12018`) in both. The AE live prompt shows `A,D,F,R,L,Q,…` (no `M`) because that test sysop lacks `ACS_SYSOP_READ`; Rust shows `A,D,M,…` because its sysop has it. Same gating, different seeded access — not an implementation difference (the per-user vs per-message gating nuance is slice B9).
+
+> **Range numbering (slice B10):** the range lower bound is the **next** message to read (the legacy increments `msgNum` *after* `displayMessage`, `:12372`), and it collapses to the literal `QUIT` when that pointer passes the last message (`:12012`). The pre-B10 Rust captures (e.g. `1+4` in `rust_sysop.txt`) showed the *just-displayed* number — an off-by-one since corrected, so a fresh `R 1` now opens at `2+<high>` and the last message's prompt reads `( QUIT )`, matching legacy.
 
 ### Sub-prompt `<CR>` / `A`gain / `L`ist / `Q`uit — MATCH
 
@@ -674,7 +675,7 @@ In AE, both `SCREEN_LOGOFF` and the `Click...` line are guarded by `logonType<>L
 
 The most important behavioural gaps, in rough order of user impact:
 
-1. **No-arg `J` / `R` are one-line rejections in Rust, interactive sub-flows in AE.** `J` with no/invalid/out-of-range argument and bare `R` all drop into interactive prompts in AmiExpress (`Conference Number (1-2): `, the readMSG loop at the first unread). Rust replaces these with single-line usage/error messages (`Usage: J <conference-number>`, `Invalid conference number.`, `Usage: R <message-number>`) and returns to the menu. This is the single largest interaction-model divergence.
+1. **No-arg `J` is a one-line rejection in Rust, an interactive sub-flow in AE.** `J` with no/invalid/out-of-range argument drops into an interactive prompt in AmiExpress (`Conference Number (1-2): `). Rust replaces these with single-line usage/error messages (`Usage: J <conference-number>`, `Invalid conference number.`) and returns to the menu. (Bare `R` had the same shape but was brought to the legacy prompt-first readMSG loop in slice B10.)
 
 2. **`J 99` (out of range): silent fall-through-to-Main vs interactive re-prompt.** Rust prints the legacy "no access" string and then *silently joins the first accessible conference*, whereas AE re-prompts and stays put. Rust reaches a legacy string under a condition the legacy never uses for it. The live AE transcript contradicts treating `J 99` as a no-access notice.
 
@@ -723,7 +724,7 @@ roughly in order of effort vs. parity gain:
 
 1. **Quick text fixes** (`wire_text.rs`, byte-for-byte parity, tiny diffs): E recipient-no-access → end with `!` + trailing blank (`express.e:10838`); EALL/ALL → distinct per-addressing notices (`:10806`); add the second trailing `\r\n` to `Goodbye`.
 2. **ANSI on the compose prompts** — decorate the `E`/`C` `To:` / `Subject:` / `Private` prompts to match the legacy `(Enter)='ALL'?` / `(Blank)=abort?` boxes. Defaults already match; do **not** flip them.
-3. **Interactive no-arg sub-flows** (largest interaction-model gap): bare `J` → `Conference Number (1-N): ` prompt (blank = abort); bare `R` → enter the readMSG loop at the first unread instead of the usage line.
+3. **Interactive no-arg sub-flows** (largest interaction-model gap): bare `J` → `Conference Number (1-N): ` prompt (blank = abort). (Bare `R` → prompt-first readMSG loop: done in slice B10.)
 4. **Menu hygiene** — stop advertising retired `RP`/`FW`/`K`/`MV`/`EH` in the menu asset (they now reject as Unknown), and reconsider the chatty Rust-only notices (item 13 above).
 5. **`mins. left`** — seed a real per-call time budget so the prompt stops showing `0`.
 6. **Login / `S` parity** (larger): flagged-file confirm on plain `G` (+ `saveFlagged`/`saveHistory`); the richer `S` screen (Area/Caller lead-in, baud/CPS/protocol/sysop block, Uploads/Downloads ratio table) beyond the six-row subset already shown at login; login mail-scan pagination.

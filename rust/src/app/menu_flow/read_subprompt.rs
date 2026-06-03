@@ -1,16 +1,18 @@
-//! `R` read sub-prompt loop (Slice B4) — the legacy `readMSG` primary
-//! mail-reading UI (`amiexpress/express.e:11972`).
+//! `R` read sub-prompt loop — the legacy `readMSG` primary mail-reading
+//! UI (`amiexpress/express.e:11972`, the `cont:` loop at `:12008-12230`).
 //!
-//! Once `handle_read_mail` has displayed a message, this loop renders
-//! the `Msg. Options:` sub-prompt and reads the caller's choice.
-//!
-//! B4 ships the smallest surface: `<CR>` (an empty line) advances to
-//! the next message in the base, and `Q` returns to the menu.
-//! Advancing past the highest existing message returns to the menu
-//! (the legacy out-of-range → `QUIT` clamp at `express.e:12012`). Every
-//! other key simply re-renders the prompt — the `A` / `F` / `R` / `L` /
-//! `D` / `M` / `EH` / `?` / `??` options accrete behind this loop in
-//! Slice B5.
+//! The loop is entered two ways (slice B10): `R <num>` and the `MS`
+//! read-it-now flow are READ-FIRST — `handle_read_mail` displays the
+//! message, then enters with the pointer advanced past it; bare `R` is
+//! PROMPT-FIRST — it renders the `Msg. Options:` prompt at the resume
+//! range and reads the first message only on `<CR>`. The range lower
+//! bound is always the NEXT message to read (the legacy increments
+//! `msgNum` *after* `displayMessage`, `:12372`) and collapses to the
+//! literal `( QUIT )` once the pointer passes the last message
+//! (`:12010-12012`). `A` / `R` / `F` / `D` / `M` / `EH` operate on the
+//! loaded message and are inert until one has been read (legacy
+//! `tempFlag`, `:12087`); `<CR>` / `L` / `Q` / `?` / `??` are always
+//! live.
 
 use std::time::SystemTime;
 
@@ -27,39 +29,60 @@ impl<T> super::MenuFlow<'_, T>
 where
     T: Terminal,
 {
-    /// Drives the read sub-prompt loop, starting from the message
-    /// `start` that `handle_read_mail` has already displayed.
+    /// Drives the read sub-prompt loop (legacy `readMSG` `cont:` loop,
+    /// `express.e:12008-12230`). `next` is the next message to read (the
+    /// legacy `msgNum` and the range's lower bound); `last_displayed` is
+    /// the message currently loaded — the one `A`/`R`/`F`/`D`/`M`/`EH`
+    /// act on — or `None` before any message has been shown (legacy
+    /// `tempFlag = 0`, `:12087`). Bare `R` enters prompt-first with
+    /// `last_displayed = None`; `R <num>` and the MS read-it-now flow
+    /// enter after displaying the message with `next = num + 1`,
+    /// `last_displayed = Some(num)`.
     pub(super) async fn run_read_subprompt(
         &mut self,
         session: &mut MenuSession,
-        start: u32,
+        next: u32,
+        last_displayed: Option<u32>,
     ) -> Result<(), T::Error> {
-        let mut number = start;
+        let mut next = next;
+        let mut last_displayed = last_displayed;
         // `?` / `??` set this so the next loop turn renders the short /
         // long help list instead of the option skeleton, then it clears.
         let mut pending_help: Option<bool> = None;
         loop {
-            // The `<number>+<highest>` range bound is re-read every turn:
-            // `R`eply / `F`orward post new messages while the reader
-            // holds the loop, so a value captured on entry would go
-            // stale (the legacy reads the live `mailStat` each pass).
-            let Some(highest) = self.current_base_highest(session).await else {
+            // Bounds are re-read every turn: `R`eply / `F`orward post new
+            // messages while the reader holds the loop, so a value
+            // captured on entry would go stale (the legacy reads the live
+            // `mailStat` each pass).
+            let Some((lowest, highest)) = self.current_base_bounds(session).await else {
                 return Ok(());
             };
-            // The `D` / `M` (and, in the long help, `EH`) options appear
-            // only for callers permitted to use them on the current
-            // message (legacy `checkSecurity` gates at
-            // `express.e:12017-12018` / `:12179`), matching the dispatch
-            // guards below so a prompt never advertises an option it
-            // would then refuse.
-            let show_delete = self.current_user_can_delete(session, number).await;
-            let show_move = can_move(session.user());
+            // Range string (legacy `:12010-12012`): the lower bound is the
+            // NEXT message to read (the legacy increments `msgNum` *after*
+            // `displayMessage`, `:12372`), and an out-of-range pointer
+            // collapses to the literal `QUIT`.
+            let out_of_range = next > highest || next < lowest;
+            let range: Vec<u8> = if out_of_range {
+                b"QUIT".to_vec()
+            } else {
+                format!("{next}+{highest}").into_bytes()
+            };
+            // `D` / `M` are advertised for the message the option would
+            // act on: the loaded message, else the one about to be read.
+            // At the `QUIT`-from-start prompt there is no such message, so
+            // neither is shown. (Per-message gating; the legacy per-user
+            // `checkSecurity` ACS flags are slice B9.)
+            let gate_msg = last_displayed.or((!out_of_range).then_some(next));
+            let show_delete = match gate_msg {
+                Some(m) => self.current_user_can_delete(session, m).await,
+                None => false,
+            };
+            let show_move = gate_msg.is_some() && can_move(session.user());
             let prompt = match pending_help.take() {
-                None => render_read_subprompt(number, highest, show_delete, show_move),
+                None => render_read_subprompt(&range, show_delete, show_move),
                 Some(long) => render_read_subprompt_help(
                     long,
-                    number,
-                    highest,
+                    &range,
                     show_delete,
                     show_move,
                     can_edit_header(session.user()),
@@ -88,125 +111,163 @@ where
                 continue;
             }
 
-            // Empty input (`<CR>`) walks forward to the next message.
+            // Empty input (`<CR>`) reads the next message (legacy
+            // `goNextMsg`, `:12082`). An out-of-range pointer returns
+            // silently to the menu (legacy `noDirF = 1` makes
+            // `noMorePlus` silent, `:12302`).
             if trimmed.is_empty() {
-                if !self.advance_or_quit(session, &mut number).await? {
+                if !self
+                    .advance(session, &mut next, &mut last_displayed)
+                    .await?
+                {
                     return Ok(());
                 }
                 continue;
             }
 
-            // Dispatch on the first character, mirroring the legacy
-            // `LowerChar(str[0])` SELECT (`express.e:12092-12224`).
-            match trimmed.chars().next().map(|c| c.to_ascii_lowercase()) {
-                // `Q`uit returns to the menu (`express.e:12226`).
-                Some('q') => return Ok(()),
-                // `A`gain re-displays the current message and stays on
-                // it (`express.e:12102-12105`).
-                Some('a') => {
-                    self.read_and_render(session, number).await?;
+            // `A`/`R`/`F`/`D`/`M`/`EH` act on the loaded message and are
+            // inert until one has been read (legacy `IF(tempFlag)`,
+            // `:12087`). Before the first read only `Q` and `L` act.
+            let Some(current) = last_displayed else {
+                match trimmed.chars().next().map(|c| c.to_ascii_lowercase()) {
+                    Some('q') => return Ok(()),
+                    Some('l') => self.handle_list_messages(session).await?,
+                    _ => {}
                 }
-                // `R`eply posts a reply to the current message, then
-                // advances to the next one (`express.e:12161-12168`).
-                Some('r') => {
-                    self.handle_reply(session, NumberArg::Number(number))
-                        .await?;
-                    if !self.advance_or_quit(session, &mut number).await? {
-                        return Ok(());
-                    }
-                }
-                // `F`orward forwards the current message, then stays on
-                // it (`express.e:12153-12160`).
-                Some('f') => {
-                    self.handle_forward(session, NumberArg::Number(number))
-                        .await?;
-                }
-                // `D`elete: gated on the per-message delete permission
-                // (legacy `ACS_DELETE_MESSAGE`, `express.e:12148`). When
-                // permitted the confirm-and-delete runs and the loop
-                // advances unconditionally — the legacy `goNextMsg`
-                // fires whatever the confirm answer (`:12151`). A
-                // caller without delete permission falls through (the
-                // option is not theirs).
-                Some('d') if self.current_user_can_delete(session, number).await => {
-                    self.handle_kill(session, NumberArg::Number(number)).await?;
-                    if !self.advance_or_quit(session, &mut number).await? {
-                        return Ok(());
-                    }
-                }
-                // `M`ove: gated on the move permission (legacy
-                // `ACS_SYSOP_READ`, `express.e:12170`). Advances only on
-                // a successful move (`:12172`); an aborted or rejected
-                // move stays on the current message.
-                Some('m') if can_move(session.user()) => {
-                    let moved = self
-                        .handle_move_mail(session, NumberArg::Number(number))
-                        .await?;
-                    if moved && !self.advance_or_quit(session, &mut number).await? {
-                        return Ok(());
-                    }
-                }
-                // `EH` edits the current header (the `E`-family option,
-                // gated on edit-header access — legacy `ACS_MESSAGE_EDIT`,
-                // `express.e:12179`), then re-displays the edited message
-                // and stays (`displayMessage` -> `nextMenu`,
-                // `:12191-12193`). Bare `E` (emacs) / `EM` (body edit)
-                // are deliberately not carried (see slice B5 Out of
-                // Scope).
-                Some('e')
-                    if trimmed.eq_ignore_ascii_case("eh") && can_edit_header(session.user()) =>
-                {
-                    self.handle_edit_header(session, NumberArg::Number(number))
-                        .await?;
-                    self.read_and_render(session, number).await?;
-                }
-                // `L`ist the base's messages (`express.e:12220`), then
-                // stay on the current message (`nextMenu`, `:12223`).
-                Some('l') => {
-                    self.handle_list_messages(session).await?;
-                }
-                // Any other key is an unimplemented B5 option; fall
-                // through and re-render the prompt.
-                _ => {}
+                continue;
+            };
+
+            // A non-empty command on the loaded message; `Ok(false)`
+            // means the option left the loop (legacy `Q` or an
+            // out-of-range advance).
+            if !self
+                .dispatch_read_option(session, trimmed, current, &mut next, &mut last_displayed)
+                .await?
+            {
+                return Ok(());
             }
         }
     }
 
-    /// Advances `number` to the next message and displays it. Re-reads
-    /// the base's highest number so a just-posted reply is reachable.
-    /// Returns `Ok(false)` when there is no next message — the legacy
-    /// out-of-range -> `QUIT` clamp (`express.e:12012`) — so the caller
-    /// leaves the loop.
-    async fn advance_or_quit(
+    /// Handles one sub-prompt command on the loaded message `current`,
+    /// mirroring the legacy `LowerChar(str[0])` SELECT
+    /// (`express.e:12092-12224`). Returns `Ok(false)` when the loop
+    /// should exit (legacy `Q`, `:12226`, or an out-of-range advance),
+    /// `Ok(true)` to keep looping.
+    async fn dispatch_read_option(
         &mut self,
         session: &mut MenuSession,
-        number: &mut u32,
+        trimmed: &str,
+        current: u32,
+        next: &mut u32,
+        last_displayed: &mut Option<u32>,
     ) -> Result<bool, T::Error> {
-        let next = *number + 1;
-        if self
-            .current_base_highest(session)
-            .await
-            .is_none_or(|h| next > h)
-        {
-            return Ok(false);
+        match trimmed.chars().next().map(|c| c.to_ascii_lowercase()) {
+            // `Q`uit returns to the menu (`express.e:12226`).
+            Some('q') => return Ok(false),
+            // `A`gain re-displays the current message and stays on it
+            // (`express.e:12102-12105`).
+            Some('a') => {
+                self.read_and_render(session, current).await?;
+            }
+            // `R`eply posts a reply to the current message, then advances
+            // to the next one (`express.e:12161-12168`).
+            Some('r') => {
+                self.handle_reply(session, NumberArg::Number(current))
+                    .await?;
+                if !self.advance(session, next, last_displayed).await? {
+                    return Ok(false);
+                }
+            }
+            // `F`orward forwards the current message, then stays on it
+            // (`express.e:12153-12160`).
+            Some('f') => {
+                self.handle_forward(session, NumberArg::Number(current))
+                    .await?;
+            }
+            // `D`elete: gated on the per-message delete permission (legacy
+            // `ACS_DELETE_MESSAGE`, `express.e:12148`). When permitted the
+            // confirm-and-delete runs and the loop advances
+            // unconditionally — the legacy `goNextMsg` fires whatever the
+            // confirm answer (`:12151`). A caller without delete
+            // permission falls through (the option is not theirs).
+            Some('d') if self.current_user_can_delete(session, current).await => {
+                self.handle_kill(session, NumberArg::Number(current))
+                    .await?;
+                if !self.advance(session, next, last_displayed).await? {
+                    return Ok(false);
+                }
+            }
+            // `M`ove: gated on the move permission (legacy `ACS_SYSOP_READ`,
+            // `express.e:12170`). Advances only on a successful move
+            // (`:12172`); an aborted or rejected move stays.
+            Some('m') if can_move(session.user()) => {
+                let moved = self
+                    .handle_move_mail(session, NumberArg::Number(current))
+                    .await?;
+                if moved && !self.advance(session, next, last_displayed).await? {
+                    return Ok(false);
+                }
+            }
+            // `EH` edits the current header (the `E`-family option, gated
+            // on edit-header access — legacy `ACS_MESSAGE_EDIT`,
+            // `express.e:12179`), then re-displays the edited message and
+            // stays (`displayMessage` -> `nextMenu`, `:12191-12193`). Bare
+            // `E` (emacs) / `EM` (body edit) are deliberately not carried
+            // (see slice B5 Out of Scope).
+            Some('e') if trimmed.eq_ignore_ascii_case("eh") && can_edit_header(session.user()) => {
+                self.handle_edit_header(session, NumberArg::Number(current))
+                    .await?;
+                self.read_and_render(session, current).await?;
+            }
+            // `L`ist the base's messages (`express.e:12220`), then stay on
+            // the current message (`nextMenu`, `:12223`).
+            Some('l') => {
+                self.handle_list_messages(session).await?;
+            }
+            // Any other key is an unimplemented B5 option; fall through
+            // and re-render the prompt.
+            _ => {}
         }
-        *number = next;
-        self.read_and_render(session, *number).await?;
         Ok(true)
     }
 
-    /// Returns the highest existing message number in the session's
-    /// current message base — the range string's upper bound, the
-    /// legacy `mailStat.highMsgNum - 1` (`express.e:12010`). `None` when
+    /// Reads `*next` and displays it, advancing the pointer past it and
+    /// recording it as the loaded message. Re-reads the base bounds so a
+    /// just-posted reply is reachable. Returns `Ok(false)` when `*next`
+    /// is out of range — the legacy out-of-range -> `QUIT` clamp
+    /// (`express.e:12012` / `:12328`) — so the caller leaves the loop.
+    async fn advance(
+        &mut self,
+        session: &mut MenuSession,
+        next: &mut u32,
+        last_displayed: &mut Option<u32>,
+    ) -> Result<bool, T::Error> {
+        let Some((lowest, highest)) = self.current_base_bounds(session).await else {
+            return Ok(false);
+        };
+        if *next > highest || *next < lowest {
+            return Ok(false);
+        }
+        self.read_and_render(session, *next).await?;
+        *last_displayed = Some(*next);
+        *next += 1;
+        Ok(true)
+    }
+
+    /// Returns the `(lowest, highest)` existing message bounds in the
+    /// session's current message base — the legacy `mailStat.lowestKey`
+    /// (approximated by the lowest undeleted message) and
+    /// `mailStat.highMsgNum - 1` (`express.e:12010-12012`). `None` when
     /// the session has no current base or no store is registered for it.
-    async fn current_base_highest(&self, session: &MenuSession) -> Option<u32> {
+    async fn current_base_bounds(&self, session: &MenuSession) -> Option<(u32, u32)> {
         let (conference, msgbase) = session.current_msgbase()?;
         let guard = self
             .services
             .mail_stores()
             .lock(MessageBaseRef::new(conference, msgbase))
             .await?;
-        Some(guard.highest_message())
+        Some((guard.lowest_undeleted_message(), guard.highest_message()))
     }
 
     /// True when the session's user may delete the current message

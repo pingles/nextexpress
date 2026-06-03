@@ -30,8 +30,9 @@ shortcuts were retired, in this commit sequence on `tier-b-read-subprompt`:
   the range bound is now re-read live each turn.
 
 Still open: **B7** (`E` / `C` wire-text drift, independent), **B9** (the
-`ACS_*` access-flag fidelity), the no-arg `R` interactive entry, and the
-deeper `forwardMSG` To-header / body-copy parity (COMMAND_PARITY row 23).
+`ACS_*` access-flag fidelity), the no-arg `R` interactive entry
+(**B10** below), and the deeper `forwardMSG` To-header / body-copy parity
+(COMMAND_PARITY row 23).
 
 The original framing of the round follows.
 
@@ -369,3 +370,82 @@ wrong.)
 - **Why deferred:** it touches the `Right` enum, the user-tier mapping
   and three domain rules used by the top-level commands too, so it is a
   cross-cutting access-model change rather than sub-prompt work.
+
+## Slice B10 — bare `R` no-arg entry + legacy-exact `readMSG` loop — **Done**
+
+B4 shipped the `R` sub-prompt but deferred the no-arg entry. Landing it
+faithfully forced a **legacy-exact rework of the whole `readMSG` loop**
+(`amiexpress/express.e:12008-12230`), because bare `R` and `R <num>`
+share that loop and the existing B4/B5 shape diverged from legacy in
+three ways that only became visible at the no-arg edge. The rework
+reshapes the shared loop, so `R <num>` and the `MS` read-it-now flow
+changed too. (Original scope was "dispatch wiring + a start clamp"; a
+parity-verification workflow against `express.e` and the
+`comparison/transcripts/` captures showed the shape itself was wrong,
+and the sysop opted for the full rework.)
+
+What shipped (all in `rust/src/app/menu_flow/`):
+
+- **Prompt-first bare `R`.** `MenuCommand::Read(NumberArg::Missing)` no
+  longer emits `READ_REQUIRES_NUMBER_LINE`; it opens the sub-prompt
+  *before* displaying any message (legacy enters `cont:` directly when
+  there are no params, `:11999-12021`). The first `<CR>` then reads the
+  resume message. `R <num>` stays read-first (legacy `passItIN`,
+  `:12003-12004`). The loop entry is unified:
+  `run_read_subprompt(session, next, last_displayed)` where bare `R`
+  passes `(start, None)` and `R <num>` / MS pass `(num + 1, Some(num))`.
+- **Start = read-pointer + 1, not an unread search.** Legacy
+  `msgNum := lastMsgReadConf + 1` (`:11984`, `lastMsgReadConf := cb.confYM`,
+  `:4912`) clamped up to the lowest key (`:11985`). Seam:
+  `user.read_pointers_for(msgbase).last_read() + 1` clamped up to the
+  base's lowest. **Not** `scan_mail::first_unread_number_for` — that
+  returns the lowest *unread-addressed-to-me* message, returns `None`
+  once mail is read, and would replay message 1 (wrong-seam trap, pinned
+  by `bare_r_with_an_exhausted_pointer_returns_to_the_menu_without_replaying`).
+- **Next-to-read range numbering.** The range lower bound is the *next*
+  message to read, because `readit` increments `msgNum` *after*
+  `displayMessage` (`:12372`). So `R 1` on a 2-message base shows
+  `( 2+2 )` (not `1+2`), and after reading the last message the range
+  collapses to the literal `( QUIT )` (`:12012`). The renderer now takes
+  a precomputed `range: &[u8]`; the caller computes the QUIT collapse
+  (`next > highest || next < lowest`).
+- **`( QUIT )` exhausted prompt.** An out-of-range pointer (exhausted, or
+  empty base) renders the prompt with the `QUIT` range rather than
+  returning silently. `<CR>` / `Q` there return to the menu silently
+  (legacy implicit-advance sets `noDirF = 1`, so `noMorePlus` prints
+  nothing, `:12082`/`:12302`). The spurious `Message not found.` that the
+  first (message-first) attempt leaked is gone — the loop guards
+  `next > highest` before reading.
+- **`tempFlag`-inert options.** `A`/`R`/`F`/`D`/`M`/`EH` operate on the
+  *loaded* message (`last_displayed`) and are inert until one has been
+  read (legacy `IF(tempFlag)`, `:12087`); before the first read only
+  `<CR>`/`L`/`Q`/`?`/`??` act.
+- **Spec**: the `messaging.allium` `MailReadPrompt` no-arg guidance note
+  and `@guarantee NavigationWalksForward` were updated to the prompt-first
+  + `QUIT` model.
+
+**Tests** (`rust/tests/tierb_read_subprompt_smoke.rs`): the ~13 existing
+B4/B5 smokes were re-pinned to the next-to-read ranges / `QUIT` forms,
+and new smokes added — `bare_r_*` (prompt-first, resume, exhausted),
+`bare_r_options_are_inert_before_the_first_message_is_read`, and
+`help_tail_shows_quit_when_out_of_range`.
+
+- **Out of Scope / deferred** (recorded so the deferral is deliberate):
+  - **B9 per-user ACS gating.** Legacy gates the prompt's `D`/`M` on the
+    per-user `checkSecurity(ACS_DELETE_MESSAGE)` / `(ACS_SYSOP_READ)`
+    flags (`:12017-12018`), so legacy shows them even at the
+    `QUIT`-from-start prompt with no current message. NextExpress keeps
+    the existing per-message gating and hides `D`/`M` when there is no
+    current message. Still tracked as B9.
+  - **In-loop digit / `+` / `-` jumps and the `noMorePlus`
+    "The last message in this conference is N" text** (`:12238-12304`).
+    The current loop has no in-prompt number jump, so the `noDirF = 0`
+    text never fires; the `R <num>` out-of-range path still uses the
+    existing `Message not found.` divergence (COMMAND_PARITY §1). Deferred.
+  - **`S` ("new only") / `NS` (non-stop) tokens** (`:11989`); `NS` is
+    Tier A A12.
+  - **Lowest-key approximation.** The clamp uses
+    `lowest_undeleted_message` (≈ legacy `lowestNotDel`) rather than
+    `mailStat.lowestKey` (lowest incl. deleted); they differ only when the
+    lowest physical key is a soft-deleted message below the lowest
+    undeleted one. Recorded as a narrow documented divergence.

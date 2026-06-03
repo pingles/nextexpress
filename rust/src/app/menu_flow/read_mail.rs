@@ -13,6 +13,8 @@ use crate::app::wire_text::{
     render_mail_body, render_mail_header, DELETED_MESSAGE_LINE, MAIL_STORE_ERROR_LINE,
     MESSAGE_NOT_FOUND_LINE, NO_MAIL_BASE_LINE, READ_DENIED_LINE,
 };
+use crate::domain::conference::MessageBaseRef;
+use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::session::typed::MenuSession;
 
 impl<T> super::MenuFlow<'_, T>
@@ -24,14 +26,63 @@ where
         session: &mut MenuSession,
         number: u32,
     ) -> Result<(), T::Error> {
-        // A message is displayed first; only then does the legacy
-        // `readMSG` sub-prompt loop take over (`express.e:11972`). The
-        // not-found / deleted / denied / error notices return straight
-        // to the menu — there is no current message to operate on.
+        // `R <num>` is read-first (legacy `passItIN` -> `goNextMsg`,
+        // `express.e:12003-12004`): the message is displayed, then the
+        // sub-prompt loop opens with the pointer advanced past it. The
+        // not-found / deleted / denied / error notices return straight to
+        // the menu — there is no current message to operate on.
         if self.read_and_render(session, number).await? {
-            self.run_read_subprompt(session, number).await?;
+            self.run_read_subprompt(session, number + 1, Some(number))
+                .await?;
         }
         Ok(())
+    }
+
+    /// Bare `R` (no message number): opens the read sub-prompt
+    /// PROMPT-FIRST at the caller's resume point — the legacy `readMSG`
+    /// no-arg entry (`express.e:11984-12021`). The resume point is the
+    /// per-base read pointer plus one (`lastMsgReadConf + 1`, `:11984`,
+    /// where `lastMsgReadConf := cb.confYM`, `:4912`), clamped up to the
+    /// base's lowest key (`:11985`). This is the sequential read pointer,
+    /// not the first unread message addressed to the reader.
+    ///
+    /// Unlike `R <num>`, bare `R` shows no message before the prompt: the
+    /// `Msg. Options:` prompt renders at the resume range and the first
+    /// `<CR>` then displays the resume message. When the resume point is
+    /// past the highest existing message (the pointer is exhausted, or the
+    /// base is empty) the prompt renders with the `( QUIT )` range and a
+    /// `<CR>` / `Q` returns to the menu (legacy `:12012`).
+    pub(super) async fn handle_read_mail_at_pointer(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> Result<(), T::Error> {
+        let Some((conference, msgbase)) = session.current_msgbase() else {
+            return self.write_and_flush(NO_MAIL_BASE_LINE).await;
+        };
+        let base = MessageBaseRef::new(conference, msgbase);
+
+        // A never-read base has no pointer row; treat that as 0 so the
+        // resume starts at message 1 (legacy `lastMsgReadConf` default).
+        let last_read = session
+            .user()
+            .read_pointers_for(base)
+            .map_or(0, ReadPointers::last_read);
+
+        // Clamp UP to the base's lowest key. The trait exposes the lowest
+        // *undeleted* message; this matches the legacy `mailStat.lowestKey`
+        // except when the true lowest key is a soft-deleted message below
+        // it.
+        let lowest = match self.services.mail_stores().lock(base).await {
+            Some(guard) => guard.lowest_undeleted_message(),
+            None => return self.write_and_flush(NO_MAIL_BASE_LINE).await,
+        };
+        let start = last_read.saturating_add(1).max(lowest);
+
+        // The legacy entry blank line (`express.e:11987`) precedes the
+        // prompt-first loop; no message is displayed yet, so
+        // `last_displayed` is `None`.
+        self.write_and_flush(b"\r\n").await?;
+        self.run_read_subprompt(session, start, None).await
     }
 
     /// Reads message `number` through the terminal-free use case and

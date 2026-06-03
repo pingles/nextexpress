@@ -104,7 +104,8 @@ where
             SystemTime::now(),
         );
         if self.read_and_render(session, start).await? {
-            self.run_read_subprompt(session, start).await?;
+            self.run_read_subprompt(session, start + 1, Some(start))
+                .await?;
         }
         if let Some((conference, msgbase)) = home {
             session.attach_read_visit(conference, msgbase, SystemTime::now());

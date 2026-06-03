@@ -541,18 +541,15 @@ pub(crate) fn render_mail_header(
 /// `:12018`); the caller passes the gate results for the current message
 /// and user.
 ///
-/// The `( <range> )` slot carries the runtime message-range string
-/// `<number>+<highest>` (`:12010`), where `highest` is the highest
-/// existing message number (legacy `mailStat.highMsgNum - 1`). When
-/// neither `D` nor `M` is shown the two `\x1b[36m` colour codes around
-/// the skipped slot collapse into the doubled-`\x1b[36m` seam the legacy
-/// leaves in that case.
-pub(crate) fn render_read_subprompt(
-    number: u32,
-    highest: u32,
-    show_delete: bool,
-    show_move: bool,
-) -> Vec<u8> {
+/// The `( <range> )` slot carries the precomputed runtime range string,
+/// either `<next>+<highest>` (`:12010`, where `next` is the next message
+/// to read and `highest` the highest existing number,
+/// `mailStat.highMsgNum - 1`) or the literal `QUIT` when `next` is out of
+/// range (`:12012`). The caller computes the collapse. When neither `D`
+/// nor `M` is shown the two `\x1b[36m` colour codes around the skipped
+/// slot collapse into the doubled-`\x1b[36m` seam the legacy leaves in
+/// that case.
+pub(crate) fn render_read_subprompt(range: &[u8], show_delete: bool, show_move: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(112);
     out.extend_from_slice(b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m");
     if show_delete {
@@ -564,9 +561,7 @@ pub(crate) fn render_read_subprompt(
     out.extend_from_slice(
         b"\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m ",
     );
-    out.extend_from_slice(number.to_string().as_bytes());
-    out.push(b'+');
-    out.extend_from_slice(highest.to_string().as_bytes());
+    out.extend_from_slice(range);
     out.extend_from_slice(b" \x1b[32m )\x1b[0m>: ");
     out
 }
@@ -589,8 +584,7 @@ pub(crate) fn render_read_subprompt(
 #[allow(clippy::fn_params_excessive_bools)]
 pub(crate) fn render_read_subprompt_help(
     long: bool,
-    number: u32,
-    highest: u32,
+    range: &[u8],
     show_delete: bool,
     show_move: bool,
     show_edit: bool,
@@ -623,9 +617,7 @@ pub(crate) fn render_read_subprompt_help(
     out.extend_from_slice(
         b"\r\n\x1b[32m<\x1b[33mCR\x1b[32m>\x1b[0m=\x1b[33mNext \x1b[32m(\x1b[0m ",
     );
-    out.extend_from_slice(number.to_string().as_bytes());
-    out.push(b'+');
-    out.extend_from_slice(highest.to_string().as_bytes());
+    out.extend_from_slice(range);
     out.extend_from_slice(b" \x1b[32m )\x1b[0m? ");
     out
 }

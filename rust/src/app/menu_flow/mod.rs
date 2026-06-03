@@ -32,8 +32,8 @@ use crate::app::wire_text::{
     render_stats_screen, render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE,
     EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE, GOODBYE_LINE, HELP_UNAVAILABLE_LINE,
     IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE,
-    JOIN_REQUIRES_NUMBER_LINE, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, READ_REQUIRES_NUMBER_LINE,
-    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
+    JOIN_REQUIRES_NUMBER_LINE, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, UNKNOWN_COMMAND_LINE,
+    VERSION_BANNER,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 
@@ -152,7 +152,9 @@ where
             },
             MenuCommand::Read(arg) => match arg {
                 NumberArg::Number(n) => self.handle_read_mail(&mut session, n).await?,
-                NumberArg::Missing => self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?,
+                // Bare `R` opens the sub-prompt at the read-resume point
+                // (legacy `readMSG` no-arg entry, `express.e:11984-11985`).
+                NumberArg::Missing => self.handle_read_mail_at_pointer(&mut session).await?,
                 NumberArg::Invalid => self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?,
             },
             MenuCommand::ScanAllMail => self.handle_scan_all_mail(&mut session).await?,
