@@ -376,6 +376,7 @@ impl SqliteUserRepository {
         conn: &Connection,
         slot_number: u32,
     ) -> rusqlite::Result<Vec<ConferenceMembership>> {
+        #[allow(clippy::struct_excessive_bools)] // mirrors the row's flag columns
         struct MembershipRow {
             conference_number: u32,
             granted: bool,
