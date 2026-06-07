@@ -80,8 +80,6 @@ new-files scan (Tier D) — not any `CS` command.
 ## Slice C5 — `CF` (conference flags editor)
 
 **Status: Done (2026-06-03), landed first in this tier.**
-Full design and the live FS-UAE behaviour assessment:
-[`docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md`](../docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md).
 Decisions: flags live on `ConferenceMembership` (per-conference; every
 shipped conference is single-base) and persist through SQLite; `mail_scan`
 / `file_scan` default on (D2); `*` honours the advertised toggle-all the
