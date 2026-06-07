@@ -74,12 +74,11 @@ done.
 | Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B3, shipped with B1's `MS`) |
 | Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B8 — `RP`/`FW`/`K`/`MV`/`EH` now parse to unknown) |
 | **C. Conference navigation** ||||
-| `CS` (surface) | spec rule `conferences.allium:ConferenceScan` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (re-scoped — there is no legacy `CS`; the runtime multi-conference scan is `MS`. Now unblocked by C5: a flag-gated new-mail scan distinct from `MS`'s force-all. See the C5 design doc.) |
 | `<` / `>` | `express.e:24529, 24548` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo |
 | `JM <n>` | `express.e:25185` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4a) |
 | `<<` / `>>`, `JM` interactive | `express.e:24566, 24580, 25197` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4b) |
 | `J` no-arg prompt | `express.e:25143-25151` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (parity gap on shipped `J`) |
-| `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C5 — landed first to unblock `CS`; M/A/F/Z editor, flags on `ConferenceMembership` (SQLite-persisted), `*` honours the advertised toggle-all the legacy no-ops) |
+| `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C5 — landed first in Tier C; M/A/F/Z editor, flags on `ConferenceMembership` (SQLite-persisted), `*` honours the advertised toggle-all the legacy no-ops) |
 | **D. Files — browsing first, transfer second** ||||
 | `F` (file listings) | `express.e:24877` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
 | `FR` (reverse listings) | `express.e:24883` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
@@ -346,6 +345,20 @@ done, rather than merely deferred. A skipped slice keeps its identity
 ships no rules, no code and no tests. The entry below explains why —
 so a future contributor doesn't quietly bring the slice back without
 revisiting the reasoning.
+
+### `CS` (conference scan) command — original Slice C1
+
+There is **no `CS` command** in AmiExpress. The legacy dispatch table
+(`processInternalCommand`, `express.e:28285`) has no `CS` token, and the
+live FS-UAE reference confirmed it (2026-06-03). The runtime
+multi-conference mail scan is `MS` (`internalCommandMS`, already
+shipped); the conference scan modelled by `conferences.allium:ConferenceScan`
+is the *logon-time* `confScan()` (`express.e:28066`), not a menu command.
+The original C1 entry proposed a `CS` command with an invented
+`Conference <n>:` / `<CR>=next, S=stop` UX — dropped as drift. The
+per-conference scan flags `confScan()` consults are edited by `CF`
+(Slice C5) and gate the conference mail-scan and the `N` new-files scan
+(Tier D); no `CS` command is planned.
 
 ### Conferences (admin) — original Phase 5 (Slices 35, 36) and `CM`
 

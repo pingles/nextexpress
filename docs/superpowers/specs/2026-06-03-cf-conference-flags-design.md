@@ -7,11 +7,14 @@ focused `cargo mutants` all green. Legacy behaviour validated live (§2).
 
 ## 1. Context
 
-Tier C (conference navigation) was re-ordered so `CF` (slice C5) lands **before**
-`CS` (slice C1). The reason: a faithful `CS` (on-demand multi-conference mail
-scan) is byte-for-byte identical to the already-shipped `MS` until per-base scan
-flags exist, and those flags (`ConferenceMembership.mail_scan` et al.) are
-introduced by `CF`. So `CF` is the unblocking slice.
+Tier C (conference navigation) was re-ordered so `CF` (slice C5) lands first.
+The original C1 entry proposed a `CS` command, but validation found there is **no
+`CS` command** in AmiExpress — the runtime multi-conference scan is `MS`
+(`internalCommandMS`, already shipped) and the conference scan modelled by
+`conferences.allium:ConferenceScan` is the *logon-time* `confScan()`
+(`express.e:28066`), not a menu command. `CS` was therefore dropped from the
+roadmap (recorded under Skipped slices in `SLICES.md`), and `CF` — a real legacy
+command — leads the tier.
 
 `CF` lets the logged-on user edit **their own** per-conference scan preferences —
 which conferences are swept for new mail (`M`), all-messages (`A`), new files
@@ -89,7 +92,8 @@ logic, a terminal-free listing use case, and a thin terminal loop.
   `file_scan`, `zoom_scan : Boolean`. Defaults on a **granted** row:
   `mail_scan = true`, `file_scan = true`, others `false`.
 - `conferences.allium`: a rule `EditConferenceScanFlags` capturing set / clear /
-  toggle semantics, and the `mail_scan` gate the later `CS` slice consumes.
+  toggle semantics, and the `mail_scan` gate the conference mail-scan
+  (legacy `confScan` / `checkMailConfScan`) consults.
 - A `has_access` right for the `ACS_CONFFLAGS` gate (`Right::EditConferenceFlags`).
 
 ### 3.2 Rust schema
@@ -152,7 +156,8 @@ multi-base conferences are a future extension, not built.
 - **D2 — default flags ON.** The legacy seed shows all flags blank (no
   `DEFAULT_NEWSCAN`/`DEFAULT_NEW_FILES` tooltypes, which we scope out as
   file-config). NextExpress defaults `mail_scan`/`file_scan` ON for a granted
-  membership so `CS`/`N` work out of the box. (User decision, 2026-06-03.)
+  membership so the conference mail-scan and the `N` new-files scan work out of
+  the box. (User decision, 2026-06-03.)
 
 ## 4. Testing
 
@@ -184,7 +189,11 @@ The single C5 slice is delivered as ordered TDD cycles:
 
 - `F`/`D` per-conference newscan tooltype overrides (file-config, deferred).
 - Per-message-base flags for multi-base conferences (future extension).
-- The `CS` command itself (next slice, now unblocked by C5's `mail_scan`).
+- Any `CS` command — there is none in the legacy (`MS` is the runtime scan);
+  dropped from the roadmap (see Skipped slices in `SLICES.md`).
+- Wiring the per-conference scan flags into an actual scan path — `CF` only
+  stores and edits them; the logon conference mail-scan and `N` new-files scan
+  that consult them are tracked separately.
 
 ## 7. Decisions on record
 

@@ -3,41 +3,27 @@
 Conferences and `J` shipped as foundation work; the rules live in
 [`specs/conferences.allium`](../specs/conferences.allium) and their
 implementation under `rust/src/domain/conference*.rs`. This file finishes
-the navigation surface: the legacy "conference scan" command-line
-form, the prev/next shortcuts, the message-base sibling commands,
-and the conference flags editor.
+the navigation surface: the prev/next shortcuts, the message-base sibling
+commands, and the conference flags editor.
 
 See [SLICES.md](../SLICES.md) for the schema-growth principle and
 asset inventory.
 
-## Slice C1 — `CS` (surface the existing `ConferenceScan` rule)
+## No `CS` command (resolved 2026-06-03)
 
-**Re-scoped (2026-06-03).** Validation against the legacy source and the
-live FS-UAE reference found there is **no legacy `CS` command** — the
-runtime multi-conference scan is `MS` (`internalCommandMS`), and the
-per-step `Conference <n>:` / `<CR>=next, S=stop` UX below was invented.
-A faithful `CS` is byte-identical to the shipped `MS` until per-base scan
-flags exist, so this slice was deferred behind C5 (now done). When picked
-up, `CS` should be the on-demand **flag-gated** new-mail scan (consulting
-`ConferenceMembership.mail_scan`), distinct from `MS`'s force-all, and
-must render only legacy-sourced strings. The In/Out scope below is
-superseded by that framing.
+There is **no `CS` command** in AmiExpress. The legacy dispatch table
+(`processInternalCommand`, `express.e:28285`) has no `CS` token, and the
+live FS-UAE reference confirmed it. The runtime multi-conference mail
+scan is `MS` (`internalCommandMS`, already shipped); the *logon-time*
+conference scan is `confScan()` (`express.e:28066`), which is not a menu
+command. An earlier roadmap entry proposed a `CS` command with an
+invented `Conference <n>:` / `<CR>=next, S=stop` UX — that was dropped as
+drift (recorded under Skipped slices in [SLICES.md](../SLICES.md)).
 
-- **In Scope**
-  - Parser: `MenuCommand::ConferenceScan`.
-  - Dispatches to the already-shipped `Session::start_conference_scan`
-    / `step_conference_scan` (Slice 33).
-  - Per-step wire text mirrors `joinConf`'s scan-display path: the
-    `Conference <n>: <name>` line, then the mail-scan summary
-    inherited from Slice 41.
-  - Sub-prompt at end of each conference offers
-    `<CR>=next, S=stop` per the legacy scan UX.
-- **Out of Scope**
-  - Filtering the scan by `ConferenceMembership.scan_flags`
-    (covered by Slice C5's `CF` command).
-- **Why it's first in this tier**: the domain rule is already
-  implemented; this slice is a parser/dispatch wiring exercise and
-  delivers visible value immediately.
+The per-conference scan flags (`ConferenceMembership.mail_scan` and
+siblings) that `confScan()` consults are edited by the `CF` command
+(Slice C5, below); they gate the conference mail-scan and the `N`
+new-files scan (Tier D) — not any `CS` command.
 
 ## Slice C2 — `J` no-arg interactive prompt (parity fix)
 
@@ -93,7 +79,7 @@ superseded by that framing.
 
 ## Slice C5 — `CF` (conference flags editor)
 
-**Status: Done (2026-06-03), landed first in this tier** to unblock `CS`.
+**Status: Done (2026-06-03), landed first in this tier.**
 Full design and the live FS-UAE behaviour assessment:
 [`docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md`](../docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md).
 Decisions: flags live on `ConferenceMembership` (per-conference; every
@@ -120,8 +106,8 @@ single `readChar` — the wire echo is identical.
 ## Slice C-wire — Tier C wire-and-smoke
 
 - **In Scope**
-  - Smoke test: log in, run `CS` and walk the scan, hop via `<` /
-    `>` / `JM`, edit conference flags via `CF` and confirm the new
-    mask is honoured on the next scan.
+  - Smoke test: log in, hop via `<` / `>` / `JM`, and edit conference
+    flags via `CF`. (`CF` already has its own end-to-end telnet smoke,
+    shipped with C5.)
 - **Out of Scope**
   - SSH transport for the smoke run (Future).
