@@ -475,6 +475,39 @@ rule ScanAllMail {
     )
 }
 
+-- Logon conference scan: the legacy `confScan()` (`express.e:28066`), run
+-- from the `SUBSTATE_DISPLAY_BULL` logon state (`:28564`) before the menu
+-- opens. It is the same per-base `ScanMail` walk as `ScanAllMail` (MS) —
+-- same banners, listing, and read-it-now offer — with two differences:
+-- it scans only bases whose conference membership has `mail_scan` set
+-- (the legacy `checkMailConfScan` gate, `:28095`), and it runs at logon
+-- rather than on demand. It scans by coordinate and does NOT join or
+-- change the current conference (legacy `joinConf(..., confScan=TRUE)`
+-- leaves `currentConf` untouched, `:4997`); the separate auto-rejoin then
+-- places the user in their home conference. Skipped in quick-logon.
+--
+-- Modelled here (not via `conferences.allium:ConferenceScan`, whose
+-- join-walk would create visits and run name-type promotion / bulletin
+-- side effects the legacy scan does not) — see slices/login-fixes.md.
+rule ScanConferencesOnLogon {
+    when: ConferenceLogonScanRequested(session)
+    requires: session.state = onboarded
+    requires: session.user != null
+    requires: not session.quick_logon
+
+    let targets = accessible_msgbases_for(session.user)
+
+    ensures:
+        for target in targets:
+            if ConferenceMembership{user: session.user, conference: target.conference}.mail_scan:
+                MailScanRequested(
+                    session: session,
+                    conference: target.conference,
+                    msgbase: target,
+                    from_message: 0
+                )
+}
+
 -- Attach a file to a message during composition. Two paths exist:
 -- (1) the user pre-uploads the file then references it; (2) the user
 -- composes the message first, then uploads the file as a follow-up.

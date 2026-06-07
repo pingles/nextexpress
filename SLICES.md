@@ -44,6 +44,16 @@ scan-all it used to carry now lives on `MS`. `N`'s mail-scan binding
 unknown command until Tier D ships the legacy new-files scan
 (`express.e:25275`).
 
+## Login-sequence fixes
+
+Parity fixes to the logged-on bring-up sequence (between a successful
+password and the first menu prompt) — foundation logon behaviour, not
+menu commands. Detail in [`slices/login-fixes.md`](slices/login-fixes.md).
+
+| Fix | Legacy source | Slice file | Status |
+| --- | --- | --- | :---: |
+| Logon conference scan (multi-conference new-mail scan) | `express.e:28066` (`confScan`) | [login-fixes.md](slices/login-fixes.md) | Todo (L1) — the `ConferenceScan` engine and the `CF` `mail_scan` flag exist but nothing drives the logon walk; spec groundwork landed |
+
 ## Menu-command roadmap
 
 Each remaining slice maps to one legacy menu command (or a tight
