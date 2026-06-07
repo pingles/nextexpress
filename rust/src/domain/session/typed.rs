@@ -323,6 +323,15 @@ impl MenuSession {
         self.session.time_remaining()
     }
 
+    /// Whether this session is a quick logon (spec
+    /// `session.allium:Session.quick_logon`). The logon conference scan
+    /// is skipped for quick logons, mirroring the legacy `confScan`
+    /// gate.
+    #[must_use]
+    pub(crate) fn quick_logon(&self) -> bool {
+        self.session.quick_logon()
+    }
+
     /// Points the open visit at `(conference_number, msgbase_number)`
     /// so the read flow targets that base. The `MS` read-it-now path
     /// attaches the base it found mail in, runs the read sub-prompt,

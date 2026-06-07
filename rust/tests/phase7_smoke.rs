@@ -163,7 +163,12 @@ fn walk_phase7_post_flow(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
 
-    // Wait for the menu prompt after sign-in and auto-rejoin.
+    // The logon conference scan (legacy confScan) surfaces the seeded
+    // message with a read-it-now offer before the menu; decline it, then
+    // wait for the menu prompt after the auto-rejoin.
+    drain_until(&mut stream, b"read it now ")
+        .map_err(|e| format!("logon scan read-it-now offer: {e}"))?;
+    write_line(&mut stream, b"n")?;
     drain_until(&mut stream, b"mins. left): ")
         .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
 

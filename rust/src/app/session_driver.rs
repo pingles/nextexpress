@@ -29,6 +29,7 @@ use crate::app::session_flow;
 use crate::app::session_presenter::{format_auto_rejoin_line, render_name_type_promotion};
 use crate::app::terminal::Terminal;
 use crate::app::wire_text::{render_stats_screen, COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
+use crate::domain::conference::NameType;
 use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
     MenuSession, OnboardedSession,
@@ -71,11 +72,27 @@ enum SignInResult {
 /// `no_conference_access`).
 enum AutoRejoinResult {
     /// The session attached to a conference and may proceed into the
-    /// menu loop.
-    Joined(OnboardedSession),
+    /// menu loop. The user-visible JOINED announcement is deferred (see
+    /// [`AutoRejoinAnnouncement`]) so it can be replayed *after* the
+    /// logon conference scan, matching the legacy substate order.
+    Joined {
+        session: OnboardedSession,
+        announcement: AutoRejoinAnnouncement,
+    },
     /// The user has no granted membership; the session has moved to
     /// `LoggingOff` with `LogoffReason::NoConferenceAccess`.
     NoAccess(LoggingOffSession),
+}
+
+/// The auto-rejoin's deferred user-visible announcement, captured when
+/// the home conference is resolved and replayed by
+/// [`SessionDriver::announce_auto_rejoin`] after the logon conference
+/// scan has run (the legacy emits it at `SUBSTATE_DISPLAY_CONF_BULL`,
+/// `amiexpress/express.e:28574`, after `confScan`).
+struct AutoRejoinAnnouncement {
+    conference_number: u32,
+    msgbase_number: u32,
+    name_type_promoted_to: Option<NameType>,
 }
 
 impl<T> SessionDriver<T>
@@ -129,16 +146,32 @@ where
         };
 
         let logging_off = match signed_in {
-            SignInResult::Onboarded(onboarded) => match self.auto_rejoin(onboarded).await? {
-                AutoRejoinResult::Joined(onboarded) => {
-                    self.render_login_stats(&onboarded).await?;
-                    let menu = self.enter_menu(onboarded);
-                    MenuFlow::new(&mut self.terminal, &self.services)
-                        .run(menu)
-                        .await?
+            SignInResult::Onboarded(onboarded) => {
+                match self.resolve_auto_rejoin(onboarded).await? {
+                    AutoRejoinResult::Joined {
+                        session,
+                        announcement,
+                    } => {
+                        // Enter the menu state first so the logon conference
+                        // scan can reuse the `MenuSession` read-it-now flow —
+                        // the legacy runs `confScan` with the user already
+                        // fully logged on, before the join announcement.
+                        let mut menu = self.enter_menu(session);
+                        MenuFlow::new(&mut self.terminal, &self.services)
+                            .run_logon_conference_scan(&mut menu)
+                            .await?;
+                        // Replay the deferred auto-rejoin announcement, then
+                        // the login stats (read after the `enter_menu` bump,
+                        // matching the legacy `statPrintUser` order).
+                        self.announce_auto_rejoin(&announcement).await?;
+                        self.render_login_stats(&menu).await?;
+                        MenuFlow::new(&mut self.terminal, &self.services)
+                            .run(menu)
+                            .await?
+                    }
+                    AutoRejoinResult::NoAccess(logging_off) => logging_off,
                 }
-                AutoRejoinResult::NoAccess(logging_off) => logging_off,
-            },
+            }
             SignInResult::LoggingOff(logging_off) => logging_off,
             SignInResult::Ended(_ended) => return Ok(()),
         };
@@ -147,52 +180,70 @@ where
         Ok(())
     }
 
-    /// Resolves `conferences.allium:JoinConference` for the
-    /// auto-rejoin path (Slice 30) and renders the JOINED screen and
-    /// any name-type promotion screen (Slices 31 / 34). On
-    /// `NoAccess` the listener writes the no-access line so the user
-    /// understands why their session is closing — the
-    /// caller-log finalise entry will already record the underlying
+    /// Resolves `conferences.allium:JoinConference` for the auto-rejoin
+    /// path (Slice 30), attaching the home visit. The JOINED line and
+    /// name-type promotion screen (Slices 31 / 34) are *captured*, not
+    /// emitted: the legacy shows them at `SUBSTATE_DISPLAY_CONF_BULL`
+    /// (`amiexpress/express.e:28574`), *after* the logon conference scan
+    /// (`confScan`, `:28564`), so the driver replays them via
+    /// [`Self::announce_auto_rejoin`] once the scan has run. No
+    /// scan-on-join fires here — the legacy auto-rejoin join carries
+    /// `FORCE_MAILSCAN_SKIP` because the preceding logon scan already
+    /// covered every flagged base.
+    ///
+    /// On `NoAccess` the listener writes the no-access line so the user
+    /// understands why their session is closing — the caller-log
+    /// finalise entry will already record the underlying
     /// `LogoffReason::NoConferenceAccess`.
-    async fn auto_rejoin(
+    async fn resolve_auto_rejoin(
         &mut self,
         onboarded: OnboardedSession,
     ) -> Result<AutoRejoinResult, T::Error> {
         let conferences = self.services.conferences();
         match onboarded.auto_rejoin_conference(conferences, SystemTime::now()) {
             AutoRejoinTransition::Joined {
-                mut session,
+                session,
                 conference_number,
                 msgbase_number,
                 show_bulletin: _,
                 name_type_promoted_to,
-            } => {
-                let line = format_auto_rejoin_line(conferences, conference_number, msgbase_number);
-                self.terminal.write(&line).await?;
-                self.terminal.flush().await?;
-                render_name_type_promotion(
-                    &mut self.terminal,
-                    self.services.screens(),
+            } => Ok(AutoRejoinResult::Joined {
+                session,
+                announcement: AutoRejoinAnnouncement {
+                    conference_number,
+                    msgbase_number,
                     name_type_promoted_to,
-                )
-                .await?;
-                // Slice 41: fire `conferences.allium:ScanMailOnJoin`
-                // in `follow_pointer` mode for the auto-rejoin path.
-                crate::app::mail_scan_on_join::scan_mail_on_join(
-                    &mut self.terminal,
-                    &self.services,
-                    &mut session,
-                    crate::app::mail_scan_on_join::JoinScanMode::FollowPointer,
-                )
-                .await?;
-                Ok(AutoRejoinResult::Joined(session))
-            }
+                },
+            }),
             AutoRejoinTransition::NoAccess(logging_off) => {
                 self.terminal.write(NO_CONFERENCE_ACCESS_LINE).await?;
                 self.terminal.flush().await?;
                 Ok(AutoRejoinResult::NoAccess(logging_off))
             }
         }
+    }
+
+    /// Replays the deferred auto-rejoin announcement — the JOINED line
+    /// (legacy `joinConf`, `amiexpress/express.e:5071-5073`) and any
+    /// name-type promotion screen (Slices 31 / 34) — after the logon
+    /// conference scan has run.
+    async fn announce_auto_rejoin(
+        &mut self,
+        announcement: &AutoRejoinAnnouncement,
+    ) -> Result<(), T::Error> {
+        let line = format_auto_rejoin_line(
+            self.services.conferences(),
+            announcement.conference_number,
+            announcement.msgbase_number,
+        );
+        self.terminal.write(&line).await?;
+        self.terminal.flush().await?;
+        render_name_type_promotion(
+            &mut self.terminal,
+            self.services.screens(),
+            announcement.name_type_promoted_to,
+        )
+        .await
     }
 
     /// Returns the terminal after the driver has finished. Intended
@@ -218,12 +269,14 @@ where
     }
 
     /// Renders the user-stats screen during login, mirroring the
-    /// legacy logon sequence which shows the `internalCommandS()`
-    /// block between the mail scan and the menu. Reuses the same
-    /// [`render_stats_screen`] bytes the `S` command emits, read from
-    /// the just-onboarded user.
-    async fn render_login_stats(&mut self, onboarded: &OnboardedSession) -> Result<(), T::Error> {
-        let user = onboarded.user();
+    /// legacy `statPrintUser` block shown at logon
+    /// (`amiexpress/express.e:29850`). Reuses the same
+    /// [`render_stats_screen`] bytes the `S` command emits. Called after
+    /// `enter_menu`, so the figures (notably `times_called`) reflect the
+    /// logon bump — matching the legacy, which prints the stats once the
+    /// user is fully logged on.
+    async fn render_login_stats(&mut self, session: &MenuSession) -> Result<(), T::Error> {
+        let user = session.user();
         let screen = render_stats_screen(
             user.slot_number(),
             user.last_call(),
@@ -568,6 +621,16 @@ mod tests {
             stats_pos < menu_pos,
             "the user-stats screen must precede the menu at login"
         );
+        // The stats read *after* `enter_menu`, so `times_called` shows the
+        // logon bump (alice starts at 0 -> 1), matching the legacy
+        // `statPrintUser` order. A regression rendering the stats from the
+        // pre-`enter_menu` `OnboardedSession` would show `0` here.
+        let times_on = b"# Times On \x1b[33m:\x1b[0m 1";
+        assert!(
+            output.windows(times_on.len()).any(|w| w == times_on),
+            "login stats must show the post-enter_menu times_called (1), got {:?}",
+            String::from_utf8_lossy(output)
+        );
     }
 
     /// Builds the services + alice/Main fixture shared by the
@@ -700,6 +763,39 @@ mod tests {
         assert!(
             !driver.into_terminal().ansi_colour(),
             "choosing ASCII at login must turn the terminal's colour mode off"
+        );
+    }
+
+    #[tokio::test]
+    async fn logon_conference_scan_runs_before_the_auto_rejoin_announcement() {
+        // The legacy runs `confScan` (the multi-conference logon mail
+        // scan) at `SUBSTATE_DISPLAY_BULL` (`amiexpress/express.e:28564`),
+        // before the auto-rejoin join at `SUBSTATE_DISPLAY_CONF_BULL`
+        // (`:28574`). NextExpress emits the `Scanning conferences for
+        // mail...` header before the `Auto-ReJoined` line.
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("G".to_string()),
+        ]);
+        let mut driver =
+            SessionDriver::new(terminal, 1, LogonChannel::Remote, graphics_test_services());
+
+        driver.run().await.expect("driver completes");
+
+        let output = driver.into_terminal().output().to_vec();
+        let scan_pos = output
+            .windows(b"Scanning conferences for mail".len())
+            .position(|w| w == b"Scanning conferences for mail")
+            .expect("the logon conference scan header should render");
+        let rejoin_pos = output
+            .windows(b"Auto-ReJoined".len())
+            .position(|w| w == b"Auto-ReJoined")
+            .expect("the auto-rejoin announcement should render");
+        assert!(
+            scan_pos < rejoin_pos,
+            "the logon conference scan must precede the auto-rejoin announcement"
         );
     }
 

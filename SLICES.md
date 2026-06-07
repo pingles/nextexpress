@@ -52,7 +52,7 @@ menu commands. Detail in [`slices/login-fixes.md`](slices/login-fixes.md).
 
 | Fix | Legacy source | Slice file | Status |
 | --- | --- | --- | :---: |
-| Logon conference scan (multi-conference new-mail scan) | `express.e:28066` (`confScan`) | [login-fixes.md](slices/login-fixes.md) | Todo (L1) — the `ConferenceScan` engine and the `CF` `mail_scan` flag exist but nothing drives the logon walk; spec groundwork landed |
+| Logon conference scan (multi-conference new-mail scan) | `express.e:28066` (`confScan`) | [login-fixes.md](slices/login-fixes.md) | Done (L1) — the logon walk reuses the `MS` render + read-it-now flow, filtered to `mail_scan`-flagged bases, run before the auto-rejoin |
 
 ## Menu-command roadmap
 

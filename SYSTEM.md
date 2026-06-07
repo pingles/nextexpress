@@ -123,7 +123,7 @@ flowchart LR
     Driver --> Start["start (banner + copyright)"]
     Driver --> Login["LoginFlow"]
     Driver --> Registration["RegistrationFlow"]
-    Driver --> AutoRejoin["auto_rejoin"]
+    Driver --> AutoRejoin["resolve_auto_rejoin\n(+ logon conference scan, L1)"]
     Driver --> Menu["MenuFlow"]
     Driver --> Finalise["session_flow::typed::finalise_logoff"]
 
@@ -278,14 +278,24 @@ thin orchestrator:
 3. `RegistrationFlow::run` — only on `NeedsRegistration`. Owns the
    new-user gate, profile collection, hash + persist, returns
    `Onboarded | LoggingOff`.
-4. `auto_rejoin` — apply `conferences.allium:JoinConference`, render
-   `JOINED` + any name-type promotion screen, fire
-   `mail_scan_on_join::scan_mail_on_join` in `FollowPointer` mode, then
-   render the user-stats screen (`render_stats_screen`, the same block
-   `S` emits) — the legacy logon shows it between the mail scan and the
-   menu.
-5. `MenuFlow::run` — the command loop above, returns `LoggingOffSession`.
-6. `finalise` — apply `finalise_logoff` and persist via
+4. `resolve_auto_rejoin` — apply `conferences.allium:JoinConference`,
+   attaching the home visit and **capturing** the `JOINED` announcement
+   (it is replayed in step 6, after the logon scan — the legacy emits it
+   at `SUBSTATE_DISPLAY_CONF_BULL`, after `confScan`). No
+   `scan_mail_on_join` fires here: the legacy auto-rejoin carries
+   `FORCE_MAILSCAN_SKIP` because the logon scan (step 5b) covers every
+   flagged base.
+5. `enter_menu` then **logon conference scan** (L1) —
+   `MenuFlow::run_logon_conference_scan` runs the legacy `confScan`
+   before the menu: the same multi-conference `scan_all_mail` walk the
+   `MS` command renders (header, per-conference banner, listing, and the
+   read-it-now offer), but filtered to `mail_scan`-flagged bases
+   (`ScanFilter::MailScanFlagged`) and skipped on a quick logon. The
+   driver then **replays** the captured auto-rejoin `JOINED` + name-type
+   promotion and renders the user-stats screen (`render_stats_screen`,
+   post-`enter_menu` so `times_called` reflects the logon bump).
+6. `MenuFlow::run` — the command loop above, returns `LoggingOffSession`.
+7. `finalise` — apply `finalise_logoff` and persist via
    `session_flow::typed`.
 
 Rendering helpers shared by the auto-rejoin and explicit-join paths live
@@ -317,8 +327,9 @@ the rule, and writes the legacy ANSI output.
     `mail_scan_on_join`. The `R <num>` handler does the
     `MailStore::load` → `read_mail` → `MailStore::save` dance; `MS`/`N`
     walk the store via `scan_mail` (bare `M` is the ANSI toggle since
-    the A8 rebind); the auto-rejoin and explicit-join
-    paths share `scan_mail_on_join`.
+    the A8 rebind); the explicit-join path uses `scan_mail_on_join`.
+    The auto-rejoin no longer scans on join (L1): the logon conference
+    scan covers every flagged base just before the menu opens.
   - Slice 41a wires the file-backed registry into the composition root:
     `app::run` walks the loaded conferences and opens one
     `FileMailStore` per `(conference, msgbase)` coordinate.

@@ -25,6 +25,7 @@ mod sysop_admin;
 
 use std::time::SystemTime;
 
+use crate::app::menu::scan_all_mail::ScanFilter;
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::format_menu_prompt;
@@ -115,6 +116,45 @@ where
         }
     }
 
+    /// Runs the logon conference scan (legacy `confScan`,
+    /// `amiexpress/express.e:28066`, driven before the menu opens at
+    /// `:28564`): the same multi-conference [`Self::handle_scan_all_mail`]
+    /// walk the `MS` command renders — header, per-conference banner,
+    /// listing table and the read-it-now offer — but restricted to
+    /// conferences whose membership has `mail_scan` set
+    /// ([`ScanFilter::MailScanFlagged`], the legacy `checkMailConfScan`
+    /// gate). Skipped on a quick logon, mirroring the spec
+    /// `messaging.allium:ScanConferencesOnLogon`'s `not quick_logon`
+    /// guard. The walk scans by coordinate and never opens or moves the
+    /// session's visit, so the caller's home conference (resolved by the
+    /// auto-rejoin) is preserved.
+    pub(crate) async fn run_logon_conference_scan(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> Result<(), T::Error> {
+        if session.quick_logon() {
+            return Ok(());
+        }
+        self.handle_scan_all_mail(session, ScanFilter::MailScanFlagged)
+            .await
+    }
+
+    /// Renders the baseline user-stats screen — Tier A quickwin A3
+    /// (`S`), the `internalCommandS()` layout (`amiexpress/express.e:25540`)
+    /// — reading the fields already present on the logged-on user.
+    async fn handle_show_stats(&mut self, session: &MenuSession) -> Result<(), T::Error> {
+        let user = session.user();
+        let screen = render_stats_screen(
+            user.slot_number(),
+            user.last_call(),
+            user.access_level(),
+            user.times_called(),
+            user.times_called_today(),
+            user.messages_posted(),
+        );
+        self.write_and_flush(&screen).await
+    }
+
     /// Routes one parsed command to the matching handler. Returns
     /// either the live [`MenuSession`] (loop continues) or the
     /// [`LoggingOffSession`] terminal value (loop exits).
@@ -159,7 +199,10 @@ where
                 NumberArg::Missing => self.handle_read_mail_at_pointer(&mut session).await?,
                 NumberArg::Invalid => self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?,
             },
-            MenuCommand::ScanAllMail => self.handle_scan_all_mail(&mut session).await?,
+            MenuCommand::ScanAllMail => {
+                self.handle_scan_all_mail(&mut session, ScanFilter::AllConferences)
+                    .await?;
+            }
             MenuCommand::Post(post) => self.handle_post_mail(&mut session, post).await?,
             MenuCommand::CommentToSysop => self.handle_comment_to_sysop(&mut session).await?,
             MenuCommand::ShowTime => {
@@ -180,22 +223,7 @@ where
                 };
                 self.write_and_flush(line).await?;
             }
-            MenuCommand::ShowStats => {
-                // Tier A quickwin A3 (`S`): the baseline user-stats
-                // screen from `internalCommandS()`
-                // (`amiexpress/express.e:25540`), reading the fields
-                // already present on the logged-on user.
-                let user = session.user();
-                let screen = render_stats_screen(
-                    user.slot_number(),
-                    user.last_call(),
-                    user.access_level(),
-                    user.times_called(),
-                    user.times_called_today(),
-                    user.messages_posted(),
-                );
-                self.write_and_flush(&screen).await?;
-            }
+            MenuCommand::ShowStats => self.handle_show_stats(&session).await?,
             MenuCommand::ExpertToggle => {
                 // Tier A quickwin A6 (`X`): flip the user's expert flag
                 // and emit the legacy on/off literal at
@@ -304,5 +332,129 @@ where
             self.terminal.write(&bytes).await?;
             self.terminal.flush().await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    use crate::adapters::file_screen_repository::FileScreenRepository;
+    use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
+    use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
+    use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::services::AppServices;
+    use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
+    use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+    use crate::domain::password::PasswordHashKind;
+    use crate::domain::session::typed::MenuSession;
+    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+    use crate::domain::user::{RatioMode, User};
+
+    #[derive(Default)]
+    struct CaptureTerminal {
+        output: Vec<u8>,
+    }
+
+    impl Terminal for CaptureTerminal {
+        type Error = Infallible;
+
+        fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
+            Box::pin(async move {
+                self.output.extend_from_slice(bytes);
+                Ok(())
+            })
+        }
+
+        fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn read_line(
+            &mut self,
+            _echo: TerminalEcho,
+            _timeout: Duration,
+        ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+            Box::pin(async { Ok(TerminalRead::Eof) })
+        }
+    }
+
+    fn test_services() -> AppServices {
+        AppServices::new(
+            Arc::new(InMemoryUserRepository::default()),
+            Arc::new(Pbkdf2PasswordHasher::new()),
+            Arc::new(InMemoryCallerLog::new()),
+            Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            Arc::new(Vec::new()),
+            Arc::new(InMemoryMailStores::new()),
+            SessionPolicy::default(),
+            DefaultRatio {
+                mode: RatioMode::Disabled,
+                value: 0,
+            },
+            NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            },
+            "Test BBS".to_string(),
+        )
+    }
+
+    /// Builds a menu-phase session with the `quick_logon` flag set.
+    fn quick_logon_menu_session() -> MenuSession {
+        let user = User::new(
+            2,
+            "alice".to_string(),
+            PasswordHashKind::Pbkdf210000,
+            "hash".to_string(),
+            Some("salt".to_string()),
+            SystemTime::UNIX_EPOCH,
+            100,
+        )
+        .expect("valid user");
+        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
+        session.prompt_for_name().expect("prompt");
+        session
+            .record_identified_user("alice", user)
+            .expect("identify");
+        apply_password_match(
+            &mut session,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("password match");
+        session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
+        session.set_quick_logon(true);
+        MenuSession::from_session(session)
+    }
+
+    #[tokio::test]
+    async fn quick_logon_skips_the_logon_conference_scan() {
+        // Spec `messaging.allium:ScanConferencesOnLogon` gates on
+        // `not quick_logon`; a quick logon must skip the scan entirely —
+        // not even the `Scanning conferences for mail...` header is
+        // written. (Pins `MenuSession::quick_logon`: a mutant forcing it
+        // to `false` would let the scan run and emit the header.)
+        let services = test_services();
+        let mut terminal = CaptureTerminal::default();
+        let mut menu = quick_logon_menu_session();
+        {
+            let mut flow = super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.run_logon_conference_scan(&mut menu)
+                .await
+                .expect("scan");
+        }
+        assert!(
+            terminal.output.is_empty(),
+            "a quick logon must skip the logon conference scan, got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
     }
 }

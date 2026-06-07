@@ -10,8 +10,31 @@ and are driven by `rust/src/app/session_driver.rs`.
 
 ## Slice L1 — logon conference scan (multi-conference new-mail scan)
 
-**Status: Todo.** Documented + spec groundwork + live behaviour captured
-2026-06-07; implementation deferred to its own session.
+**Status: Done** (2026-06-07). Documented + spec groundwork + live
+behaviour captured, then implemented test-first.
+
+### How it was implemented
+
+- `app/menu/scan_all_mail.rs` gained a `ScanFilter` parameter
+  (`AllConferences` for `MS`; `MailScanFlagged` for the logon scan) so
+  the walk honours each membership's `mail_scan` flag (the legacy
+  `checkMailConfScan` gate).
+- `MenuFlow::run_logon_conference_scan` reuses the `MS` handler's
+  rendering + read-it-now flow with the `MailScanFlagged` filter, gated
+  on `not quick_logon`.
+- `session_driver` now resolves the auto-rejoin (attaching the home
+  visit and **capturing** the JOINED announcement), enters the menu,
+  runs the logon scan, then **replays** the auto-rejoin announcement and
+  the login stats. The auto-rejoin's own `scan_mail_on_join` is dropped
+  — the legacy join carries `FORCE_MAILSCAN_SKIP` (`express.e:28574`)
+  because the logon scan already covered every flagged base, and
+  `scan_mail`'s monotonic `last_scanned` makes the home conference
+  self-reconcile.
+- The login stats now read after the `enter_menu` bump (post-bump
+  `times_called`), matching the legacy `statPrintUser` order.
+- Smoke: `rust/tests/logon_conference_scan_smoke.rs`. Existing smokes
+  that log in with seeded mail either opt out of the logon scan
+  (`mail_scan` cleared in the fixture) or decline the read-it-now offer.
 
 ### Why this exists
 
@@ -87,6 +110,10 @@ removing it is **out of scope** for L1.
 ### Out of scope
 
 - `MAILSCAN_PROMPT` "Scan for Mail (Y/n)" gate (`:28075`) — node tooltype.
+- The per-conference **file** scan `confScan` also runs
+  (`checkFileConfScan` → `runSysCommand('N','S U')`, `:28100-28113`) — the
+  new-files scan (`N`) is Tier D and unimplemented, so the logon walk
+  scans mail only.
 - The post-scan part-upload check (`:28117-28147`) — Tier I.
 - Removing the unused `ConferenceScan` join-walk engine — separate cleanup.
 

@@ -5,9 +5,10 @@
 //! then drives the Phase 6 read flow over real telnet:
 //!
 //!   1. Sign in as the seeded `sysop` / `sysop`.
-//!   2. Auto-rejoin attaches the session to Conf01 and Slice 41 fires
-//!      the auto mail-scan-on-join, surfacing the seeded unread
-//!      message and rendering `SCREEN_MAILSCAN` plus a summary line.
+//!   2. The logon conference scan (L1, legacy `confScan`) runs before
+//!      the auto-rejoin, surfacing the seeded unread message in the
+//!      `Scanning conferences for mail...` listing and offering to read
+//!      it now; the walk declines the offer here.
 //!   3. `R 1` invokes Slice 39's `ReadMail` rule, marks `received_at`,
 //!      and renders the legacy header block + body.
 //!   4. `N` rescans for new mail; the previous read advanced
@@ -136,24 +137,28 @@ fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
     drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
     write_line(&mut stream, b"sysop")?;
 
-    // After auth + auto-rejoin: the binary fires Slice 41's
-    // auto-scan-on-join. It must surface the seeded unread message
-    // (SCREEN_MAILSCAN screen + "You have 1 new message" summary)
-    // before the menu prompt.
-    let post_auth = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after auto-rejoin: {e}"))?;
-    if !contains(&post_auth, b"New mail") {
+    // After auth, the logon conference scan (legacy confScan, L1) runs
+    // before the auto-rejoin: it surfaces the seeded unread message —
+    // the `Scanning conferences for mail...` header, the conference
+    // banner and the listing — then offers to read it now. Decline the
+    // offer here; `R 1` reads it below.
+    let post_auth = drain_until_capturing(&mut stream, b"read it now ")
+        .map_err(|e| format!("logon scan read-it-now offer: {e}"))?;
+    if !contains(&post_auth, b"Scanning conferences for mail") {
         return Err(format!(
-            "expected SCREEN_MAILSCAN fallback after auto-scan, got {:?}",
+            "expected the logon conference scan header, got {:?}",
             String::from_utf8_lossy(&post_auth)
         ));
     }
-    if !contains(&post_auth, b"You have 1 new message") {
+    if !contains(&post_auth, b"Welcome to") {
         return Err(format!(
-            "expected scan summary after auto-scan, got {:?}",
+            "expected the seeded message in the logon scan listing, got {:?}",
             String::from_utf8_lossy(&post_auth)
         ));
     }
+    write_line(&mut stream, b"n")?;
+    drain_until(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("menu prompt after declining the logon read: {e}"))?;
 
     // R 1 invokes Slice 39's ReadMail. Expect: legacy header block
     // (From, To, Subject, Conf), the body line, and a return to

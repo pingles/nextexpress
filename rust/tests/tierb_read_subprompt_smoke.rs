@@ -37,7 +37,7 @@ use nextexpress::app::services::{
 use nextexpress::bootstrap;
 use nextexpress::domain::caller_log::CallerLogAppender;
 use nextexpress::domain::conference::{
-    Conference, ConferenceMembership, MessageBase, MessageBaseRef,
+    Conference, ConferenceMembership, MessageBase, MessageBaseRef, ScanFlag,
 };
 use nextexpress::domain::password::{PasswordHashKind, PasswordHasher};
 use nextexpress::domain::user::User;
@@ -1085,6 +1085,14 @@ async fn spawn_one_conference_listener(
 
     let mut sysop = seed::default_sysop(hasher.as_ref()).expect("seed sysop");
     seed::grant_all_memberships(&mut sysop, &conferences);
+    // This smoke isolates the `R` sub-prompt. Opt the sysop out of the
+    // logon conference scan — which would otherwise surface the seeded
+    // mail with a read-it-now offer before the menu — by clearing the
+    // per-conference `mail_scan` flag. The logon scan has its own
+    // dedicated smoke (`logon_conference_scan_smoke.rs`).
+    for membership in sysop.memberships_mut() {
+        membership.set_scan_flag(ScanFlag::MailScan, false);
+    }
     // A validated, non-sysop regular user (slot 3, access 100) used to
     // prove the sub-prompt's `D` / `EH` gates deny a caller who is
     // neither the message owner nor privileged.

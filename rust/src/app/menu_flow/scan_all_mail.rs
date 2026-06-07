@@ -11,7 +11,7 @@
 
 use std::time::SystemTime;
 
-use crate::app::menu::scan_all_mail::{scan_all_mail, BaseScanOutcome};
+use crate::app::menu::scan_all_mail::{scan_all_mail, BaseScanOutcome, ScanFilter};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_scan_conference_banner, render_scan_listing_table, render_scan_msgbase_banner,
@@ -28,11 +28,13 @@ where
     pub(super) async fn handle_scan_all_mail(
         &mut self,
         session: &mut MenuSession,
+        filter: ScanFilter,
     ) -> Result<(), T::Error> {
         let scans = scan_all_mail(
             session,
             self.services.mail_stores(),
             self.services.conferences(),
+            filter,
             SystemTime::now(),
         )
         .await;

@@ -35,7 +35,7 @@ use nextexpress::app::services::{
 };
 use nextexpress::bootstrap;
 use nextexpress::domain::caller_log::CallerLogAppender;
-use nextexpress::domain::conference::{Conference, MessageBase, MessageBaseRef};
+use nextexpress::domain::conference::{Conference, MessageBase, MessageBaseRef, ScanFlag};
 use nextexpress::domain::password::PasswordHasher;
 use nextexpress::domain::user_repository::UserRepository;
 
@@ -534,6 +534,14 @@ async fn spawn_two_conference_listener(
 
     let mut sysop = seed::default_sysop(hasher.as_ref()).expect("seed sysop");
     seed::grant_all_memberships(&mut sysop, &conferences);
+    // This smoke exercises the `MS` command, which scans every accessible
+    // conference regardless of the per-conference `mail_scan` flag. Opt
+    // the sysop out of the *logon* conference scan (which honours the
+    // flag) so login reaches the menu without a read-it-now detour; the
+    // logon scan has its own dedicated smoke.
+    for membership in sysop.memberships_mut() {
+        membership.set_scan_flag(ScanFlag::MailScan, false);
+    }
     let user_repo: SharedUserRepo =
         Arc::new(InMemoryUserRepository::new(vec![sysop])) as Arc<dyn UserRepository + Send + Sync>;
     let hasher_shared: SharedHasher = hasher as Arc<dyn PasswordHasher + Send + Sync>;

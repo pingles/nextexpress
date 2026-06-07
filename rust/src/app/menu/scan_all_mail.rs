@@ -16,7 +16,7 @@
 use std::time::SystemTime;
 
 use crate::app::mail_stores::MailStores;
-use crate::domain::conference::{Conference, MessageBase, MessageBaseRef};
+use crate::domain::conference::{Conference, MessageBase, MessageBaseRef, ScanFlag};
 use crate::domain::conference_visit::next_accessible_conference_after;
 use crate::domain::messaging::scan_mail::{
     scan_mail as scan_mail_rule, MailScanRow, ScanMailError,
@@ -60,6 +60,19 @@ pub(crate) struct BaseScan {
     pub outcome: BaseScanOutcome,
 }
 
+/// Which accessible conferences a [`scan_all_mail`] walk visits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScanFilter {
+    /// Every conference the caller has a granted membership for — the
+    /// `MS` command, which forces a scan of all bases regardless of the
+    /// per-conference flags (legacy `internalCommandMS`).
+    AllConferences,
+    /// Only conferences whose membership has `mail_scan` set — the
+    /// logon conference scan (legacy `confScan`'s `checkMailConfScan`
+    /// gate, `amiexpress/express.e:28095`).
+    MailScanFlagged,
+}
+
 /// One scanned conference and its bases, in ascending base order.
 pub(crate) struct ConferenceScan {
     /// The conference's display name, for the `Scanning Conference`
@@ -77,12 +90,18 @@ pub(crate) struct ConferenceScan {
 /// sentinel — the legacy `FORCE_MAILSCAN_ALL` forces *whether* a base
 /// is scanned, not where the scan starts).
 ///
+/// `filter` selects which accessible conferences are walked: the `MS`
+/// command passes [`ScanFilter::AllConferences`]; the logon conference
+/// scan passes [`ScanFilter::MailScanFlagged`] to honour the
+/// per-conference `mail_scan` flag.
+///
 /// Does not render anything and does not touch the session's current
 /// visit.
 pub(crate) async fn scan_all_mail<M>(
     session: &mut MenuSession,
     mail_stores: &M,
     conferences: &[Conference],
+    filter: ScanFilter,
     now: SystemTime,
 ) -> Vec<ConferenceScan>
 where
@@ -92,15 +111,26 @@ where
     // so the immutable user borrow is released before the scan loop
     // takes `user_mut`. `next_accessible_conference_after(.., 0)` yields
     // the lowest-numbered accessible conference, and each step's
-    // strictly-greater result guarantees termination.
+    // strictly-greater result guarantees termination. The logon walk
+    // additionally drops conferences whose membership has `mail_scan`
+    // cleared (legacy `checkMailConfScan`).
     let accessible: Vec<u32> = {
+        let user = session.user();
         let mut numbers = Vec::new();
         let mut after = 0;
-        while let Some(conference) =
-            next_accessible_conference_after(session.user(), conferences, after)
-        {
+        while let Some(conference) = next_accessible_conference_after(user, conferences, after) {
             after = conference.number();
-            numbers.push(after);
+            let include = match filter {
+                ScanFilter::AllConferences => true,
+                ScanFilter::MailScanFlagged => user
+                    .memberships()
+                    .iter()
+                    .find(|membership| membership.conference_number() == after)
+                    .is_some_and(|membership| membership.scan_flag(ScanFlag::MailScan)),
+            };
+            if include {
+                numbers.push(after);
+            }
         }
         numbers
     };
@@ -167,7 +197,7 @@ mod tests {
     use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
     use crate::domain::user::User;
 
-    use super::{scan_all_mail, BaseScanOutcome};
+    use super::{scan_all_mail, BaseScanOutcome, ScanFilter};
 
     fn t(secs: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
@@ -257,7 +287,14 @@ mod tests {
             store_with_mail(MessageBaseRef::new(2, 1), 2, 2),
         );
 
-        let scans = scan_all_mail(&mut session, &stores, &confs, t(100)).await;
+        let scans = scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::AllConferences,
+            t(100),
+        )
+        .await;
 
         assert_eq!(scans.len(), 2);
         assert_eq!(scans[0].conference_name, "One");
@@ -292,7 +329,14 @@ mod tests {
             store_with_mail(MessageBaseRef::new(2, 1), 2, 2),
         );
 
-        let scans = scan_all_mail(&mut session, &stores, &confs, t(100)).await;
+        let scans = scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::AllConferences,
+            t(100),
+        )
+        .await;
 
         assert_eq!(scans.len(), 1);
         assert_eq!(scans[0].conference_name, "One");
@@ -306,7 +350,14 @@ mod tests {
         let confs = two_conferences();
         let stores = InMemoryMailStores::new();
 
-        let scans = scan_all_mail(&mut session, &stores, &confs, t(100)).await;
+        let scans = scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::AllConferences,
+            t(100),
+        )
+        .await;
 
         assert_eq!(scans.len(), 1);
         assert!(matches!(
@@ -331,7 +382,14 @@ mod tests {
             store_with_mail(MessageBaseRef::new(1, 1), 9, 1),
         );
 
-        let scans = scan_all_mail(&mut session, &stores, &confs, t(100)).await;
+        let scans = scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::AllConferences,
+            t(100),
+        )
+        .await;
 
         assert!(
             matches!(scans[0].bases[0].outcome, BaseScanOutcome::NoMatch),
@@ -352,7 +410,14 @@ mod tests {
             store_with_mail(MessageBaseRef::new(1, 1), 2, 0),
         );
 
-        let scans = scan_all_mail(&mut session, &stores, &confs, t(100)).await;
+        let scans = scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::AllConferences,
+            t(100),
+        )
+        .await;
 
         assert!(
             matches!(scans[0].bases[0].outcome, BaseScanOutcome::NothingNew),
@@ -379,12 +444,77 @@ mod tests {
             store_with_mail(MessageBaseRef::new(2, 1), 2, 1),
         );
 
-        scan_all_mail(&mut session, &stores, &confs, t(100)).await;
+        scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::AllConferences,
+            t(100),
+        )
+        .await;
 
         assert_eq!(
             session.current_conference_number(),
             None,
             "MS must not open a conference visit"
+        );
+    }
+
+    #[tokio::test]
+    async fn mail_scan_flagged_filter_skips_conferences_with_mail_scan_off() {
+        use crate::domain::conference::ScanFlag;
+        use crate::domain::session::typed::BoundMenuUser;
+        // Member of both conferences, each with mail seeded, but
+        // conference 2's `mail_scan` flag is cleared (the `CF` editor's
+        // effect / the legacy `checkMailConfScan` gate). The logon walk
+        // (`MailScanFlagged`) must scan only conference 1; the
+        // unconditional `MS` walk (`AllConferences`) still scans both.
+        let mut session = menu_session_with_memberships(&[1, 2]);
+        for membership in session.user_mut().memberships_mut() {
+            if membership.conference_number() == 2 {
+                membership.set_scan_flag(ScanFlag::MailScan, false);
+            }
+        }
+        let confs = two_conferences();
+        let mut stores = InMemoryMailStores::new();
+        stores.register(
+            MessageBaseRef::new(1, 1),
+            store_with_mail(MessageBaseRef::new(1, 1), 2, 1),
+        );
+        stores.register(
+            MessageBaseRef::new(2, 1),
+            store_with_mail(MessageBaseRef::new(2, 1), 2, 1),
+        );
+
+        let flagged = scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::MailScanFlagged,
+            t(100),
+        )
+        .await;
+        assert_eq!(
+            flagged.len(),
+            1,
+            "a conference with mail_scan cleared must be skipped by the logon walk"
+        );
+        assert_eq!(flagged[0].conference_name, "One");
+
+        // The `MS` walk ignores the flag and scans every accessible
+        // conference, including the one the logon walk skipped.
+        let all = scan_all_mail(
+            &mut session,
+            &stores,
+            &confs,
+            ScanFilter::AllConferences,
+            t(100),
+        )
+        .await;
+        assert_eq!(
+            all.len(),
+            2,
+            "AllConferences must ignore the mail_scan flag"
         );
     }
 }
