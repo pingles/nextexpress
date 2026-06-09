@@ -125,7 +125,7 @@ flowchart LR
     Driver --> Registration["RegistrationFlow"]
     Driver --> AutoRejoin["auto-rejoin resolution\n(inline in run; + logon conference scan, L1)"]
     Driver --> Menu["MenuFlow"]
-    Driver --> Finalise["session_flow::typed::finalise_logoff"]
+    Driver --> Finalise["session_flow::finalise_logoff"]
 
     Login --> Typed["domain::session::typed\n(phase wrappers)"]
     Registration --> Typed
@@ -295,8 +295,7 @@ thin orchestrator:
    promotion and renders the user-stats screen (`render_stats_screen`,
    post-`enter_menu` so `times_called` reflects the logon bump).
 6. `MenuFlow::run` — the command loop above, returns `LoggingOffSession`.
-7. `finalise` — apply `finalise_logoff` and persist via
-   `session_flow::typed`.
+7. `finalise` — apply `session_flow::finalise_logoff` and persist.
 
 Rendering helpers shared by the auto-rejoin and explicit-join paths live
 in `app::session_presenter`. The wire byte constants live in
@@ -575,21 +574,23 @@ an inherent `user_mut` and the menu use cases call it directly
 
 ### 5. Merge `session_flow`'s typed/untyped twin functions
 
-Every login-path use case exists twice: an untyped fn over
-`&mut Session` (`name_typed`, `verify_password`,
+**Landed.** Every login-path use case existed twice: an untyped fn
+over `&mut Session` (`name_typed`, `verify_password`,
 `verify_new_user_password`, `enter_menu`, `finalise_logoff`,
 `NewUserRegistrationFlow::complete`) and a typed wrapper in the nested
 `typed` module doing `into_inner → call → expect → from_session`.
-Production code calls only the typed variants. Fold each pair into one
-function taking/returning the phase wrappers directly, deleting the
-untyped twin and its now-redundant `WrongState` guard; tests build
-wrappers via the existing `pub(crate)` `from_session`/`into_inner` and
-assert on the returned transition (a stronger pin than post-state
-checks).
-
-Verified impact: −110 to −150 production lines; a new flow rule is
-written once, not twice; makes the per-rule file split (refactoring
-13) cheaper.
+Production code called only the typed variants. Each pair is now one
+function taking/returning the phase wrappers directly; the untyped
+twins, the `typed` delegation module, and the now-redundant
+`WrongState` guards are gone (the wrong-state test for registration
+completion was deleted with them — the wrapper type makes the case
+unrepresentable). Tests build wrappers via the existing `pub(crate)`
+`from_session`/`into_inner` and assert on the returned transition — a
+stronger pin than post-state checks. (`complete_password_reset` still
+drives the raw `Session`; its driver path lands with the
+password-reset slice.) Net −130 lines; a new flow rule is written
+once, not twice, and the per-rule file split (refactoring 13) got
+cheaper.
 
 ### 6. Make `AppServices` a plain pub-field struct
 

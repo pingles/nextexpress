@@ -257,7 +257,7 @@ where
     }
 
     fn enter_menu(&mut self, onboarded: OnboardedSession) -> MenuSession {
-        session_flow::typed::enter_menu(
+        session_flow::enter_menu(
             onboarded,
             self.services.user_repo(),
             self.services.caller_log(),
@@ -267,7 +267,7 @@ where
     }
 
     fn finalise(&mut self, logging_off: LoggingOffSession) -> EndedSession {
-        session_flow::typed::finalise_logoff(
+        session_flow::finalise_logoff(
             logging_off,
             self.services.user_repo(),
             self.services.caller_log(),

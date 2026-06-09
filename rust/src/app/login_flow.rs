@@ -130,7 +130,7 @@ where
                 }
             };
             let trimmed = line.trim();
-            let transition = session_flow::typed::name_typed(
+            let transition = session_flow::name_typed(
                 session,
                 trimmed,
                 self.services.user_repo(),
@@ -195,7 +195,7 @@ where
                     return Ok(LoginOutcome::LoggingOff(logoff));
                 }
             };
-            let transition = session_flow::typed::verify_password(
+            let transition = session_flow::verify_password(
                 session,
                 password.trim(),
                 self.services.user_repo(),

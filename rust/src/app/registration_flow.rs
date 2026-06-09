@@ -3,7 +3,7 @@
 //! Owns the optional password gate and the registration form
 //! collection (handle, location, phone, email, password,
 //! line-length, ANSI). Hands the assembled profile to
-//! [`crate::app::session_flow::NewUserRegistrationFlow::complete_typed`]
+//! [`crate::app::session_flow::NewUserRegistrationFlow::complete`]
 //! and renders the appropriate wire-message for each outcome.
 
 use std::collections::BTreeSet;
@@ -146,7 +146,7 @@ where
                     return Ok(GateResult::LoggingOff(logoff));
                 }
             };
-            let transition = session_flow::typed::verify_new_user_password(
+            let transition = session_flow::verify_new_user_password(
                 session,
                 typed.trim(),
                 self.services.new_user_gate(),
@@ -346,7 +346,7 @@ where
             self.services.default_ratio(),
             self.services.session_policy(),
         );
-        match flow.complete_typed(session, profile, SystemTime::now()) {
+        match flow.complete(session, profile, SystemTime::now()) {
             Ok(NewUserRegistrationResult::Onboarded(onboarded)) => {
                 self.write_and_flush(REGISTRATION_COMPLETE_LINE).await?;
                 Ok(RegistrationOutcome::Onboarded(onboarded))
