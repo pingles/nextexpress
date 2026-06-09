@@ -1,17 +1,21 @@
 //! `MS` (multi-conference mail scan) menu command (Tier B, Slice B1).
 //!
-//! Delegates the walk over accessible conferences to
-//! [`crate::app::menu::scan_all_mail`], then renders the legacy
-//! `searchNewMail` multi-conference output: the `Scanning conferences
-//! for mail...` header, a per-conference banner, and per-base either
-//! the `Type/From/Subject/Msg` listing table, a `No mail today!`
-//! line, or (for a base with messages but none addressed to the
-//! caller) just the banner — mirroring `amiexpress/express.e:25250`
-//! and `:11668-11739`.
+//! The terminal-free walk over accessible conferences lives in the
+//! [`core`] submodule; this module renders the legacy `searchNewMail`
+//! multi-conference output: the `Scanning conferences for mail...`
+//! header, a per-conference banner, and per-base either the
+//! `Type/From/Subject/Msg` listing table, a `No mail today!` line, or
+//! (for a base with messages but none addressed to the caller) just
+//! the banner — mirroring `amiexpress/express.e:25250` and
+//! `:11668-11739`.
+
+mod core;
+
+pub(super) use self::core::ScanFilter;
 
 use std::time::SystemTime;
 
-use crate::app::menu::scan_all_mail::{scan_all_mail, BaseScanOutcome, ScanFilter};
+use self::core::{scan_all_mail, BaseScanOutcome};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_scan_conference_banner, render_scan_listing_table, render_scan_msgbase_banner,

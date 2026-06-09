@@ -5,4 +5,3 @@
 //! for prompts and wire rendering.
 
 pub(crate) mod list_mail;
-pub(crate) mod scan_all_mail;

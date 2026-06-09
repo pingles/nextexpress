@@ -25,7 +25,7 @@ mod sysop_admin;
 
 use std::time::SystemTime;
 
-use crate::app::menu::scan_all_mail::ScanFilter;
+use self::scan_all_mail::ScanFilter;
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::format_menu_prompt;
