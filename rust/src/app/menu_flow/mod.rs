@@ -26,6 +26,7 @@ mod sysop_admin;
 use std::time::SystemTime;
 
 use self::scan_all_mail::ScanFilter;
+use crate::app::mail_stores::{MailStoreGuard, MailStores};
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::format_menu_prompt;
@@ -36,6 +37,9 @@ use crate::app::wire_text::{
     IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE,
     JOIN_REQUIRES_NUMBER_LINE, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, UNKNOWN_COMMAND_LINE,
     VERSION_BANNER,
+};
+use crate::domain::conference::{
+    find_msgbase_in, AllowedAddressing, Conference, MessageBase, MessageBaseRef,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 use crate::domain::user::Right;
@@ -101,9 +105,9 @@ where
                 }
                 TerminalRead::Eof => return Ok(session.into_active().apply_carrier_loss()),
                 TerminalRead::IdleTimedOut => {
-                    let logoff = session.into_active().apply_idle_timeout(
-                        self.services.session_policy.treat_timeout_as_logoff(),
-                    );
+                    let logoff = session
+                        .into_active()
+                        .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
                     self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                     return Ok(logoff);
                 }
@@ -317,7 +321,13 @@ where
                     .conference_menu(conf, access_level)
                     .await
             }
-            None => self.services.screens.as_ref().default_menu(access_level).await,
+            None => {
+                self.services
+                    .screens
+                    .as_ref()
+                    .default_menu(access_level)
+                    .await
+            }
         }
     }
 
@@ -334,6 +344,40 @@ where
             self.terminal.flush().await
         }
     }
+}
+
+/// The session's open message-base coordinate, as the
+/// [`MessageBaseRef`] the stores and messaging rules consume. `None`
+/// when no visit is open.
+fn current_base(session: &MenuSession) -> Option<MessageBaseRef> {
+    session
+        .current_msgbase()
+        .map(|(conference, msgbase)| MessageBaseRef::new(conference, msgbase))
+}
+
+/// Locks the mail store for the session's current message base —
+/// the resolution preamble every mail command shares. `None` when the
+/// session has no open visit or no store is registered for the
+/// coordinate.
+async fn lock_current_base<M>(
+    session: &MenuSession,
+    mail_stores: &M,
+) -> Option<(MessageBaseRef, MailStoreGuard)>
+where
+    M: MailStores + ?Sized,
+{
+    let base = current_base(session)?;
+    let guard = mail_stores.lock(base).await?;
+    Some((base, guard))
+}
+
+/// The `allowed_addressing` policy for `base` within the loaded
+/// catalogue (Slice 43), or `None` when the coordinate is unknown.
+fn allowed_addressing_for(
+    conferences: &[Conference],
+    base: MessageBaseRef,
+) -> Option<AllowedAddressing> {
+    find_msgbase_in(conferences, base).map(MessageBase::allowed_addressing)
 }
 
 #[cfg(test)]

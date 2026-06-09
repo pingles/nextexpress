@@ -15,7 +15,6 @@ use std::time::SystemTime;
 use crate::app::mail_stores::MailStores;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{render_list_header, render_list_row};
-use crate::domain::conference::MessageBaseRef;
 use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
 use crate::domain::messaging::scan_mail::MailScanRow;
 use crate::domain::session::typed::MenuSession;
@@ -39,9 +38,7 @@ async fn list_mail<M>(session: &MenuSession, mail_stores: &M) -> Option<ListMail
 where
     M: MailStores + ?Sized,
 {
-    let (conference, msgbase) = session.current_msgbase()?;
-    let msgbase = MessageBaseRef::new(conference, msgbase);
-    let guard = mail_stores.lock(msgbase).await?;
+    let (msgbase, guard) = super::lock_current_base(session, mail_stores).await?;
     let highest = guard.highest_message();
     let lowest = guard.lowest_undeleted_message();
     let reader_slot = session.user().slot_number();

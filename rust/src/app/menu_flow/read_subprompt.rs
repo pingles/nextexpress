@@ -18,7 +18,6 @@ use std::time::SystemTime;
 
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{render_read_subprompt, render_read_subprompt_help};
-use crate::domain::conference::MessageBaseRef;
 use crate::domain::messaging::delete_mail::can_delete;
 use crate::domain::messaging::edit_mail_header::can_edit_header;
 use crate::domain::messaging::move_mail::can_move;
@@ -254,13 +253,8 @@ where
     /// `mailStat.highMsgNum - 1` (`express.e:12010-12012`). `None` when
     /// the session has no current base or no store is registered for it.
     async fn current_base_bounds(&self, session: &MenuSession) -> Option<(u32, u32)> {
-        let (conference, msgbase) = session.current_msgbase()?;
-        let guard = self
-            .services
-            .mail_stores
-            .as_ref()
-            .lock(MessageBaseRef::new(conference, msgbase))
-            .await?;
+        let (_, guard) =
+            super::lock_current_base(session, self.services.mail_stores.as_ref()).await?;
         Some((guard.lowest_undeleted_message(), guard.highest_message()))
     }
 
@@ -271,15 +265,8 @@ where
     /// base, an absent message or a load error all read as "not
     /// permitted".
     async fn current_user_can_delete(&self, session: &MenuSession, number: u32) -> bool {
-        let Some((conference, msgbase)) = session.current_msgbase() else {
-            return false;
-        };
-        let Some(guard) = self
-            .services
-            .mail_stores
-            .as_ref()
-            .lock(MessageBaseRef::new(conference, msgbase))
-            .await
+        let Some((_, guard)) =
+            super::lock_current_base(session, self.services.mail_stores.as_ref()).await
         else {
             return false;
         };

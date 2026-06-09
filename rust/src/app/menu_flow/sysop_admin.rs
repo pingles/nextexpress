@@ -87,10 +87,9 @@ async fn delete_mail<M>(session: &mut MenuSession, mail_stores: &M, number: u32)
 where
     M: MailStores + ?Sized,
 {
-    let Some(visit_msgbase) = current_msgbase(session) else {
-        return DeleteOutcome::NoMailBase;
-    };
-    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
+    let Some((_, mut guard)) =
+        super::lock_current_base(session, mail_stores).await
+    else {
         return DeleteOutcome::NoMailBase;
     };
     let result = delete_mail_rule(session.user_mut(), &mut *guard, number);
@@ -106,7 +105,7 @@ async fn move_mail<M>(session: &mut MenuSession, mail_stores: &M, input: MoveInp
 where
     M: MailStores + ?Sized,
 {
-    let Some(source_msgbase) = current_msgbase(session) else {
+    let Some(source_msgbase) = super::current_base(session) else {
         return MoveOutcome::NoMailBase;
     };
     let target_msgbase = MessageBaseRef::new(input.target_conference, input.target_msgbase);
@@ -149,10 +148,9 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some(visit_msgbase) = current_msgbase(session) else {
-        return EditHeaderOutcome::NoMailBase;
-    };
-    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
+    let Some((_, mut guard)) =
+        super::lock_current_base(session, mail_stores).await
+    else {
         return EditHeaderOutcome::NoMailBase;
     };
 
@@ -186,11 +184,6 @@ where
     }
 }
 
-fn current_msgbase(session: &MenuSession) -> Option<MessageBaseRef> {
-    session
-        .current_msgbase()
-        .map(|(conf, mb)| MessageBaseRef::new(conf, mb))
-}
 
 impl<T> super::MenuFlow<'_, T>
 where

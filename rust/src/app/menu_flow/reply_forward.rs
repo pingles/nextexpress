@@ -20,7 +20,7 @@ use crate::app::wire_text::{
     POST_ADDRESSING_NOT_ALLOWED_LINE, POST_RECIPIENT_NO_ACCESS_LINE, SOURCE_DELETED_LINE,
     SOURCE_NOT_FOUND_LINE,
 };
-use crate::domain::conference::{find_msgbase_in, Conference, MessageBaseRef};
+use crate::domain::conference::Conference;
 use crate::domain::messaging::forward_mail::{
     forward_mail as forward_mail_rule, ForwardMailError, ForwardMailRequest,
 };
@@ -88,14 +88,12 @@ async fn reply_mail<M>(
 where
     M: MailStores + ?Sized,
 {
-    let Some(visit_msgbase) = current_msgbase(session) else {
+    let Some((visit_msgbase, mut guard)) =
+        super::lock_current_base(session, mail_stores).await
+    else {
         return ReplyForwardOutcome::NoMailBase;
     };
-    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
-        return ReplyForwardOutcome::NoMailBase;
-    };
-    let Some(allowed_addressing) = find_msgbase_in(conferences, visit_msgbase)
-        .map(crate::domain::conference::MessageBase::allowed_addressing)
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
     else {
         return ReplyForwardOutcome::NoMailBase;
     };
@@ -142,14 +140,12 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some(visit_msgbase) = current_msgbase(session) else {
+    let Some((visit_msgbase, mut guard)) =
+        super::lock_current_base(session, mail_stores).await
+    else {
         return ReplyForwardOutcome::NoMailBase;
     };
-    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
-        return ReplyForwardOutcome::NoMailBase;
-    };
-    let Some(allowed_addressing) = find_msgbase_in(conferences, visit_msgbase)
-        .map(crate::domain::conference::MessageBase::allowed_addressing)
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
     else {
         return ReplyForwardOutcome::NoMailBase;
     };
@@ -186,11 +182,6 @@ where
     }
 }
 
-fn current_msgbase(session: &MenuSession) -> Option<MessageBaseRef> {
-    session
-        .current_msgbase()
-        .map(|(conf, mb)| MessageBaseRef::new(conf, mb))
-}
 
 impl<T> super::MenuFlow<'_, T>
 where

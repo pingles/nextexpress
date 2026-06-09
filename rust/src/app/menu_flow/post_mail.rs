@@ -25,7 +25,7 @@ use crate::app::wire_text::{
     POST_PRIVATE_PROMPT, POST_RECIPIENT_NO_ACCESS_LINE, POST_SUBJECT_PROMPT, POST_TO_PROMPT,
     POST_UNKNOWN_USER_LINE,
 };
-use crate::domain::conference::{find_msgbase_in, Conference, MessageBaseRef};
+use crate::domain::conference::Conference;
 use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
 use crate::domain::messaging::mail::{BroadcastTo, Mail};
 use crate::domain::messaging::post_comment_to_sysop::{
@@ -90,11 +90,9 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some(visit_msgbase) = current_msgbase(session) else {
-        return PostMailOutcome::NoMailBase;
-    };
-
-    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
+    let Some((visit_msgbase, mut guard)) =
+        super::lock_current_base(session, mail_stores).await
+    else {
         return PostMailOutcome::NoMailBase;
     };
 
@@ -122,8 +120,7 @@ where
         }
     };
 
-    let Some(allowed_addressing) = find_msgbase_in(conferences, visit_msgbase)
-        .map(crate::domain::conference::MessageBase::allowed_addressing)
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
     else {
         return PostMailOutcome::NoMailBase;
     };
@@ -165,11 +162,9 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some(visit_msgbase) = current_msgbase(session) else {
-        return PostMailOutcome::NoMailBase;
-    };
-
-    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
+    let Some((visit_msgbase, mut guard)) =
+        super::lock_current_base(session, mail_stores).await
+    else {
         return PostMailOutcome::NoMailBase;
     };
 
@@ -178,8 +173,7 @@ where
         NameLookupResult::NotFound => return PostMailOutcome::NoSysop,
     };
 
-    let Some(allowed_addressing) = find_msgbase_in(conferences, visit_msgbase)
-        .map(crate::domain::conference::MessageBase::allowed_addressing)
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
     else {
         return PostMailOutcome::NoMailBase;
     };
@@ -206,11 +200,6 @@ where
     }
 }
 
-fn current_msgbase(session: &MenuSession) -> Option<MessageBaseRef> {
-    session
-        .current_msgbase()
-        .map(|(conf, mb)| MessageBaseRef::new(conf, mb))
-}
 
 /// Outcome of classifying the recipient typed at the `To:` prompt.
 enum Recipient {

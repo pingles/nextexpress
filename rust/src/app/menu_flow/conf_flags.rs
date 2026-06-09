@@ -35,8 +35,10 @@ where
             // immutable user / conferences borrows are released before the
             // mutable terminal and session borrows below.
             let listing = {
-                let rows =
-                    conf_flag_rows(session.user().memberships(), self.services.conferences.as_ref());
+                let rows = conf_flag_rows(
+                    session.user().memberships(),
+                    self.services.conferences.as_ref(),
+                );
                 render_conf_flags_listing(&rows)
             };
             self.terminal.write(&listing).await?;

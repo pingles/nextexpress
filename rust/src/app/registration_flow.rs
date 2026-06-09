@@ -139,9 +139,9 @@ where
                     ));
                 }
                 TerminalRead::IdleTimedOut => {
-                    let logoff = session.into_active().apply_idle_timeout(
-                        self.services.session_policy.treat_timeout_as_logoff(),
-                    );
+                    let logoff = session
+                        .into_active()
+                        .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
                     self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                     return Ok(GateResult::LoggingOff(logoff));
                 }

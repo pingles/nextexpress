@@ -73,14 +73,9 @@ async fn read_mail<M>(
 where
     M: MailStores + ?Sized,
 {
-    let Some(visit_msgbase) = session
-        .current_msgbase()
-        .map(|(conf, mb)| MessageBaseRef::new(conf, mb))
+    let Some((visit_msgbase, mut guard)) =
+        super::lock_current_base(session, mail_stores).await
     else {
-        return ReadMailOutcome::NoMailBase;
-    };
-
-    let Some(mut guard) = mail_stores.lock(visit_msgbase).await else {
         return ReadMailOutcome::NoMailBase;
     };
 

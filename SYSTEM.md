@@ -615,13 +615,14 @@ and the orphaned `READ_REQUIRES_NUMBER_LINE` constant are gone
 
 ### 8. Shared current-base helpers for the mail use cases
 
-The `current_msgbase → lock → addressing` preamble is copy-pasted
-across ~8 mail use cases (including three byte-identical
-`current_msgbase()` resolution copies). Extract `current_base` /
-`lock_current_base` / `allowed_addressing_for` helpers. Verified
-impact: −25 to −35 production lines once doc comments are paid for;
-the existing `NoMailBase` outcome tests keep killing mutants in the
-shared helpers.
+**Landed.** The `current_msgbase → lock → addressing` preamble was
+copy-pasted across the mail command cores (including three
+byte-identical `current_msgbase()` resolution copies). Three private
+helpers in `menu_flow/mod.rs` — `current_base`, `lock_current_base`
+(returns the `(MessageBaseRef, MailStoreGuard)` pair) and
+`allowed_addressing_for` — now serve every command module via
+`super::`; the existing `NoMailBase` outcome tests keep killing
+mutants inside them.
 
 ### 9. Colocate command-specific wire bytes with the command module
 

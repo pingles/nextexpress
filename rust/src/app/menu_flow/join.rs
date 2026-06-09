@@ -14,7 +14,7 @@ use crate::app::wire_text::{
     render_scan_summary, MAIL_STORE_ERROR_LINE, NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE,
     NO_CONFERENCE_ACCESS_LINE,
 };
-use crate::domain::conference::{find_msgbase_in, MessageBase, MessageBaseRef};
+use crate::domain::conference::{find_msgbase_in, MessageBase};
 use crate::domain::messaging::scan_mail::scan_mail;
 use crate::domain::session::typed::{ExplicitJoinTransition, LoggingOffSession, MenuSession};
 
@@ -88,13 +88,9 @@ where
     /// generic mail-store-error notice — the session continues either
     /// way.
     async fn scan_mail_on_join(&mut self, session: &mut MenuSession) -> Result<(), T::Error> {
-        let Some(visit_msgbase) = session
-            .current_msgbase()
-            .map(|(conf, mb)| MessageBaseRef::new(conf, mb))
+        let Some((visit_msgbase, guard)) =
+            super::lock_current_base(session, self.services.mail_stores.as_ref()).await
         else {
-            return Ok(());
-        };
-        let Some(guard) = self.services.mail_stores.as_ref().lock(visit_msgbase).await else {
             return Ok(());
         };
         let scope = find_msgbase_in(self.services.conferences.as_ref(), visit_msgbase)
