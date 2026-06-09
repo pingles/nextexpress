@@ -1,14 +1,13 @@
 //! `J <num>` (Explicit Join) menu command (Slice 32).
 //!
-//! Routes through [`crate::app::menu::join`]: writes the legacy "no
-//! access" notice when the resolver fell through, the `Joining
-//! Conference: <name>` announcement on success, any name-type
-//! promotion screen (Slice 34), then fires Slice 41's
-//! `ScanMailOnJoin` against the new visit.
+//! Applies the `conferences.allium:JoinConference` explicit-join
+//! transition, writes the legacy "no access" notice when the resolver
+//! fell through, the `Joining Conference: <name>` announcement on
+//! success, any name-type promotion screen (Slice 34), then fires
+//! Slice 41's `ScanMailOnJoin` against the new visit.
 
 use std::time::SystemTime;
 
-use crate::app::menu::join::{explicit_join, ExplicitJoinOutcome};
 use crate::app::session_presenter::{format_explicit_join_line, render_name_type_promotion};
 use crate::app::terminal::Terminal;
 use crate::app::wire_text::{
@@ -17,7 +16,7 @@ use crate::app::wire_text::{
 };
 use crate::domain::conference::{find_msgbase_in, MessageBase, MessageBaseRef};
 use crate::domain::messaging::scan_mail::scan_mail;
-use crate::domain::session::typed::{LoggingOffSession, MenuSession};
+use crate::domain::session::typed::{ExplicitJoinTransition, LoggingOffSession, MenuSession};
 
 /// Outcome of [`super::MenuFlow::handle_explicit_join`]. The success
 /// branch returns the still-Menu-state session so the menu loop
@@ -39,18 +38,18 @@ where
         target_conference_number: u32,
     ) -> Result<ExplicitJoinResult, T::Error> {
         let conferences = self.services.conferences();
-        match explicit_join(
-            session,
-            conferences,
+        match session.explicit_join_conference(
             target_conference_number,
+            conferences,
             SystemTime::now(),
         ) {
-            ExplicitJoinOutcome::Joined {
+            ExplicitJoinTransition::Joined {
                 mut session,
                 conference_number,
                 msgbase_number,
                 matched_request,
                 name_type_promoted_to,
+                ..
             } => {
                 // Compute the announcement bytes up-front so the
                 // immutable borrow on `self.services.conferences()`
@@ -71,7 +70,7 @@ where
                 self.scan_mail_on_join(&mut session).await?;
                 Ok(ExplicitJoinResult::Joined(session))
             }
-            ExplicitJoinOutcome::NoAccess(logging_off) => {
+            ExplicitJoinTransition::NoAccess(logging_off) => {
                 self.write_and_flush(NO_CONFERENCE_ACCESS_LINE).await?;
                 Ok(ExplicitJoinResult::NoAccess(logging_off))
             }

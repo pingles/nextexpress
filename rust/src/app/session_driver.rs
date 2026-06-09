@@ -67,23 +67,6 @@ enum SignInResult {
     Ended(EndedSession),
 }
 
-/// Outcome of [`SessionDriver::auto_rejoin`]. Mirrors the spec's
-/// `JoinConference` two-branch consequent (resolved vs.
-/// `no_conference_access`).
-enum AutoRejoinResult {
-    /// The session attached to a conference and may proceed into the
-    /// menu loop. The user-visible JOINED announcement is deferred (see
-    /// [`AutoRejoinAnnouncement`]) so it can be replayed *after* the
-    /// logon conference scan, matching the legacy substate order.
-    Joined {
-        session: OnboardedSession,
-        announcement: AutoRejoinAnnouncement,
-    },
-    /// The user has no granted membership; the session has moved to
-    /// `LoggingOff` with `LogoffReason::NoConferenceAccess`.
-    NoAccess(LoggingOffSession),
-}
-
 /// The auto-rejoin's deferred user-visible announcement, captured when
 /// the home conference is resolved and replayed by
 /// [`SessionDriver::announce_auto_rejoin`] after the logon conference
@@ -147,11 +130,31 @@ where
 
         let logging_off = match signed_in {
             SignInResult::Onboarded(onboarded) => {
-                match self.resolve_auto_rejoin(onboarded).await? {
-                    AutoRejoinResult::Joined {
+                // Resolve `conferences.allium:JoinConference` for the
+                // auto-rejoin path (Slice 30), attaching the home visit.
+                // The JOINED line and name-type promotion screen (Slices
+                // 31 / 34) are *captured*, not emitted: the legacy shows
+                // them at `SUBSTATE_DISPLAY_CONF_BULL`
+                // (`amiexpress/express.e:28574`), *after* the logon
+                // conference scan (`confScan`, `:28564`). No scan-on-join
+                // fires here — the legacy auto-rejoin join carries
+                // `FORCE_MAILSCAN_SKIP` because the logon scan already
+                // covered every flagged base.
+                let transition = onboarded
+                    .auto_rejoin_conference(self.services.conferences(), SystemTime::now());
+                match transition {
+                    AutoRejoinTransition::Joined {
                         session,
-                        announcement,
+                        conference_number,
+                        msgbase_number,
+                        show_bulletin: _,
+                        name_type_promoted_to,
                     } => {
+                        let announcement = AutoRejoinAnnouncement {
+                            conference_number,
+                            msgbase_number,
+                            name_type_promoted_to,
+                        };
                         // Enter the menu state first so the logon conference
                         // scan can reuse the `MenuSession` read-it-now flow —
                         // the legacy runs `confScan` with the user already
@@ -169,7 +172,14 @@ where
                             .run(menu)
                             .await?
                     }
-                    AutoRejoinResult::NoAccess(logging_off) => logging_off,
+                    // The no-access line tells the user why their session
+                    // is closing — the caller-log finalise entry already
+                    // records `LogoffReason::NoConferenceAccess`.
+                    AutoRejoinTransition::NoAccess(logging_off) => {
+                        self.terminal.write(NO_CONFERENCE_ACCESS_LINE).await?;
+                        self.terminal.flush().await?;
+                        logging_off
+                    }
                 }
             }
             SignInResult::LoggingOff(logging_off) => logging_off,
@@ -178,49 +188,6 @@ where
 
         self.finalise(logging_off);
         Ok(())
-    }
-
-    /// Resolves `conferences.allium:JoinConference` for the auto-rejoin
-    /// path (Slice 30), attaching the home visit. The JOINED line and
-    /// name-type promotion screen (Slices 31 / 34) are *captured*, not
-    /// emitted: the legacy shows them at `SUBSTATE_DISPLAY_CONF_BULL`
-    /// (`amiexpress/express.e:28574`), *after* the logon conference scan
-    /// (`confScan`, `:28564`), so the driver replays them via
-    /// [`Self::announce_auto_rejoin`] once the scan has run. No
-    /// scan-on-join fires here — the legacy auto-rejoin join carries
-    /// `FORCE_MAILSCAN_SKIP` because the preceding logon scan already
-    /// covered every flagged base.
-    ///
-    /// On `NoAccess` the listener writes the no-access line so the user
-    /// understands why their session is closing — the caller-log
-    /// finalise entry will already record the underlying
-    /// `LogoffReason::NoConferenceAccess`.
-    async fn resolve_auto_rejoin(
-        &mut self,
-        onboarded: OnboardedSession,
-    ) -> Result<AutoRejoinResult, T::Error> {
-        let conferences = self.services.conferences();
-        match onboarded.auto_rejoin_conference(conferences, SystemTime::now()) {
-            AutoRejoinTransition::Joined {
-                session,
-                conference_number,
-                msgbase_number,
-                show_bulletin: _,
-                name_type_promoted_to,
-            } => Ok(AutoRejoinResult::Joined {
-                session,
-                announcement: AutoRejoinAnnouncement {
-                    conference_number,
-                    msgbase_number,
-                    name_type_promoted_to,
-                },
-            }),
-            AutoRejoinTransition::NoAccess(logging_off) => {
-                self.terminal.write(NO_CONFERENCE_ACCESS_LINE).await?;
-                self.terminal.flush().await?;
-                Ok(AutoRejoinResult::NoAccess(logging_off))
-            }
-        }
     }
 
     /// Replays the deferred auto-rejoin announcement — the JOINED line
