@@ -262,6 +262,10 @@ domain rule. It must also be advertised in the main menu: the
 given a menu token and the assertion then fails until the menu asset
 lists it (simple toggles/queries are otherwise handled inline in
 `MenuFlow::dispatch` rather than in their own `app/menu/*` file).
+Refactoring 3 below plans to fold each `app/menu/*` use case into its
+`app/menu_flow/*` sibling — one module per command, with the
+terminal-free core fn kept as the testing seam — which cuts the
+per-command file count in half.
 
 ### Driver and sub-flow split
 
@@ -385,16 +389,17 @@ The current top files by line count:
 | File | Lines | Notes |
 |---|---|---|
 | `domain/session/tests.rs` | 2000 | Cross-capability session tests, internally grouped but monolithic. |
-| `adapters/telnet_listener.rs` | 1710 | ~180 lines of production `TelnetListener` + `TelnetTerminal`; ~1500 lines of in-process integration tests. |
+| `adapters/telnet_listener.rs` | 1762 | ~180 lines of production `TelnetListener` + `TelnetTerminal`; ~1500 lines of in-process integration tests. |
+| `app/wire_text.rs` | 1709 | Wire-format constants and rendering helpers. Growing ~100–200 lines per command (`CF` added 132, `MS` 207); see refactoring 9. |
 | `app/session_flow.rs` | 1553 | Remaining use cases over `(Session, UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade. |
-| `domain/user/mod.rs` | 1521 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
-| `app/wire_text.rs` | 1144 | Wire-format constants and rendering helpers. |
-| `adapters/sqlite_user_repository.rs` | 1062 | Schema init + row codec + queries + ~30 tests. |
-| `adapters/file_mail_store.rs` | 1033 | Per-msgbase JSON store + lock + tests. |
-| `domain/messaging/scan_mail.rs` | 833 | Scan rule + extensive test fixtures. |
-| `domain/conference.rs` | 860 | `Conference`, `MessageBase`, `ConferenceMembership` (incl. the M/A/F/Z `ScanFlag` accessors), `NameType`, `AllowedAddressing`, `AllScanScope`. The `CF` edit semantics live in the focused `domain/conference_flags.rs`. |
-| `domain/messaging/post_mail.rs` | 784 | Post rule + helpers + tests. |
-| `domain/session/typed.rs` | 647 | Phase-typed wrappers and their constructors. |
+| `domain/user/mod.rs` | 1527 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
+| `adapters/file_mail_store.rs` | 1196 | Per-msgbase JSON store + lock + tests. |
+| `adapters/sqlite_user_repository.rs` | 1127 | Schema init + row codec + queries + ~30 tests. |
+| `domain/messaging/scan_mail.rs` | 941 | Scan rule + extensive test fixtures. |
+| `domain/conference.rs` | 896 | `Conference`, `MessageBase`, `ConferenceMembership` (incl. the M/A/F/Z `ScanFlag` accessors), `NameType`, `AllowedAddressing`, `AllScanScope`. The `CF` edit semantics live in the focused `domain/conference_flags.rs`. |
+| `domain/messaging/post_mail.rs` | 886 | Post rule + helpers + tests. |
+| `app/session_driver.rs` | 856 | Per-connection orchestrator + logon-order tests. |
+| `domain/session/typed.rs` | 672 | Phase-typed wrappers and their constructors. |
 
 ## Idiomatic-Rust read
 
@@ -432,9 +437,14 @@ What is less idiomatic and worth flagging:
   type system instead.
 - **`Pin<Box<dyn Future + Send + 'a>>` boilerplate** on `Terminal` and
   `ScreenRepository`. With Rust 1.75+ `async fn` in trait, the
-  `Terminal` trait could shed the alias entirely (`Terminal` is already
-  generic at call sites); `ScreenRepository` would need `async_trait`
-  or the `RPITIT` variant because it lives behind `Arc<dyn …>`.
+  `Terminal` trait could shed the alias (`Terminal` is already generic
+  at call sites); `ScreenRepository` would need `async_trait` or the
+  `RPITIT` variant because it lives behind `Arc<dyn …>`. A measured
+  dry-run of the `Terminal` conversion (June 2026 assessment) came out
+  at roughly **net −10 lines** across all seven impl sites —
+  `telnet_listener` still needs a `Box::pin` at spawn — so this is
+  worth doing only when the trait is being touched anyway, not as a
+  standalone change.
 - **`std::sync::Mutex::lock().expect("…")`** in three adapters
   (`SqliteUserRepository`, `InMemoryUserRepository`,
   `InMemoryCallerLog`). Panic-on-poison is acceptable here, but the
@@ -472,6 +482,20 @@ exposes only phase concerns — `current_msgbase` and `user_mut` —
 and the menu use cases under `app/menu/*` call the
 `domain::messaging::*` rules directly with `session.user_mut()`).
 
+Items 3–12 come from a multi-lens design assessment (June 2026): five
+independent review lenses (command-dispatch friction, idiomatic Rust,
+hexagonal boundaries, duplication, structural simplicity), with every
+suggestion adversarially verified against the code before inclusion.
+LOC figures are the verifier's adjusted estimates, not the finders'
+optimistic originals. The headline finding: the add-a-command friction
+is accidental, not essential to the hexagon — it comes from the
+parallel `app/menu/` + `app/menu_flow/` trees, dead generality left
+behind by the L1 refactor, and `wire_text.rs` being a mandatory stop
+on every command's tour. Items 3, 4 and 9 together cut the
+add-a-command tour from ~6 app-layer touch-points to ~4 (empirical
+baseline: the `CF` commit touched 9 files / ~630 lines; `MS` touched
+13 files).
+
 ### 1. Evolve user persistence away from full aggregate saves
 
 `UserRepository::save(User)` persists the whole aggregate, and flows
@@ -507,13 +531,185 @@ need a storage port, but the error shape can be less file-specific.
 app/bootstrap because runtime rules consume an already-loaded
 `Vec<Conference>`, not a repository.
 
-### 3. Keep file-size refactors opportunistic
+### 3. One module per menu command: fold `app/menu/*` into `app/menu_flow/*`
+
+The top-ranked friction fix — all five assessment lenses converged on
+it independently. The terminal-free seam that matters for TDD is the
+*function signature* (no `Terminal` parameter), not the directory
+boundary, so each use-case module under `app/menu/` can move into its
+1:1 sibling handler under `app/menu_flow/`: the core fn + outcome enum
+become `pub(super)` items at the top of the file, the `impl MenuFlow`
+handler block sits below, and unit tests keep calling the core fn with
+in-memory stores. `CF` is the precedent: it already ships handler-only
+(`menu_flow/conf_flags.rs`).
+
+Two layers are pure ceremony and get deleted outright:
+`app/menu/join.rs` (a rewrap of the domain `ExplicitJoinTransition`
+into an identically-shaped enum) and the driver's `AutoRejoinResult` +
+`resolve_auto_rejoin` repackaging (`session_driver.rs`; note the
+`NoAccess` arm writes `NO_CONFERENCE_ACCESS_LINE`, so the inlining
+lands in `run`, which owns the terminal — keep
+`AutoRejoinAnnouncement`, which earns its keep by deferring the
+`JOINED` line past the logon scan). The substantive use-case fns
+(`post_mail`, `reply_forward`, `sysop_admin`, `scan_all_mail`,
+`list_mail`) earn their keep — real lock acquisition, repo lookups,
+recipient classification — and survive as terminal-free fns in the
+merged files. The rule going forward: a separate use-case fn exists to
+keep store/repo resolution terminal-free, never to ceremonially
+forward a domain transition.
+
+Verified impact: −130 to −170 production lines, 8–9 fewer files;
+add-a-command touch-points drop from ~6 to ~4, new files per command
+from 2 to 1. The architecture test only polices `domain/` and
+app→adapters imports, so the fold is invariant-neutral. Migrate one
+command per commit; `scan_all_mail` (~650 merged lines) should become
+a `menu_flow/scan_all_mail/{mod.rs, core.rs}` submodule. Update the
+"two files per command" doctrine in this document in the same change.
+
+### 4. Delete the pre-L1 scan-on-join generality
+
+`app/mail_scan_on_join.rs` (130 lines) and `app/menu/scan_mail.rs`
+(130 lines) exist so scan-on-join could run from either an
+`OnboardedSession` (auto-rejoin) or a `MenuSession` (explicit join).
+Since slice L1 the auto-rejoin path no longer scans, leaving exactly
+one production caller (`menu_flow/join.rs`). Inline the lock-and-call
+body into a single fn beside the `J` handler, hardcode the sole live
+`JoinScanMode` variant (`ForceAll` is already `#[allow(dead_code)]`),
+and delete the `BoundMenuUser` trait (`domain/session/typed.rs`) plus
+both impls, replacing it with one inherent `pub(crate) fn user_mut` on
+`MenuSession`. Seven `app/menu/*` files then drop the trait import and
+the `S: BoundMenuUser` generic parameter.
+
+Verified impact: −150 to −170 production lines, two modules and a
+domain trait gone; one less concept to learn per new command.
+
+### 5. Merge `session_flow`'s typed/untyped twin functions
+
+Every login-path use case exists twice: an untyped fn over
+`&mut Session` (`name_typed`, `verify_password`,
+`verify_new_user_password`, `enter_menu`, `finalise_logoff`,
+`NewUserRegistrationFlow::complete`) and a typed wrapper in the nested
+`typed` module doing `into_inner → call → expect → from_session`.
+Production code calls only the typed variants. Fold each pair into one
+function taking/returning the phase wrappers directly, deleting the
+untyped twin and its now-redundant `WrongState` guard; tests build
+wrappers via the existing `pub(crate)` `from_session`/`into_inner` and
+assert on the returned transition (a stronger pin than post-state
+checks).
+
+Verified impact: −110 to −150 production lines; a new flow rule is
+written once, not twice; makes the per-rule file split (refactoring
+13) cheaper.
+
+### 6. Make `AppServices` a plain pub-field struct
+
+The 10-positional-argument constructor and ten accessor methods are
+ceremony around a bag of `Arc` fields. Public fields + struct-literal
+construction delete ~70–85 lines in `services.rs`, make the test
+construction sites readable (named fields instead of positional
+ordering), and cut the add-a-service-field path from ~12 touch-points
+to ~9. ~68 call sites churn mechanically at zero net lines.
+
+### 7. Delete the dead `NumberArg` plumbing in the read-subprompt handlers
+
+`handle_reply` / `handle_forward` / `handle_kill` / `handle_move_mail`
+/ `handle_edit_header` are called only from `read_subprompt.rs`,
+always with `NumberArg::Number`; their `Missing`/`Invalid` match arms
+are unreachable and untested (a likely source of surviving mutants).
+Take a plain `u32`, drop the five 11-line match blocks, the
+`NumberArg` imports, and the orphaned `READ_REQUIRES_NUMBER_LINE`
+constant.
+
+Verified impact: −65 to −70 production lines.
+
+### 8. Shared current-base helpers for the mail use cases
+
+The `current_msgbase → lock → addressing` preamble is copy-pasted
+across ~8 mail use cases (including three byte-identical
+`current_msgbase()` resolution copies). Extract `current_base` /
+`lock_current_base` / `allowed_addressing_for` helpers. Verified
+impact: −25 to −35 production lines once doc comments are paid for;
+the existing `NoMailBase` outcome tests keep killing mutants in the
+shared helpers.
+
+### 9. Colocate command-specific wire bytes with the command module
+
+Policy change: a new command's single-consumer renderers and prompt
+constants live in its own `menu_flow` module (`pub(super)` items or a
+private `wire` submodule), not in `app/wire_text.rs`; the shared file
+keeps genuinely shared text (`UNKNOWN_COMMAND_LINE`, `GOODBYE_LINE`,
+`render_stats_screen`, …). `wire_text.rs` is at 1709 lines and grows
+~100–200 per command (`CF` added 132, `MS` 207 — both
+single-consumer). Migrate the existing `CF`/`MS` blocks
+opportunistically when next touched; two shared private helpers
+(`left_field`, `scan_row_status`) need `pub(crate)` widening. This is
+*not* the skip-listed "rewriting `wire_text.rs`": no shared constant
+moves and no string changes — it only removes the file from every
+command's mandatory tour and puts bytes-pinned tests next to the
+handler that emits them.
+
+### 10. One parameterised line reader + pure outcome-to-bytes functions
+
+Two mechanical de-duplications inside `menu_flow`, no new layer (this
+supersedes the earlier "small menu renderer" idea):
+
+- Merge the three near-identical single-line readers
+  (`read_required_line`, `read_optional_line`,
+  `read_optional_unchanged_line`) into one helper parameterised by
+  empty-line meaning and abort-notice policy, keeping thin named
+  wrappers at the call sites. The `record_input` idle-clock stamp then
+  cannot be forgotten on a new prompt.
+- Convert the static error-rendering matches (`sysop_admin.rs`'s
+  `render_delete/move/edit_header_error`, the static arms of
+  `render_post_outcome`) from async methods into pure
+  `fn line_for(err) -> &'static [u8]` functions co-located with each
+  handler — unit-testable with a plain `#[test]`, no capture terminal
+  or async runtime, and friendly to cargo-mutants.
+
+Verified impact: −35 to −55 production lines now, ~10–20 per future
+interactive command. The error arms are currently unpinned, so the
+sync byte asserts must land first (which is the TDD order anyway).
+
+### 11. Declarative command listing in `menu_command.rs` (low priority)
+
+A const table (`&[(&str, ArgSpec)]`) or a ~40-line `commands!` macro
+can drive the parser if-chain, `every_menu_command`, and the nine
+near-identical parse/reject test pairs from one listing — mirroring
+the legacy dispatch shape (`express.e:28286` splits the line into
+`(cmdcode, cmdparams)` then string-matches the code). The
+`main_menu_advertises_exactly_the_implemented_commands` safety net
+survives either way: `advertised_token` stays as the one exhaustive
+match. Verified to be worth only ~−20 to −50 lines confined to one
+file (~4% of the measured add-a-command line count), so do it for the
+shape — one row per command beats a 16-branch if-chain — when next in
+the file, not as a priority.
+
+### 12. Test-support consolidation
+
+Zero production risk, large test-code wins:
+
+- **`tests/support/` smoke harness.** Each `tests/*_smoke.rs` re-rolls
+  the same in-process boot + login tail (~700 duplicated lines
+  measured). Verified net −440 to −480 test lines; every future
+  command smoke starts ~130–150 lines smaller.
+- **Crate-root `#[cfg(test)] mod test_support`.** Five copies of the
+  capture-terminal double, a triplicated `test_services()`, four
+  session fixtures, and repeated user builders collapse into one
+  module. Verified net −180 to −280 test lines; a new handler's test
+  module becomes one `use` line instead of ~90 pasted fixture lines.
+
+Test clarity beats DRY in this codebase: only the scaffolding moves;
+scenario-specific assertions stay in the test files.
+
+### 13. Keep file-size refactors opportunistic
 
 The older navigability refactors are still useful, just lower leverage
-than the boundary work above:
+than the work above:
 
 - **Carve `app/session_flow.rs` into per-rule modules** when the next
-  slice would otherwise add to it. Suggested shape:
+  slice would otherwise add to it — do refactoring 5 first, which
+  deletes the typed/untyped twin layer and makes the split smaller.
+  Suggested shape:
 
   ```
   app/session_flow/
@@ -524,7 +720,6 @@ than the boundary work above:
     finalise_logoff.rs  -- + FinaliseLogoffFlowError
     registration.rs     -- NewUserRegistrationFlow + Complete* errors
     password_reset.rs   -- complete_password_reset + CompletePasswordResetFlowError
-    typed.rs            -- the typed-wrapper helpers SessionDriver calls
   ```
 
 - **Move large adapter test modules into sibling files** such as
@@ -532,11 +727,6 @@ than the boundary work above:
   `adapters/sqlite_user_repository/tests.rs`, and
   `adapters/file_screen_repository/tests.rs`. This is a pure code move
   that keeps production modules readable.
-
-- **Consider a small menu renderer** if new commands keep adding large
-  outcome-to-wire `match` blocks in `menu_flow/*`. The current
-  terminal-free use-case split is sound; a renderer would mainly reduce
-  repetition in presentation code.
 
 ## Refactorings to skip for now
 
@@ -555,15 +745,39 @@ than the boundary work above:
 - **Async-fn-in-trait for `ScreenRepository`.** Until `RPITIT` works
   cleanly behind `Arc<dyn Trait>`, the manual `Pin<Box<dyn Future>>`
   alias is the shortest path. Revisit when `dyn` support catches up.
+- **Standalone RPITIT conversion of `Terminal`.** A measured dry-run
+  (June 2026) came out at net −10 lines across all seven impl sites —
+  `telnet_listener` still needs a `Box::pin` at the spawn boundary.
+  Fold it into a change that touches the trait anyway.
+- **A dyn `Command`-trait registry for menu dispatch.** Handlers are
+  inherent async methods on `MenuFlow<'a, T: Terminal>`; a dyn
+  registry would force type-erasing the terminal (rippling through
+  `ColourTerminal` and every flow) for no line savings. The dispatch
+  `match` arms also encode real heterogeneous behaviour — `G`'s
+  early return, `J`'s NoAccess→logoff, `CF`'s rights gate — not
+  ceremony. Checked and rejected by the June 2026 assessment; the
+  data-driven shape that *does* fit is the parser-side listing
+  (refactoring 11).
 - **Rewriting `wire_text.rs`.** The legacy strings are the wire
   contract; the file is long because the BBS has many lines, not
-  because of poor structure.
+  because of poor structure. (Refactoring 9 — colocating *new*
+  single-consumer text with its command — is a placement policy, not
+  a rewrite.)
 
 ## Suggested order
 
-1. Add optimistic or command-style user writes before cross-session
-   sysop/background mutations.
-2. Revisit port error shapes while moving `ConferenceRepository` out of
-   the domain boundary.
-3. Do the file-size and renderer cleanups opportunistically when a
-   nearby feature already touches those modules.
+1. Pure deletions first — risk-free and test-pinned: the dead
+   `NumberArg` plumbing (7), then the scan-on-join generality (4).
+2. The `app/menu` → `app/menu_flow` fold (3), one command per commit,
+   updating the command doctrine in this document alongside.
+3. The `session_flow` twin merge (5) and the `AppServices` field
+   struct (6); the current-base helpers (8) ride along with whichever
+   mail command is touched next.
+4. Apply the placement policies (9, 10) opportunistically whenever a
+   command is touched; the declarative command listing (11) when next
+   in `menu_command.rs`.
+5. Test-support consolidation (12) the next time a smoke or handler
+   test is being written.
+6. Add optimistic or command-style user writes (1) before
+   cross-session sysop/background mutations; revisit port error shapes
+   (2) while moving `ConferenceRepository` out of the domain boundary.
