@@ -271,7 +271,7 @@ mod tests {
 
     use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
     use crate::app::mail_stores::MailStores;
-    use crate::domain::conference::{Conference, MessageBase};
+    use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
     use crate::domain::session::typed::MenuSession;
     use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
     use crate::domain::user::User;
@@ -328,5 +328,83 @@ mod tests {
         .await;
 
         assert!(matches!(outcome, ReadMailOutcome::NoMailBase));
+    }
+
+    #[tokio::test]
+    async fn read_mail_resolves_the_conference_name_of_the_open_visit() {
+        use crate::domain::conference::MessageBaseRef;
+        use crate::domain::messaging::mail::{BroadcastTo, MailDraft, MailVisibility};
+        use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
+        use crate::domain::messaging::mail_store::MailStore;
+
+        // The rendered header names the conference of the *open visit*
+        // (here number 2, "Other"), not whichever conference happens to
+        // sort first in the loaded list.
+        let conferences = vec![
+            Conference::new(
+                1,
+                "Main".to_string(),
+                vec![MessageBase::new(1, 1, "main".to_string())],
+            )
+            .expect("valid conference"),
+            Conference::new(
+                2,
+                "Other".to_string(),
+                vec![MessageBase::new(2, 1, "general".to_string())],
+            )
+            .expect("valid conference"),
+        ];
+        let mut user = alice();
+        user.upsert_membership(ConferenceMembership::new(2, true));
+        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
+        session.prompt_for_name().expect("prompt");
+        session
+            .record_identified_user("alice", user)
+            .expect("identify");
+        apply_password_match(
+            &mut session,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("password match");
+        session
+            .auto_rejoin_conference(&conferences, SystemTime::UNIX_EPOCH)
+            .expect("rejoin");
+        session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
+        let mut session = MenuSession::from_session(session);
+
+        let coord = MessageBaseRef::new(2, 1);
+        let mut store = InMemoryMailStore::new(coord);
+        store
+            .insert(MailDraft {
+                visibility: MailVisibility::Public,
+                from_name: "carol".to_string(),
+                to_name: "alice".to_string(),
+                broadcast_to: BroadcastTo::None,
+                subject: "hello".to_string(),
+                posted_at: SystemTime::UNIX_EPOCH,
+                author_slot: 1,
+                addressee_slot: Some(2),
+                body: "hi".to_string(),
+            })
+            .expect("insert");
+        let mut mail_stores = InMemoryMailStores::new();
+        mail_stores.register(coord, Box::new(store));
+
+        let outcome = read_mail(
+            &mut session,
+            &mail_stores as &dyn MailStores,
+            &conferences,
+            1,
+            SystemTime::UNIX_EPOCH,
+        )
+        .await;
+
+        match outcome {
+            ReadMailOutcome::Read {
+                conference_name, ..
+            } => assert_eq!(conference_name, "Other"),
+            _ => panic!("expected ReadMailOutcome::Read"),
+        }
     }
 }
