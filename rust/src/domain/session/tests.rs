@@ -1962,7 +1962,6 @@ mod mail {
         use crate::domain::conference::MessageBaseRef;
         use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
         use crate::domain::messaging::read_mail::read_mail;
-        use crate::domain::session::typed::BoundMenuUser;
         let confs = vec![make_conf(2)];
         let mut s = session_at_onboarded_with(user_with_grants(&[2]));
         s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)

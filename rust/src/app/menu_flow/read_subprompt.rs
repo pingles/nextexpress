@@ -289,3 +289,140 @@ where
         permitted
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::convert::Infallible;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    use crate::adapters::file_screen_repository::FileScreenRepository;
+    use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
+    use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
+    use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::services::AppServices;
+    use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
+    use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+    use crate::domain::password::PasswordHashKind;
+    use crate::domain::session::typed::MenuSession;
+    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+    use crate::domain::user::{NewUserDraft, RatioMode, User};
+
+    #[derive(Default)]
+    struct CaptureTerminal {
+        output: Vec<u8>,
+    }
+
+    impl Terminal for CaptureTerminal {
+        type Error = Infallible;
+
+        fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
+            Box::pin(async move {
+                self.output.extend_from_slice(bytes);
+                Ok(())
+            })
+        }
+
+        fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn read_line(
+            &mut self,
+            _echo: TerminalEcho,
+            _timeout: Duration,
+        ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+            Box::pin(async { Ok(TerminalRead::Eof) })
+        }
+    }
+
+    fn test_services() -> AppServices {
+        AppServices::new(
+            Arc::new(InMemoryUserRepository::default()),
+            Arc::new(Pbkdf2PasswordHasher::new()),
+            Arc::new(InMemoryCallerLog::new()),
+            Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            Arc::new(Vec::new()),
+            Arc::new(InMemoryMailStores::new()),
+            SessionPolicy::default(),
+            DefaultRatio {
+                mode: RatioMode::Disabled,
+                value: 0,
+            },
+            NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            },
+            "Test BBS".to_string(),
+        )
+    }
+
+    /// A Menu-phase session bound to an awaiting-validation new user —
+    /// the only tier where `can_move` / `can_edit_header` are denied.
+    fn menu_session_for_new_user() -> MenuSession {
+        let user = User::register_new(
+            7,
+            NewUserDraft {
+                handle: "newbie".to_string(),
+                location: Some("Townsville".to_string()),
+                phone_number: Some("555-0123".to_string()),
+                email: Some("newbie@example.com".to_string()),
+                password_hash: "hash".to_string(),
+                password_salt: Some("salt".to_string()),
+                password_hash_kind: PasswordHashKind::Pbkdf210000,
+                line_length: 80,
+                ansi_colour: true,
+                flags: BTreeSet::new(),
+                ratio_mode: RatioMode::Disabled,
+                ratio_value: 0,
+                now: SystemTime::UNIX_EPOCH,
+            },
+        )
+        .expect("valid new user");
+        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
+        session.prompt_for_name().expect("prompt");
+        session
+            .record_identified_user("newbie", user)
+            .expect("identify");
+        apply_password_match(
+            &mut session,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("password match");
+        session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
+        MenuSession::from_session(session)
+    }
+
+    #[tokio::test]
+    async fn move_option_is_inert_for_a_user_without_move_access() {
+        // The `M` arm is guarded by `can_move` (legacy `ACS_SYSOP_READ`
+        // gate, `express.e:12170`): a caller without it falls through to
+        // the unknown-option arm and the loop re-renders silently — the
+        // move-target prompts must never appear. Pins the match guard
+        // itself; the smoke pins the prompt-rendering gate only.
+        let services = test_services();
+        let mut terminal = CaptureTerminal::default();
+        let mut session = menu_session_for_new_user();
+        let mut next = 2;
+        let mut last_displayed = Some(1);
+        let keep_looping = {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.dispatch_read_option(&mut session, "m", 1, &mut next, &mut last_displayed)
+                .await
+                .expect("dispatch")
+        };
+        assert!(keep_looping, "an ignored option must keep the loop alive");
+        assert!(
+            terminal.output.is_empty(),
+            "`m` must be inert without move access, got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+}

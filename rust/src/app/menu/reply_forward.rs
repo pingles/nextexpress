@@ -17,7 +17,7 @@ use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::reply_to_mail::{
     reply_to_mail as reply_to_mail_rule, ReplyToMailDraft, ReplyToMailError,
 };
-use crate::domain::session::typed::{BoundMenuUser, MenuSession};
+use crate::domain::session::typed::MenuSession;
 use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
 /// Caller-collected fields for an `RP <num>` command.

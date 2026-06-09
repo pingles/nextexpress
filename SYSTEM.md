@@ -568,20 +568,19 @@ a `menu_flow/scan_all_mail/{mod.rs, core.rs}` submodule. Update the
 
 ### 4. Delete the pre-L1 scan-on-join generality
 
-`app/mail_scan_on_join.rs` (130 lines) and `app/menu/scan_mail.rs`
-(130 lines) exist so scan-on-join could run from either an
-`OnboardedSession` (auto-rejoin) or a `MenuSession` (explicit join).
-Since slice L1 the auto-rejoin path no longer scans, leaving exactly
-one production caller (`menu_flow/join.rs`). Inline the lock-and-call
-body into a single fn beside the `J` handler, hardcode the sole live
-`JoinScanMode` variant (`ForceAll` is already `#[allow(dead_code)]`),
-and delete the `BoundMenuUser` trait (`domain/session/typed.rs`) plus
-both impls, replacing it with one inherent `pub(crate) fn user_mut` on
-`MenuSession`. Seven `app/menu/*` files then drop the trait import and
-the `S: BoundMenuUser` generic parameter.
-
-Verified impact: −150 to −170 production lines, two modules and a
-domain trait gone; one less concept to learn per new command.
+**Landed.** `app/mail_scan_on_join.rs` and `app/menu/scan_mail.rs`
+existed so scan-on-join could run from either an `OnboardedSession`
+(auto-rejoin) or a `MenuSession` (explicit join); since slice L1 the
+auto-rejoin path no longer scans, leaving exactly one production
+caller. Both modules are deleted: the lock-and-call body lives in a
+single `scan_mail_on_join` fn beside the `J` handler
+(`menu_flow/join.rs`), with the `JoinScanMode::FollowPointer`
+semantics inlined as the `from_message = 0` sentinel — now pinned by a
+behavioural test (a broadcast message behind the read pointer must not
+re-surface on the next join) instead of the old enum-accessor pins.
+The `BoundMenuUser` trait and both impls are gone; `MenuSession` has
+an inherent `user_mut` and the menu use cases call it directly
+(−160 net lines).
 
 ### 5. Merge `session_flow`'s typed/untyped twin functions
 

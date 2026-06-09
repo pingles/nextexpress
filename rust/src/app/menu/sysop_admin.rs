@@ -13,7 +13,7 @@ use crate::domain::messaging::edit_mail_header::{
 };
 use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::move_mail::{move_mail as move_mail_rule, MoveMailError};
-use crate::domain::session::typed::{BoundMenuUser, MenuSession};
+use crate::domain::session::typed::MenuSession;
 use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
 /// Outcome of a `K <num>` command.

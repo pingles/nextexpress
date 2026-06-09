@@ -36,31 +36,6 @@ use crate::domain::session::{
 };
 use crate::domain::user::User;
 
-/// Phase-level capability shared by the post-authentication wrappers
-/// that have a bound user and an open conference visit
-/// ([`OnboardedSession`] and [`MenuSession`]).
-///
-/// The trait deliberately exposes only session-phase concerns —
-/// `current_msgbase` (open visit's coordinate) and `user_mut` (the
-/// bound user record). Feature-family rules in `domain::messaging`
-/// (and later `domain::files`) take `&mut User` directly rather than
-/// routing through `MenuSession` methods, so the session typing stays
-/// focused on the state machine rather than acting as a command
-/// registry.
-///
-/// Replaces the earlier `ScanOnJoin` trait, which leaked
-/// messaging-specific `scan_mail` mechanics into the session typing.
-pub(crate) trait BoundMenuUser {
-    /// Returns the `(conference_number, msgbase_number)` pair for
-    /// the session's open visit, or `None` when none is open.
-    fn current_msgbase(&self) -> Option<(u32, u32)>;
-
-    /// Returns a mutable reference to the bound user. Domain rules
-    /// (read/scan/post mail, future file commands) consume this
-    /// reference directly.
-    fn user_mut(&mut self) -> &mut User;
-}
-
 /// Build a wrapper from a raw session, asserting (in debug builds) that
 /// the underlying state matches the expected phase.
 ///
@@ -263,20 +238,6 @@ impl OnboardedSession {
     }
 }
 
-impl BoundMenuUser for OnboardedSession {
-    fn current_msgbase(&self) -> Option<(u32, u32)> {
-        let visit = self.session.current_visit()?;
-        Some((visit.conference_number(), visit.msgbase_number()))
-    }
-
-    fn user_mut(&mut self) -> &mut User {
-        self.session
-            .phase
-            .user_mut()
-            .expect("Onboarded session has a bound user")
-    }
-}
-
 impl_constructor!(OnboardedSession, Onboarded);
 
 /// Wraps a [`Session`] in [`SessionState::Menu`]. The user is at the
@@ -291,6 +252,18 @@ impl MenuSession {
     pub(crate) fn user(&self) -> &User {
         self.session
             .user()
+            .expect("Menu phase always has a bound user")
+    }
+
+    /// Returns a mutable reference to the bound user. The menu use
+    /// cases hand this directly to the `domain::messaging` rules,
+    /// which take `&mut User` rather than routing through
+    /// `MenuSession` methods — the session typing stays focused on
+    /// the state machine rather than acting as a command registry.
+    pub(crate) fn user_mut(&mut self) -> &mut User {
+        self.session
+            .phase
+            .user_mut()
             .expect("Menu phase always has a bound user")
     }
 
@@ -423,20 +396,6 @@ impl MenuSession {
     #[must_use]
     pub(crate) fn into_active(self) -> ActivePhase {
         ActivePhase::Menu(self)
-    }
-}
-
-impl BoundMenuUser for MenuSession {
-    fn current_msgbase(&self) -> Option<(u32, u32)> {
-        let visit = self.session.current_visit()?;
-        Some((visit.conference_number(), visit.msgbase_number()))
-    }
-
-    fn user_mut(&mut self) -> &mut User {
-        self.session
-            .phase
-            .user_mut()
-            .expect("Menu session has a bound user")
     }
 }
 

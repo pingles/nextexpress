@@ -11,7 +11,7 @@ use crate::domain::messaging::post_comment_to_sysop::{
 use crate::domain::messaging::post_mail::{
     post_mail as post_mail_rule, PostMailDraft, PostMailError,
 };
-use crate::domain::session::typed::{BoundMenuUser, MenuSession};
+use crate::domain::session::typed::MenuSession;
 use crate::domain::user_repository::{NameLookupResult, UserRepository};
 
 /// Already-collected fields for an `E` command.

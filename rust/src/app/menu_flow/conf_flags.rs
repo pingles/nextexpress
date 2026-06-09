@@ -20,7 +20,7 @@ use crate::app::wire_text::{
 use crate::domain::conference_flags::{
     apply_scan_flag_edit, conf_flag_rows, parse_scan_flag_mask, parse_scan_flag_selection,
 };
-use crate::domain::session::typed::{BoundMenuUser, MenuSession};
+use crate::domain::session::typed::MenuSession;
 
 impl<T> super::MenuFlow<'_, T>
 where

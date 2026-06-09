@@ -21,7 +21,7 @@ use crate::domain::conference_visit::next_accessible_conference_after;
 use crate::domain::messaging::scan_mail::{
     scan_mail as scan_mail_rule, MailScanRow, ScanMailError,
 };
-use crate::domain::session::typed::{BoundMenuUser, MenuSession};
+use crate::domain::session::typed::MenuSession;
 
 /// Render-ready classification of a single base's scan during the `MS`
 /// walk. The arithmetic that distinguishes the legacy's three
@@ -463,7 +463,6 @@ mod tests {
     #[tokio::test]
     async fn mail_scan_flagged_filter_skips_conferences_with_mail_scan_off() {
         use crate::domain::conference::ScanFlag;
-        use crate::domain::session::typed::BoundMenuUser;
         // Member of both conferences, each with mail seeded, but
         // conference 2's `mail_scan` flag is cleared (the `CF` editor's
         // effect / the legacy `checkMailConfScan` gate). The logon walk

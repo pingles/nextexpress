@@ -7,7 +7,7 @@ use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::mail_store::MailStoreError;
 use crate::domain::messaging::read_mail::{read_mail as read_mail_rule, ReadMailError};
-use crate::domain::session::typed::{BoundMenuUser, MenuSession};
+use crate::domain::session::typed::MenuSession;
 
 /// Outcome of the terminal-free read-mail command.
 pub(crate) enum ReadMailOutcome {
