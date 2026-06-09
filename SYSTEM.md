@@ -384,18 +384,19 @@ The current top files by line count:
 
 | File | Lines | Notes |
 |---|---|---|
-| `domain/session/tests.rs` | 2000 | Cross-capability session tests, internally grouped but monolithic. |
+| `domain/session/tests.rs` | 1999 | Cross-capability session tests, internally grouped but monolithic. |
 | `adapters/telnet_listener.rs` | 1762 | ~180 lines of production `TelnetListener` + `TelnetTerminal`; ~1500 lines of in-process integration tests. |
-| `app/wire_text.rs` | 1709 | Wire-format constants and rendering helpers. Growing ~100–200 lines per command (`CF` added 132, `MS` 207); see refactoring 9. |
-| `app/session_flow.rs` | 1553 | Remaining use cases over `(Session, UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade. |
+| `app/wire_text.rs` | 1703 | Wire-format constants and rendering helpers. Growing ~100–200 lines per command (`CF` added 132, `MS` 207); see refactoring 9. |
 | `domain/user/mod.rs` | 1527 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
+| `app/session_flow.rs` | 1423 | Typed-only login-path use cases over `(Session, UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade (refactoring 5 deleted the twin layer). |
 | `adapters/file_mail_store.rs` | 1196 | Per-msgbase JSON store + lock + tests. |
 | `adapters/sqlite_user_repository.rs` | 1127 | Schema init + row codec + queries + ~30 tests. |
 | `domain/messaging/scan_mail.rs` | 941 | Scan rule + extensive test fixtures. |
 | `domain/conference.rs` | 896 | `Conference`, `MessageBase`, `ConferenceMembership` (incl. the M/A/F/Z `ScanFlag` accessors), `NameType`, `AllowedAddressing`, `AllScanScope`. The `CF` edit semantics live in the focused `domain/conference_flags.rs`. |
 | `domain/messaging/post_mail.rs` | 886 | Post rule + helpers + tests. |
-| `app/session_driver.rs` | 856 | Per-connection orchestrator + logon-order tests. |
-| `domain/session/typed.rs` | 672 | Phase-typed wrappers and their constructors. |
+| `app/session_driver.rs` | 823 | Per-connection orchestrator + logon-order tests. |
+| `app/menu_flow/post_mail.rs` | 676 | Largest merged command module (core fns + editor handlers + tests). |
+| `domain/session/typed.rs` | 631 | Phase-typed wrappers and their constructors. |
 
 ## Idiomatic-Rust read
 
@@ -758,18 +759,15 @@ than the work above:
 
 ## Suggested order
 
-1. Pure deletions first — risk-free and test-pinned: the dead
-   `NumberArg` plumbing (7), then the scan-on-join generality (4).
-2. The `app/menu` → `app/menu_flow` fold (3), one command per commit,
-   updating the command doctrine in this document alongside.
-3. The `session_flow` twin merge (5) and the `AppServices` field
-   struct (6); the current-base helpers (8) ride along with whichever
-   mail command is touched next.
-4. Apply the placement policies (9, 10) opportunistically whenever a
+Refactorings 3, 4, 5, 6, 7 and 8 have **landed** (June 2026), one
+commit each, with the full suite plus a focused `cargo mutants
+--in-diff` run per commit. What remains:
+
+1. Apply the placement policies (9, 10) opportunistically whenever a
    command is touched; the declarative command listing (11) when next
    in `menu_command.rs`.
-5. Test-support consolidation (12) the next time a smoke or handler
+2. Test-support consolidation (12) the next time a smoke or handler
    test is being written.
-6. Add optimistic or command-style user writes (1) before
+3. Add optimistic or command-style user writes (1) before
    cross-session sysop/background mutations; revisit port error shapes
    (2) while moving `ConferenceRepository` out of the domain boundary.
