@@ -13,13 +13,12 @@ use crate::app::input_limits::append_line_with_newline;
 use crate::app::menu::reply_forward::{
     forward_mail, reply_mail, ForwardInput, ReplyForwardOutcome, ReplyInput,
 };
-use crate::app::menu_command::NumberArg;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_post_success, FORWARD_NOTE_PROMPT, FORWARD_TO_PROMPT, FORWARD_UNKNOWN_USER_LINE,
-    INVALID_MESSAGE_NUMBER_LINE, MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, POST_ABORTED_LINE,
-    POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE, POST_RECIPIENT_NO_ACCESS_LINE,
-    READ_REQUIRES_NUMBER_LINE, SOURCE_DELETED_LINE, SOURCE_NOT_FOUND_LINE,
+    MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, POST_ABORTED_LINE, POST_ACCESS_DENIED_LINE,
+    POST_ADDRESSING_NOT_ALLOWED_LINE, POST_RECIPIENT_NO_ACCESS_LINE, SOURCE_DELETED_LINE,
+    SOURCE_NOT_FOUND_LINE,
 };
 use crate::domain::messaging::forward_mail::ForwardMailError;
 use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
@@ -38,20 +37,8 @@ where
     pub(super) async fn handle_reply(
         &mut self,
         session: &mut MenuSession,
-        arg: NumberArg,
+        source_number: u32,
     ) -> Result<(), T::Error> {
-        let source_number = match arg {
-            NumberArg::Number(n) => n,
-            NumberArg::Missing => {
-                self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
-                return Ok(());
-            }
-            NumberArg::Invalid => {
-                self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-                return Ok(());
-            }
-        };
-
         let Some(body) = self.read_post_body(session, true).await? else {
             return Ok(());
         };
@@ -81,20 +68,8 @@ where
     pub(super) async fn handle_forward(
         &mut self,
         session: &mut MenuSession,
-        arg: NumberArg,
+        source_number: u32,
     ) -> Result<(), T::Error> {
-        let source_number = match arg {
-            NumberArg::Number(n) => n,
-            NumberArg::Missing => {
-                self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
-                return Ok(());
-            }
-            NumberArg::Invalid => {
-                self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-                return Ok(());
-            }
-        };
-
         let Some(typed_to) = self
             .read_required_line(session, FORWARD_TO_PROMPT, true)
             .await?

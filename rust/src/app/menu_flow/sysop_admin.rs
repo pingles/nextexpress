@@ -9,15 +9,13 @@ use crate::app::menu::sysop_admin::{
     delete_mail, edit_mail_header, move_mail, DeleteOutcome, EditHeaderInput, EditHeaderOutcome,
     MoveInput, MoveOutcome,
 };
-use crate::app::menu_command::NumberArg;
 use crate::app::terminal::Terminal;
 use crate::app::wire_text::{
     CONFIRM_DELETE_PROMPT, DELETE_DONE_LINE, EDIT_HEADER_DONE_LINE, EDIT_HEADER_SUBJECT_PROMPT,
     EDIT_HEADER_TO_PROMPT, FORWARD_UNKNOWN_USER_LINE, INVALID_CONFERENCE_NUMBER_LINE,
     INVALID_MESSAGE_NUMBER_LINE, MAIL_STORE_ERROR_LINE, MOVE_DONE_PREFIX,
     MOVE_TARGET_CONFERENCE_PROMPT, MOVE_TARGET_MSGBASE_PROMPT, MOVE_UNKNOWN_TARGET_LINE,
-    NO_MAIL_BASE_LINE, POST_ABORTED_LINE, READ_REQUIRES_NUMBER_LINE, SOURCE_NOT_FOUND_LINE,
-    SYSOP_ONLY_LINE,
+    NO_MAIL_BASE_LINE, POST_ABORTED_LINE, SOURCE_NOT_FOUND_LINE, SYSOP_ONLY_LINE,
 };
 use crate::domain::messaging::delete_mail::DeleteMailError;
 use crate::domain::messaging::edit_mail_header::EditMailHeaderError;
@@ -32,20 +30,8 @@ where
     pub(super) async fn handle_kill(
         &mut self,
         session: &mut MenuSession,
-        arg: NumberArg,
+        number: u32,
     ) -> Result<(), T::Error> {
-        let number = match arg {
-            NumberArg::Number(n) => n,
-            NumberArg::Missing => {
-                self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
-                return Ok(());
-            }
-            NumberArg::Invalid => {
-                self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-                return Ok(());
-            }
-        };
-
         let Some(line) = self
             .read_required_line(session, CONFIRM_DELETE_PROMPT, false)
             .await?
@@ -80,20 +66,8 @@ where
     pub(super) async fn handle_move_mail(
         &mut self,
         session: &mut MenuSession,
-        arg: NumberArg,
+        number: u32,
     ) -> Result<bool, T::Error> {
-        let number = match arg {
-            NumberArg::Number(n) => n,
-            NumberArg::Missing => {
-                self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
-                return Ok(false);
-            }
-            NumberArg::Invalid => {
-                self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-                return Ok(false);
-            }
-        };
-
         let Some(conf_line) = self
             .read_required_line(session, MOVE_TARGET_CONFERENCE_PROMPT, false)
             .await?
@@ -154,20 +128,8 @@ where
     pub(super) async fn handle_edit_header(
         &mut self,
         session: &mut MenuSession,
-        arg: NumberArg,
+        number: u32,
     ) -> Result<(), T::Error> {
-        let number = match arg {
-            NumberArg::Number(n) => n,
-            NumberArg::Missing => {
-                self.write_and_flush(READ_REQUIRES_NUMBER_LINE).await?;
-                return Ok(());
-            }
-            NumberArg::Invalid => {
-                self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?;
-                return Ok(());
-            }
-        };
-
         let new_subject = self
             .read_optional_unchanged_line(session, EDIT_HEADER_SUBJECT_PROMPT)
             .await?;

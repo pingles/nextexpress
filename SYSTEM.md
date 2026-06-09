@@ -612,15 +612,13 @@ to ~9. ~68 call sites churn mechanically at zero net lines.
 
 ### 7. Delete the dead `NumberArg` plumbing in the read-subprompt handlers
 
-`handle_reply` / `handle_forward` / `handle_kill` / `handle_move_mail`
-/ `handle_edit_header` are called only from `read_subprompt.rs`,
-always with `NumberArg::Number`; their `Missing`/`Invalid` match arms
-are unreachable and untested (a likely source of surviving mutants).
-Take a plain `u32`, drop the five 11-line match blocks, the
-`NumberArg` imports, and the orphaned `READ_REQUIRES_NUMBER_LINE`
-constant.
-
-Verified impact: −65 to −70 production lines.
+**Landed.** `handle_reply` / `handle_forward` / `handle_kill` /
+`handle_move_mail` / `handle_edit_header` were called only from
+`read_subprompt.rs`, always with `NumberArg::Number`; their
+`Missing`/`Invalid` match arms were unreachable and untested. They now
+take a plain `u32`; the five match blocks, the `NumberArg` imports,
+and the orphaned `READ_REQUIRES_NUMBER_LINE` constant are gone
+(−76 net lines).
 
 ### 8. Shared current-base helpers for the mail use cases
 

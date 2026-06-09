@@ -16,7 +16,6 @@
 
 use std::time::SystemTime;
 
-use crate::app::menu_command::NumberArg;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{render_read_subprompt, render_read_subprompt_help};
 use crate::domain::conference::MessageBaseRef;
@@ -173,8 +172,7 @@ where
             // `R`eply posts a reply to the current message, then advances
             // to the next one (`express.e:12161-12168`).
             Some('r') => {
-                self.handle_reply(session, NumberArg::Number(current))
-                    .await?;
+                self.handle_reply(session, current).await?;
                 if !self.advance(session, next, last_displayed).await? {
                     return Ok(false);
                 }
@@ -182,8 +180,7 @@ where
             // `F`orward forwards the current message, then stays on it
             // (`express.e:12153-12160`).
             Some('f') => {
-                self.handle_forward(session, NumberArg::Number(current))
-                    .await?;
+                self.handle_forward(session, current).await?;
             }
             // `D`elete: gated on the per-message delete permission (legacy
             // `ACS_DELETE_MESSAGE`, `express.e:12148`). When permitted the
@@ -192,8 +189,7 @@ where
             // confirm answer (`:12151`). A caller without delete
             // permission falls through (the option is not theirs).
             Some('d') if self.current_user_can_delete(session, current).await => {
-                self.handle_kill(session, NumberArg::Number(current))
-                    .await?;
+                self.handle_kill(session, current).await?;
                 if !self.advance(session, next, last_displayed).await? {
                     return Ok(false);
                 }
@@ -202,9 +198,7 @@ where
             // `express.e:12170`). Advances only on a successful move
             // (`:12172`); an aborted or rejected move stays.
             Some('m') if can_move(session.user()) => {
-                let moved = self
-                    .handle_move_mail(session, NumberArg::Number(current))
-                    .await?;
+                let moved = self.handle_move_mail(session, current).await?;
                 if moved && !self.advance(session, next, last_displayed).await? {
                     return Ok(false);
                 }
@@ -216,8 +210,7 @@ where
             // `E` (emacs) / `EM` (body edit) are deliberately not carried
             // (see slice B5 Out of Scope).
             Some('e') if trimmed.eq_ignore_ascii_case("eh") && can_edit_header(session.user()) => {
-                self.handle_edit_header(session, NumberArg::Number(current))
-                    .await?;
+                self.handle_edit_header(session, current).await?;
                 self.read_and_render(session, current).await?;
             }
             // `L`ist the base's messages (`express.e:12220`), then stay on

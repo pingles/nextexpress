@@ -246,12 +246,6 @@ pub(crate) const JOIN_REQUIRES_NUMBER_LINE: &[u8] = b"\r\nUsage: J <conference-n
 /// number.
 pub(crate) const INVALID_CONFERENCE_NUMBER_LINE: &[u8] = b"\r\nInvalid conference number.\r\n";
 
-/// Sent when the user types `R` without a target message number.
-/// The Phase-6 wiring rejects the no-arg form rather than running
-/// the legacy `readMSG` prompt sub-flow; future slices may refine
-/// this when the prompt arrives.
-pub(crate) const READ_REQUIRES_NUMBER_LINE: &[u8] = b"\r\nUsage: R <message-number>\r\n";
-
 /// Sent when `R <something>` cannot be parsed as a message number.
 pub(crate) const INVALID_MESSAGE_NUMBER_LINE: &[u8] = b"\r\nInvalid message number.\r\n";
 
