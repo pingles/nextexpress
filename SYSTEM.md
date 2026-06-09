@@ -30,9 +30,9 @@ top-level modules under `rust/src/`:
   (`Terminal`, `ScreenRepository`, `MailStores`), configuration types,
   the runtime value (`Runtime` + `AppServices`), the per-connection
   orchestrator (`SessionDriver`), three sub-flows (`LoginFlow`,
-  `RegistrationFlow`, `MenuFlow`), the menu use-case modules
-  (`app/menu/*`) paired with their terminal-aware handlers
-  (`app/menu_flow/*`), and the `ColourTerminal` decorator
+  `RegistrationFlow`, `MenuFlow`), one command module per menu command
+  under `app/menu_flow/*` (terminal-free core fn + terminal-aware
+  handler in the same file), and the `ColourTerminal` decorator
   (`app/colour_terminal`) that strips ANSI SGR escapes from output
   while the `M`-toggled colour mode is off. Production code under `app/` is forbidden from
   importing `crate::adapters`; the boundary is enforced by
@@ -123,7 +123,7 @@ flowchart LR
     Driver --> Start["start (banner + copyright)"]
     Driver --> Login["LoginFlow"]
     Driver --> Registration["RegistrationFlow"]
-    Driver --> AutoRejoin["resolve_auto_rejoin\n(+ logon conference scan, L1)"]
+    Driver --> AutoRejoin["auto-rejoin resolution\n(inline in run; + logon conference scan, L1)"]
     Driver --> Menu["MenuFlow"]
     Driver --> Finalise["session_flow::typed::finalise_logoff"]
 
@@ -137,13 +137,9 @@ flowchart LR
 
     Menu --> Parse["menu_command::parse"]
     Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle, ShowMenu,\nTopicHelp, AnsiToggle, ConferenceFlags, Unknown}"]
-    Menu --> MenuFlowHandlers["menu_flow/*\n(terminal handlers)"]
-    MenuFlowHandlers --> MenuUseCases["menu/*\n(terminal-free use cases)"]
+    Menu --> MenuFlowHandlers["menu_flow/*\n(one module per command:\nterminal-free core + handler)"]
 
-    MenuUseCases --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment)"]
-    AutoRejoin --> ScanOnJoin["mail_scan_on_join"]
-    Menu --> ScanOnJoin
-    ScanOnJoin --> Rules
+    MenuFlowHandlers --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment)"]
 
     Rules --> Mail["domain::Mail"]
     Rules --> Pointers["domain::ReadPointers"]
@@ -243,29 +239,29 @@ advances, `F`orward stays, `D`elete advances (gated by
 `edit_mail_header::can_edit_header`). `?` / `??` render the short / long
 help list (gated the same way), and `L`ist shows the legacy `listMSGs`
 table (start-message prompt, addressed-to-reader rows via
-`app/menu/list_mail`) paginated through the shared `menu_flow::pager`
+`menu_flow/list_messages`) paginated through the shared `menu_flow::pager`
 (`(Pause)...More(y/n/ns)?`). The surface is modelled in
 `messaging.allium:MailReadPrompt`. The three access gates currently
 diverge from the legacy `ACS_*` flags — tracked as Tier B slice B9.
 
-Each non-trivial command lives in two files: a terminal-free use case
-under `app/menu/*` that resolves stores/repositories and returns an
-outcome enum, and a sibling handler under `app/menu_flow/*` that owns
-the prompts and wire rendering. `MenuFlow` collects prompts and maps
-outcomes to wire text; the use-case module never sees the terminal.
-Adding a new command means adding a use case under `app/menu/`, a
-handler under `app/menu_flow/`, a `MenuCommand` arm, and (usually) a
+Each non-trivial command lives in **one module** under
+`app/menu_flow/*`: a terminal-free core fn (plus its outcome enum)
+that resolves stores/repositories and returns an outcome, followed by
+the `impl MenuFlow` handler that owns the prompts and wire rendering.
+The terminal-free seam is the core fn's *signature* (it never takes a
+`Terminal`), which is what the unit tests drive with in-memory stores;
+a separate core fn is added only when there is real store/repository
+resolution to keep terminal-free — never to ceremonially forward a
+domain transition. The one outsized command, `MS`, keeps its walk in a
+`scan_all_mail/core.rs` submodule. Adding a new command means adding a
+module under `app/menu_flow/`, a `MenuCommand` arm, and (usually) a
 domain rule. It must also be advertised in the main menu: the
 `main_menu_advertises_exactly_the_implemented_commands` test pins
 `Conf02/Menu5.txt` against the `MenuCommand` set via an exhaustive
 `advertised_token` match, so a new variant fails to compile until it is
 given a menu token and the assertion then fails until the menu asset
 lists it (simple toggles/queries are otherwise handled inline in
-`MenuFlow::dispatch` rather than in their own `app/menu/*` file).
-Refactoring 3 below plans to fold each `app/menu/*` use case into its
-`app/menu_flow/*` sibling — one module per command, with the
-terminal-free core fn kept as the testing seam — which cuts the
-per-command file count in half.
+`MenuFlow::dispatch` rather than in their own module).
 
 ### Driver and sub-flow split
 
@@ -282,13 +278,13 @@ thin orchestrator:
 3. `RegistrationFlow::run` — only on `NeedsRegistration`. Owns the
    new-user gate, profile collection, hash + persist, returns
    `Onboarded | LoggingOff`.
-4. `resolve_auto_rejoin` — apply `conferences.allium:JoinConference`,
-   attaching the home visit and **capturing** the `JOINED` announcement
-   (it is replayed in step 6, after the logon scan — the legacy emits it
-   at `SUBSTATE_DISPLAY_CONF_BULL`, after `confScan`). No
-   `scan_mail_on_join` fires here: the legacy auto-rejoin carries
-   `FORCE_MAILSCAN_SKIP` because the logon scan (step 5b) covers every
-   flagged base.
+4. Auto-rejoin resolution (inline in `run`) — apply
+   `conferences.allium:JoinConference`, attaching the home visit and
+   **capturing** the `JOINED` announcement (it is replayed in step 6,
+   after the logon scan — the legacy emits it at
+   `SUBSTATE_DISPLAY_CONF_BULL`, after `confScan`). No join scan fires
+   here: the legacy auto-rejoin carries `FORCE_MAILSCAN_SKIP` because
+   the logon scan (step 5b) covers every flagged base.
 5. `enter_menu` then **logon conference scan** (L1) —
    `MenuFlow::run_logon_conference_scan` runs the legacy `confScan`
    before the menu: the same multi-conference `scan_all_mail` walk the
@@ -327,13 +323,14 @@ the rule, and writes the legacy ANSI output.
     `ConferenceMembership`. `read_pointers_for(user, msgbase)` is the
     spec's black box; rows are lazily created on first
     `ReadMail`/`ScanMail` for a base.
-  - Slices 39–41 wire `read_mail`, `scan_mail` and
-    `mail_scan_on_join`. The `R <num>` handler does the
-    `MailStore::load` → `read_mail` → `MailStore::save` dance; `MS`/`N`
-    walk the store via `scan_mail` (bare `M` is the ANSI toggle since
-    the A8 rebind); the explicit-join path uses `scan_mail_on_join`.
-    The auto-rejoin no longer scans on join (L1): the logon conference
-    scan covers every flagged base just before the menu opens.
+  - Slices 39–41 wire `read_mail`, `scan_mail` and the join scan. The
+    `R <num>` handler does the `MailStore::load` → `read_mail` →
+    `MailStore::save` dance; `MS` walks the stores via `scan_mail`
+    (bare `M` is the ANSI toggle since the A8 rebind); the
+    explicit-join path fires `scan_mail_on_join` (inlined beside the
+    `J` handler in `menu_flow/join.rs`). The auto-rejoin no longer
+    scans on join (L1): the logon conference scan covers every flagged
+    base just before the menu opens.
   - Slice 41a wires the file-backed registry into the composition root:
     `app::run` walks the loaded conferences and opens one
     `FileMailStore` per `(conference, msgbase)` coordinate.
@@ -358,8 +355,8 @@ the rule, and writes the legacy ANSI output.
     newtype), Slice 49 `delete_mail` / `edit_mail_header` /
     `move_mail`.
   - Slice 49a / 49b wire `RP`, `FW`, `K`, `MV`, `EH` through
-    `app/menu/{reply_forward, sysop_admin}` and the matching
-    `menu_flow` handlers. `tests/phase7_smoke.rs` /
+    `menu_flow/{reply_forward, sysop_admin}` (terminal-free cores +
+    handlers in the same modules). `tests/phase7_smoke.rs` /
     `phase8_smoke.rs` drive the compiled binary end-to-end over
     telnet.
 
@@ -533,38 +530,32 @@ app/bootstrap because runtime rules consume an already-loaded
 
 ### 3. One module per menu command: fold `app/menu/*` into `app/menu_flow/*`
 
-The top-ranked friction fix — all five assessment lenses converged on
-it independently. The terminal-free seam that matters for TDD is the
-*function signature* (no `Terminal` parameter), not the directory
-boundary, so each use-case module under `app/menu/` can move into its
-1:1 sibling handler under `app/menu_flow/`: the core fn + outcome enum
-become `pub(super)` items at the top of the file, the `impl MenuFlow`
-handler block sits below, and unit tests keep calling the core fn with
-in-memory stores. `CF` is the precedent: it already ships handler-only
-(`menu_flow/conf_flags.rs`).
+**Landed** (one command per commit: J, R, E/C, RP/FW, K/MV/EH, MS, L).
+The `app/menu/` tree is gone. Each command's terminal-free core fn +
+outcome enum now sit at the top of its `app/menu_flow/<cmd>.rs` module
+(module-private — the handlers were their only consumers), with the
+`impl MenuFlow` handler below; unit tests kept calling the core fns
+with in-memory stores throughout the move. The terminal-free seam that
+matters for TDD is the *function signature* (no `Terminal` parameter),
+not the directory boundary.
 
-Two layers are pure ceremony and get deleted outright:
+Two layers were pure ceremony and were deleted outright:
 `app/menu/join.rs` (a rewrap of the domain `ExplicitJoinTransition`
 into an identically-shaped enum) and the driver's `AutoRejoinResult` +
-`resolve_auto_rejoin` repackaging (`session_driver.rs`; note the
-`NoAccess` arm writes `NO_CONFERENCE_ACCESS_LINE`, so the inlining
-lands in `run`, which owns the terminal — keep
-`AutoRejoinAnnouncement`, which earns its keep by deferring the
-`JOINED` line past the logon scan). The substantive use-case fns
-(`post_mail`, `reply_forward`, `sysop_admin`, `scan_all_mail`,
-`list_mail`) earn their keep — real lock acquisition, repo lookups,
-recipient classification — and survive as terminal-free fns in the
-merged files. The rule going forward: a separate use-case fn exists to
-keep store/repo resolution terminal-free, never to ceremonially
-forward a domain transition.
+`resolve_auto_rejoin` repackaging (inlined into `SessionDriver::run`,
+which owns the terminal for the `NoAccess` notice;
+`AutoRejoinAnnouncement` stays — deferring the `JOINED` line past the
+logon scan is real behaviour). The substantive cores (`post_mail`,
+`reply_forward`, `sysop_admin`, `scan_all_mail`, `list_messages`) earn
+their keep — real lock acquisition, repo lookups, recipient
+classification — and survived as terminal-free fns in the merged
+modules. The rule going forward: a separate core fn exists to keep
+store/repo resolution terminal-free, never to ceremonially forward a
+domain transition. `MS` (the outsized one) keeps its walk in a
+`menu_flow/scan_all_mail/core.rs` submodule.
 
-Verified impact: −130 to −170 production lines, 8–9 fewer files;
-add-a-command touch-points drop from ~6 to ~4, new files per command
-from 2 to 1. The architecture test only polices `domain/` and
-app→adapters imports, so the fold is invariant-neutral. Migrate one
-command per commit; `scan_all_mail` (~650 merged lines) should become
-a `menu_flow/scan_all_mail/{mod.rs, core.rs}` submodule. Update the
-"two files per command" doctrine in this document in the same change.
+Add-a-command touch-points dropped from ~6 to ~4; new files per
+command from 2 to 1.
 
 ### 4. Delete the pre-L1 scan-on-join generality
 

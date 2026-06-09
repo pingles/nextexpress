@@ -21,7 +21,6 @@ pub mod config_loader;
 pub(crate) mod input_limits;
 pub mod login_flow;
 pub mod mail_stores;
-pub(crate) mod menu;
 pub mod menu_command;
 pub mod menu_flow;
 pub mod node_pool;
