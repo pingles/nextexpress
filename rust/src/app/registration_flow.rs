@@ -67,7 +67,7 @@ where
         session: NewUserRegisteringSession,
         password_required: bool,
     ) -> Result<RegistrationOutcome, T::Error> {
-        let screen = self.services.screens().new_user_password().await;
+        let screen = self.services.screens.as_ref().new_user_password().await;
         self.terminal.write(&screen).await?;
         let session = if password_required {
             match self.run_password_gate(session).await? {
@@ -140,7 +140,7 @@ where
                 }
                 TerminalRead::IdleTimedOut => {
                     let logoff = session.into_active().apply_idle_timeout(
-                        self.services.session_policy().treat_timeout_as_logoff(),
+                        self.services.session_policy.treat_timeout_as_logoff(),
                     );
                     self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                     return Ok(GateResult::LoggingOff(logoff));
@@ -149,8 +149,8 @@ where
             let transition = session_flow::verify_new_user_password(
                 session,
                 typed.trim(),
-                self.services.new_user_gate(),
-                self.services.caller_log(),
+                self.services.new_user_gate.as_ref(),
+                self.services.caller_log.as_ref(),
                 SystemTime::now(),
             )
             .expect("NewUserRegisteringSession + configured gate guarantees flow ok");
@@ -178,7 +178,7 @@ where
     ) -> Result<ReadField<String>, T::Error> {
         let max_attempts = self
             .services
-            .session_policy()
+            .session_policy
             .max_registration_handle_attempts();
         let mut attempts: u32 = 0;
         loop {
@@ -199,7 +199,7 @@ where
                 }
                 other => return self.handle_interrupt(session, other).await,
             };
-            if is_handle_available_for_registration(self.services.user_repo(), &typed) {
+            if is_handle_available_for_registration(self.services.user_repo.as_ref(), &typed) {
                 return Ok(ReadField::Got(session, typed.trim().to_string()));
             }
             self.terminal.write(HANDLE_TAKEN_LINE).await?;
@@ -325,7 +325,7 @@ where
             TerminalRead::IdleTimedOut => {
                 let logoff = session
                     .into_active()
-                    .apply_idle_timeout(self.services.session_policy().treat_timeout_as_logoff());
+                    .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
                 self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                 logoff
             }
@@ -340,11 +340,11 @@ where
         profile: NewUserProfile,
     ) -> Result<RegistrationOutcome, T::Error> {
         let flow = NewUserRegistrationFlow::new(
-            self.services.user_repo(),
-            self.services.hasher(),
-            self.services.caller_log(),
-            self.services.default_ratio(),
-            self.services.session_policy(),
+            self.services.user_repo.as_ref(),
+            self.services.hasher.as_ref(),
+            self.services.caller_log.as_ref(),
+            self.services.default_ratio,
+            self.services.session_policy,
         );
         match flow.complete(session, profile, SystemTime::now()) {
             Ok(NewUserRegistrationResult::Onboarded(onboarded)) => {
@@ -378,7 +378,7 @@ where
         prompt: &[u8],
         echo: TerminalEcho,
     ) -> Result<TerminalRead, T::Error> {
-        let timeout = self.services.session_policy().input_timeout();
+        let timeout = self.services.session_policy.input_timeout();
         crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
     }
 

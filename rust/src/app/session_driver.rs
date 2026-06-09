@@ -141,7 +141,7 @@ where
                 // `FORCE_MAILSCAN_SKIP` because the logon scan already
                 // covered every flagged base.
                 let transition = onboarded
-                    .auto_rejoin_conference(self.services.conferences(), SystemTime::now());
+                    .auto_rejoin_conference(self.services.conferences.as_ref(), SystemTime::now());
                 match transition {
                     AutoRejoinTransition::Joined {
                         session,
@@ -199,7 +199,7 @@ where
         announcement: &AutoRejoinAnnouncement,
     ) -> Result<(), T::Error> {
         let line = format_auto_rejoin_line(
-            self.services.conferences(),
+            self.services.conferences.as_ref(),
             announcement.conference_number,
             announcement.msgbase_number,
         );
@@ -207,7 +207,7 @@ where
         self.terminal.flush().await?;
         render_name_type_promotion(
             &mut self.terminal,
-            self.services.screens(),
+            self.services.screens.as_ref(),
             announcement.name_type_promoted_to,
         )
         .await
@@ -259,8 +259,8 @@ where
     fn enter_menu(&mut self, onboarded: OnboardedSession) -> MenuSession {
         session_flow::enter_menu(
             onboarded,
-            self.services.user_repo(),
-            self.services.caller_log(),
+            self.services.user_repo.as_ref(),
+            self.services.caller_log.as_ref(),
             SystemTime::now(),
         )
         .expect("OnboardedSession with no force_password_reset enters menu cleanly")
@@ -269,8 +269,8 @@ where
     fn finalise(&mut self, logging_off: LoggingOffSession) -> EndedSession {
         session_flow::finalise_logoff(
             logging_off,
-            self.services.user_repo(),
-            self.services.caller_log(),
+            self.services.user_repo.as_ref(),
+            self.services.caller_log.as_ref(),
             SystemTime::now(),
         )
         .expect("LoggingOffSession finalises cleanly when persistence succeeds")
@@ -457,18 +457,18 @@ mod tests {
             mode: RatioMode::ByFiles,
             value: 3,
         };
-        let services = AppServices::new(
-            repo,
+        let services = AppServices {
+            user_repo: repo,
             hasher,
-            caller_log.clone(),
+            caller_log: caller_log.clone(),
             screens,
-            Arc::new(conferences),
-            test_mail_stores(),
-            SessionPolicy::default(),
-            ratio,
-            gate,
-            "TestBBS".to_string(),
-        );
+            conferences: Arc::new(conferences),
+            mail_stores: test_mail_stores(),
+            session_policy: SessionPolicy::default(),
+            default_ratio: ratio,
+            new_user_gate: Arc::new(gate),
+            bbs_name: Arc::from("TestBBS"),
+        };
         let terminal = FakeTerminal::new([
             TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
@@ -552,18 +552,18 @@ mod tests {
             mode: RatioMode::ByFiles,
             value: 3,
         };
-        let services = AppServices::new(
-            repo,
+        let services = AppServices {
+            user_repo: repo,
             hasher,
             caller_log,
             screens,
-            Arc::new(conferences),
-            test_mail_stores(),
-            SessionPolicy::default(),
-            ratio,
-            gate,
-            "TestBBS".to_string(),
-        );
+            conferences: Arc::new(conferences),
+            mail_stores: test_mail_stores(),
+            session_policy: SessionPolicy::default(),
+            default_ratio: ratio,
+            new_user_gate: Arc::new(gate),
+            bbs_name: Arc::from("TestBBS"),
+        };
         let terminal = FakeTerminal::new([
             TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
@@ -625,18 +625,18 @@ mod tests {
             mode: RatioMode::ByFiles,
             value: 3,
         };
-        AppServices::new(
-            repo,
+        AppServices {
+            user_repo: repo,
             hasher,
             caller_log,
             screens,
-            Arc::new(conferences),
-            test_mail_stores(),
-            SessionPolicy::default(),
-            ratio,
-            gate,
-            "TestBBS".to_string(),
-        )
+            conferences: Arc::new(conferences),
+            mail_stores: test_mail_stores(),
+            session_policy: SessionPolicy::default(),
+            default_ratio: ratio,
+            new_user_gate: Arc::new(gate),
+            bbs_name: Arc::from("TestBBS"),
+        }
     }
 
     #[tokio::test]
@@ -786,18 +786,18 @@ mod tests {
             mode: RatioMode::ByFiles,
             value: 3,
         };
-        let services = AppServices::new(
-            repo,
+        let services = AppServices {
+            user_repo: repo,
             hasher,
             caller_log,
             screens,
-            Arc::new(vec![]),
-            test_mail_stores(),
-            SessionPolicy::default(),
-            ratio,
-            gate,
-            "TestBBS".to_string(),
-        );
+            conferences: Arc::new(vec![]),
+            mail_stores: test_mail_stores(),
+            session_policy: SessionPolicy::default(),
+            default_ratio: ratio,
+            new_user_gate: Arc::new(gate),
+            bbs_name: Arc::from("TestBBS"),
+        };
         let terminal = FakeTerminal::new([
             // Answer the graphics prompt, then drive registration.
             TerminalRead::Line("Y".to_string()),

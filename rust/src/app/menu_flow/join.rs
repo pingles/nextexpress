@@ -37,7 +37,7 @@ where
         session: MenuSession,
         target_conference_number: u32,
     ) -> Result<ExplicitJoinResult, T::Error> {
-        let conferences = self.services.conferences();
+        let conferences = self.services.conferences.as_ref();
         match session.explicit_join_conference(
             target_conference_number,
             conferences,
@@ -52,7 +52,7 @@ where
                 ..
             } => {
                 // Compute the announcement bytes up-front so the
-                // immutable borrow on `self.services.conferences()`
+                // immutable borrow on `self.services.conferences.as_ref()`
                 // doesn't overlap the mutable borrows below.
                 let line =
                     format_explicit_join_line(conferences, conference_number, msgbase_number);
@@ -63,7 +63,7 @@ where
                 self.write_and_flush(&line).await?;
                 render_name_type_promotion(
                     self.terminal,
-                    self.services.screens(),
+                    self.services.screens.as_ref(),
                     name_type_promoted_to,
                 )
                 .await?;
@@ -94,10 +94,10 @@ where
         else {
             return Ok(());
         };
-        let Some(guard) = self.services.mail_stores().lock(visit_msgbase).await else {
+        let Some(guard) = self.services.mail_stores.as_ref().lock(visit_msgbase).await else {
             return Ok(());
         };
-        let scope = find_msgbase_in(self.services.conferences(), visit_msgbase)
+        let scope = find_msgbase_in(self.services.conferences.as_ref(), visit_msgbase)
             .map(MessageBase::all_scan_scope)
             .unwrap_or_default();
         let result = scan_mail(
@@ -112,7 +112,7 @@ where
         match result {
             Ok(result) => {
                 if result.unread_count > 0 {
-                    let screen = self.services.screens().mailscan_screen().await;
+                    let screen = self.services.screens.as_ref().mailscan_screen().await;
                     self.terminal.write(&screen).await?;
                 }
                 let summary = render_scan_summary(result.unread_count, result.first_unread_number);
@@ -206,25 +206,25 @@ mod tests {
             .expect("insert broadcast");
         let mut stores = InMemoryMailStores::new();
         stores.register(coord, Box::new(store));
-        AppServices::new(
-            Arc::new(InMemoryUserRepository::default()),
-            Arc::new(Pbkdf2PasswordHasher::new()),
-            Arc::new(InMemoryCallerLog::new()),
-            Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            Arc::new(one_conference()),
-            Arc::new(stores),
-            SessionPolicy::default(),
-            DefaultRatio {
+        AppServices {
+            user_repo: Arc::new(InMemoryUserRepository::default()),
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            conferences: Arc::new(one_conference()),
+            mail_stores: Arc::new(stores),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
                 mode: RatioMode::Disabled,
                 value: 0,
             },
-            NewUserGateConfig {
+            new_user_gate: Arc::new(NewUserGateConfig {
                 allow_new_users: true,
                 new_user_password: None,
                 max_new_user_password_attempts: 3,
-            },
-            "Test BBS".to_string(),
-        )
+            }),
+            bbs_name: Arc::from("Test BBS"),
+        }
     }
 
     fn alice() -> User {

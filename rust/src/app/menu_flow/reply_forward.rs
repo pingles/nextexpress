@@ -211,8 +211,8 @@ where
 
         let outcome = reply_mail(
             session,
-            self.services.mail_stores(),
-            self.services.conferences(),
+            self.services.mail_stores.as_ref(),
+            self.services.conferences.as_ref(),
             ReplyInput {
                 source_number,
                 body,
@@ -247,9 +247,9 @@ where
 
         let outcome = forward_mail(
             session,
-            self.services.user_repo(),
-            self.services.mail_stores(),
-            self.services.conferences(),
+            self.services.user_repo.as_ref(),
+            self.services.mail_stores.as_ref(),
+            self.services.conferences.as_ref(),
             ForwardInput {
                 source_number,
                 typed_to,
@@ -415,25 +415,25 @@ mod tests {
     }
 
     fn test_services() -> AppServices {
-        AppServices::new(
-            Arc::new(InMemoryUserRepository::default()),
-            Arc::new(Pbkdf2PasswordHasher::new()),
-            Arc::new(InMemoryCallerLog::new()),
-            Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            Arc::new(Vec::new()),
-            Arc::new(InMemoryMailStores::new()),
-            SessionPolicy::default(),
-            DefaultRatio {
+        AppServices {
+            user_repo: Arc::new(InMemoryUserRepository::default()),
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            conferences: Arc::new(Vec::new()),
+            mail_stores: Arc::new(InMemoryMailStores::new()),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
                 mode: RatioMode::Disabled,
                 value: 0,
             },
-            NewUserGateConfig {
+            new_user_gate: Arc::new(NewUserGateConfig {
                 allow_new_users: true,
                 new_user_password: None,
                 max_new_user_password_attempts: 3,
-            },
-            "Test BBS".to_string(),
-        )
+            }),
+            bbs_name: Arc::from("Test BBS"),
+        }
     }
 
     #[tokio::test]

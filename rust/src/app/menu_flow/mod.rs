@@ -88,8 +88,8 @@ where
             // (`amiexpress/express.e:28404`) renders the BBS name, the
             // current conference and the per-call minutes remaining.
             let prompt = format_menu_prompt(
-                self.services.bbs_name(),
-                self.services.conferences(),
+                self.services.bbs_name.as_ref(),
+                self.services.conferences.as_ref(),
                 session.current_msgbase(),
                 session.time_remaining(),
             );
@@ -102,7 +102,7 @@ where
                 TerminalRead::Eof => return Ok(session.into_active().apply_carrier_loss()),
                 TerminalRead::IdleTimedOut => {
                     let logoff = session.into_active().apply_idle_timeout(
-                        self.services.session_policy().treat_timeout_as_logoff(),
+                        self.services.session_policy.treat_timeout_as_logoff(),
                     );
                     self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                     return Ok(logoff);
@@ -173,7 +173,7 @@ where
                 // Idle-timeout / account-lock / carrier exits use
                 // their dedicated goodbye lines and never reach this
                 // branch — matching the legacy.
-                let logoff_screen = self.services.screens().logoff_screen().await;
+                let logoff_screen = self.services.screens.as_ref().logoff_screen().await;
                 if !logoff_screen.is_empty() {
                     self.terminal.write(&logoff_screen).await?;
                 }
@@ -252,7 +252,7 @@ where
                 // screen, truncating the topic until a screen matches
                 // (`amiexpress/express.e:25089`). An empty topic or a
                 // topic with no matching screen is a silent no-op.
-                let screen = self.services.screens().topic_help(&topic).await;
+                let screen = self.services.screens.as_ref().topic_help(&topic).await;
                 if !screen.is_empty() {
                     self.write_and_flush(&screen).await?;
                 }
@@ -294,7 +294,7 @@ where
         prompt: &[u8],
         echo: TerminalEcho,
     ) -> Result<TerminalRead, T::Error> {
-        let timeout = self.services.session_policy().input_timeout();
+        let timeout = self.services.session_policy.input_timeout();
         crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
     }
 
@@ -312,11 +312,12 @@ where
         match session.current_conference_number() {
             Some(conf) => {
                 self.services
-                    .screens()
+                    .screens
+                    .as_ref()
                     .conference_menu(conf, access_level)
                     .await
             }
-            None => self.services.screens().default_menu(access_level).await,
+            None => self.services.screens.as_ref().default_menu(access_level).await,
         }
     }
 
@@ -325,7 +326,7 @@ where
     /// `Sorry Help is unavailable at this time.` line when the
     /// adapter returns empty bytes (`amiexpress/express.e:25079-25085`).
     async fn handle_show_help(&mut self) -> Result<(), T::Error> {
-        let bytes = self.services.screens().bbs_help_screen().await;
+        let bytes = self.services.screens.as_ref().bbs_help_screen().await;
         if bytes.is_empty() {
             self.write_and_flush(HELP_UNAVAILABLE_LINE).await
         } else {
@@ -383,25 +384,25 @@ mod tests {
     }
 
     fn test_services() -> AppServices {
-        AppServices::new(
-            Arc::new(InMemoryUserRepository::default()),
-            Arc::new(Pbkdf2PasswordHasher::new()),
-            Arc::new(InMemoryCallerLog::new()),
-            Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            Arc::new(Vec::new()),
-            Arc::new(InMemoryMailStores::new()),
-            SessionPolicy::default(),
-            DefaultRatio {
+        AppServices {
+            user_repo: Arc::new(InMemoryUserRepository::default()),
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            conferences: Arc::new(Vec::new()),
+            mail_stores: Arc::new(InMemoryMailStores::new()),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
                 mode: RatioMode::Disabled,
                 value: 0,
             },
-            NewUserGateConfig {
+            new_user_gate: Arc::new(NewUserGateConfig {
                 allow_new_users: true,
                 new_user_password: None,
                 max_new_user_password_attempts: 3,
-            },
-            "Test BBS".to_string(),
-        )
+            }),
+            bbs_name: Arc::from("Test BBS"),
+        }
     }
 
     /// Builds a menu-phase session with the `quick_logon` flag set.

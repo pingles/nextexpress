@@ -89,7 +89,7 @@ where
         &mut self,
         session: &mut MenuSession,
     ) -> Result<(), T::Error> {
-        let Some(listing) = list_mail(session, self.services.mail_stores()).await else {
+        let Some(listing) = list_mail(session, self.services.mail_stores.as_ref()).await else {
             return Ok(());
         };
         let Some(start) = self.read_list_start(session, listing.lowest).await? else {

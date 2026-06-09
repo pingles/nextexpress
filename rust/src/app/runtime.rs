@@ -60,18 +60,18 @@ impl Runtime {
             new_user_password: config.new_user_password.clone(),
             max_new_user_password_attempts: config.max_new_user_password_attempts,
         };
-        let services = AppServices::new(
+        let services = AppServices {
             user_repo,
             hasher,
             caller_log,
             screens,
             conferences,
             mail_stores,
-            config.session_policy(),
+            session_policy: config.session_policy(),
             default_ratio,
-            new_user_gate,
-            config.bbs_name.clone(),
-        );
+            new_user_gate: Arc::new(new_user_gate),
+            bbs_name: Arc::from(config.bbs_name.as_str()),
+        };
         Self { pool, services }
     }
 

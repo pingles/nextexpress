@@ -149,25 +149,25 @@ mod tests {
     }
 
     fn test_services() -> AppServices {
-        AppServices::new(
-            Arc::new(InMemoryUserRepository::default()),
-            Arc::new(Pbkdf2PasswordHasher::new()),
-            Arc::new(InMemoryCallerLog::new()),
-            Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            Arc::new(Vec::new()),
-            Arc::new(InMemoryMailStores::new()),
-            SessionPolicy::default(),
-            DefaultRatio {
+        AppServices {
+            user_repo: Arc::new(InMemoryUserRepository::default()),
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            conferences: Arc::new(Vec::new()),
+            mail_stores: Arc::new(InMemoryMailStores::new()),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
                 mode: RatioMode::Disabled,
                 value: 0,
             },
-            NewUserGateConfig {
+            new_user_gate: Arc::new(NewUserGateConfig {
                 allow_new_users: true,
                 new_user_password: None,
                 max_new_user_password_attempts: 3,
-            },
-            "Test BBS".to_string(),
-        )
+            }),
+            bbs_name: Arc::from("Test BBS"),
+        }
     }
 
     fn line(text: &str) -> TerminalRead {

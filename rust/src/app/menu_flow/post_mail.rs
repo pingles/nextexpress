@@ -301,9 +301,9 @@ where
 
         let outcome = post_mail(
             session,
-            self.services.user_repo(),
-            self.services.mail_stores(),
-            self.services.conferences(),
+            self.services.user_repo.as_ref(),
+            self.services.mail_stores.as_ref(),
+            self.services.conferences.as_ref(),
             PostMailInput {
                 typed_to,
                 subject,
@@ -339,9 +339,9 @@ where
 
         let outcome = post_comment_to_sysop(
             session,
-            self.services.user_repo(),
-            self.services.mail_stores(),
-            self.services.conferences(),
+            self.services.user_repo.as_ref(),
+            self.services.mail_stores.as_ref(),
+            self.services.conferences.as_ref(),
             CommentToSysopInput {
                 subject,
                 body,

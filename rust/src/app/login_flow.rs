@@ -96,7 +96,7 @@ where
             TerminalRead::IdleTimedOut => {
                 let logoff = session
                     .into_active()
-                    .apply_idle_timeout(self.services.session_policy().treat_timeout_as_logoff());
+                    .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
                 self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                 return Ok(LoginOutcome::LoggingOff(logoff));
             }
@@ -105,7 +105,7 @@ where
         // an ASCII caller gets it ANSI-stripped — the legacy
         // `SCREEN_BBSTITLE` order (`amiexpress/express.e:29552`, shown
         // after the `A/r/n` question).
-        let banner = self.services.screens().banner().await;
+        let banner = self.services.screens.as_ref().banner().await;
         self.terminal.write(&banner).await?;
         loop {
             let read = self
@@ -123,7 +123,7 @@ where
                 }
                 TerminalRead::IdleTimedOut => {
                     let logoff = session.into_active().apply_idle_timeout(
-                        self.services.session_policy().treat_timeout_as_logoff(),
+                        self.services.session_policy.treat_timeout_as_logoff(),
                     );
                     self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                     return Ok(LoginOutcome::LoggingOff(logoff));
@@ -133,8 +133,8 @@ where
             let transition = session_flow::name_typed(
                 session,
                 trimmed,
-                self.services.user_repo(),
-                self.services.new_user_gate(),
+                self.services.user_repo.as_ref(),
+                self.services.new_user_gate.as_ref(),
                 SystemTime::now(),
             );
             match transition {
@@ -155,7 +155,7 @@ where
                     });
                 }
                 NameTypedTransition::Disallowed(logging_off) => {
-                    let screen = self.services.screens().no_new_users().await;
+                    let screen = self.services.screens.as_ref().no_new_users().await;
                     self.terminal.write(&screen).await?;
                     self.terminal.flush().await?;
                     return Ok(LoginOutcome::LoggingOff(logging_off));
@@ -189,7 +189,7 @@ where
                 }
                 TerminalRead::IdleTimedOut => {
                     let logoff = session.into_active().apply_idle_timeout(
-                        self.services.session_policy().treat_timeout_as_logoff(),
+                        self.services.session_policy.treat_timeout_as_logoff(),
                     );
                     self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
                     return Ok(LoginOutcome::LoggingOff(logoff));
@@ -198,10 +198,10 @@ where
             let transition = session_flow::verify_password(
                 session,
                 password.trim(),
-                self.services.user_repo(),
-                self.services.hasher(),
-                self.services.caller_log(),
-                self.services.session_policy(),
+                self.services.user_repo.as_ref(),
+                self.services.hasher.as_ref(),
+                self.services.caller_log.as_ref(),
+                self.services.session_policy,
                 SystemTime::now(),
             )
             .expect("AuthenticatingSession guarantees Authenticating + bound user");
@@ -237,7 +237,7 @@ where
         prompt: &[u8],
         echo: TerminalEcho,
     ) -> Result<TerminalRead, T::Error> {
-        let timeout = self.services.session_policy().input_timeout();
+        let timeout = self.services.session_policy.input_timeout();
         crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
     }
 

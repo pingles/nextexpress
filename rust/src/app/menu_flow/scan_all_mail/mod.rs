@@ -36,8 +36,8 @@ where
     ) -> Result<(), T::Error> {
         let scans = scan_all_mail(
             session,
-            self.services.mail_stores(),
-            self.services.conferences(),
+            self.services.mail_stores.as_ref(),
+            self.services.conferences.as_ref(),
             filter,
             SystemTime::now(),
         )

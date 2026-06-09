@@ -594,12 +594,14 @@ cheaper.
 
 ### 6. Make `AppServices` a plain pub-field struct
 
-The 10-positional-argument constructor and ten accessor methods are
-ceremony around a bag of `Arc` fields. Public fields + struct-literal
-construction delete ~70–85 lines in `services.rs`, make the test
-construction sites readable (named fields instead of positional
-ordering), and cut the add-a-service-field path from ~12 touch-points
-to ~9. ~68 call sites churn mechanically at zero net lines.
+**Landed.** The 10-positional-argument constructor and ten accessor
+methods were ceremony around a bag of `Arc` fields; `services.rs` is
+now a documented pub-field struct (~75 lines shorter). Construction
+sites use named struct literals (the test fixtures read better than
+the positional list did); port reads are `services.<port>.as_ref()`
+and `Copy` policy values are plain field reads. Adding a service field
+is now the field plus the construction sites — no constructor or
+accessor to keep in sync.
 
 ### 7. Delete the dead `NumberArg` plumbing in the read-subprompt handlers
 

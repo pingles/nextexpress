@@ -37,114 +37,34 @@ pub type SharedMailStores = Arc<dyn MailStores + Send + Sync + 'static>;
 
 /// Container for the trait-object ports and policy values an
 /// interactive BBS session reads. Cheap to clone (one `Arc` bump per
-/// port).
+/// port). Constructed as a plain struct literal — the composition
+/// root and the test fixtures name every field, so adding a service
+/// is one field plus the construction sites, with no positional
+/// constructor to keep in sync.
 #[derive(Clone)]
 pub struct AppServices {
-    user_repo: SharedUserRepo,
-    hasher: SharedHasher,
-    caller_log: SharedCallerLog,
-    screens: SharedScreens,
-    conferences: SharedConferences,
-    mail_stores: SharedMailStores,
-    session_policy: SessionPolicy,
-    default_ratio: DefaultRatio,
-    new_user_gate: Arc<NewUserGateConfig>,
-    bbs_name: Arc<str>,
-}
-
-impl AppServices {
-    /// Constructs a services container from the supplied ports and
-    /// configuration.
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        user_repo: SharedUserRepo,
-        hasher: SharedHasher,
-        caller_log: SharedCallerLog,
-        screens: SharedScreens,
-        conferences: SharedConferences,
-        mail_stores: SharedMailStores,
-        session_policy: SessionPolicy,
-        default_ratio: DefaultRatio,
-        new_user_gate: NewUserGateConfig,
-        bbs_name: String,
-    ) -> Self {
-        Self {
-            user_repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences,
-            mail_stores,
-            session_policy,
-            default_ratio,
-            new_user_gate: Arc::new(new_user_gate),
-            bbs_name: Arc::from(bbs_name),
-        }
-    }
-
-    /// Returns the user repository as a `&dyn` trait object suitable
-    /// for the generic `?Sized + UserRepository` flow signatures.
-    #[must_use]
-    pub fn user_repo(&self) -> &(dyn UserRepository + Send + Sync) {
-        self.user_repo.as_ref()
-    }
-
-    /// Returns the password hasher as a `&dyn` trait object.
-    #[must_use]
-    pub fn hasher(&self) -> &(dyn PasswordHasher + Send + Sync) {
-        self.hasher.as_ref()
-    }
-
-    /// Returns the caller-log appender as a `&dyn` trait object.
-    #[must_use]
-    pub fn caller_log(&self) -> &(dyn CallerLogAppender + Send + Sync) {
-        self.caller_log.as_ref()
-    }
-
-    /// Returns the screen repository as a `&dyn` trait object.
-    #[must_use]
-    pub fn screens(&self) -> &(dyn ScreenRepository + Send + Sync) {
-        self.screens.as_ref()
-    }
-
-    /// Returns the conference catalogue (Slice 34a). Sorted by
-    /// conference number per the
+    /// User repository port.
+    pub user_repo: SharedUserRepo,
+    /// Password hasher port.
+    pub hasher: SharedHasher,
+    /// Caller-log appender port.
+    pub caller_log: SharedCallerLog,
+    /// Screen repository port.
+    pub screens: SharedScreens,
+    /// Conference catalogue (Slice 34a), sorted by conference number
+    /// per the
     /// [`crate::domain::conference_repository::ConferenceRepository`]
     /// contract.
-    #[must_use]
-    pub fn conferences(&self) -> &[Conference] {
-        self.conferences.as_ref()
-    }
-
-    /// Returns the mail-store registry (Slice 39 / 41a).
-    #[must_use]
-    pub fn mail_stores(&self) -> &(dyn MailStores + Send + Sync) {
-        self.mail_stores.as_ref()
-    }
-
-    /// Returns the configured [`SessionPolicy`] (Copy).
-    #[must_use]
-    pub fn session_policy(&self) -> SessionPolicy {
-        self.session_policy
-    }
-
-    /// Returns the configured [`DefaultRatio`] (Copy).
-    #[must_use]
-    pub fn default_ratio(&self) -> DefaultRatio {
-        self.default_ratio
-    }
-
-    /// Returns the configured new-user gate as a borrowed reference.
-    #[must_use]
-    pub fn new_user_gate(&self) -> &NewUserGateConfig {
-        &self.new_user_gate
-    }
-
-    /// Returns the configured BBS name shown in the menu prompt
-    /// (legacy `cmds.bbsName`, Tier A quickwin A4).
-    #[must_use]
-    pub fn bbs_name(&self) -> &str {
-        &self.bbs_name
-    }
+    pub conferences: SharedConferences,
+    /// Mail-store registry (Slice 39 / 41a).
+    pub mail_stores: SharedMailStores,
+    /// Session policy values (`Copy`).
+    pub session_policy: SessionPolicy,
+    /// Ratio defaults applied to fresh registrations (`Copy`).
+    pub default_ratio: DefaultRatio,
+    /// New-user registration gate configuration.
+    pub new_user_gate: Arc<NewUserGateConfig>,
+    /// BBS name shown in the menu prompt (legacy `cmds.bbsName`,
+    /// Tier A quickwin A4).
+    pub bbs_name: Arc<str>,
 }

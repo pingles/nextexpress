@@ -180,7 +180,7 @@ where
         // *undeleted* message; this matches the legacy `mailStat.lowestKey`
         // except when the true lowest key is a soft-deleted message below
         // it.
-        let lowest = match self.services.mail_stores().lock(base).await {
+        let lowest = match self.services.mail_stores.as_ref().lock(base).await {
             Some(guard) => guard.lowest_undeleted_message(),
             None => return self.write_and_flush(NO_MAIL_BASE_LINE).await,
         };
@@ -205,8 +205,8 @@ where
     ) -> Result<bool, T::Error> {
         match read_mail(
             session,
-            self.services.mail_stores(),
-            self.services.conferences(),
+            self.services.mail_stores.as_ref(),
+            self.services.conferences.as_ref(),
             number,
             SystemTime::now(),
         )

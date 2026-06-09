@@ -213,7 +213,7 @@ where
             return Ok(());
         }
 
-        let outcome = delete_mail(session, self.services.mail_stores(), number).await;
+        let outcome = delete_mail(session, self.services.mail_stores.as_ref(), number).await;
         match outcome {
             DeleteOutcome::NoMailBase => {
                 self.write_and_flush(NO_MAIL_BASE_LINE).await?;
@@ -261,7 +261,7 @@ where
 
         let outcome = move_mail(
             session,
-            self.services.mail_stores(),
+            self.services.mail_stores.as_ref(),
             MoveInput {
                 source_number: number,
                 target_conference: target_conf,
@@ -309,9 +309,9 @@ where
 
         let outcome = edit_mail_header(
             session,
-            self.services.user_repo(),
-            self.services.mail_stores(),
-            self.services.conferences(),
+            self.services.user_repo.as_ref(),
+            self.services.mail_stores.as_ref(),
+            self.services.conferences.as_ref(),
             EditHeaderInput {
                 source_number: number,
                 new_subject,
