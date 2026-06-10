@@ -20,6 +20,7 @@
 
   CONFERENCES
     J <n>    Join conference number <n>
+    JM <n>   Join message base number <n>
     <        Join previous accessible conference
     >        Join next accessible conference
     CF       Edit conference scan flags

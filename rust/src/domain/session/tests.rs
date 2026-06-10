@@ -1571,7 +1571,7 @@ mod conferencing {
         let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
         let mut s = session_at_onboarded_with(user_with_grants(&[1, 2, 3]));
         let outcome = s
-            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .explicit_join_conference(2, None, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
         match outcome {
             ExplicitJoinOutcome::Joined {
@@ -1590,6 +1590,46 @@ mod conferencing {
     }
 
     #[test]
+    fn explicit_join_with_requested_msgbase_attaches_it_and_records_last_joined() {
+        // Tier C C4a (`JM <n>` / `J <a>.<b>`): the join targets a
+        // specific message base — the visit opens there and the
+        // user's auto-rejoin coordinate records the same base
+        // (legacy `joinConf`, `amiexpress/express.e:4998` and
+        // `:5135-5136`).
+        use crate::domain::conference::{Conference, MessageBase};
+        let confs = vec![Conference::new(
+            1,
+            "Multi".to_string(),
+            vec![
+                MessageBase::new(1, 1, "main".to_string()),
+                MessageBase::new(1, 2, "tech".to_string()),
+            ],
+        )
+        .expect("valid")];
+        let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        let outcome = s
+            .explicit_join_conference(1, Some(2), &confs, SystemTime::UNIX_EPOCH)
+            .expect("ok");
+        match outcome {
+            ExplicitJoinOutcome::Joined {
+                conference_number,
+                msgbase_number,
+                ..
+            } => {
+                assert_eq!(conference_number, 1);
+                assert_eq!(msgbase_number, 2);
+            }
+            ExplicitJoinOutcome::Denied => panic!("expected Joined"),
+        }
+        let visit = s.current_visit().expect("open visit");
+        assert_eq!(visit.conference_number(), 1);
+        assert_eq!(visit.msgbase_number(), 2);
+        let last = s.user().expect("user").last_joined().expect("last_joined");
+        assert_eq!(last.conference_number(), 1);
+        assert_eq!(last.msgbase_number(), 2);
+    }
+
+    #[test]
     fn explicit_join_denied_leaves_session_and_visit_unchanged() {
         // Tier C C2: legacy internalCommandJ access-checks the request
         // and stays put (`amiexpress/express.e:25156-25158`) — no
@@ -1599,7 +1639,7 @@ mod conferencing {
         s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
             .expect("rejoin");
         let outcome = s
-            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .explicit_join_conference(2, None, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
         assert_eq!(outcome, ExplicitJoinOutcome::Denied);
         assert_eq!(s.state(), SessionState::Onboarded);
@@ -1615,7 +1655,7 @@ mod conferencing {
         let confs = vec![make_conf(1)];
         let mut s = session_at_onboarded_with(alice());
         let outcome = s
-            .explicit_join_conference(1, &confs, SystemTime::UNIX_EPOCH)
+            .explicit_join_conference(1, None, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
         assert_eq!(outcome, ExplicitJoinOutcome::Denied);
         assert_eq!(s.state(), SessionState::Onboarded);
@@ -1627,7 +1667,7 @@ mod conferencing {
         let confs = vec![make_conf(1)];
         let mut s = new_session(LogonChannel::Remote);
         let err = s
-            .explicit_join_conference(1, &confs, SystemTime::UNIX_EPOCH)
+            .explicit_join_conference(1, None, &confs, SystemTime::UNIX_EPOCH)
             .expect_err("wrong state");
         assert_eq!(err, AutoRejoinError::WrongState(SessionState::Connecting));
     }
@@ -1638,7 +1678,7 @@ mod conferencing {
         let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
         s.enter_menu(SystemTime::UNIX_EPOCH).expect("enter menu");
         assert_eq!(s.state(), SessionState::Menu);
-        s.explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+        s.explicit_join_conference(2, None, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
         assert_eq!(s.current_visit().unwrap().conference_number(), 2);
     }
@@ -1649,7 +1689,7 @@ mod conferencing {
         let mut s = session_at_onboarded_with(user_with_grants(&[1]));
         s.set_quick_logon(true);
         let outcome = s
-            .explicit_join_conference(1, &confs, SystemTime::UNIX_EPOCH)
+            .explicit_join_conference(1, None, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
         match outcome {
             ExplicitJoinOutcome::Joined { show_bulletin, .. } => assert!(!show_bulletin),
@@ -1812,7 +1852,7 @@ mod conferencing {
         ];
         let mut s = session_at_onboarded_with(user_with_grants(&[1, 2]));
         let outcome = s
-            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .explicit_join_conference(2, None, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
         match outcome {
             ExplicitJoinOutcome::Joined {
@@ -1860,7 +1900,7 @@ mod conferencing {
         s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
             .unwrap();
         let outcome = s
-            .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
+            .explicit_join_conference(2, None, &confs, SystemTime::UNIX_EPOCH)
             .unwrap();
         match outcome {
             ExplicitJoinOutcome::Joined {

@@ -144,7 +144,10 @@ pub enum ExplicitJoinResolution<'a> {
     Granted {
         /// Conference the session attaches to.
         conference: &'a Conference,
-        /// Primary (number 1) message base within `conference`.
+        /// Message base within `conference` the session attaches to:
+        /// the requested base when it exists, else the conference's
+        /// primary base (Tier C C4a; the legacy `joinConf` reset,
+        /// `amiexpress/express.e:4995`).
         msgbase: &'a MessageBase,
     },
     /// The requested conference is not accessible to the user, or —
@@ -291,8 +294,9 @@ pub fn resolve_auto_rejoin<'a>(user: &User, conferences: &'a [Conference]) -> Jo
     }
 }
 
-/// Resolves the explicit-join path of `J <num>` (Tier C C2, legacy
-/// `internalCommandJ`, `amiexpress/express.e:25156-25158`).
+/// Resolves the explicit-join path of `J <num>` / `JM <num>` (Tier C
+/// C2 / C4a, legacy `internalCommandJ` / `internalCommandJM`,
+/// `amiexpress/express.e:25156-25158` / `:25236`).
 ///
 /// The requested conference number is looked up exactly: a granted
 /// membership yields [`ExplicitJoinResolution::Granted`]; anything
@@ -301,9 +305,19 @@ pub fn resolve_auto_rejoin<'a>(user: &User, conferences: &'a [Conference]) -> Jo
 /// caller stays in its current conference. Explicit join never falls
 /// through to another conference and never logs the user off (they
 /// already hold a conference).
+///
+/// `requested_msgbase_number` targets a specific message base of the
+/// conference (`None` means unspecified — the primary base). A
+/// requested base that does not exist on the conference defensively
+/// resets to the primary base, mirroring the legacy `joinConf` clamp
+/// `IF msgBaseNum<1 OR >getConfMsgBaseCount(conf) THEN msgBaseNum:=1`
+/// (`amiexpress/express.e:4995`) — the range checks that decide
+/// between joining and prompting are the caller's concern, exactly as
+/// in the legacy split between `internalCommandJ`/`JM` and `joinConf`.
 #[must_use]
 pub fn resolve_explicit_join<'a>(
     target_conference_number: u32,
+    requested_msgbase_number: Option<u32>,
     user: &User,
     conferences: &'a [Conference],
 ) -> ExplicitJoinResolution<'a> {
@@ -312,9 +326,12 @@ pub fn resolve_explicit_join<'a>(
         .find(|c| c.number() == target_conference_number)
         .filter(|c| user.has_membership(c))
         .map_or(ExplicitJoinResolution::Denied, |conference| {
+            let msgbase = requested_msgbase_number
+                .and_then(|n| conference.find_msgbase(n))
+                .unwrap_or_else(|| primary_msgbase_of(conference));
             ExplicitJoinResolution::Granted {
                 conference,
-                msgbase: primary_msgbase_of(conference),
+                msgbase,
             }
         })
 }
@@ -559,7 +576,7 @@ mod tests {
     fn explicit_join_grants_the_exact_target_when_user_has_access() {
         let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
         let user = make_user(&[(1, true), (2, true)], None);
-        let outcome = resolve_explicit_join(2, &user, &confs);
+        let outcome = resolve_explicit_join(2, None, &user, &confs);
         match outcome {
             ExplicitJoinResolution::Granted {
                 conference,
@@ -572,6 +589,69 @@ mod tests {
         }
     }
 
+    fn assert_granted(outcome: &ExplicitJoinResolution<'_>, expected_conf: u32, expected_mb: u32) {
+        match outcome {
+            ExplicitJoinResolution::Granted {
+                conference,
+                msgbase,
+            } => {
+                assert_eq!(conference.number(), expected_conf);
+                assert_eq!(msgbase.number(), expected_mb);
+            }
+            ExplicitJoinResolution::Denied => panic!("expected Granted, got Denied"),
+        }
+    }
+
+    #[test]
+    fn explicit_join_resolves_the_requested_msgbase_when_it_exists() {
+        // Tier C C4a: `JM <n>` / `J <a>.<b>` target a specific base
+        // of the conference (`joinConf(currentConf,newMsgBase,...)`,
+        // `amiexpress/express.e:25236`).
+        let confs = vec![make_conf_with_bases(1, vec![(1, "main"), (2, "tech")])];
+        let user = make_user(&[(1, true)], None);
+        let outcome = resolve_explicit_join(1, Some(2), &user, &confs);
+        assert_granted(&outcome, 1, 2);
+    }
+
+    #[test]
+    fn explicit_join_out_of_range_msgbase_resets_to_the_primary_base() {
+        // Defensive rule from legacy `joinConf`
+        // (`amiexpress/express.e:4995`): an out-of-range message-base
+        // number reaching the join resets to the primary base — never
+        // a denial, never a panic.
+        let confs = vec![make_conf_with_bases(1, vec![(1, "main"), (2, "tech")])];
+        let user = make_user(&[(1, true)], None);
+        for out_of_range in [0, 3, 99] {
+            let outcome = resolve_explicit_join(1, Some(out_of_range), &user, &confs);
+            assert_granted(&outcome, 1, 1);
+        }
+    }
+
+    #[test]
+    fn explicit_join_msgbase_reset_lands_on_the_declared_primary() {
+        // The reset goes to the *primary* base, which for legacy data
+        // numbering from something other than 1 is the first declared
+        // base (the `primary_msgbase_of` fallback).
+        let confs = vec![make_conf_with_bases(
+            1,
+            vec![(7, "weird"), (8, "even-weirder")],
+        )];
+        let user = make_user(&[(1, true)], None);
+        let outcome = resolve_explicit_join(1, Some(99), &user, &confs);
+        assert_granted(&outcome, 1, 7);
+    }
+
+    #[test]
+    fn explicit_join_without_msgbase_request_lands_on_the_primary_base() {
+        // `None` is the "unspecified" marker: `J <n>`'s
+        // `DEF newMsgBase=1` default (`amiexpress/express.e:25116`)
+        // — the conference's primary base.
+        let confs = vec![make_conf_with_bases(1, vec![(1, "main"), (2, "tech")])];
+        let user = make_user(&[(1, true)], None);
+        let outcome = resolve_explicit_join(1, None, &user, &confs);
+        assert_granted(&outcome, 1, 1);
+    }
+
     #[test]
     fn explicit_join_denies_an_inaccessible_target_without_falling_through() {
         // Legacy internalCommandJ access-checks the request and stays
@@ -580,7 +660,7 @@ mod tests {
         let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
         let user = make_user(&[(1, true)], None);
         assert_eq!(
-            resolve_explicit_join(3, &user, &confs),
+            resolve_explicit_join(3, None, &user, &confs),
             ExplicitJoinResolution::Denied
         );
     }
@@ -593,7 +673,7 @@ mod tests {
         let confs = vec![make_conf(1)];
         let user = make_user(&[(1, true)], None);
         assert_eq!(
-            resolve_explicit_join(99, &user, &confs),
+            resolve_explicit_join(99, None, &user, &confs),
             ExplicitJoinResolution::Denied
         );
     }
@@ -605,7 +685,7 @@ mod tests {
         let confs = vec![make_conf(1), make_conf(2)];
         let user = make_user(&[], None);
         assert_eq!(
-            resolve_explicit_join(1, &user, &confs),
+            resolve_explicit_join(1, None, &user, &confs),
             ExplicitJoinResolution::Denied
         );
     }
@@ -617,7 +697,7 @@ mod tests {
         let confs = vec![make_conf(1), make_conf(2)];
         let user = make_user(&[(1, true), (2, false)], None);
         assert_eq!(
-            resolve_explicit_join(2, &user, &confs),
+            resolve_explicit_join(2, None, &user, &confs),
             ExplicitJoinResolution::Denied
         );
     }

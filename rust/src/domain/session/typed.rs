@@ -356,20 +356,30 @@ impl MenuSession {
     }
 
     /// Resolves the explicit-join path of
-    /// `conferences.allium:JoinConference` (Slice 32 / Tier C C2)
-    /// for a `J` / `J <num>` command typed at the menu. A denied
-    /// request returns the session unchanged — explicit join never
-    /// logs the user off (`amiexpress/express.e:25156-25158`).
+    /// `conferences.allium:JoinConference` (Slice 32 / Tier C C2 /
+    /// C4a) for a `J <num>` — or message-base-targeted `J <a>.<b>` /
+    /// `JM <n>`, where `requested_msgbase_number` is `Some(_)` —
+    /// command typed at the menu (`None` lands on the conference's
+    /// primary base; an unknown base defensively resets to it,
+    /// `amiexpress/express.e:4995`). A denied request returns the
+    /// session unchanged — explicit join never logs the user off
+    /// (`amiexpress/express.e:25156-25158`).
     #[must_use]
     pub(crate) fn explicit_join_conference(
         mut self,
         target_conference_number: u32,
+        requested_msgbase_number: Option<u32>,
         conferences: &[Conference],
         now: SystemTime,
     ) -> ExplicitJoinTransition {
         let outcome = self
             .session
-            .explicit_join_conference(target_conference_number, conferences, now)
+            .explicit_join_conference(
+                target_conference_number,
+                requested_msgbase_number,
+                conferences,
+                now,
+            )
             .expect("Menu -> explicit_join is total per spec requires-clause");
         match outcome {
             ExplicitJoinOutcome::Joined {

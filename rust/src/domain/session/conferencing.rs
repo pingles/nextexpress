@@ -120,9 +120,10 @@ impl Session {
 
     /// Resolves the explicit-join path of
     /// `conferences.allium:JoinConference`
-    /// (`reason = explicit_join`, Slice 32 / Tier C C2).
+    /// (`reason = explicit_join`, Slice 32 / Tier C C2 / C4a).
     ///
-    /// Models the user typing `J <number>` from the menu. When the
+    /// Models the user typing `J <number>` (or a message-base-
+    /// targeted `J <a>.<b>` / `JM <n>`) from the menu. When the
     /// user has a granted membership for `target_conference_number`
     /// the session attaches there directly. Otherwise the request is
     /// denied and the session is left untouched — still in its
@@ -132,6 +133,14 @@ impl Session {
     /// "You do not have access to the requested conference" notice.
     /// Explicit join never logs the user off.
     ///
+    /// `requested_msgbase_number` targets a specific message base
+    /// (`None` = the primary base); a base the conference does not
+    /// hold defensively resets to the primary base, the legacy
+    /// `joinConf` clamp (`amiexpress/express.e:4995`). The user's
+    /// `last_joined` and the new visit both record the resolved base,
+    /// and read pointers stay per-base
+    /// (`ConferenceMembership.pointers`).
+    ///
     /// # Errors
     /// Returns [`AutoRejoinError::WrongState`] when the session is
     /// not in [`SessionState::Onboarded`] or [`SessionState::Menu`],
@@ -139,6 +148,7 @@ impl Session {
     pub fn explicit_join_conference(
         &mut self,
         target_conference_number: u32,
+        requested_msgbase_number: Option<u32>,
         conferences: &[Conference],
         now: SystemTime,
     ) -> Result<ExplicitJoinOutcome, AutoRejoinError> {
@@ -147,7 +157,12 @@ impl Session {
         }
         let user = self.phase.user_mut().ok_or(AutoRejoinError::UserMissing)?;
 
-        let resolution = resolve_explicit_join(target_conference_number, user, conferences);
+        let resolution = resolve_explicit_join(
+            target_conference_number,
+            requested_msgbase_number,
+            user,
+            conferences,
+        );
         match resolution {
             ExplicitJoinResolution::Denied => Ok(ExplicitJoinOutcome::Denied),
             ExplicitJoinResolution::Granted {

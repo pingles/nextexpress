@@ -248,6 +248,20 @@ pub(crate) fn render_conference_number_prompt(highest_conference_number: u32) ->
     format!("Conference Number (1-{highest_conference_number}): ").into_bytes()
 }
 
+/// Sent when `JM` (any non-dotted form, argument or not) is used in a
+/// conference holding a single message base. The legacy probes the
+/// `NMSGBASES` tooltype and fails before any range logic when it is
+/// absent — the normal single-base configuration
+/// (`amiexpress/express.e:25211-25215`); the literal is
+/// `'\b\nThis conference does not contain multiple message bases\b\n\b\n'`
+/// (`amiexpress/express.e:25213`, Amiga `\b\n` becomes telnet `\r\n`).
+/// `NextExpress` equates "tooltype absent" with the conference holding
+/// exactly one base; the legacy nuance of an explicitly-set
+/// `NMSGBASES=1` (which prompts `(1-1)` instead) is deliberately not
+/// modelled — recorded in `slices/cmds-conf-nav.md`.
+pub(crate) const SINGLE_MSGBASE_CONFERENCE_LINE: &[u8] =
+    b"\r\nThis conference does not contain multiple message bases\r\n\r\n";
+
 /// Sent when the `MV` sub-command's target cannot be parsed as a
 /// conference number.
 pub(crate) const INVALID_CONFERENCE_NUMBER_LINE: &[u8] = b"\r\nInvalid conference number.\r\n";

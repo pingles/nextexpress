@@ -202,6 +202,14 @@ where
                 // (`internalCommandGT`, `amiexpress/express.e:24548-24564`).
                 session = self.handle_next_conference(session).await?;
             }
+            MenuCommand::JoinMsgBase(arg) => {
+                // Tier C C4a (`JM`): join a message base of the current
+                // conference (`internalCommandJM`,
+                // `amiexpress/express.e:25185-25237`). Single-base
+                // conferences fail with the legacy notice; an in-range
+                // argument runs the full join sequence.
+                session = self.handle_join_msgbase_command(session, arg).await?;
+            }
             MenuCommand::Read(arg) => match arg {
                 NumberArg::Number(n) => self.handle_read_mail(&mut session, n).await?,
                 // Bare `R` opens the sub-prompt at the read-resume point

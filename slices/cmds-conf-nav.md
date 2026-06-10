@@ -93,8 +93,50 @@ slice extends `<` / `>` for free via the shared join machinery.
 
 ## Slice C4a — `JM <n>` (explicit join message base)
 
+**Status: Done (2026-06-10), pinned against the live AmiExpress 5.6.0
+reference (`comparison/evidence-tierC/live-observations.md`) and the
+raw source (`comparison/evidence-tierC/legacy-JM.md`).**
+Decisions: `MenuCommand::JoinMsgBase(MsgBaseArg)` carries the `Val` of
+the first token only (extra tokens ignored, `express.e:25199-25208`);
+a `.`-dotted first token delegates the raw params to the `J` logic at
+parse time (`express.e:25203-25205` — observed: `JM 1.1` ≡ `J 1.1`).
+The dotted / two-token `J` forms now join the requested base
+(replacing C2's interim conference-prompt routing): `Val` of the
+first token is the conference (stopping at the `.`), the text after
+the first `.` — else the second token — is the base (`J 1 2 3` =
+conf 1 base 2); the base request survives the conference prompt, and
+the access check on the resolved conference precedes the base range
+check (`express.e:25156` vs `:25168`). Default base when unspecified:
+the conference's primary base. The domain explicit-join transition
+takes the requested base and defensively resets a base the conference
+does not hold to the PRIMARY base (the legacy `joinConf` clamp,
+`express.e:4995`) — range checks that decide between joining and
+prompting stay in the handlers, as in the legacy split. Multi-base
+join announcements append ` [<base>]` (`express.e:5077-5084`);
+`JM <current>` re-joins in full (no "already there" check); read
+pointers stay per-msgbase (`ConferenceMembership.pointers`).
+
+**Single-base gate**: when the current conference has exactly one
+message base, every non-dotted `JM` form (no-arg, `JM 1`, `JM 9`,
+`JM abc`) writes exactly
+`\r\nThis conference does not contain multiple message bases\r\n\r\n`
+and stays — no join, no prompt (`express.e:25211-25215`). NextExpress
+equates the legacy "`NMSGBASES` tooltype absent" with
+`bases.len() == 1`; the legacy nuance of an explicitly-set
+`NMSGBASES=1` producing a `(1-1)` prompt instead is **deliberately
+not modelled** (NextExpress has no per-conference tooltype layer; the
+base count in `conference.toml` is the single source of truth).
+
+**Interim until C4b** (TODO markers in `menu_flow/join.rs`): `JM`
+with a missing/out-of-range argument on a multi-base conference, and
+`J` with an explicit out-of-range base (`J 1 2` on a single-base
+conference — the live reference prompts even there), eventually open
+the `Message Base Number (1-N): ` prompt (`express.e:25169-25180` /
+`:25220-25230`); until C4b they return to the menu silently — no
+invented messages, no join.
+
 - **In Scope**
-  - `MenuCommand::JoinMsgBase(NumberArg)` for the numeric-arg form
+  - `MenuCommand::JoinMsgBase(MsgBaseArg)` for the numeric-arg form
     mirrors `internalCommandJM` (`amiexpress/express.e:25185`). A
     `.`-dotted arg (`JM 2.3`) delegates to `J` per the legacy.
 - **Out of Scope**

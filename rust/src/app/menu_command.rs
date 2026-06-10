@@ -64,6 +64,13 @@ pub(crate) enum MenuCommand {
     /// `CF`: edit the caller's per-conference scan flags (Tier C C5).
     /// Mirrors `internalCommandCF()` at `amiexpress/express.e:24672`.
     ConferenceFlags,
+    /// `JM` / `JM <number>`: join a message base of the current
+    /// conference (Tier C C4a). Mirrors `internalCommandJM()` at
+    /// `amiexpress/express.e:25185-25237`. A `.`-dotted first token
+    /// never reaches this variant — the legacy hands the raw params
+    /// to `internalCommandJ` (`:25203-25205`), which the parser
+    /// mirrors by producing [`MenuCommand::Join`] directly.
+    JoinMsgBase(MsgBaseArg),
     /// `<`: join the nearest lower-numbered accessible conference
     /// (Tier C C3). Mirrors `internalCommandLT()` at
     /// `amiexpress/express.e:24529-24546`. The legacy tokenizer keeps
@@ -112,13 +119,34 @@ pub(crate) enum JoinArg {
     /// prompt branch.
     Missing,
     /// `J <a>.<b>` or `J <a> <b>` — the conference + message-base
-    /// argument forms (`amiexpress/express.e:25132-25135`).
-    ///
-    /// TODO(C4a): slice C4a completes these by parsing the
-    /// conference and message-base values and joining the requested
-    /// base. Interim for slice C2 they are routed into the
-    /// conference-number prompt rather than joining silently.
-    WithMsgBase,
+    /// argument forms (`amiexpress/express.e:25130-25136`): `Val` of
+    /// the first token is the conference (it stops at the `.`), and
+    /// the text after the first `.` — or, failing that, the second
+    /// whitespace token — `Val`s to the message base. Both values
+    /// carry raw `Val` results; range checks happen at dispatch.
+    WithMsgBase {
+        /// Requested conference number (`amiexpress/express.e:25131`).
+        conference: i64,
+        /// Requested message-base number within that conference
+        /// (`amiexpress/express.e:25133` / `:25135`).
+        msgbase: i64,
+    },
+}
+
+/// Parsed argument shape of the `JM` command, using legacy `Val`
+/// semantics (`amiexpress/express.e:25199-25208`): only the first
+/// whitespace token is read; further tokens are ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MsgBaseArg {
+    /// `JM <token>` — the legacy `Val(param)` of the first token
+    /// (`amiexpress/express.e:25208`). May be zero (non-numeric
+    /// token) or negative; anything outside the current conference's
+    /// base range is handled at dispatch
+    /// (`amiexpress/express.e:25220`).
+    Base(i64),
+    /// Bare `JM` — the legacy `newMsgBase := -1` default
+    /// (`amiexpress/express.e:25199`).
+    Missing,
 }
 
 /// Parses the numeric prefix of `token` with the semantics of the
@@ -211,6 +239,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if let Some(arg) = parse_join_command(trimmed) {
         return MenuCommand::Join(arg);
     }
+    if let Some(command) = parse_join_msgbase_command(trimmed) {
+        return command;
+    }
     if let Some(arg) = parse_number_command(trimmed, "R") {
         return MenuCommand::Read(arg);
     }
@@ -242,10 +273,54 @@ fn parse_join_command(line: &str) -> Option<JoinArg> {
     let Some(first) = tokens.next() else {
         return Some(JoinArg::Missing);
     };
-    if first.contains('.') || tokens.next().is_some() {
-        return Some(JoinArg::WithMsgBase);
+    Some(parse_join_params(first, tokens))
+}
+
+/// Parses `J`'s parameter tokens (`amiexpress/express.e:25130-25136`)
+/// into a [`JoinArg`]: `Val` of the first token is the conference
+/// (stopping at any `.`); the text after the first `.` — else a
+/// second token — `Val`s to the message base; further tokens are
+/// ignored. Shared with `JM`'s dotted-argument delegation, which
+/// hands its raw params to the same logic
+/// (`amiexpress/express.e:25203-25205`).
+fn parse_join_params<'a>(first: &str, mut rest: impl Iterator<Item = &'a str>) -> JoinArg {
+    let conference = val_prefix(first);
+    if let Some(dot) = first.find('.') {
+        return JoinArg::WithMsgBase {
+            conference,
+            msgbase: val_prefix(&first[dot + 1..]),
+        };
     }
-    Some(JoinArg::Conference(val_prefix(first)))
+    if let Some(second) = rest.next() {
+        return JoinArg::WithMsgBase {
+            conference,
+            msgbase: val_prefix(second),
+        };
+    }
+    JoinArg::Conference(conference)
+}
+
+/// Parses the `JM` command line (`internalCommandJM` parameter
+/// handling, `amiexpress/express.e:25197-25208`). A `.` anywhere in
+/// the first token delegates the raw params to the `J` logic
+/// (`:25203-25205`), yielding [`MenuCommand::Join`]; otherwise the
+/// `Val` of the first token is the message-base request and extra
+/// tokens are ignored.
+fn parse_join_msgbase_command(line: &str) -> Option<MenuCommand> {
+    let mut tokens = line.split_ascii_whitespace();
+    let head = tokens.next()?;
+    if !head.eq_ignore_ascii_case("JM") {
+        return None;
+    }
+    let Some(first) = tokens.next() else {
+        return Some(MenuCommand::JoinMsgBase(MsgBaseArg::Missing));
+    };
+    if first.contains('.') {
+        return Some(MenuCommand::Join(parse_join_params(first, tokens)));
+    }
+    Some(MenuCommand::JoinMsgBase(MsgBaseArg::Base(val_prefix(
+        first,
+    ))))
 }
 
 fn parse_number_command(line: &str, command: &str) -> Option<NumberArg> {
@@ -326,23 +401,137 @@ mod tests {
     }
 
     #[test]
-    fn join_msgbase_argument_forms_parse_to_the_msgbase_shape() {
-        // Dotted (`J 1.1`) and two-token (`J 1 2`) forms carry a
-        // message-base request (`amiexpress/express.e:25132-25135`).
-        // TODO(C4a): completed by slice C4a; interim they route into
-        // the conference prompt.
+    fn join_msgbase_argument_forms_carry_conference_and_msgbase() {
+        // Tier C C4a: the dotted (`J 1.1`) and two-token (`J 1 2`)
+        // forms carry a message-base request
+        // (`amiexpress/express.e:25130-25136`) — `Val` of the first
+        // token is the conference (it stops at the `.`), the text
+        // after the first `.` (or a second token) `Val`s to the
+        // message base.
         assert_eq!(
             parse_menu_command("J 1.1"),
-            MenuCommand::Join(JoinArg::WithMsgBase)
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 1,
+                msgbase: 1,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("J 2.1"),
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 2,
+                msgbase: 1,
+            })
         );
         assert_eq!(
             parse_menu_command("J 1 2"),
-            MenuCommand::Join(JoinArg::WithMsgBase)
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 1,
+                msgbase: 2,
+            })
         );
-        // Legacy parseParams ignores tokens past the second.
+        // Legacy parseParams reads only items 0 and 1 here: `J 1 2 3`
+        // is conference 1, message base 2; the `3` is discarded.
         assert_eq!(
             parse_menu_command("J 1 2 3"),
-            MenuCommand::Join(JoinArg::WithMsgBase)
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 1,
+                msgbase: 2,
+            })
+        );
+        // The dot is found first (`InStr`, `amiexpress/express.e:25132`),
+        // so the text after it wins over a second token, and only the
+        // text up to the *next* non-digit feeds `Val`: `J 1.2.3` is
+        // conference 1, message base 2.
+        assert_eq!(
+            parse_menu_command("J 1.2.3 9"),
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 1,
+                msgbase: 2,
+            })
+        );
+        // `J 2.` → `Val('') = 0`: an explicit but out-of-range base.
+        assert_eq!(
+            parse_menu_command("J 2."),
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 2,
+                msgbase: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_jm_command_argument_forms() {
+        // Tier C C4a: `JM` takes the `Val` of its first token as the
+        // message-base number (`amiexpress/express.e:25199-25208`);
+        // extra tokens are ignored (only item 0 is read), and a bare
+        // `JM` is the legacy `newMsgBase := -1` missing marker.
+        assert_eq!(
+            parse_menu_command("JM 2"),
+            MenuCommand::JoinMsgBase(MsgBaseArg::Base(2))
+        );
+        assert_eq!(
+            parse_menu_command("jm 2"),
+            MenuCommand::JoinMsgBase(MsgBaseArg::Base(2))
+        );
+        assert_eq!(
+            parse_menu_command("JM"),
+            MenuCommand::JoinMsgBase(MsgBaseArg::Missing)
+        );
+        // Non-numeric `Val`s to 0 (out of range, never rejected).
+        assert_eq!(
+            parse_menu_command("JM abc"),
+            MenuCommand::JoinMsgBase(MsgBaseArg::Base(0))
+        );
+        // `Val` prefix semantics, as for `J`.
+        assert_eq!(
+            parse_menu_command("JM 2abc"),
+            MenuCommand::JoinMsgBase(MsgBaseArg::Base(2))
+        );
+        // Tokens past the first are ignored: `JM 1 2` is base 1.
+        assert_eq!(
+            parse_menu_command("JM 1 2"),
+            MenuCommand::JoinMsgBase(MsgBaseArg::Base(1))
+        );
+    }
+
+    #[test]
+    fn jm_dotted_argument_delegates_to_the_j_command() {
+        // A `.` anywhere in JM's first token hands the *raw params*
+        // to `internalCommandJ` (`amiexpress/express.e:25203-25205`)
+        // — observed live: `JM 1.1` joins conference 1, identical to
+        // `J 1.1`. The parser routes the dotted form straight to the
+        // `Join` command shape.
+        assert_eq!(
+            parse_menu_command("JM 1.1"),
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 1,
+                msgbase: 1,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("jm 1.1"),
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 1,
+                msgbase: 1,
+            })
+        );
+        // J re-parses the raw params, so its two-token rule applies
+        // after delegation too: `JM 1.1 5` is conference 1, base 1
+        // (the dot wins, `amiexpress/express.e:25132-25135`).
+        assert_eq!(
+            parse_menu_command("JM 1.1 5"),
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 1,
+                msgbase: 1,
+            })
+        );
+        // `JM .5` → J parses `.5`: conference `Val('.5') = 0`, base 5.
+        assert_eq!(
+            parse_menu_command("JM .5"),
+            MenuCommand::Join(JoinArg::WithMsgBase {
+                conference: 0,
+                msgbase: 5,
+            })
         );
     }
 
@@ -788,6 +977,7 @@ mod tests {
             MenuCommand::TopicHelp(_) => Some("^"),
             MenuCommand::AnsiToggle => Some("M"),
             MenuCommand::ConferenceFlags => Some("CF"),
+            MenuCommand::JoinMsgBase(_) => Some("JM"),
             MenuCommand::PrevConference => Some("<"),
             MenuCommand::NextConference => Some(">"),
             MenuCommand::Unknown => None,
@@ -815,6 +1005,7 @@ mod tests {
             MenuCommand::TopicHelp(String::new()),
             MenuCommand::AnsiToggle,
             MenuCommand::ConferenceFlags,
+            MenuCommand::JoinMsgBase(MsgBaseArg::Missing),
             MenuCommand::PrevConference,
             MenuCommand::NextConference,
             MenuCommand::Unknown,
