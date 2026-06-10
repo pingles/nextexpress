@@ -105,7 +105,7 @@ flowchart LR
 
     AppRun --> Runtime["app::runtime::Runtime"]
     Runtime --> NodePool["NodePool"]
-    Runtime --> Services["AppServices"]
+    Runtime --> Services["AppServices\n(plain pub-field struct)"]
 
     Services --> Sharedhasher["SharedHasher"]
     Services --> SharedRepo["SharedUserRepo"]
@@ -113,33 +113,37 @@ flowchart LR
     Services --> SharedScreens
     Services --> SharedConfs["SharedConferences\n(Arc&lt;Vec&lt;Conference&gt;&gt;)"]
     Services --> SharedMail["SharedMailStores"]
-    Services --> Policy["SessionPolicy\nDefaultRatio\nNewUserGateConfig"]
+    Services --> Policy["SessionPolicy / DefaultRatio\nNewUserGateConfig / bbs_name"]
 
     AppRun --> Telnet["TelnetListener::bind"]
-    Telnet --> Terminal["TelnetTerminal\n(impls app::Terminal)"]
-    Terminal --> Colour["ColourTerminal\n(strips ANSI when M-off)"]
-    Telnet --> Driver["SessionDriver\n(per connection)"]
+    Telnet --> Colour["ColourTerminal\n(decorator: strips ANSI\nwhen M-off)"]
+    Colour --> Terminal["TelnetTerminal"]
+    Telnet --> Driver["SessionDriver\n(per connection, drives the\nColourTerminal)"]
 
     Driver --> Start["start (banner + copyright)"]
     Driver --> Login["LoginFlow"]
     Driver --> Registration["RegistrationFlow"]
     Driver --> AutoRejoin["auto-rejoin resolution\n(inline in run; + logon conference scan, L1)"]
     Driver --> Menu["MenuFlow"]
-    Driver --> Finalise["session_flow::finalise_logoff"]
+    Driver --> Finalise["session_flow::enter_menu /\nfinalise_logoff"]
 
     Login --> Typed["domain::session::typed\n(phase wrappers)"]
     Registration --> Typed
     Menu --> Typed
-    Login --> SF["session_flow\n(use cases over ports)"]
+    AutoRejoin --> Typed
+    Login --> SF["session_flow\n(typed-only use cases over ports)"]
     Registration --> SF
-    AutoRejoin --> SF
     Driver --> Presenter["session_presenter\n+ wire_text"]
 
-    Menu --> Parse["menu_command::parse"]
-    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, Scan, Post,\nCommentToSysop, Reply, Forward,\nKill, Move, EditHeader,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle, ShowMenu,\nTopicHelp, AnsiToggle, ConferenceFlags, Unknown}"]
+    Menu --> Parse["menu_command::parse_menu_command"]
+    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, ScanAllMail,\nPost, CommentToSysop,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle,\nShowMenu, TopicHelp, AnsiToggle,\nConferenceFlags, Unknown}"]
     Menu --> MenuFlowHandlers["menu_flow/*\n(one module per command:\nterminal-free core + handler)"]
 
+    MenuFlowHandlers --> ReadSub["read_subprompt loop\n(legacy readMSG: CR/A/R/F/\nD/M/EH/L/Q options)"]
+    MenuFlowHandlers --> BaseHelpers["menu_flow shared helpers\n(lock_current_base,\nallowed_addressing_for)"]
+    BaseHelpers --> MailRegistryPort
     MenuFlowHandlers --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment)"]
+    ReadSub --> Rules
 
     Rules --> Mail["domain::Mail"]
     Rules --> Pointers["domain::ReadPointers"]
@@ -155,6 +159,7 @@ flowchart LR
     MailRegistry -.implements.-> MailRegistryPort["MailStores\n(app port)"]
     FileMailStore -.implements.-> MailPort
     Terminal -.implements.-> TermPort["Terminal\n(app port)"]
+    Colour -.implements.-> TermPort
 ```
 
 ### Phase-typed session
