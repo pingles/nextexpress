@@ -35,6 +35,8 @@ Raw transcripts (every block has RENDER + Python-repr byte forms):
 | `comparison/transcripts/ae_tierd_aquascan3.txt` | **Cleanest AquaScan evidence** — surgical pass, per-prompt answer queues, 10/12 scenarios clean, 2 self-recovered |
 | `comparison/transcripts/ae_tierd_stock.txt` | Stock internal F first pass — F1 block is the canonical raw-stream capture; everything after bounced off the unanticipated `(Pause)` prompt |
 | `comparison/transcripts/ae_tierd_stock2.txt` | Stock internal corrected pass — T1–T14 captured (some with recovery noise); T15 onward died in internal `N`'s looping date prompt |
+| `comparison/transcripts/ae_tierd_aquascan4.txt` | Recapture of the six unverified pager corners (U1–U7), all pinned — three corrected the design's provisionals |
+| `comparison/transcripts/ae_tierd_aquascan5.txt` | `F A` across an emptied Dir1 (V1) + `F 1` on the empty dir (V2); Dir1 restored from fixtures afterwards |
 
 ## The headline discovery: door icons shadow the internal commands
 
@@ -119,16 +121,31 @@ Each parseable DIR row is re-rendered:
 
 - `Y` (and unrecognised keys) continue. `Q` echoes `Quit` and exits to
   the menu (two blank lines, then the menu prompt).
+- **`n` is a buffered prefix, not a stop verb** (aquascan4.txt U1 +
+  aquascan3.txt S2 — mid-list and post-End behave identically): the
+  door echoes `n` and waits, because `n` is ambiguous between
+  `N` (= Quit, per the in-pager help) and `ns`; the next key emits
+  `\x08 \x08` (erasing the n) and then runs its own verb.
 - `F` erases the prompt line and opens a line-read
   `\x1b[36mFile name(s) to flag:\x1b[0m ` — after the filename + CR it
   erases and returns **straight to `More?` with no confirmation**
-  (flagging is silent).
+  (flagging is silent). `R` is the same with the distinct prompt
+  `File number(s) to flag:`.
 - `ns` opens `\x1b[36mNon-stop scrolling! Are you sure \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m)\x1b[36m? ` —
-  `Y` streams the rest without pausing.
-- At the **post-`End of File List`** `More?`, `n` is rejected
-  (backspaced out: `\x08 \x08`) and `Q` exits. Mid-list `n` semantics
-  were not isolated cleanly (assumed stop-listing; verify when the Rust
-  pager lands).
+  `Y` streams the rest without pausing; declining with `n` (unechoed)
+  clears and redraws `More?`, paged mode continuing (aquascan4.txt U3).
+- `?` shows the **in-pager pause help** (aquascan4.txt U2), not the
+  `F ?` screen: `\x0c\r\n` + `These are the commands that can be used
+  at the pause prompt:` + a verb table revealing the full surface —
+  `(Enter),(Y),(Space)` continue, `(C)` clear+continue,
+  `(DownArrow),(3)` page down, `(UpArrow),(9)` page up, `(7)` start,
+  `(5)` redraw, `(NS)` non-stop, `(?)` help, `(F)` flag by name,
+  `(R),(#)` flag by number, `(K)` skip dir, `(L)` reload dir,
+  `(N),(Q)` Quit, `(Ctrl-C)` quit anytime, `(D)` quit and download,
+  `(X)` mark fake file, `(V)` view a file, `(O)` who online,
+  `(Z)` zippy search, `(A)` alter file flags — then a
+  `\x1b[0m~SP|\x0c\x1b[0m\r\n` marker and a full redraw of the current
+  page from its first line, ending back at `More?`.
 
 ### Bare `F` — AquaScan's own directories prompt
 
@@ -138,9 +155,24 @@ Each parseable DIR row is re-rendered:
 
 Line-read (needs CR). Enter alone aborts silently to the menu. Invalid
 input (e.g. a stray `F 1` line) → `Error in input!` and exit to menu.
+`A`/`U`/`H` answers behave exactly like the argument spans
+(aquascan4.txt U5–U7; `U` → `Scanning dir 2 from top... Ok!`,
+confirming upload = highest dir via the prompt path too).
 Note the differences from the stock prompt: capital `N` in `None`,
-space before `?`, no `(Enter)=none? ` parenthesis styling differences —
-see the diff table.
+space before `?` — see the diff table.
+
+**Junk arguments at the menu** (`F XYZ`, aquascan4.txt U4) do NOT take
+the `Error in input!` path: they emit the **help-banner variant** (the
+`Copyright © 1994 Aquarius` banner, no form-feed) followed by
+`Argument error! Type 'f ?' for help.` and a single-`\x1b[0m\r\n` exit
+tail.
+
+**Empty-dir transition in an `A` span** (aquascan5.txt V1): an empty
+dir emits exactly its `Scanning dir 1 from top... Nothing found!` line
+with the next dir's `Scanning dir 2 from top... Ok!` directly on the
+next line — no blank between, no `More?`, one banner for the whole
+span; the blank line comes after the last scan header, before the
+first frame.
 
 ### Help (`F ?`)
 
@@ -255,10 +287,23 @@ NextExpress's `N` targets the AquaScan date prompt instead.
 
 ## Open questions for the port
 
-- Mid-list `n` at AquaScan's `More?` — assumed "stop listing", not
-  cleanly isolated. Pin when the Rust pager's tests land, or capture
-  opportunistically in a future session.
+(The 2026-06-10 recapture session — aquascan4.txt, aquascan5.txt —
+pinned the original six: mid-list `n`, `?` at More?, ns-confirm
+declined, junk menu args, A/U/H prompt answers, empty-dir `F A`
+transition. Folded into the sections above.)
+
 - AquaScan `Q`uick-scan token (`F 1 Q`) and `F W` configuration were
-  not captured (W is out of scope — sysop-side config of the door).
+  not captured (W is out of scope — sysop-side config of the door);
+  whether the door accepts `F R 1` rather than Argument-erroring is
+  also uncaptured — worth pinning before slice D3 flips `F R`.
+- The in-pager help advertises navigation verbs with uncaptured
+  behaviours (DownArrow/3 page down, UpArrow/9 page up, 7 start,
+  5 redraw, K skip dir, L reload dir) and cross-tier verbs (D, X, V,
+  O, Z, A). NextScan D2 ships the help text verbatim but treats them
+  as advertised-but-inert (unknown keys continue); each is owed to its
+  owning slice.
+- The `~SP|` + form-feed marker emitted between the in-pager help and
+  the page redraw (aquascan4.txt U2) — origin unclear; reproduce
+  byte-for-byte.
 - Whether AquaScan's date-bearing separator art varies for same-date
   consecutive files (it repeats the date per file in all captures).
