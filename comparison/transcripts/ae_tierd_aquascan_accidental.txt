@@ -1,0 +1,384 @@
+@@@@@ CONNECT @@@@@
+(landed on node, attempt 0)
+\r\n
+/X Native Telnet:  Searching for free node...\r\n
+/X Native Telnet:  Successful connection to node 0\r\n
+\r\n
+CONNECT 19200\r\n
+**EMSI_IRQ8E08\r\n
+\r\n
+⟨ESC[0m⟩Welcome to NextExpress Reference, located in Docker\r\n
+\r\n
+Running AmiExpress 5.6.0 Copyright ⟨a9⟩2018-2023 Darren Coles\r\n
+Registration NONE. You are connected to Node 0 at 19200 baud\r\n
+Connection occured at Wed 10-Jun-2026 13:48:24.\r\n
+\r\n
+ANSI, RIP or No graphics (A/r/n)? 
+
+@@@@@ graphics -> A @@@@@ [MATCHED]
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+Enter your Name: 
+----- REPR -----
+b'A\r\n\r\nEnter your Name: '
+
+@@@@@ name -> sysop @@@@@ [MATCHED]
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+Password: 
+----- REPR -----
+b'sysop\r\nPassword: '
+
+@@@@@ password -> POST-LOGIN @@@@@ [MENU]
+>>> SENT b'sysop\r'
+----- RENDER -----
+*****\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩New Users - No mail today!\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Amiga - No mail today!\r\n
+\r\n
+⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩Space To Resume⟨ESC[33m⟩: ⟨ESC[0m⟩<<<harness sends SPACE>>>\r\n
+\r\n
+\r\n
+\r\n
+⟨ESC[32m⟩Area Name  ⟨ESC[33m⟩:⟨ESC[0m⟩ Sysop\r\n
+⟨ESC[32m⟩Caller Num.⟨ESC[33m⟩:⟨ESC[0m⟩ 32\r\n
+⟨ESC[32m⟩Lst Date On⟨ESC[33m⟩:⟨ESC[0m⟩ Wed 10-Jun-2026 00:47:13\r\n
+⟨ESC[32m⟩Security Lv⟨ESC[33m⟩:⟨ESC[0m⟩ 255\r\n
+⟨ESC[32m⟩# Times On ⟨ESC[33m⟩:⟨ESC[0m⟩ 19\r\n
+⟨ESC[32m⟩Times Today⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Msgs Posted⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+⟨ESC[32m⟩Online Baud⟨ESC[33m⟩:⟨ESC[0m⟩ 19200\r\n
+⟨ESC[32m⟩Rate CPS UP⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Rate CPS DN⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Screen  Clr⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+⟨ESC[32m⟩Protocol   ⟨ESC[33m⟩:⟨ESC[0m⟩ /X ZMODEM\r\n
+⟨ESC[32m⟩Sysop  Here⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+\r\n
+⟨ESC[32m⟩              Uploads                 Downloads\r\n
+\r\n
+⟨ESC[32m⟩    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n
+⟨ESC[0m⟩    ----  -------  -------------- -------  -------------- -----------  -----\r\n
+⟨ESC[33m⟩       2⟨ESC[0m⟩> ⟨ESC[33m⟩      0               0       0               0    Infinite  ⟨ESC[31m⟩DSBLD\r\n
+⟨ESC[0m⟩\r\n
+\r\n
+Conference 2: Amiga Auto-ReJoined\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'*****\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mNew Users - No mail today!\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mAmiga - No mail today!\r\n\r\n\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32mSpace To Resume\x1b[33m: \x1b[0m<<<harness sends SPACE>>>\r\n\r\n\r\n\r\n\x1b[32mArea Name  \x1b[33m:\x1b[0m Sysop\r\n\x1b[32mCaller Num.\x1b[33m:\x1b[0m 32\r\n\x1b[32mLst Date On\x1b[33m:\x1b[0m Wed 10-Jun-2026 00:47:13\r\n\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\x1b[32m# Times On \x1b[33m:\x1b[0m 19\r\n\x1b[32mTimes Today\x1b[33m:\x1b[0m 3\r\n\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 2\r\n\x1b[32mOnline Baud\x1b[33m:\x1b[0m 19200\r\n\x1b[32mRate CPS UP\x1b[33m:\x1b[0m 0\r\n\x1b[32mRate CPS DN\x1b[33m:\x1b[0m 0\r\n\x1b[32mScreen  Clr\x1b[33m:\x1b[0m NO\r\n\x1b[32mProtocol   \x1b[33m:\x1b[0m /X ZMODEM\r\n\x1b[32mSysop  Here\x1b[33m:\x1b[0m NO\r\n\r\n\x1b[32m              Uploads                 Downloads\r\n\r\n\x1b[32m    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n\x1b[0m    ----  -------  -------------- -------  -------------- -----------  -----\r\n\x1b[33m       2\x1b[0m> \x1b[33m      0               0       0               0    Infinite  \x1b[31mDSBLD\r\n\x1b[0m\r\n\r\nConference 2: Amiga Auto-ReJoined\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ ensure conf 2 (Amiga, seeded) @@@@@ [MENU]
+>>> SENT b'J 2\r'
+----- RENDER -----
+J 2\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Amiga\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Amiga\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ F1: F 1 (28-entry dir, expect pagination) @@@@@ [TIMEOUT]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩--[ ⟨ESC[36m⟩AquaScan v1.0 by Aquarius/Outlaws ⟨ESC[34m⟩]---------------[ ⟨ESC[36m⟩'f ?' for options ⟨ESC[34m⟩]--⟨ESC[0m⟩\r\n
+\r\n
+Scanning dir 1 from top... Ok!\r\n
+\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 01-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #1 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ANSIPACK.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 234567  ⟨ESC[33m⟩01-15-26⟨ESC[0m⟩  Collection of 40 ANSI screens from the\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                 Mirage art crew, January release.\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                 Includes viewer.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 01-22-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #2 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩TERMV48.LHA  ⟨ESC[34m⟩P⟨ESC[32m⟩ 456123  ⟨ESC[33m⟩01-22-26⟨ESC[0m⟩  Term v4.8 - the best Amiga comms package\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 02-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #3 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩LHA_138.RUN  ⟨ESC[34m⟩P⟨ESC[32m⟩ 123456  ⟨ESC[33m⟩02-01-26⟨ESC[0m⟩  LhA 1.38 evaluation - archiver\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 02-03-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b"F 1\r\n\x1b[0m\r\n\x1b[0m\x1b[34m--[ \x1b[36mAquaScan v1.0 by Aquarius/Outlaws \x1b[34m]---------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n\r\nScanning dir 1 from top... Ok!\r\n\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 01-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #1 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34mP\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n\x1b[0m\x1b[0m                                 Mirage art crew, January release.\r\n\x1b[0m\x1b[0m                                 Includes viewer.\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 01-22-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #2 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mTERMV48.LHA  \x1b[34mP\x1b[32m 456123  \x1b[33m01-22-26\x1b[0m  Term v4.8 - the best Amiga comms package\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 02-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #3 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mLHA_138.RUN  \x1b[34mP\x1b[32m 123456  \x1b[33m02-01-26\x1b[0m  LhA 1.38 evaluation - archiver\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 02-03-26\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m "
+
+@@@@@ F2: F 2 (upload dir, T: copy branch) @@@@@ [TIMEOUT]
+>>> SENT b'F 2\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩  2\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m  2\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F3: F A (all dirs walk) @@@@@ [TIMEOUT]
+>>> SENT b'F A\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩  A\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m  A\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F4: F U (upload dir shortcut) @@@@@ [TIMEOUT]
+>>> SENT b'F U\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩  U\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m  U\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F5: F H (hold scan, sysop access) @@@@@ [TIMEOUT]
+>>> SENT b'F H\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩  H\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m  H\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F6: F 99 (out of range) @@@@@ [TIMEOUT]
+>>> SENT b'F 99\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩  99\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m  99\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F7: F 1 NS (non-stop, no pause expected) @@@@@ [TIMEOUT]
+>>> SENT b'F 1 NS\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩  1 NS\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m  1 NS\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F8: bare F -> Directories prompt @@@@@ [GOT None]
+>>> SENT b'F\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩ \r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m \r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F8b: answer 1 at the prompt @@@@@ [TIMEOUT]
+>>> SENT b'1\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #4 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩MODRIPPR.LZH ⟨ESC[34m⟩P⟨ESC[32m⟩  98304  ⟨ESC[33m⟩02-03-26⟨ESC[0m⟩  Rip protracker mods from memory\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 02-10-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #5 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩SYSINFO4.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 187233  ⟨ESC[33m⟩02-10-26⟨ESC[0m⟩  SysInfo 4.0 - system information tool\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 02-14-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #6 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩PTREPLAY.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩  45678  ⟨ESC[33m⟩02-14-26⟨ESC[0m⟩  Protracker replay routine, asm source\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                 Sent by: SYSOP\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 02-20-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #7 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩AMIGANSI.TXT ⟨ESC[34m⟩P⟨ESC[32m⟩   4521  ⟨ESC[33m⟩02-20-26⟨ESC[0m⟩  ANSI escape code reference for Amiga\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 03-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #8 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩BBSDOORS.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 345987  ⟨ESC[33m⟩03-01-26⟨ESC[0m⟩  Collection of 12 AmiExpress doors\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                 Tested on /X 4.x and 5.x.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[0m\x1b[34m[\x1b[0m File #4 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mMODRIPPR.LZH \x1b[34mP\x1b[32m  98304  \x1b[33m02-03-26\x1b[0m  Rip protracker mods from memory\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 02-10-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #5 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mSYSINFO4.LHA \x1b[34mP\x1b[32m 187233  \x1b[33m02-10-26\x1b[0m  SysInfo 4.0 - system information tool\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 02-14-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #6 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mPTREPLAY.LHA \x1b[34mP\x1b[32m  45678  \x1b[33m02-14-26\x1b[0m  Protracker replay routine, asm source\r\n\x1b[0m\x1b[0m                                 Sent by: SYSOP\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 02-20-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #7 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mAMIGANSI.TXT \x1b[34mP\x1b[32m   4521  \x1b[33m02-20-26\x1b[0m  ANSI escape code reference for Amiga\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 03-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #8 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mBBSDOORS.LHA \x1b[34mP\x1b[32m 345987  \x1b[33m03-01-26\x1b[0m  Collection of 12 AmiExpress doors\r\n\x1b[0m\x1b[0m                                 Tested on /X 4.x and 5.x.\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F9: bare F again -> prompt @@@@@ [GOT None]
+>>> SENT b'F\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩ \r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m \r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ F9b: Enter alone (=none, abort) @@@@@ [TIMEOUT]
+>>> SENT b'\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 03-05-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #9 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩WB31PTCH.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩  78222  ⟨ESC[33m⟩03-05-26⟨ESC[0m⟩  Workbench 3.1 unofficial patches\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 03-12-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #10 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ZOOMOD12.MOD ⟨ESC[34m⟩P⟨ESC[32m⟩ 267890  ⟨ESC[33m⟩03-12-26⟨ESC[0m⟩  4-channel mod - 'Zoom' by Stinger\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 03-18-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #11 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩PICPACK1.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 876543  ⟨ESC[33m⟩03-18-26⟨ESC[0m⟩  IFF picture pack vol 1 - 25 images\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 03-25-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #12 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩CRUNCHM2.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩  34567  ⟨ESC[33m⟩03-25-26⟨ESC[0m⟩  CrunchMania 2.0 - file cruncher\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 04-02-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #13 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b"\r                                                                     \r\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 03-05-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #9 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mWB31PTCH.LHA \x1b[34mP\x1b[32m  78222  \x1b[33m03-05-26\x1b[0m  Workbench 3.1 unofficial patches\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 03-12-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #10 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mZOOMOD12.MOD \x1b[34mP\x1b[32m 267890  \x1b[33m03-12-26\x1b[0m  4-channel mod - 'Zoom' by Stinger\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 03-18-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #11 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mPICPACK1.LHA \x1b[34mP\x1b[32m 876543  \x1b[33m03-18-26\x1b[0m  IFF picture pack vol 1 - 25 images\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 03-25-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #12 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mCRUNCHM2.LHA \x1b[34mP\x1b[32m  34567  \x1b[33m03-25-26\x1b[0m  CrunchMania 2.0 - file cruncher\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 04-02-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #13 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m "
+
+@@@@@ R1: FR 1 (reverse listing) @@@@@ [TIMEOUT]
+>>> SENT b'FR 1\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩ R 1\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m R 1\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ R2: FR A (reverse all) @@@@@ [TIMEOUT]
+>>> SENT b'FR A\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩ R A\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m R A\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ E1: J 1 (New Users conf, empty Dir1) @@@@@ [TIMEOUT]
+>>> SENT b'J 1\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[0m⟩⟨ESC[36m⟩ASMTUT05.TXT ⟨ESC[34m⟩P⟨ESC[32m⟩  23456  ⟨ESC[33m⟩04-02-26⟨ESC[0m⟩  68k assembler tutorial part 5: copper\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                 lists and display interrupts.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 04-08-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #14 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩VIRUSZ31.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 145678  ⟨ESC[33m⟩04-08-26⟨ESC[0m⟩  VirusZ 3.1 - virus checker update\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 04-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #15 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩FCOMPARE.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩  12345  ⟨ESC[33m⟩04-15-26⟨ESC[0m⟩  Compare two files, show differences\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 04-22-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #16 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩DISKMAST.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 234511  ⟨ESC[33m⟩04-22-26⟨ESC[0m⟩  DiskMaster 2.1 - directory utility\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩MEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 05-06-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #17 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩XPRZMODM.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩  56789  ⟨ESC[33m⟩05-06-26⟨ESC[0m⟩  XPR Zmodem library 2.10\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[0m\x1b[36mASMTUT05.TXT \x1b[34mP\x1b[32m  23456  \x1b[33m04-02-26\x1b[0m  68k assembler tutorial part 5: copper\r\n\x1b[0m\x1b[0m                                 lists and display interrupts.\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 04-08-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #14 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mVIRUSZ31.LHA \x1b[34mP\x1b[32m 145678  \x1b[33m04-08-26\x1b[0m  VirusZ 3.1 - virus checker update\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 04-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #15 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mFCOMPARE.LHA \x1b[34mP\x1b[32m  12345  \x1b[33m04-15-26\x1b[0m  Compare two files, show differences\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 04-22-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #16 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mDISKMAST.LHA \x1b[34mP\x1b[32m 234511  \x1b[33m04-22-26\x1b[0m  DiskMaster 2.1 - directory utility\r\n\x1b[0m\x1b[0mMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 05-06-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #17 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mXPRZMODM.LHA \x1b[34mP\x1b[32m  56789  \x1b[33m05-06-26\x1b[0m  XPR Zmodem library 2.10\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ E2: F 1 (empty DIR file) @@@@@ [TIMEOUT]
+>>> SENT b'F 1\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩  1\r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m  1\r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ E3: bare F in single-dir conf -> prompt @@@@@ [GOT None]
+>>> SENT b'F\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[36m⟩File name(s) to flag:⟨ESC[0m⟩ \r                                                                               \r⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[36mFile name(s) to flag:\x1b[0m \r                                                                               \r\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ E3b: Enter alone (abort) @@@@@ [TIMEOUT]
+>>> SENT b'\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 05-12-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #18 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩GUIDE2AE.TXT ⟨ESC[34m⟩P⟨ESC[32m⟩   8765  ⟨ESC[33m⟩05-12-26⟨ESC[0m⟩  Beginners guide to AmiExpress BBSing\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 05-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #19 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩BADUPLD.LHA  ⟨ESC[34m⟩F⟨ESC[32m⟩  11111  ⟨ESC[33m⟩05-15-26⟨ESC[0m⟩  Upload aborted at 80 percent\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩THIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩ALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 05-28-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #20 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩STARVIEW.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 198765  ⟨ESC[33m⟩05-28-26⟨ESC[0m⟩  StarView 2.4 - astronomy program\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                 Plots 9000 stars, needs FPU.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 06-02-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #21 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ICONPACK.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩  54321  ⟨ESC[33m⟩06-02-26⟨ESC[0m⟩  MagicWB style icons, 200 drawers\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 05-12-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #18 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mGUIDE2AE.TXT \x1b[34mP\x1b[32m   8765  \x1b[33m05-12-26\x1b[0m  Beginners guide to AmiExpress BBSing\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 05-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #19 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mBADUPLD.LHA  \x1b[34mF\x1b[32m  11111  \x1b[33m05-15-26\x1b[0m  Upload aborted at 80 percent\r\n\x1b[0m\x1b[0mTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\r\n\x1b[0m\x1b[0mALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 05-28-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #20 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mSTARVIEW.LHA \x1b[34mP\x1b[32m 198765  \x1b[33m05-28-26\x1b[0m  StarView 2.4 - astronomy program\r\n\x1b[0m\x1b[0m                                 Plots 9000 stars, needs FPU.\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 06-02-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #21 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mICONPACK.LHA \x1b[34mP\x1b[32m  54321  \x1b[33m06-02-26\x1b[0m  MagicWB style icons, 200 drawers\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ restore rejoin target: J 2 @@@@@ [TIMEOUT]
+>>> SENT b'J 2\r'
+----- RENDER -----
+\r                                                                     \r⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 06-05-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #22 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩PROTRACK.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩ 321098  ⟨ESC[33m⟩06-05-26⟨ESC[0m⟩  Protracker 3.15 final release\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨af⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩,⟨b8⟩_⟨b8⟩,⟨f8⟩*⟨a4⟩⟨b0⟩⟨ac⟩⟨b0⟩⟨a4⟩*⟨f8⟩, 06-08-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #23 ⟨ESC[34m⟩]                   - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩NEWSREAD.LHA ⟨ESC[34m⟩P⟨ESC[32m⟩  87654  ⟨ESC[33m⟩06-08-26⟨ESC[0m⟩  Offline news reader for UUCP feeds\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩README1ST.TXT    1024  06-09-26  How the file areas on this board work\r\n
+⟨ESC[0;34m⟩[⟨ESC[36m⟩ End of File List ⟨ESC[34m⟩]⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ 
+----- REPR -----
+b'\r                                                                     \r\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 06-05-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #22 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mPROTRACK.LHA \x1b[34mP\x1b[32m 321098  \x1b[33m06-05-26\x1b[0m  Protracker 3.15 final release\r\n\x1b[0m\r\n\x1b[0m                                            _\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_\r\n\x1b[0m      \xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 06-08-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #23 \x1b[34m]                   - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mNEWSREAD.LHA \x1b[34mP\x1b[32m  87654  \x1b[33m06-08-26\x1b[0m  Offline news reader for UUCP feeds\r\n\x1b[0m\x1b[0mREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\r\n\x1b[0;34m[\x1b[36m End of File List \x1b[34m]\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m '
+
+@@@@@ LOGOFF round @@@@@
+\r                                                                     \r⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩582⟨ESC[0m⟩ mins. left): 
+
+@@@@@ LOGOFF round @@@@@

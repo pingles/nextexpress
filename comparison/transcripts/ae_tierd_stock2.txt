@@ -1,0 +1,639 @@
+@@@@@ CONNECT @@@@@
+(landed on node, attempt 0)
+\r\n
+/X Native Telnet:  Searching for free node...\r\n
+/X Native Telnet:  Successful connection to node 0\r\n
+\r\n
+CONNECT 19200\r\n
+**EMSI_IRQ8E08\r\n
+\r\n
+⟨ESC[0m⟩Welcome to NextExpress Reference, located in Docker\r\n
+\r\n
+Running AmiExpress 5.6.0 Copyright ⟨a9⟩2018-2023 Darren Coles\r\n
+Registration NONE. You are connected to Node 0 at 19200 baud\r\n
+Connection occured at Wed 10-Jun-2026 14:56:15.\r\n
+\r\n
+ANSI, RIP or No graphics (A/r/n)? 
+
+@@@@@ graphics -> A @@@@@ [MATCHED]
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+Enter your Name: 
+----- REPR -----
+b'A\r\n\r\nEnter your Name: '
+
+@@@@@ name -> sysop @@@@@ [MATCHED]
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+Password: 
+----- REPR -----
+b'sysop\r\nPassword: '
+
+@@@@@ password -> POST-LOGIN @@@@@ [MENU]
+>>> SENT b'sysop\r'
+----- RENDER -----
+*****\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩New Users - No mail today!\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Amiga - No mail today!\r\n
+\r\n
+⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩Space To Resume⟨ESC[33m⟩: ⟨ESC[0m⟩<<<harness sends SPACE>>>\r\n
+\r\n
+\r\n
+\r\n
+⟨ESC[32m⟩Area Name  ⟨ESC[33m⟩:⟨ESC[0m⟩ Sysop\r\n
+⟨ESC[32m⟩Caller Num.⟨ESC[33m⟩:⟨ESC[0m⟩ 36\r\n
+⟨ESC[32m⟩Lst Date On⟨ESC[33m⟩:⟨ESC[0m⟩ Wed 10-Jun-2026 14:36:21\r\n
+⟨ESC[32m⟩Security Lv⟨ESC[33m⟩:⟨ESC[0m⟩ 255\r\n
+⟨ESC[32m⟩# Times On ⟨ESC[33m⟩:⟨ESC[0m⟩ 21\r\n
+⟨ESC[32m⟩Times Today⟨ESC[33m⟩:⟨ESC[0m⟩ 5\r\n
+⟨ESC[32m⟩Msgs Posted⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+⟨ESC[32m⟩Online Baud⟨ESC[33m⟩:⟨ESC[0m⟩ 19200\r\n
+⟨ESC[32m⟩Rate CPS UP⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Rate CPS DN⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Screen  Clr⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+⟨ESC[32m⟩Protocol   ⟨ESC[33m⟩:⟨ESC[0m⟩ /X ZMODEM\r\n
+⟨ESC[32m⟩Sysop  Here⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+\r\n
+⟨ESC[32m⟩              Uploads                 Downloads\r\n
+\r\n
+⟨ESC[32m⟩    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n
+⟨ESC[0m⟩    ----  -------  -------------- -------  -------------- -----------  -----\r\n
+⟨ESC[33m⟩       2⟨ESC[0m⟩> ⟨ESC[33m⟩      0               0       0               0    Infinite  ⟨ESC[31m⟩DSBLD\r\n
+⟨ESC[0m⟩\r\n
+\r\n
+Conference 2: Amiga Auto-ReJoined\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+** Flagged File(s) Exist **\r\n
+⟨BEL⟩\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩589⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'*****\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mNew Users - No mail today!\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mAmiga - No mail today!\r\n\r\n\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32mSpace To Resume\x1b[33m: \x1b[0m<<<harness sends SPACE>>>\r\n\r\n\r\n\r\n\x1b[32mArea Name  \x1b[33m:\x1b[0m Sysop\r\n\x1b[32mCaller Num.\x1b[33m:\x1b[0m 36\r\n\x1b[32mLst Date On\x1b[33m:\x1b[0m Wed 10-Jun-2026 14:36:21\r\n\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\x1b[32m# Times On \x1b[33m:\x1b[0m 21\r\n\x1b[32mTimes Today\x1b[33m:\x1b[0m 5\r\n\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 2\r\n\x1b[32mOnline Baud\x1b[33m:\x1b[0m 19200\r\n\x1b[32mRate CPS UP\x1b[33m:\x1b[0m 0\r\n\x1b[32mRate CPS DN\x1b[33m:\x1b[0m 0\r\n\x1b[32mScreen  Clr\x1b[33m:\x1b[0m NO\r\n\x1b[32mProtocol   \x1b[33m:\x1b[0m /X ZMODEM\r\n\x1b[32mSysop  Here\x1b[33m:\x1b[0m NO\r\n\r\n\x1b[32m              Uploads                 Downloads\r\n\r\n\x1b[32m    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n\x1b[0m    ----  -------  -------------- -------  -------------- -----------  -----\r\n\x1b[33m       2\x1b[0m> \x1b[33m      0               0       0               0    Infinite  \x1b[31mDSBLD\r\n\x1b[0m\r\n\r\nConference 2: Amiga Auto-ReJoined\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n** Flagged File(s) Exist **\r\n\x07\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m589\x1b[0m mins. left): '
+
+@@@@@ ensure conf 2 (Amiga, seeded) @@@@@ [MENU]
+>>> SENT b'J 2\r'
+----- RENDER -----
+J 2\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Amiga\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩589⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Amiga\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m589\x1b[0m mins. left): '
+
+@@@@@ T1: F 1, Y through to end @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+\r\n
+Scanning directory 1\r\n
+ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[1A⟩⟨ESC[K⟩                                 Plots 9000 stars, needs FPU.\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩588⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F 1\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[1A\x1b[K                                 Plots 9000 stars, needs FPU.\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m588\x1b[0m mins. left): "
+
+@@@@@ T2: F 1, n at first pause (stop) @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+\r\n
+Scanning directory 1\r\n
+ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: n>>>n<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩587⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F 1\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: n>>>n<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m587\x1b[0m mins. left): "
+
+@@@@@ T3: F 1, ns at first pause (non-stop rest) @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+\r\n
+Scanning directory 1\r\n
+ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: ns>>>ns<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[1A⟩⟨ESC[K⟩                                 Plots 9000 stars, needs FPU.\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩586⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F 1\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: ns>>>ns<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[1A\x1b[K                                 Plots 9000 stars, needs FPU.\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m586\x1b[0m mins. left): "
+
+@@@@@ T4: F 1, f at pause (flags option) @@@@@ [TIMEOUT (no sentinel)]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+\r\n
+Scanning directory 1\r\n
+ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: f>>>f<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[A⟩⟨ESC[K⟩⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? 
+----- REPR -----
+b"F 1\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: f>>>f<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[A\x1b[K\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? "
+
+@@@@@ T5: F 2 (upload dir, T: copy) @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'F 2\r'
+----- RENDER -----
+F 2\r\n
+⟨ESC[A⟩⟨ESC[K⟩⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[1A⟩⟨ESC[K⟩                                 Plots 9000 stars, needs FPU.\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩584⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'F 2\r\n\x1b[A\x1b[K\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[1A\x1b[K                                 Plots 9000 stars, needs FPU.\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m584\x1b[0m mins. left): '
+
+@@@@@ T6: F A (all-dirs walk) @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'F A\r'
+----- RENDER -----
+F A\r\n
+\r\n
+Scanning directory 1\r\n
+ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[1A⟩⟨ESC[K⟩                                 Plots 9000 stars, needs FPU.\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\r\r\n
+Scanning directory 2\r\n
+FRESHUPL.LHA P  43210  06-09-26  Uploaded last night, awaiting sort\n
+\rMYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\n
+\r                                 Greets to everyone on node 1.\n
+\rTOOLPACK.LHA P 234567  06-10-26  Misc CLI tools collection\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩582⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F A\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[1A\x1b[K                                 Plots 9000 stars, needs FPU.\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\r\r\nScanning directory 2\r\nFRESHUPL.LHA P  43210  06-09-26  Uploaded last night, awaiting sort\n\rMYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\n\r                                 Greets to everyone on node 1.\n\rTOOLPACK.LHA P 234567  06-10-26  Misc CLI tools collection\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m582\x1b[0m mins. left): "
+
+@@@@@ T7: F U (upload shortcut) @@@@@ [MENU]
+>>> SENT b'F U\r'
+----- RENDER -----
+F U\r\n
+\r\n
+Scanning directory 2\r\n
+FRESHUPL.LHA P  43210  06-09-26  Uploaded last night, awaiting sort\n
+\rMYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\n
+\r                                 Greets to everyone on node 1.\n
+\rTOOLPACK.LHA P 234567  06-10-26  Misc CLI tools collection\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩582⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'F U\r\n\r\nScanning directory 2\r\nFRESHUPL.LHA P  43210  06-09-26  Uploaded last night, awaiting sort\n\rMYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\n\r                                 Greets to everyone on node 1.\n\rTOOLPACK.LHA P 234567  06-10-26  Misc CLI tools collection\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m582\x1b[0m mins. left): '
+
+@@@@@ T8: F H (hold, file likely missing) @@@@@ [MENU]
+>>> SENT b'F H\r'
+----- RENDER -----
+F H\r\n
+\r\n
+Scanning directory HOLD\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩582⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'F H\r\n\r\nScanning directory HOLD\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m582\x1b[0m mins. left): '
+
+@@@@@ T9: F 99 (No such directory.) @@@@@ [MENU]
+>>> SENT b'F 99\r'
+----- RENDER -----
+F 99\r\n
+\r\n
+\r\n
+No such directory.\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩582⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'F 99\r\n\r\n\r\nNo such directory.\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m582\x1b[0m mins. left): '
+
+@@@@@ T10: F 1 NS (pause suppressed) @@@@@ [MENU]
+>>> SENT b'F 1 NS\r'
+----- RENDER -----
+F 1 NS\r\n
+\r\n
+Scanning directory 1\r\n
+ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r                                 Plots 9000 stars, needs FPU.\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩582⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F 1 NS\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r                                 Plots 9000 stars, needs FPU.\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m582\x1b[0m mins. left): "
+
+@@@@@ T11: bare F -> answer 1 @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'F\r'
+----- RENDER -----
+F\r\n
+\r\n
+⟨ESC[36m⟩Directories: ⟨ESC[32m⟩(⟨ESC[33m⟩1-2⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩A⟨ESC[32m⟩)⟨ESC[36m⟩ll, ⟨ESC[32m⟩(⟨ESC[33m⟩U⟨ESC[32m⟩)⟨ESC[36m⟩pload, ⟨ESC[32m⟩(⟨ESC[33m⟩H⟨ESC[32m⟩)⟨ESC[36m⟩old, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none? ⟨ESC[0m⟩<<<harness answers =none? : 1\r>>>1\r\n
+Scanning directory 1\r\n
+ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[1A⟩⟨ESC[K⟩                                 Plots 9000 stars, needs FPU.\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩581⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F\r\n\r\n\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mA\x1b[32m)\x1b[36mll, \x1b[32m(\x1b[33mU\x1b[32m)\x1b[36mpload, \x1b[32m(\x1b[33mH\x1b[32m)\x1b[36mold, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none? \x1b[0m<<<harness answers =none? : 1\r>>>1\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[1A\x1b[K                                 Plots 9000 stars, needs FPU.\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m581\x1b[0m mins. left): "
+
+@@@@@ T12: bare F -> Enter (=none abort) @@@@@ [MENU]
+>>> SENT b'F\r'
+----- RENDER -----
+F\r\n
+\r\n
+⟨ESC[36m⟩Directories: ⟨ESC[32m⟩(⟨ESC[33m⟩1-2⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩A⟨ESC[32m⟩)⟨ESC[36m⟩ll, ⟨ESC[32m⟩(⟨ESC[33m⟩U⟨ESC[32m⟩)⟨ESC[36m⟩pload, ⟨ESC[32m⟩(⟨ESC[33m⟩H⟨ESC[32m⟩)⟨ESC[36m⟩old, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none? ⟨ESC[0m⟩<<<harness answers =none? : \r>>>\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩581⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'F\r\n\r\n\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mA\x1b[32m)\x1b[36mll, \x1b[32m(\x1b[33mU\x1b[32m)\x1b[36mpload, \x1b[32m(\x1b[33mH\x1b[32m)\x1b[36mold, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none? \x1b[0m<<<harness answers =none? : \r>>>\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m581\x1b[0m mins. left): '
+
+@@@@@ T13: FR 1 (reverse scan) @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'FR 1\r'
+----- RENDER -----
+FR 1\r\n
+\r\n
+Scanning directory 1\r\n
+README1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r                                 Plots 9000 stars, needs FPU.\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[1A⟩⟨ESC[K⟩LHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩580⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"FR 1\r\n\r\nScanning directory 1\r\nREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r                                 Plots 9000 stars, needs FPU.\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\rAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[1A\x1b[KLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m580\x1b[0m mins. left): "
+
+@@@@@ T14: FR A (reverse all) @@@@@ [TIMEOUT (no sentinel) +RECOVERED]
+>>> SENT b'FR A\r'
+----- RENDER -----
+FR A\r\n
+\r\n
+Reverse scanning directory 2\r\n
+TOOLPACK.LHA P 234567  06-10-26  Misc CLI tools collection\n
+\rMYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\n
+\r                                 Greets to everyone on node 1.\n
+\rFRESHUPL.LHA P  43210  06-09-26  Uploaded last night, awaiting sort\n
+\r\r\n
+Scanning directory 1\r\n
+README1ST.TXT    1024  06-09-26  How the file areas on this board work\n
+\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n
+\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n
+\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n
+\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n
+\r                                 Plots 9000 stars, needs FPU.\n
+\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n
+\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n
+\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n
+\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n
+\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n
+\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n
+\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n
+\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n
+\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n
+\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n
+\r                                 lists and display interrupts.\n
+\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n
+\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n
+\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n
+\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n
+\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n
+\r                                 Tested on /X 4.x and 5.x.\n
+\r⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩(⟨ESC[33m⟩f⟨ESC[32m⟩)⟨ESC[36m⟩lags, More⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[0m⟩? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+⟨ESC[1A⟩⟨ESC[K⟩AMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n
+\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n
+\r                                 Sent by: SYSOP\n
+\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n
+\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n
+\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n
+\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n
+\rANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n
+\r                                 Mirage art crew, January release.\n
+\r                                 Includes viewer.\n
+\r\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩579⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"FR A\r\n\r\nReverse scanning directory 2\r\nTOOLPACK.LHA P 234567  06-10-26  Misc CLI tools collection\n\rMYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\n\r                                 Greets to everyone on node 1.\n\rFRESHUPL.LHA P  43210  06-09-26  Uploaded last night, awaiting sort\n\r\r\nScanning directory 1\r\nREADME1ST.TXT    1024  06-09-26  How the file areas on this board work\n\rNEWSREAD.LHA P  87654  06-08-26  Offline news reader for UUCP feeds\n\rPROTRACK.LHA P 321098  06-05-26  Protracker 3.15 final release\n\rICONPACK.LHA P  54321  06-02-26  MagicWB style icons, 200 drawers\n\rSTARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\n\r                                 Plots 9000 stars, needs FPU.\n\rALONGFILENAME.LHA   77777  05-22-26  Long filename breaks the columns\n\rTHIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename\n\rBADUPLD.LHA  F  11111  05-15-26  Upload aborted at 80 percent\n\rGUIDE2AE.TXT P   8765  05-12-26  Beginners guide to AmiExpress BBSing\n\rXPRZMODM.LHA P  56789  05-06-26  XPR Zmodem library 2.10\n\rMEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2\n\rDISKMAST.LHA P 234511  04-22-26  DiskMaster 2.1 - directory utility\n\rFCOMPARE.LHA P  12345  04-15-26  Compare two files, show differences\n\rVIRUSZ31.LHA P 145678  04-08-26  VirusZ 3.1 - virus checker update\n\rASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\n\r                                 lists and display interrupts.\n\rCRUNCHM2.LHA P  34567  03-25-26  CrunchMania 2.0 - file cruncher\n\rPICPACK1.LHA P 876543  03-18-26  IFF picture pack vol 1 - 25 images\n\rZOOMOD12.MOD P 267890  03-12-26  4-channel mod - 'Zoom' by Stinger\n\rWB31PTCH.LHA P  78222  03-05-26  Workbench 3.1 unofficial patches\n\rBBSDOORS.LHA P 345987  03-01-26  Collection of 12 AmiExpress doors\n\r                                 Tested on /X 4.x and 5.x.\n\r\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32m(\x1b[33mf\x1b[32m)\x1b[36mlags, More\x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[0m? <<<harness answers lags, More: Y>>>Y<<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\x1b[1A\x1b[KAMIGANSI.TXT P   4521  02-20-26  ANSI escape code reference for Amiga\n\rPTREPLAY.LHA P  45678  02-14-26  Protracker replay routine, asm source\n\r                                 Sent by: SYSOP\n\rSYSINFO4.LHA P 187233  02-10-26  SysInfo 4.0 - system information tool\n\rMODRIPPR.LZH P  98304  02-03-26  Rip protracker mods from memory\n\rLHA_138.RUN  P 123456  02-01-26  LhA 1.38 evaluation - archiver\n\rTERMV48.LHA  P 456123  01-22-26  Term v4.8 - the best Amiga comms package\n\rANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\n\r                                 Mirage art crew, January release.\n\r                                 Includes viewer.\n\r\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m579\x1b[0m mins. left): "
+
+@@@@@ T15: N (internal new-files semantics) @@@@@ [TIMEOUT (no sentinel)]
+>>> SENT b'N\r'
+----- RENDER -----
+N\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: <<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: 
+----- REPR -----
+b'N\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: <<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: '
+
+@@@@@ E1: J 1 (empty Dir1 conf) @@@@@ [TIMEOUT]
+>>> SENT b'J 1\r'
+----- RENDER -----
+J 1\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: 
+----- REPR -----
+b'J 1\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: '
+
+@@@@@ E2: F 1 (empty DIR file) @@@@@ [TIMEOUT (no sentinel)]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: <<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: 
+----- REPR -----
+b'F 1\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: <<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: '
+
+@@@@@ E3: bare F single-dir conf -> Enter @@@@@ [TIMEOUT (no sentinel)]
+>>> SENT b'F\r'
+----- RENDER -----
+F\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: <<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: 
+----- REPR -----
+b'F\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: <<<recovery n>>>n<<<recovery Q>>>Q<<<recovery \r>>>\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: '
+
+@@@@@ restore rejoin target: J 2 @@@@@ [TIMEOUT]
+>>> SENT b'J 2\r'
+----- RENDER -----
+J 2\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: 
+----- REPR -----
+b'J 2\r\n\r\nDate as (mm-dd-yy) to search from (Enter)=: '
+
+@@@@@ LOGOFF round @@@@@
+G Y\r\n
+\r\n
+Date as (mm-dd-yy) to search from (Enter)=: 
+
+@@@@@ LOGOFF round @@@@@
