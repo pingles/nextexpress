@@ -97,6 +97,15 @@ rule JoinConference {
     when: JoinConferenceRequested(session, target_conference, target_msgbase, reason, scan_mode)
     requires: session.state in {onboarded, menu}
 
+    -- Explicit joins are access-checked up front (legacy internalCommandJ,
+    -- express.e:25156-25158): a denied request surfaces the "You do not
+    -- have access to the requested conference" notice and leaves the
+    -- session in its current conference — no fall-through, no disconnect.
+    -- The first-accessible fallback below applies only to the auto_rejoin
+    -- and conf_scan_walk reasons (joinConf's own access walk,
+    -- express.e:4982-4992).
+    requires: reason != explicit_join or has_membership(session.user, target_conference)
+
     let user = session.user
 
     let resolved_conference =

@@ -1577,50 +1577,49 @@ mod conferencing {
             ExplicitJoinOutcome::Joined {
                 conference_number,
                 msgbase_number,
-                matched_request,
                 show_bulletin,
                 ..
             } => {
                 assert_eq!(conference_number, 2);
                 assert_eq!(msgbase_number, 1);
-                assert!(matched_request);
                 assert!(show_bulletin);
             }
-            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+            ExplicitJoinOutcome::Denied => panic!("expected Joined"),
         }
         assert_eq!(s.current_visit().unwrap().conference_number(), 2);
     }
 
     #[test]
-    fn explicit_join_falls_through_with_matched_request_false_when_no_access_to_target() {
+    fn explicit_join_denied_leaves_session_and_visit_unchanged() {
+        // Tier C C2: legacy internalCommandJ access-checks the request
+        // and stays put (`amiexpress/express.e:25156-25158`) — no
+        // first-accessible fallback, no state change.
         let confs = vec![make_conf(1), make_conf(2)];
         let mut s = session_at_onboarded_with(user_with_grants(&[1]));
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .expect("rejoin");
         let outcome = s
             .explicit_join_conference(2, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
-        match outcome {
-            ExplicitJoinOutcome::Joined {
-                conference_number,
-                matched_request,
-                ..
-            } => {
-                assert_eq!(conference_number, 1);
-                assert!(!matched_request);
-            }
-            ExplicitJoinOutcome::NoAccess => panic!("expected Joined fallback"),
-        }
+        assert_eq!(outcome, ExplicitJoinOutcome::Denied);
+        assert_eq!(s.state(), SessionState::Onboarded);
+        assert_eq!(s.current_visit().unwrap().conference_number(), 1);
+        assert_eq!(s.logoff_reason(), None);
     }
 
     #[test]
-    fn explicit_join_with_no_grants_anywhere_terminates_session_with_no_conference_access() {
+    fn explicit_join_with_no_grants_anywhere_is_denied_without_logoff() {
+        // Explicit join never disconnects — the caller already holds
+        // a conference; only auto-rejoin's resolver can conclude
+        // `no_conference_access`.
         let confs = vec![make_conf(1)];
         let mut s = session_at_onboarded_with(alice());
         let outcome = s
             .explicit_join_conference(1, &confs, SystemTime::UNIX_EPOCH)
             .expect("ok");
-        assert_eq!(outcome, ExplicitJoinOutcome::NoAccess);
-        assert_eq!(s.state(), SessionState::LoggingOff);
-        assert_eq!(s.logoff_reason(), Some(LogoffReason::NoConferenceAccess));
+        assert_eq!(outcome, ExplicitJoinOutcome::Denied);
+        assert_eq!(s.state(), SessionState::Onboarded);
+        assert_eq!(s.logoff_reason(), None);
     }
 
     #[test]
@@ -1654,7 +1653,7 @@ mod conferencing {
             .expect("ok");
         match outcome {
             ExplicitJoinOutcome::Joined { show_bulletin, .. } => assert!(!show_bulletin),
-            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+            ExplicitJoinOutcome::Denied => panic!("expected Joined"),
         }
     }
 
@@ -1820,7 +1819,7 @@ mod conferencing {
                 name_type_promoted_to,
                 ..
             } => assert_eq!(name_type_promoted_to, Some(NameType::InternetName)),
-            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+            ExplicitJoinOutcome::Denied => panic!("expected Joined"),
         }
         assert_eq!(s.display_name_type(), NameType::InternetName);
     }
@@ -1868,7 +1867,7 @@ mod conferencing {
                 name_type_promoted_to,
                 ..
             } => assert_eq!(name_type_promoted_to, None),
-            ExplicitJoinOutcome::NoAccess => panic!("expected Joined"),
+            ExplicitJoinOutcome::Denied => panic!("expected Joined"),
         }
     }
 

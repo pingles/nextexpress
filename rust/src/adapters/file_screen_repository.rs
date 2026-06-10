@@ -29,16 +29,21 @@ const FALLBACK_NEW_USER_PW: &[u8] = b"\r\nNew user registration.\r\n";
 /// why the connection is closing.
 const FALLBACK_NO_NEW_USERS: &[u8] = b"\r\nNew user registration is not available.\r\n";
 
-/// Built-in fallback for `Screens/JoinConf.txt` (Slice 32). Rendered
-/// as the prompt header for the no-arg `J` flow
-/// (`amiexpress/express.e:6588`).
+/// Built-in fallback for `Screens/JoinConf.txt` — the screen shown
+/// before the `J` command's `Conference Number (1-N): ` prompt
+/// (`amiexpress/express.e:25143`, resolved at `:6588`). The reference
+/// renders NOTHING when the screen file is absent (verified live
+/// against `AmiExpress` 5.6.0,
+/// `comparison/evidence-tierC/live-observations.md`), so the fallback
+/// is empty: the screen appears only when the sysop installs the
+/// asset.
 ///
 /// `SCREEN_JOIN` / `SCREEN_JOINED` are intentionally absent: the
 /// conference-join wire output is hardcoded inline in legacy
 /// `joinConf` (`amiexpress/express.e:5071-5085`); the matching
 /// `SCREEN_JOIN` / `SCREEN_JOINED` files belong to the new-user
 /// registration flow (`:30057`, `:30125`).
-const FALLBACK_JOINCONF: &[u8] = b"\r\nJoin which conference?\r\n";
+const FALLBACK_JOINCONF: &[u8] = b"";
 
 /// Built-in fallback for `Screens/REALNAMES.txt` (Slice 34,
 /// `amiexpress/express.e:28169`). Rendered the first time a join
@@ -697,10 +702,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn joinconf_falls_back_when_asset_is_missing() {
+    async fn joinconf_returns_empty_bytes_when_asset_is_missing() {
+        // The AmiExpress 5.6.0 reference shows NOTHING before the
+        // `Conference Number (1-N): ` prompt when no JoinConf screen
+        // file is installed — the fallback must be empty so the
+        // caller writes nothing.
         let dir = tempfile::tempdir().unwrap();
         let repo = FileScreenRepository::new(dir.path().to_path_buf());
         assert_eq!(repo.joinconf_screen().await, FALLBACK_JOINCONF);
+        assert!(repo.joinconf_screen().await.is_empty());
     }
 
     #[tokio::test]

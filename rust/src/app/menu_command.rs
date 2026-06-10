@@ -9,8 +9,10 @@
 pub(crate) enum MenuCommand {
     /// `G`: user requested logoff.
     Logoff,
-    /// `J` / `J <number>`: explicit conference join.
-    Join(NumberArg),
+    /// `J` / `J <number>`: explicit conference join (Tier C C2).
+    /// Mirrors `internalCommandJ()` at
+    /// `amiexpress/express.e:25113-25183`.
+    Join(JoinArg),
     /// `R` / `R <number>`: read one message.
     Read(NumberArg),
     /// `MS`: scan every conference the caller can access for mail
@@ -66,7 +68,7 @@ pub(crate) enum MenuCommand {
     Unknown,
 }
 
-/// Parsed numeric argument shared by `J` and `R` commands.
+/// Parsed numeric argument of the `R` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NumberArg {
     /// `<command> <n>` where `<n>` parsed as a `u32`.
@@ -76,6 +78,60 @@ pub(crate) enum NumberArg {
     /// `<command> <token>` where `<token>` could not be parsed as a
     /// `u32`, or where extra trailing tokens were supplied.
     Invalid,
+}
+
+/// Parsed argument shape of the `J` command, using legacy `Val`
+/// semantics (`amiexpress/express.e:25125-25136`): `parseParams`
+/// splits the parameters on whitespace, the first token's numeric
+/// prefix is the conference, and a `.`-suffix on that token or a
+/// second token names a message base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JoinArg {
+    /// `J <token>` where the token carries no `.` and no second token
+    /// follows: the legacy `Val(param)` of the token
+    /// (`amiexpress/express.e:25131`). May be zero (non-numeric
+    /// token) or negative — range checks happen at dispatch, where
+    /// anything outside `1..=numConf` opens the interactive prompt
+    /// (`amiexpress/express.e:25142`).
+    Conference(i64),
+    /// Bare `J` — the legacy `newConf := -1` default
+    /// (`amiexpress/express.e:25127`) always lands in the interactive
+    /// prompt branch.
+    Missing,
+    /// `J <a>.<b>` or `J <a> <b>` — the conference + message-base
+    /// argument forms (`amiexpress/express.e:25132-25135`).
+    ///
+    /// TODO(C4a): slice C4a completes these by parsing the
+    /// conference and message-base values and joining the requested
+    /// base. Interim for slice C2 they are routed into the
+    /// conference-number prompt rather than joining silently.
+    WithMsgBase,
+}
+
+/// Parses the numeric prefix of `token` with the semantics of the
+/// Amiga E `Val()` built-in as used by `internalCommandJ`
+/// (`amiexpress/express.e:25131`): an optional leading `-` sign
+/// followed by decimal digits, stopping at the first non-digit
+/// character. Returns 0 when the token carries no leading number
+/// (e.g. `"abc"`, `""`, or a bare `"-"`). Saturates at the `i64`
+/// bounds rather than reproducing the legacy 32-bit wraparound — the
+/// caller clamps the value into `1..=numConf` anyway.
+#[must_use]
+pub(crate) fn val_prefix(token: &str) -> i64 {
+    let (negative, rest) = match token.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, token),
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit);
+    if negative {
+        digits.fold(0_i64, |acc, b| {
+            acc.saturating_mul(10).saturating_sub(i64::from(b - b'0'))
+        })
+    } else {
+        digits.fold(0_i64, |acc, b| {
+            acc.saturating_mul(10).saturating_add(i64::from(b - b'0'))
+        })
+    }
 }
 
 /// Parsed shape of an `E` / `E <to>` command.
@@ -128,7 +184,7 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if trimmed.eq_ignore_ascii_case("M") {
         return MenuCommand::AnsiToggle;
     }
-    if let Some(arg) = parse_number_command(trimmed, "J") {
+    if let Some(arg) = parse_join_command(trimmed) {
         return MenuCommand::Join(arg);
     }
     if let Some(arg) = parse_number_command(trimmed, "R") {
@@ -144,6 +200,28 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
         return MenuCommand::Post(post);
     }
     MenuCommand::Unknown
+}
+
+/// Parses the `J` command line into a [`JoinArg`]. Mirrors the legacy
+/// `internalCommandJ` parameter handling
+/// (`amiexpress/express.e:25125-25136`): whitespace-split tokens, the
+/// first token's `Val` prefix selects the conference, and a `.`
+/// inside the first token or the presence of a second token signals
+/// the message-base forms (tokens past the second are ignored, as
+/// `parseParams` only ever reads items 0 and 1 here).
+fn parse_join_command(line: &str) -> Option<JoinArg> {
+    let mut tokens = line.split_ascii_whitespace();
+    let head = tokens.next()?;
+    if !head.eq_ignore_ascii_case("J") {
+        return None;
+    }
+    let Some(first) = tokens.next() else {
+        return Some(JoinArg::Missing);
+    };
+    if first.contains('.') || tokens.next().is_some() {
+        return Some(JoinArg::WithMsgBase);
+    }
+    Some(JoinArg::Conference(val_prefix(first)))
 }
 
 fn parse_number_command(line: &str, command: &str) -> Option<NumberArg> {
@@ -196,26 +274,81 @@ mod tests {
 
     #[test]
     fn parses_join_command_arguments() {
+        // Tier C C2: `J` uses legacy `Val` semantics
+        // (`amiexpress/express.e:25127-25136`) — the conference is the
+        // numeric prefix of the first token, and non-numeric tokens
+        // `Val` to 0 rather than being rejected.
         assert_eq!(
             parse_menu_command("J 7"),
-            MenuCommand::Join(NumberArg::Number(7))
+            MenuCommand::Join(JoinArg::Conference(7))
         );
         assert_eq!(
             parse_menu_command("j 7"),
-            MenuCommand::Join(NumberArg::Number(7))
+            MenuCommand::Join(JoinArg::Conference(7))
         );
-        assert_eq!(
-            parse_menu_command("J"),
-            MenuCommand::Join(NumberArg::Missing)
-        );
+        assert_eq!(parse_menu_command("J"), MenuCommand::Join(JoinArg::Missing));
         assert_eq!(
             parse_menu_command("J nope"),
-            MenuCommand::Join(NumberArg::Invalid)
+            MenuCommand::Join(JoinArg::Conference(0))
+        );
+        assert_eq!(
+            parse_menu_command("J 2abc"),
+            MenuCommand::Join(JoinArg::Conference(2))
+        );
+        assert_eq!(
+            parse_menu_command("J -1"),
+            MenuCommand::Join(JoinArg::Conference(-1))
+        );
+    }
+
+    #[test]
+    fn join_msgbase_argument_forms_parse_to_the_msgbase_shape() {
+        // Dotted (`J 1.1`) and two-token (`J 1 2`) forms carry a
+        // message-base request (`amiexpress/express.e:25132-25135`).
+        // TODO(C4a): completed by slice C4a; interim they route into
+        // the conference prompt.
+        assert_eq!(
+            parse_menu_command("J 1.1"),
+            MenuCommand::Join(JoinArg::WithMsgBase)
         );
         assert_eq!(
             parse_menu_command("J 1 2"),
-            MenuCommand::Join(NumberArg::Invalid)
+            MenuCommand::Join(JoinArg::WithMsgBase)
         );
+        // Legacy parseParams ignores tokens past the second.
+        assert_eq!(
+            parse_menu_command("J 1 2 3"),
+            MenuCommand::Join(JoinArg::WithMsgBase)
+        );
+    }
+
+    #[test]
+    fn val_prefix_parses_leading_digits_with_optional_minus_sign() {
+        assert_eq!(val_prefix("2"), 2);
+        assert_eq!(val_prefix("2abc"), 2);
+        assert_eq!(val_prefix("2.1"), 2);
+        assert_eq!(val_prefix("007"), 7);
+        assert_eq!(val_prefix("-1"), -1);
+        assert_eq!(val_prefix("-12x"), -12);
+    }
+
+    #[test]
+    fn val_prefix_returns_zero_when_no_leading_number() {
+        assert_eq!(val_prefix(""), 0);
+        assert_eq!(val_prefix("abc"), 0);
+        assert_eq!(val_prefix("-"), 0);
+        // E's `Val` accepts a leading `-` only; `+` is not a sign.
+        assert_eq!(val_prefix("+2"), 0);
+        // No whitespace skipping — a leading space stops the parse,
+        // so whitespace-only prompt input `Val`s to 0.
+        assert_eq!(val_prefix(" 2"), 0);
+        assert_eq!(val_prefix(".5"), 0);
+    }
+
+    #[test]
+    fn val_prefix_saturates_instead_of_overflowing() {
+        assert_eq!(val_prefix("99999999999999999999999"), i64::MAX);
+        assert_eq!(val_prefix("-99999999999999999999999"), i64::MIN);
     }
 
     #[test]
@@ -594,7 +727,7 @@ mod tests {
     fn every_menu_command() -> Vec<MenuCommand> {
         vec![
             MenuCommand::Logoff,
-            MenuCommand::Join(NumberArg::Missing),
+            MenuCommand::Join(JoinArg::Missing),
             MenuCommand::Read(NumberArg::Missing),
             MenuCommand::ScanAllMail,
             MenuCommand::Post(PostArg::Missing),

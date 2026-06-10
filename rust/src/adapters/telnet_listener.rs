@@ -94,7 +94,11 @@ impl TelnetListener {
             let (stream, _peer) = self.listener.accept().await?;
             let runtime = self.runtime.clone();
             tokio::spawn(async move {
-                let _ = handle_connection(stream, runtime).await;
+                // Boxed: the whole session state machine lives in this
+                // future, whose stack footprint exceeds clippy's
+                // `large_futures` threshold — heap-allocate it once per
+                // connection instead of inflating every spawn.
+                let _ = Box::pin(handle_connection(stream, runtime)).await;
             });
         }
     }
@@ -113,16 +117,23 @@ async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Resul
         return Ok(());
     };
 
-    release_node_after(pool.clone(), node_number, async {
-        stream.write_all(IAC_INIT).await?;
-        // Wrap the transport terminal so the `M` command (Tier A
-        // quickwin A8) can strip ANSI colour from output; a fresh
-        // connection starts with colour on.
-        let terminal = ColourTerminal::new(TelnetTerminal::new(&mut stream), true);
-        let services: AppServices = runtime.services().clone();
-        let mut driver = SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
-        driver.run().await
-    })
+    // Boxed for the same `large_futures` reason as the spawn site:
+    // the driver future carries every sub-flow's locals inline.
+    release_node_after(
+        pool.clone(),
+        node_number,
+        Box::pin(async {
+            stream.write_all(IAC_INIT).await?;
+            // Wrap the transport terminal so the `M` command (Tier A
+            // quickwin A8) can strip ANSI colour from output; a fresh
+            // connection starts with colour on.
+            let terminal = ColourTerminal::new(TelnetTerminal::new(&mut stream), true);
+            let services: AppServices = runtime.services().clone();
+            let mut driver =
+                SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
+            driver.run().await
+        }),
+    )
     .await
 }
 

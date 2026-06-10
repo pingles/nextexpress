@@ -229,21 +229,27 @@ pub(crate) const LOGON_REJECTED_LINE: &[u8] = b"Logon rejected. Goodbye.\r\n";
 /// session terminates with `LogoffReason::NoConferenceAccess`.
 pub(crate) const NO_CONFERENCE_ACCESS_LINE: &[u8] = b"\r\nNo accessible conferences. Goodbye.\r\n";
 
-/// Sent when the user types `J <num>` for a conference they don't
-/// have access to; the session falls through to the first accessible
-/// conference but the listener surfaces this notice first
-/// (`amiexpress/express.e:25157`).
+/// Sent when the user requested a conference they don't have access
+/// to (or — defensively — one missing from the catalogue). The legacy
+/// `'\b\nYou do not have access to the requested conference\b\n\b\n'`
+/// (`amiexpress/express.e:25157`, Amiga `\b\n` becomes telnet
+/// `\r\n`); the session stays in its current conference
+/// (`amiexpress/express.e:25158` returns to the menu).
 pub(crate) const NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE: &[u8] =
     b"\r\nYou do not have access to the requested conference\r\n\r\n";
 
-/// Sent when the user types `J` without a target conference number.
-/// The simplified Phase-4 wiring rejects the no-arg form rather than
-/// running the `JoinConf` prompt sub-flow; future slices may refine
-/// this when the `JoinConf` prompt arrives.
-pub(crate) const JOIN_REQUIRES_NUMBER_LINE: &[u8] = b"\r\nUsage: J <conference-number>\r\n";
+/// Prompt of the `J` command's interactive join-conference flow
+/// (`amiexpress/express.e:25144`):
+/// `'Conference Number (1-\d): '` with `\d` = the highest conference
+/// number (legacy `cmds.numConf`). Written immediately after the
+/// echoed command line — no leading CRLF — and ends with the prompt's
+/// trailing space, no trailing CRLF.
+pub(crate) fn render_conference_number_prompt(highest_conference_number: u32) -> Vec<u8> {
+    format!("Conference Number (1-{highest_conference_number}): ").into_bytes()
+}
 
-/// Sent when `J <something>` cannot be parsed as a conference
-/// number.
+/// Sent when the `MV` sub-command's target cannot be parsed as a
+/// conference number.
 pub(crate) const INVALID_CONFERENCE_NUMBER_LINE: &[u8] = b"\r\nInvalid conference number.\r\n";
 
 /// Sent when `R <something>` cannot be parsed as a message number.
@@ -1155,6 +1161,17 @@ mod tests {
         ];
         let expected: &[u8] = b"\x0c\r\n\x1b[32m        M A F Z Conference                      M A F Z Conference\x1b[0m\r\n\x1b[33m        ~ ~ ~ ~ ~~~~~~~~~~~~~~~~~~~~~~~         ~ ~ ~ ~ ~~~~~~~~~~~~~~~~~~~~~~~\x1b[0m\r\n\r\n\x1b[34m[\x1b[0m    1\x1b[34m] \x1b[36m        \x1b[0mNew Users               \x1b[34m[\x1b[0m    2\x1b[34m] \x1b[36m*       \x1b[0mAmiga                  \r\n";
         assert_eq!(render_conf_flags_listing(&rows), expected);
+    }
+
+    #[test]
+    fn conference_number_prompt_matches_the_legacy_capture() {
+        // Live capture (AmiExpress 5.6.0, two conferences):
+        // `b'Conference Number (1-2): '` — trailing space, no CRLF on
+        // either side (`amiexpress/express.e:25144`).
+        assert_eq!(
+            render_conference_number_prompt(2),
+            b"Conference Number (1-2): "
+        );
     }
 
     #[test]

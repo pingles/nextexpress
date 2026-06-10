@@ -106,7 +106,7 @@ impl ConferenceVisit {
     }
 }
 
-/// Outcome of a `JoinConference` resolution (spec:
+/// Outcome of the auto-rejoin `JoinConference` resolution (spec:
 /// `conferences.allium:JoinConference`).
 ///
 /// References borrow from the `conferences` slice supplied to the
@@ -122,21 +122,37 @@ pub enum JoinResolution<'a> {
         conference: &'a Conference,
         /// Primary (number 1) message base within `conference`.
         msgbase: &'a MessageBase,
-        /// `true` when the resolved conference matches the request
-        /// (spec: `target_conference` was the one chosen). `false`
-        /// signals the resolver fell through to
-        /// `first_accessible_conference` because the user lacked
-        /// access to their requested conference, so the listener
-        /// can render the legacy "You do not have access to the
-        /// requested conference" notice (`amiexpress/express.e:25157`)
-        /// before continuing into the bulletin / menu cycle. For
-        /// `auto_rejoin` this is always `true` — auto-rejoin asks
-        /// for whatever the resolver settles on.
-        matched_request: bool,
     },
     /// The user has no granted membership for any conference. The
     /// session should be terminated with `no_conference_access`.
     NoAccess,
+}
+
+/// Outcome of the explicit-join resolution (Tier C C2).
+///
+/// Unlike [`resolve_auto_rejoin`] there is no fall-through to
+/// `first_accessible_conference` and no disconnect: the legacy
+/// `internalCommandJ` access-checks the requested conference and, on
+/// failure, prints the no-access notice and returns to the menu with
+/// the caller still attached to their current conference
+/// (`amiexpress/express.e:25156-25158`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExplicitJoinResolution<'a> {
+    /// The user holds a granted membership for the requested
+    /// conference. The caller creates the visit and updates
+    /// `User.last_joined`.
+    Granted {
+        /// Conference the session attaches to.
+        conference: &'a Conference,
+        /// Primary (number 1) message base within `conference`.
+        msgbase: &'a MessageBase,
+    },
+    /// The requested conference is not accessible to the user, or —
+    /// defensively — no conference with that number exists in the
+    /// catalogue (impossible after the prompt clamp under legacy
+    /// contiguous numbering, but `NextExpress` allows gaps). The
+    /// session stays where it is.
+    Denied,
 }
 
 /// Per-session conference-scan tracking (spec:
@@ -247,52 +263,36 @@ pub fn resolve_auto_rejoin<'a>(user: &User, conferences: &'a [Conference]) -> Jo
         Some(conference) => JoinResolution::Resolved {
             conference,
             msgbase: primary_msgbase_of(conference),
-            matched_request: true,
         },
     }
 }
 
-/// Resolves the `JoinConference` rule for the explicit-join path
-/// (spec: `conferences.allium:JoinConference`,
-/// `reason = explicit_join`, Slice 32).
+/// Resolves the explicit-join path of `J <num>` (Tier C C2, legacy
+/// `internalCommandJ`, `amiexpress/express.e:25156-25158`).
 ///
-/// When the user has a granted membership for `target_conference_number`
-/// the resolution is direct. Otherwise the resolver falls through to
-/// `first_accessible_conference` per the spec's `else` clause, with
-/// `matched_request = false` so the listener can surface the legacy
-/// "no access" notice (`amiexpress/express.e:25157`) before the
-/// fallback conference's screens are rendered.
-///
-/// When the user has no granted membership anywhere at all the
-/// resolver returns [`JoinResolution::NoAccess`] and the session
-/// must terminate with `no_conference_access`.
+/// The requested conference number is looked up exactly: a granted
+/// membership yields [`ExplicitJoinResolution::Granted`]; anything
+/// else — revoked membership, no membership, or no such conference in
+/// the catalogue — is [`ExplicitJoinResolution::Denied`] and the
+/// caller stays in its current conference. Explicit join never falls
+/// through to another conference and never logs the user off (they
+/// already hold a conference).
 #[must_use]
 pub fn resolve_explicit_join<'a>(
     target_conference_number: u32,
     user: &User,
     conferences: &'a [Conference],
-) -> JoinResolution<'a> {
-    let target = conferences
+) -> ExplicitJoinResolution<'a> {
+    conferences
         .iter()
         .find(|c| c.number() == target_conference_number)
-        .filter(|c| user.has_membership(c));
-
-    if let Some(conference) = target {
-        return JoinResolution::Resolved {
-            conference,
-            msgbase: primary_msgbase_of(conference),
-            matched_request: true,
-        };
-    }
-
-    match first_accessible_conference(user.memberships(), conferences) {
-        None => JoinResolution::NoAccess,
-        Some(conference) => JoinResolution::Resolved {
-            conference,
-            msgbase: primary_msgbase_of(conference),
-            matched_request: false,
-        },
-    }
+        .filter(|c| user.has_membership(c))
+        .map_or(ExplicitJoinResolution::Denied, |conference| {
+            ExplicitJoinResolution::Granted {
+                conference,
+                msgbase: primary_msgbase_of(conference),
+            }
+        })
 }
 
 #[cfg(test)]
@@ -467,107 +467,69 @@ mod tests {
     }
 
     #[test]
-    fn auto_rejoin_signals_matched_request_when_resolved() {
-        let confs = vec![make_conf(1)];
-        let user = make_user(&[(1, true)], None);
-        let outcome = resolve_auto_rejoin(&user, &confs);
-        match outcome {
-            JoinResolution::Resolved {
-                matched_request, ..
-            } => assert!(matched_request),
-            JoinResolution::NoAccess => panic!("expected Resolved"),
-        }
-    }
-
-    #[test]
-    fn explicit_join_resolves_directly_when_user_has_access_to_target() {
+    fn explicit_join_grants_the_exact_target_when_user_has_access() {
         let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
         let user = make_user(&[(1, true), (2, true)], None);
         let outcome = resolve_explicit_join(2, &user, &confs);
         match outcome {
-            JoinResolution::Resolved {
+            ExplicitJoinResolution::Granted {
                 conference,
-                matched_request,
-                ..
+                msgbase,
             } => {
                 assert_eq!(conference.number(), 2);
-                assert!(matched_request);
+                assert_eq!(msgbase.number(), 1);
             }
-            JoinResolution::NoAccess => panic!("expected Resolved"),
+            ExplicitJoinResolution::Denied => panic!("expected Granted"),
         }
     }
 
     #[test]
-    fn explicit_join_falls_through_with_matched_request_false_when_target_is_not_accessible() {
-        // User picked 3 but they only have 1. Resolver falls through
-        // to first_accessible (1), and matched_request is false so
-        // the listener can render "You do not have access".
+    fn explicit_join_denies_an_inaccessible_target_without_falling_through() {
+        // Legacy internalCommandJ access-checks the request and stays
+        // put (`amiexpress/express.e:25156-25158`) — there is no
+        // first-accessible fallback for explicit joins.
         let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
         let user = make_user(&[(1, true)], None);
-        let outcome = resolve_explicit_join(3, &user, &confs);
-        match outcome {
-            JoinResolution::Resolved {
-                conference,
-                matched_request,
-                ..
-            } => {
-                assert_eq!(conference.number(), 1);
-                assert!(
-                    !matched_request,
-                    "resolver fell through, listener must surface no-access notice"
-                );
-            }
-            JoinResolution::NoAccess => panic!("expected Resolved"),
-        }
-    }
-
-    #[test]
-    fn explicit_join_falls_through_when_target_is_not_in_catalogue() {
-        // User typed J 99 but no such conference exists.
-        let confs = vec![make_conf(1)];
-        let user = make_user(&[(1, true)], None);
-        let outcome = resolve_explicit_join(99, &user, &confs);
-        match outcome {
-            JoinResolution::Resolved {
-                conference,
-                matched_request,
-                ..
-            } => {
-                assert_eq!(conference.number(), 1);
-                assert!(!matched_request);
-            }
-            JoinResolution::NoAccess => panic!("expected Resolved"),
-        }
-    }
-
-    #[test]
-    fn explicit_join_returns_no_access_when_user_has_no_grants_at_all() {
-        let confs = vec![make_conf(1), make_conf(2)];
-        let user = make_user(&[], None);
         assert_eq!(
-            resolve_explicit_join(1, &user, &confs),
-            JoinResolution::NoAccess
+            resolve_explicit_join(3, &user, &confs),
+            ExplicitJoinResolution::Denied
         );
     }
 
     #[test]
-    fn explicit_join_with_target_having_only_revoked_membership_falls_through() {
-        // The revoked row for conference 2 doesn't grant access; the
-        // resolver falls through to conference 1 (the only granted
-        // one). This pins the `.filter(has_membership)` step.
+    fn explicit_join_denies_a_target_missing_from_the_catalogue() {
+        // Defensive: legacy contiguous numbering makes a clamped
+        // in-range number always resolvable, but NextExpress allows
+        // gaps — a hole in the catalogue is treated as denied.
+        let confs = vec![make_conf(1)];
+        let user = make_user(&[(1, true)], None);
+        assert_eq!(
+            resolve_explicit_join(99, &user, &confs),
+            ExplicitJoinResolution::Denied
+        );
+    }
+
+    #[test]
+    fn explicit_join_denies_when_user_has_no_grants_at_all() {
+        // Even with zero grants explicit join only denies — it never
+        // disconnects; the caller already holds a conference.
+        let confs = vec![make_conf(1), make_conf(2)];
+        let user = make_user(&[], None);
+        assert_eq!(
+            resolve_explicit_join(1, &user, &confs),
+            ExplicitJoinResolution::Denied
+        );
+    }
+
+    #[test]
+    fn explicit_join_denies_a_revoked_membership() {
+        // The revoked row for conference 2 doesn't grant access; this
+        // pins the `.filter(has_membership)` step.
         let confs = vec![make_conf(1), make_conf(2)];
         let user = make_user(&[(1, true), (2, false)], None);
-        let outcome = resolve_explicit_join(2, &user, &confs);
-        match outcome {
-            JoinResolution::Resolved {
-                conference,
-                matched_request,
-                ..
-            } => {
-                assert_eq!(conference.number(), 1);
-                assert!(!matched_request);
-            }
-            JoinResolution::NoAccess => panic!("expected Resolved"),
-        }
+        assert_eq!(
+            resolve_explicit_join(2, &user, &confs),
+            ExplicitJoinResolution::Denied
+        );
     }
 }

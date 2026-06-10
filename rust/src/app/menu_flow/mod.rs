@@ -34,17 +34,14 @@ use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_stats_screen, render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE,
     EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE, GOODBYE_LINE, HELP_UNAVAILABLE_LINE,
-    IDLE_TIMEOUT_LINE, INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE,
-    JOIN_REQUIRES_NUMBER_LINE, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE, UNKNOWN_COMMAND_LINE,
-    VERSION_BANNER,
+    IDLE_TIMEOUT_LINE, INVALID_MESSAGE_NUMBER_LINE, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE,
+    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
 };
 use crate::domain::conference::{
     find_msgbase_in, AllowedAddressing, Conference, MessageBase, MessageBaseRef,
 };
 use crate::domain::session::typed::{LoggingOffSession, MenuSession};
 use crate::domain::user::Right;
-
-use self::join::ExplicitJoinResult;
 
 /// Internal control-flow signal returned by
 /// [`MenuFlow::dispatch`]: either the loop continues with the supplied
@@ -184,18 +181,15 @@ where
                 self.write_and_flush(GOODBYE_LINE).await?;
                 return Ok(DispatchOutcome::LogoffComplete(logging_off));
             }
-            MenuCommand::Join(arg) => match arg {
-                NumberArg::Number(n) => {
-                    session = match self.handle_explicit_join(session, n).await? {
-                        ExplicitJoinResult::Joined(menu) => menu,
-                        ExplicitJoinResult::NoAccess(logging_off) => {
-                            return Ok(DispatchOutcome::LogoffComplete(logging_off));
-                        }
-                    };
-                }
-                NumberArg::Missing => self.write_and_flush(JOIN_REQUIRES_NUMBER_LINE).await?,
-                NumberArg::Invalid => self.write_and_flush(INVALID_CONFERENCE_NUMBER_LINE).await?,
-            },
+            MenuCommand::Join(arg) => {
+                // Tier C C2: a direct in-range argument joins
+                // immediately; everything else opens the legacy
+                // interactive `Conference Number (1-N): ` prompt
+                // (`amiexpress/express.e:25142-25154`). Both arms
+                // return the session — explicit join never logs the
+                // caller off.
+                session = self.handle_join_command(session, arg).await?;
+            }
             MenuCommand::Read(arg) => match arg {
                 NumberArg::Number(n) => self.handle_read_mail(&mut session, n).await?,
                 // Bare `R` opens the sub-prompt at the read-resume point

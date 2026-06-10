@@ -207,7 +207,7 @@ module under `app::menu_flow/`):
 | Command | Variant | Handler |
 |---|---|---|
 | `G` | `Logoff` | dispatch |
-| `J <n>` | `Join(NumberArg)` | `join` |
+| `J` / `J <n>` | `Join(JoinArg)` | `join` (direct in-range arg joins; everything else opens the legacy `Conference Number (1-N): ` single-shot prompt) |
 | `R` / `R <n>` | `Read(NumberArg)` | `read_mail` → `read_subprompt` (bare `R` = prompt-first at the read-pointer resume point; `R <n>` = read-first) |
 | `E` / `E <to>` | `Post(PostArg)` | `post_mail` (body via `read_editor_body` — the ruler / numbered-line editor + `Msg. Options:` save menu) |
 | `C` | `CommentToSysop` | `post_mail` (same ruler editor) |

@@ -87,9 +87,7 @@ async fn delete_mail<M>(session: &mut MenuSession, mail_stores: &M, number: u32)
 where
     M: MailStores + ?Sized,
 {
-    let Some((_, mut guard)) =
-        super::lock_current_base(session, mail_stores).await
-    else {
+    let Some((_, mut guard)) = super::lock_current_base(session, mail_stores).await else {
         return DeleteOutcome::NoMailBase;
     };
     let result = delete_mail_rule(session.user_mut(), &mut *guard, number);
@@ -148,9 +146,7 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some((_, mut guard)) =
-        super::lock_current_base(session, mail_stores).await
-    else {
+    let Some((_, mut guard)) = super::lock_current_base(session, mail_stores).await else {
         return EditHeaderOutcome::NoMailBase;
     };
 
@@ -183,7 +179,6 @@ where
         Err(err) => EditHeaderOutcome::Rejected(err),
     }
 }
-
 
 impl<T> super::MenuFlow<'_, T>
 where

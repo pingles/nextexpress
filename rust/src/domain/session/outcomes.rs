@@ -147,11 +147,11 @@ pub enum AutoRejoinOutcome {
 
 /// Outcome of [`super::Session::explicit_join_conference`]
 /// (`conferences.allium:JoinConference` for `explicit_join`,
-/// Slice 32).
+/// Slice 32 / Tier C C2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExplicitJoinOutcome {
-    /// The user has been attached to a conference. The session
-    /// carries a fresh `ConferenceVisit`; the bound user's
+    /// The user has been attached to the requested conference. The
+    /// session carries a fresh `ConferenceVisit`; the bound user's
     /// `last_joined` mirrors `(conference_number, msgbase_number)`.
     Joined {
         /// 1-indexed number of the conference the session is now
@@ -166,23 +166,17 @@ pub enum ExplicitJoinOutcome {
         /// Slice 31). `false` whenever
         /// [`super::Session::quick_logon`] is set.
         show_bulletin: bool,
-        /// `true` when the resolved conference is the one the user
-        /// asked for; `false` when the resolver fell through to
-        /// `first_accessible_conference` (e.g. user typed `J 7`
-        /// without access to 7). The listener uses this to render
-        /// the legacy "You do not have access to the requested
-        /// conference" notice (`amiexpress/express.e:25157`)
-        /// before the JOIN / JOINED screens.
-        matched_request: bool,
         /// Mirrors [`AutoRejoinOutcome::Joined::name_type_promoted_to`]
         /// for explicit joins (Slice 34).
         name_type_promoted_to: Option<crate::domain::conference::NameType>,
     },
-    /// The user has no granted membership in any catalogued
-    /// conference. The session has moved to
-    /// [`super::SessionState::LoggingOff`] with
-    /// [`super::LogoffReason::NoConferenceAccess`].
-    NoAccess,
+    /// The requested conference is not accessible to the user
+    /// (legacy `checkConfAccess` failure,
+    /// `amiexpress/express.e:25156-25158`). The session is
+    /// unchanged — still attached to its current conference, still
+    /// at the menu; the listener writes the
+    /// "You do not have access to the requested conference" notice.
+    Denied,
 }
 
 /// Outcome of [`super::Session::start_conference_scan`] and

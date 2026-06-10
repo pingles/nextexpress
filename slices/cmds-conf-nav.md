@@ -27,6 +27,26 @@ new-files scan (Tier D) — not any `CS` command.
 
 ## Slice C2 — `J` no-arg interactive prompt (parity fix)
 
+**Status: Done (2026-06-10), pinned against the live AmiExpress 5.6.0
+reference (`comparison/evidence-tierC/live-observations.md`).**
+Decisions: the prompt is single-shot — blank aborts with one CRLF,
+anything else takes the legacy `Val` of the line (optional `-` sign +
+digit prefix; `+` is not a sign) clamped into `[1,N]`, N = the highest
+conference number; direct `J <arg>` values are *not* clamped — bare,
+zero, negative, non-numeric and out-of-range arguments all open the
+prompt (`express.e:25142` vs `:25153-25154`). Denied joins (parity
+fix to shipped `J <n>`) print the legacy no-access notice and stay in
+the current conference — no first-accessible fallback, no disconnect
+(`express.e:25156-25158`). The built-in `JoinConf` fallback screen is
+now empty: the reference renders nothing before the prompt when the
+asset is absent. Eof / idle timeout at the prompt returns silently to
+the menu loop (the CF precedent; legacy would take the
+`RESULT_TIMEOUT` bell-and-grace path). **Interim until C4a**: the
+dotted (`J 1.1`) and two-token (`J 1 2`) message-base forms route
+into the conference prompt rather than joining silently (the live
+reference joins `J 1.1` directly and gives `J 1 2` the message-base
+prompt) — `TODO(C4a)` markers sit in `menu_command.rs` / `join.rs`.
+
 - **In Scope**
   - When `J` is typed with no argument, NextExpress today rejects
     with `Usage: J <conference-number>`. Legacy

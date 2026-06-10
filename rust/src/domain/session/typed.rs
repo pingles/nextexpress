@@ -356,8 +356,10 @@ impl MenuSession {
     }
 
     /// Resolves the explicit-join path of
-    /// `conferences.allium:JoinConference` (Slice 32) for a `J` /
-    /// `J <num>` command typed at the menu.
+    /// `conferences.allium:JoinConference` (Slice 32 / Tier C C2)
+    /// for a `J` / `J <num>` command typed at the menu. A denied
+    /// request returns the session unchanged — explicit join never
+    /// logs the user off (`amiexpress/express.e:25156-25158`).
     #[must_use]
     pub(crate) fn explicit_join_conference(
         mut self,
@@ -374,7 +376,6 @@ impl MenuSession {
                 conference_number,
                 msgbase_number,
                 show_bulletin,
-                matched_request,
                 name_type_promoted_to,
             } => ExplicitJoinTransition::Joined {
                 session: Self {
@@ -383,10 +384,9 @@ impl MenuSession {
                 conference_number,
                 msgbase_number,
                 show_bulletin,
-                matched_request,
                 name_type_promoted_to,
             },
-            ExplicitJoinOutcome::NoAccess => ExplicitJoinTransition::NoAccess(LoggingOffSession {
+            ExplicitJoinOutcome::Denied => ExplicitJoinTransition::Denied(Self {
                 session: self.session,
             }),
         }
@@ -508,20 +508,16 @@ pub(crate) enum AutoRejoinTransition {
 }
 
 /// Outcome of [`MenuSession::explicit_join_conference`] expressed as
-/// next-phase ownership (Slice 32). The session stays in
-/// [`SessionState::Menu`] on success.
+/// next-phase ownership (Slice 32 / Tier C C2). The session stays in
+/// [`SessionState::Menu`] on both arms — explicit join never logs
+/// the user off.
 ///
-/// `conference_number`, `msgbase_number` and `show_bulletin` are
-/// reserved for forthcoming slices that surface the joined
-/// coordinates (e.g. visit-history listings) and the bulletin
-/// rendering driver-side; the present driver only needs
-/// `matched_request` and `name_type_promoted_to`.
+/// `show_bulletin` is reserved for the forthcoming slice that
+/// renders conference bulletins driver-side; the present driver
+/// needs the joined coordinates and `name_type_promoted_to`.
 #[allow(dead_code)]
 pub(crate) enum ExplicitJoinTransition {
-    /// The session reattached to a conference. `matched_request` is
-    /// `false` when the resolver fell through to
-    /// `first_accessible_conference` because the requested
-    /// conference wasn't accessible to the user.
+    /// The session reattached to the requested conference.
     Joined {
         /// The session, still in [`SessionState::Menu`].
         session: MenuSession,
@@ -533,16 +529,15 @@ pub(crate) enum ExplicitJoinTransition {
         /// Whether the listener should render the conference
         /// bulletin after the join.
         show_bulletin: bool,
-        /// `true` when the resolved conference matches what the user
-        /// asked for; `false` when the resolver fell through.
-        matched_request: bool,
         /// Mirrors [`AutoRejoinTransition::Joined::name_type_promoted_to`].
         name_type_promoted_to: Option<NameType>,
     },
-    /// The user has no granted membership anywhere; the session has
-    /// moved to [`SessionState::LoggingOff`] with
-    /// [`crate::domain::session::LogoffReason::NoConferenceAccess`].
-    NoAccess(LoggingOffSession),
+    /// The requested conference is not accessible (legacy
+    /// `checkConfAccess` failure,
+    /// `amiexpress/express.e:25156-25158`). The session is returned
+    /// unchanged; the caller writes the no-access notice and stays
+    /// at the menu.
+    Denied(MenuSession),
 }
 
 /// Outcome of the name-typed flow expressed as next-phase ownership.

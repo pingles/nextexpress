@@ -192,22 +192,29 @@ fn walk_phase4_conference_flow(addr: &str) -> Result<(), String> {
         ));
     }
 
-    // J 99 doesn't exist; the resolver falls through to
-    // first_accessible (Conf01) and the listener surfaces the
-    // legacy "do not have access" notice before the JOINED screen.
+    // J 99 is out of range (highest conference is 3): legacy
+    // `internalCommandJ` opens the interactive
+    // `Conference Number (1-N): ` prompt instead of clamping or
+    // rejecting a direct argument (`amiexpress/express.e:25142-25144`).
+    // A blank line aborts silently (`:25148`) and the session stays in
+    // the conference it was in (Conf03).
     write_line(&mut stream, b"J 99")?;
-    let post_j99 = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after J 99: {e}"))?;
-    if !contains(&post_j99, b"do not have access") {
+    drain_until(&mut stream, b"Conference Number (1-3): ")
+        .map_err(|e| format!("join prompt after J 99: {e}"))?;
+    write_line(&mut stream, b"")?;
+    let post_blank = drain_until_capturing(&mut stream, b"mins. left): ")
+        .map_err(|e| format!("Command prompt after blank join abort: {e}"))?;
+    if contains(&post_blank, b"Joining Conference") || contains(&post_blank, b"do not have access")
+    {
         return Err(format!(
-            "expected no-access notice after `J 99`, got {:?}",
-            String::from_utf8_lossy(&post_j99)
+            "blank input at the join prompt must abort silently, got {:?}",
+            String::from_utf8_lossy(&post_blank)
         ));
     }
-    if !contains(&post_j99, b"CONF1-MENU") {
+    if !contains(&post_blank, b"CONF3-MENU") {
         return Err(format!(
-            "expected fallback to Conf01 menu after `J 99`, got {:?}",
-            String::from_utf8_lossy(&post_j99)
+            "expected to stay in Conf03 after the blank join abort, got {:?}",
+            String::from_utf8_lossy(&post_blank)
         ));
     }
 

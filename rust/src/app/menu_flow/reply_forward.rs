@@ -88,13 +88,11 @@ async fn reply_mail<M>(
 where
     M: MailStores + ?Sized,
 {
-    let Some((visit_msgbase, mut guard)) =
-        super::lock_current_base(session, mail_stores).await
+    let Some((visit_msgbase, mut guard)) = super::lock_current_base(session, mail_stores).await
     else {
         return ReplyForwardOutcome::NoMailBase;
     };
-    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
-    else {
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase) else {
         return ReplyForwardOutcome::NoMailBase;
     };
 
@@ -140,13 +138,11 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some((visit_msgbase, mut guard)) =
-        super::lock_current_base(session, mail_stores).await
+    let Some((visit_msgbase, mut guard)) = super::lock_current_base(session, mail_stores).await
     else {
         return ReplyForwardOutcome::NoMailBase;
     };
-    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
-    else {
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase) else {
         return ReplyForwardOutcome::NoMailBase;
     };
 
@@ -181,7 +177,6 @@ where
         Err(err) => ReplyForwardOutcome::ForwardRejected(err),
     }
 }
-
 
 impl<T> super::MenuFlow<'_, T>
 where

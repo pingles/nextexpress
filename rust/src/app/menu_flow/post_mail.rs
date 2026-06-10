@@ -90,8 +90,7 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some((visit_msgbase, mut guard)) =
-        super::lock_current_base(session, mail_stores).await
+    let Some((visit_msgbase, mut guard)) = super::lock_current_base(session, mail_stores).await
     else {
         return PostMailOutcome::NoMailBase;
     };
@@ -120,8 +119,7 @@ where
         }
     };
 
-    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
-    else {
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase) else {
         return PostMailOutcome::NoMailBase;
     };
 
@@ -162,8 +160,7 @@ where
     R: UserRepository + ?Sized,
     M: MailStores + ?Sized,
 {
-    let Some((visit_msgbase, mut guard)) =
-        super::lock_current_base(session, mail_stores).await
+    let Some((visit_msgbase, mut guard)) = super::lock_current_base(session, mail_stores).await
     else {
         return PostMailOutcome::NoMailBase;
     };
@@ -173,8 +170,7 @@ where
         NameLookupResult::NotFound => return PostMailOutcome::NoSysop,
     };
 
-    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase)
-    else {
+    let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase) else {
         return PostMailOutcome::NoMailBase;
     };
 
@@ -199,7 +195,6 @@ where
         Err(err) => PostMailOutcome::Rejected(err),
     }
 }
-
 
 /// Outcome of classifying the recipient typed at the `To:` prompt.
 enum Recipient {

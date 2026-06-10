@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use crate::domain::conference::{first_accessible_conference, Conference, NameType};
 use crate::domain::conference_visit::{
     next_accessible_conference_after, primary_msgbase_of, resolve_auto_rejoin,
-    resolve_explicit_join, ConferenceScan, ConferenceVisit, JoinResolution,
+    resolve_explicit_join, ConferenceScan, ConferenceVisit, ExplicitJoinResolution, JoinResolution,
 };
 
 use super::{
@@ -85,7 +85,6 @@ impl Session {
             JoinResolution::Resolved {
                 conference,
                 msgbase,
-                matched_request: _,
             } => {
                 let conference_number = conference.number();
                 let msgbase_number = msgbase.number();
@@ -121,18 +120,17 @@ impl Session {
 
     /// Resolves the explicit-join path of
     /// `conferences.allium:JoinConference`
-    /// (`reason = explicit_join`, Slice 32).
+    /// (`reason = explicit_join`, Slice 32 / Tier C C2).
     ///
     /// Models the user typing `J <number>` from the menu. When the
-    /// user has access to `target_conference_number` the session
-    /// attaches there directly; otherwise the resolver falls
-    /// through to `first_accessible_conference` and signals
-    /// `matched_request = false` so the listener can render the
-    /// legacy "You do not have access to the requested conference"
-    /// notice (`amiexpress/express.e:25157`) before the JOIN /
-    /// JOINED screens. With no granted memberships at all the
-    /// session moves to [`SessionState::LoggingOff`] with
-    /// [`LogoffReason::NoConferenceAccess`].
+    /// user has a granted membership for `target_conference_number`
+    /// the session attaches there directly. Otherwise the request is
+    /// denied and the session is left untouched — still in its
+    /// current conference, still at the menu — mirroring the legacy
+    /// `internalCommandJ` access check
+    /// (`amiexpress/express.e:25156-25158`); the listener renders the
+    /// "You do not have access to the requested conference" notice.
+    /// Explicit join never logs the user off.
     ///
     /// # Errors
     /// Returns [`AutoRejoinError::WrongState`] when the session is
@@ -151,14 +149,10 @@ impl Session {
 
         let resolution = resolve_explicit_join(target_conference_number, user, conferences);
         match resolution {
-            JoinResolution::NoAccess => {
-                self.move_to_logging_off(Some(LogoffReason::NoConferenceAccess));
-                Ok(ExplicitJoinOutcome::NoAccess)
-            }
-            JoinResolution::Resolved {
+            ExplicitJoinResolution::Denied => Ok(ExplicitJoinOutcome::Denied),
+            ExplicitJoinResolution::Granted {
                 conference,
                 msgbase,
-                matched_request,
             } => {
                 let conference_number = conference.number();
                 let msgbase_number = msgbase.number();
@@ -171,7 +165,6 @@ impl Session {
                     conference_number,
                     msgbase_number,
                     show_bulletin,
-                    matched_request,
                     name_type_promoted_to,
                 })
             }

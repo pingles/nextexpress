@@ -87,7 +87,7 @@ done.
 | `<` / `>` | `express.e:24529, 24548` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo |
 | `JM <n>` | `express.e:25185` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4a) |
 | `<<` / `>>`, `JM` interactive | `express.e:24566, 24580, 25197` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (C4b) |
-| `J` no-arg prompt | `express.e:25143-25151` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Todo (parity gap on shipped `J`) |
+| `J` no-arg prompt | `express.e:25113-25183` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C2 — bare / non-numeric / out-of-range `J` opens the single-shot `Conference Number (1-N): ` prompt (`Val` + clamp, blank aborts); denied joins keep the caller in their current conference with the legacy notice instead of falling through; dotted / two-token msgbase forms route into the prompt interim until C4a) |
 | `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C5 — landed first in Tier C; M/A/F/Z editor, flags on `ConferenceMembership` (SQLite-persisted), `*` honours the advertised toggle-all the legacy no-ops) |
 | **D. Files — browsing first, transfer second** ||||
 | `F` (file listings) | `express.e:24877` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |

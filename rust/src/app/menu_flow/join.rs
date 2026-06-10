@@ -1,42 +1,149 @@
-//! `J <num>` (Explicit Join) menu command (Slice 32).
+//! `J` (Join Conference) menu command (Slice 32 / Tier C C2).
 //!
-//! Applies the `conferences.allium:JoinConference` explicit-join
-//! transition, writes the legacy "no access" notice when the resolver
-//! fell through, the `Joining Conference: <name>` announcement on
-//! success, any name-type promotion screen (Slice 34), then fires
-//! Slice 41's `ScanMailOnJoin` against the new visit.
+//! Mirrors the legacy `internalCommandJ`
+//! (`amiexpress/express.e:25113-25183`): a direct in-range argument
+//! joins immediately; everything else opens the single-shot
+//! `Conference Number (1-N): ` prompt. A granted join writes the
+//! `Joining Conference: <name>` announcement, any name-type promotion
+//! screen (Slice 34) and Slice 41's `ScanMailOnJoin`; a denied
+//! request writes the legacy no-access notice and stays in the
+//! current conference.
 
 use std::time::SystemTime;
 
+use crate::app::menu_command::{val_prefix, JoinArg};
 use crate::app::session_presenter::{format_explicit_join_line, render_name_type_promotion};
-use crate::app::terminal::Terminal;
+use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_scan_summary, MAIL_STORE_ERROR_LINE, NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE,
-    NO_CONFERENCE_ACCESS_LINE,
+    render_conference_number_prompt, render_scan_summary, MAIL_STORE_ERROR_LINE,
+    NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE,
 };
-use crate::domain::conference::{find_msgbase_in, MessageBase};
+use crate::domain::conference::{find_msgbase_in, Conference, MessageBase};
 use crate::domain::messaging::scan_mail::scan_mail;
-use crate::domain::session::typed::{ExplicitJoinTransition, LoggingOffSession, MenuSession};
-
-/// Outcome of [`super::MenuFlow::handle_explicit_join`]. The success
-/// branch returns the still-Menu-state session so the menu loop
-/// continues; failure terminates with `LogoffReason::NoConferenceAccess`.
-pub(super) enum ExplicitJoinResult {
-    /// The user is now attached to a (possibly fallback) conference.
-    Joined(MenuSession),
-    /// The user lost their last membership; the session is closing.
-    NoAccess(LoggingOffSession),
-}
+use crate::domain::session::typed::{ExplicitJoinTransition, MenuSession};
 
 impl<T> super::MenuFlow<'_, T>
 where
     T: Terminal,
 {
+    /// Drives the `J` menu command (`internalCommandJ`,
+    /// `amiexpress/express.e:25113-25183`).
+    ///
+    /// A direct argument already inside `1..=numConf` joins
+    /// immediately (`amiexpress/express.e:25142` gate). Everything
+    /// else — bare `J`, a `Val` of zero/negative, an out-of-range
+    /// number (direct arguments are *not* clamped; clamping is
+    /// prompt-input-only, `:25153-25154`), and — interim, until C4a
+    /// completes them — the dotted / two-token message-base forms —
+    /// opens the interactive conference prompt.
+    ///
+    /// Returns the session in both outcomes: explicit join never
+    /// logs the caller off (they already hold a conference).
+    ///
+    /// # Errors
+    /// Propagates terminal I/O errors.
+    pub(super) async fn handle_join_command(
+        &mut self,
+        mut session: MenuSession,
+        arg: JoinArg,
+    ) -> Result<MenuSession, T::Error> {
+        let highest = highest_conference_number(self.services.conferences.as_ref());
+        let direct_target = match arg {
+            JoinArg::Conference(n) => u32::try_from(n)
+                .ok()
+                .filter(|&n| (1..=highest).contains(&n)),
+            // TODO(C4a): `JoinArg::WithMsgBase` (dotted / two-token
+            // forms) joins the requested message base once C4a lands;
+            // interim it falls into the conference prompt rather than
+            // joining silently.
+            JoinArg::Missing | JoinArg::WithMsgBase => None,
+        };
+        let target = match direct_target {
+            Some(n) => n,
+            None => match self
+                .prompt_for_conference_number(&mut session, highest)
+                .await?
+            {
+                Some(n) => n,
+                None => return Ok(session),
+            },
+        };
+        self.handle_explicit_join(session, target).await
+    }
+
+    /// Runs the single-shot interactive conference prompt
+    /// (`amiexpress/express.e:25143-25154`): the optional `JoinConf`
+    /// screen, the `Conference Number (1-N): ` prompt, then exactly
+    /// one line of input — the legacy never re-prompts.
+    ///
+    /// Returns `Some(number)` (the `Val` of the line clamped into
+    /// `1..=N`, `:25153-25154`) for a non-empty line. Returns `None`
+    /// when the caller aborted: a blank line (exact emptiness, no
+    /// trimming — a whitespace-only line `Val`s to 0 and clamps to
+    /// conference 1 instead) writes the lone CRLF the legacy
+    /// `lineInput` always emits (`:2378`); Eof / idle timeout return
+    /// silently and the menu loop's next read applies the
+    /// carrier-loss / idle transitions.
+    ///
+    /// # Errors
+    /// Propagates terminal I/O errors.
+    async fn prompt_for_conference_number(
+        &mut self,
+        session: &mut MenuSession,
+        highest_conference_number: u32,
+    ) -> Result<Option<u32>, T::Error> {
+        // SCREEN_JOINCONF (`amiexpress/express.e:25143`): renders
+        // only when the sysop installed `Screens/JoinConf.txt` — the
+        // adapter returns empty bytes when the asset is absent,
+        // matching the reference where nothing precedes the prompt.
+        let screen = self.services.screens.as_ref().joinconf_screen().await;
+        if !screen.is_empty() {
+            self.terminal.write(&screen).await?;
+        }
+        let prompt = render_conference_number_prompt(highest_conference_number);
+        let TerminalRead::Line(line) = self.read_prompted(&prompt, TerminalEcho::Visible).await?
+        else {
+            return Ok(None);
+        };
+        session.record_input(SystemTime::now());
+        if line.is_empty() {
+            // Blank aborts silently (`amiexpress/express.e:25148`);
+            // the only wire output is `lineInput`'s trailing `\b\n`
+            // (`:2378`) — one CRLF after the echoed empty line.
+            self.write_and_flush(b"\r\n").await?;
+            return Ok(None);
+        }
+        let mut value = val_prefix(&line);
+        // Legacy clamp order (`amiexpress/express.e:25153-25154`).
+        // On an empty catalogue (highest = 0, unreachable from a
+        // joined menu session) this yields 0, which resolution
+        // denies.
+        if value < 1 {
+            value = 1;
+        }
+        if value > i64::from(highest_conference_number) {
+            value = i64::from(highest_conference_number);
+        }
+        Ok(Some(
+            u32::try_from(value).expect("clamped into 0..=u32::MAX above"),
+        ))
+    }
+
+    /// Joins `target_conference_number` exactly (legacy `joinConf`
+    /// via `internalCommandJ`, `amiexpress/express.e:25156-25182`):
+    /// the granted path renders the join announcement, any name-type
+    /// promotion screen and the scan-on-join; a denied request
+    /// writes the legacy no-access notice
+    /// (`amiexpress/express.e:25157`) and leaves the session in its
+    /// current conference.
+    ///
+    /// # Errors
+    /// Propagates terminal I/O errors.
     pub(super) async fn handle_explicit_join(
         &mut self,
         session: MenuSession,
         target_conference_number: u32,
-    ) -> Result<ExplicitJoinResult, T::Error> {
+    ) -> Result<MenuSession, T::Error> {
         let conferences = self.services.conferences.as_ref();
         match session.explicit_join_conference(
             target_conference_number,
@@ -47,7 +154,6 @@ where
                 mut session,
                 conference_number,
                 msgbase_number,
-                matched_request,
                 name_type_promoted_to,
                 ..
             } => {
@@ -56,10 +162,6 @@ where
                 // doesn't overlap the mutable borrows below.
                 let line =
                     format_explicit_join_line(conferences, conference_number, msgbase_number);
-                if !matched_request {
-                    self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
-                        .await?;
-                }
                 self.write_and_flush(&line).await?;
                 render_name_type_promotion(
                     self.terminal,
@@ -68,11 +170,12 @@ where
                 )
                 .await?;
                 self.scan_mail_on_join(&mut session).await?;
-                Ok(ExplicitJoinResult::Joined(session))
+                Ok(session)
             }
-            ExplicitJoinTransition::NoAccess(logging_off) => {
-                self.write_and_flush(NO_CONFERENCE_ACCESS_LINE).await?;
-                Ok(ExplicitJoinResult::NoAccess(logging_off))
+            ExplicitJoinTransition::Denied(session) => {
+                self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
+                    .await?;
+                Ok(session)
             }
         }
     }
@@ -122,9 +225,21 @@ where
     }
 }
 
+/// The highest conference number in the catalogue — the legacy
+/// `cmds.numConf` bound the prompt advertises and clamps into
+/// (`amiexpress/express.e:25144`, `:25154`). The catalogue is in
+/// ascending number order per the `ConferenceRepository::load_all`
+/// contract, so the last entry carries the highest number. Zero on
+/// an empty catalogue, where every join request is denied.
+fn highest_conference_number(conferences: &[Conference]) -> u32 {
+    conferences.last().map_or(0, Conference::number)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::convert::Infallible;
+    use std::path::Path;
     use std::sync::Arc;
     use std::time::{Duration, SystemTime};
 
@@ -133,9 +248,11 @@ mod tests {
     use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::menu_command::{parse_menu_command, JoinArg, MenuCommand};
     use crate::app::services::AppServices;
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
     use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+    use crate::app::wire_text::NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE;
     use crate::domain::conference::{
         Conference, ConferenceMembership, MessageBase, MessageBaseRef,
     };
@@ -147,12 +264,28 @@ mod tests {
     use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
     use crate::domain::user::{RatioMode, User};
 
-    #[derive(Default)]
-    struct CaptureTerminal {
+    /// Write-capturing terminal with a scripted input queue
+    /// (the `FakeTerminal` precedent from `session_driver.rs`);
+    /// reads past the script return `Eof`.
+    struct ScriptTerminal {
+        inputs: VecDeque<TerminalRead>,
         output: Vec<u8>,
     }
 
-    impl Terminal for CaptureTerminal {
+    impl ScriptTerminal {
+        fn new(inputs: impl IntoIterator<Item = TerminalRead>) -> Self {
+            Self {
+                inputs: inputs.into_iter().collect(),
+                output: Vec::new(),
+            }
+        }
+
+        fn line(text: &str) -> TerminalRead {
+            TerminalRead::Line(text.to_string())
+        }
+    }
+
+    impl Terminal for ScriptTerminal {
         type Error = Infallible;
 
         fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
@@ -171,17 +304,51 @@ mod tests {
             _echo: TerminalEcho,
             _timeout: Duration,
         ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
-            Box::pin(async { Ok(TerminalRead::Eof) })
+            Box::pin(async move { Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof)) })
         }
     }
 
-    fn one_conference() -> Vec<Conference> {
-        vec![Conference::new(
-            1,
-            "One".to_string(),
-            vec![MessageBase::new(1, 1, "general".to_string())],
+    fn conference(number: u32, name: &str) -> Conference {
+        Conference::new(
+            number,
+            name.to_string(),
+            vec![MessageBase::new(number, 1, "main".to_string())],
         )
-        .expect("valid conference")]
+        .expect("valid conference")
+    }
+
+    fn three_conferences() -> Vec<Conference> {
+        vec![
+            conference(1, "One"),
+            conference(2, "Two"),
+            conference(3, "Three"),
+        ]
+    }
+
+    fn services_with(
+        conferences: Vec<Conference>,
+        stores: InMemoryMailStores,
+        bbs_path: &Path,
+    ) -> AppServices {
+        AppServices {
+            user_repo: Arc::new(InMemoryUserRepository::default()),
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(FileScreenRepository::new(bbs_path.to_path_buf())),
+            conferences: Arc::new(conferences),
+            mail_stores: Arc::new(stores),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
+                mode: RatioMode::Disabled,
+                value: 0,
+            },
+            new_user_gate: Arc::new(NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            }),
+            bbs_name: Arc::from("Test BBS"),
+        }
     }
 
     fn services_with_one_broadcast_message() -> AppServices {
@@ -202,28 +369,10 @@ mod tests {
             .expect("insert broadcast");
         let mut stores = InMemoryMailStores::new();
         stores.register(coord, Box::new(store));
-        AppServices {
-            user_repo: Arc::new(InMemoryUserRepository::default()),
-            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
-            caller_log: Arc::new(InMemoryCallerLog::new()),
-            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            conferences: Arc::new(one_conference()),
-            mail_stores: Arc::new(stores),
-            session_policy: SessionPolicy::default(),
-            default_ratio: DefaultRatio {
-                mode: RatioMode::Disabled,
-                value: 0,
-            },
-            new_user_gate: Arc::new(NewUserGateConfig {
-                allow_new_users: true,
-                new_user_password: None,
-                max_new_user_password_attempts: 3,
-            }),
-            bbs_name: Arc::from("Test BBS"),
-        }
+        services_with(vec![conference(1, "One")], stores, &std::env::temp_dir())
     }
 
-    fn alice() -> User {
+    fn alice_with_grants(grants: &[u32]) -> User {
         let mut user = User::new(
             2,
             "alice".to_string(),
@@ -234,15 +383,50 @@ mod tests {
             100,
         )
         .expect("valid user");
-        user.upsert_membership(ConferenceMembership::new(1, true));
+        for &number in grants {
+            user.upsert_membership(ConferenceMembership::new(number, true));
+        }
         user
     }
 
-    fn menu_session(with_visit: bool) -> MenuSession {
+    /// User whose `last_joined` is conference 2, so the fixture's
+    /// auto-rejoin attaches there instead of the lowest-numbered
+    /// grant — making "moved to conference 1" observable.
+    fn alice_last_joined_two(grants: &[u32]) -> User {
+        let mut user = alice_with_grants(grants);
+        let conf = conference(2, "Two");
+        user.record_join(&conf, &conf.msgbases()[0]);
+        user
+    }
+
+    /// Menu-phase session attached (via auto-rejoin) to the first
+    /// accessible conference of `conferences`.
+    fn menu_session_attached(conferences: &[Conference], user: User) -> MenuSession {
         let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
         session.prompt_for_name().expect("prompt");
         session
-            .record_identified_user("alice", alice())
+            .record_identified_user("alice", user)
+            .expect("identify");
+        apply_password_match(
+            &mut session,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("password match");
+        session
+            .auto_rejoin_conference(conferences, SystemTime::UNIX_EPOCH)
+            .expect("rejoin");
+        session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
+        MenuSession::from_session(session)
+    }
+
+    fn menu_session(with_visit: bool) -> MenuSession {
+        let conferences = vec![conference(1, "One")];
+        let user = alice_with_grants(&[1]);
+        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
+        session.prompt_for_name().expect("prompt");
+        session
+            .record_identified_user("alice", user)
             .expect("identify");
         apply_password_match(
             &mut session,
@@ -252,11 +436,323 @@ mod tests {
         .expect("password match");
         if with_visit {
             session
-                .auto_rejoin_conference(&one_conference(), SystemTime::UNIX_EPOCH)
+                .auto_rejoin_conference(&conferences, SystemTime::UNIX_EPOCH)
                 .expect("rejoin");
         }
         session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
         MenuSession::from_session(session)
+    }
+
+    /// Runs `handle_join_command` against a fresh flow, returning the
+    /// session it yields.
+    async fn run_join(
+        services: &AppServices,
+        terminal: &mut ScriptTerminal,
+        session: MenuSession,
+        arg: JoinArg,
+    ) -> MenuSession {
+        let mut flow = super::super::MenuFlow { terminal, services };
+        flow.handle_join_command(session, arg)
+            .await
+            .expect("join command")
+    }
+
+    fn join_arg(line: &str) -> JoinArg {
+        match parse_menu_command(line) {
+            MenuCommand::Join(arg) => arg,
+            other => panic!("`{line}` must parse as a join command, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn join_prompt_blank_abort_is_byte_exact_and_stays_put() {
+        // Live capture: `J` at the menu yields exactly
+        // `b'Conference Number (1-N): '` (no JoinConf screen
+        // installed → nothing precedes it; no leading CRLF; trailing
+        // space, no trailing CRLF), and a blank line aborts with one
+        // CRLF (`amiexpress/express.e:25144-25148`, lineInput `:2378`).
+        // Conference numbers 1 and 3 pin that N is the *highest
+        // number* (legacy `cmds.numConf`), not the catalogue length.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(3, "Three")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 3]));
+        let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        assert_eq!(
+            terminal.output,
+            b"Conference Number (1-3): \r\n",
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+        assert_eq!(session.current_conference_number(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn join_prompt_eof_returns_to_menu_silently() {
+        // Eof / idle at the sub-prompt writes nothing extra; the menu
+        // loop's next read applies the carrier/idle transitions (the
+        // CF precedent).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = three_conferences();
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2, 3]));
+        let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        assert_eq!(terminal.output, b"Conference Number (1-3): ");
+        assert_eq!(session.current_conference_number(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn join_prompt_clamps_high_input_to_the_highest_conference() {
+        // Live capture: `99` at `Conference Number (1-2): ` is clamped
+        // to the highest conference (`amiexpress/express.e:25154`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = three_conferences();
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("99")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2, 3]));
+        let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        assert_eq!(session.current_conference_number(), Some(3));
+        assert_eq!(
+            terminal.output,
+            b"Conference Number (1-3): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Three\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_prompt_clamps_zero_input_to_conference_one() {
+        // Live capture: `0` clamps to conference 1
+        // (`amiexpress/express.e:25153`). The session starts in 2 so
+        // the clamp's effect is observable as a move.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = three_conferences();
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("0")]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2, 3]));
+        assert_eq!(session.current_conference_number(), Some(2));
+        let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        assert_eq!(session.current_conference_number(), Some(1));
+        assert_eq!(
+            terminal.output,
+            b"Conference Number (1-3): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_prompt_clamps_non_numeric_input_to_conference_one() {
+        // Live capture: `abc` → Val 0 → clamps to conference 1; no
+        // error message, no re-prompt (`amiexpress/express.e:25150-25154`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = three_conferences();
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("abc")]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2, 3]));
+        assert_eq!(session.current_conference_number(), Some(2));
+        let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        assert_eq!(session.current_conference_number(), Some(1));
+        // Byte-exactness also pins single-shot behaviour: exactly one
+        // prompt, no error text, straight into the join output.
+        assert_eq!(
+            terminal.output,
+            b"Conference Number (1-3): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_prompt_whitespace_only_input_is_not_blank_and_joins_conference_one() {
+        // A whitespace-only line is NOT the blank abort — there is no
+        // trimming; it `Val`s to 0 and clamps to conference 1
+        // (`amiexpress/express.e:25148` checks StrLen of the raw
+        // buffer).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = three_conferences();
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line(" ")]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2, 3]));
+        assert_eq!(session.current_conference_number(), Some(2));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 0")).await;
+        assert_eq!(
+            session.current_conference_number(),
+            Some(1),
+            "whitespace-only input joins conference 1, it does not abort"
+        );
+        assert_eq!(
+            terminal.output,
+            b"Conference Number (1-3): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_argument_with_digit_prefix_joins_that_conference_directly() {
+        // `J 2abc` → Val("2abc") = 2 → in range → joins 2 without any
+        // prompt (`amiexpress/express.e:25131`, `:25142`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = three_conferences();
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2, 3]));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 2abc")).await;
+        assert_eq!(session.current_conference_number(), Some(2));
+        assert_eq!(
+            terminal.output,
+            b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Two\r\n".to_vec(),
+            "no prompt may precede a direct in-range join, got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_direct_out_of_range_argument_opens_the_prompt_instead_of_clamping() {
+        // Live capture: `J 99` (and `J 0`, `J -1`, `J abc`) opens the
+        // prompt — clamping applies only to input typed *at* the
+        // prompt (`amiexpress/express.e:25142` vs `:25153-25154`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2]));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 99")).await;
+        assert_eq!(
+            terminal.output,
+            b"Conference Number (1-2): \r\n",
+            "out-of-range direct argument must prompt, not clamp; got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+        assert_eq!(session.current_conference_number(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn join_negative_argument_opens_the_prompt() {
+        // `J -1` → Val = -1 → below range → prompt
+        // (`amiexpress/express.e:25142`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2]));
+        let _session = run_join(&services, &mut terminal, session, join_arg("J -1")).await;
+        assert_eq!(terminal.output, b"Conference Number (1-2): \r\n");
+    }
+
+    #[tokio::test]
+    async fn join_msgbase_argument_forms_open_the_prompt_until_c4a() {
+        // TODO(C4a): `J 1.1` / `J 1 2` will join the requested
+        // message base; interim they must not silently join — they
+        // route into the conference prompt.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        for line in ["J 1.1", "J 1 2"] {
+            let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+            let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2]));
+            let session = run_join(&services, &mut terminal, session, join_arg(line)).await;
+            assert_eq!(
+                terminal.output, b"Conference Number (1-2): \r\n",
+                "`{line}` must open the conference prompt (interim until C4a)"
+            );
+            assert_eq!(session.current_conference_number(), Some(1));
+        }
+    }
+
+    #[tokio::test]
+    async fn join_denied_writes_the_notice_and_stays_in_the_current_conference() {
+        // Legacy `internalCommandJ` access check
+        // (`amiexpress/express.e:25156-25158`): denied requests print
+        // the no-access notice and stay put — no fallback join, no
+        // logoff.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 2")).await;
+        assert_eq!(
+            terminal.output,
+            NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE.to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+        assert_eq!(
+            session.current_conference_number(),
+            Some(1),
+            "a denied join must leave the session in its current conference"
+        );
+    }
+
+    #[tokio::test]
+    async fn join_prompt_input_clamped_onto_a_denied_conference_stays_put() {
+        // The access check applies to clamped prompt input too: the
+        // user types 2 at the prompt but holds no grant for 2.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("2")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        let mut expected = b"Conference Number (1-2): ".to_vec();
+        expected.extend_from_slice(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE);
+        assert_eq!(
+            terminal.output,
+            expected,
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+        assert_eq!(session.current_conference_number(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn join_prompt_input_landing_in_a_catalogue_hole_is_denied() {
+        // Defensive: legacy contiguous numbering makes every clamped
+        // number resolvable, but NextExpress allows gaps — prompt
+        // input `2` against a {1, 3} catalogue denies and stays put.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(3, "Three")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("2")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 3]));
+        let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        let mut expected = b"Conference Number (1-3): ".to_vec();
+        expected.extend_from_slice(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE);
+        assert_eq!(terminal.output, expected);
+        assert_eq!(session.current_conference_number(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn joinconf_screen_bytes_precede_the_prompt_when_installed() {
+        // `displayScreen(SCREEN_JOINCONF)` runs before the prompt
+        // (`amiexpress/express.e:25143`); the screen renders only when
+        // the sysop installs `Screens/JoinConf.txt`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("Screens")).expect("mkdir");
+        std::fs::write(
+            dir.path().join("Screens").join("JoinConf.txt"),
+            b"PICK A CONF\n",
+        )
+        .expect("write screen");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2]));
+        let _session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+        assert_eq!(
+            terminal.output,
+            b"PICK A CONF\r\nConference Number (1-2): \r\n".to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
     }
 
     #[tokio::test]
@@ -265,7 +761,7 @@ mod tests {
         // visit (the deleted `ScanMailOutcome::NoOpenMsgbase` arm): no
         // summary, no error — the menu prompt follows immediately.
         let services = services_with_one_broadcast_message();
-        let mut terminal = CaptureTerminal::default();
+        let mut terminal = ScriptTerminal::new([]);
         let mut session = menu_session(false);
         {
             let mut flow = super::super::MenuFlow {
@@ -291,7 +787,7 @@ mod tests {
         // advanced the pointer past it — a mutant hardcoding the scan
         // to start from message 1 re-surfaces the broadcast forever.
         let services = services_with_one_broadcast_message();
-        let mut terminal = CaptureTerminal::default();
+        let mut terminal = ScriptTerminal::new([]);
         let mut session = menu_session(true);
         {
             let mut flow = super::super::MenuFlow {

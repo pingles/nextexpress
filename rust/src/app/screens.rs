@@ -35,9 +35,12 @@ pub trait ScreenRepository {
 
     /// Returns the `SCREEN_JOINCONF` asset
     /// (`Screens/JoinConf.txt`, `amiexpress/express.e:6588-6590`).
-    /// Rendered as the prompt header when the user typed `J`
-    /// without a conference number and the listener is asking which
-    /// conference to join (`amiexpress/express.e:25143`).
+    /// Rendered immediately before the `Conference Number (1-N): `
+    /// prompt when the `J` command falls into its interactive flow
+    /// (`amiexpress/express.e:25143`, Tier C C2). Returns empty
+    /// bytes when the asset is absent — the reference renders
+    /// nothing before the prompt on a default install, so the
+    /// caller writes the screen only when non-empty.
     ///
     /// `SCREEN_JOIN` and `SCREEN_JOINED` (`Screens/JOIN.txt`,
     /// `Screens/JOINED.txt`) are deliberately *not* part of the
