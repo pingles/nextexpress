@@ -190,6 +190,18 @@ where
                 // caller off.
                 session = self.handle_join_command(session, arg).await?;
             }
+            MenuCommand::PrevConference => {
+                // Tier C C3 (`<`): nearest lower-numbered accessible
+                // conference at its primary message base, or the
+                // interactive join prompt at the bottom edge
+                // (`internalCommandLT`, `amiexpress/express.e:24529-24546`).
+                session = self.handle_prev_conference(session).await?;
+            }
+            MenuCommand::NextConference => {
+                // Tier C C3 (`>`): the upward mirror
+                // (`internalCommandGT`, `amiexpress/express.e:24548-24564`).
+                session = self.handle_next_conference(session).await?;
+            }
             MenuCommand::Read(arg) => match arg {
                 NumberArg::Number(n) => self.handle_read_mail(&mut session, n).await?,
                 // Bare `R` opens the sub-prompt at the read-resume point

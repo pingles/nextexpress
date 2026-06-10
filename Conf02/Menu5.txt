@@ -20,6 +20,8 @@
 
   CONFERENCES
     J <n>    Join conference number <n>
+    <        Join previous accessible conference
+    >        Join next accessible conference
     CF       Edit conference scan flags
 
   SESSION

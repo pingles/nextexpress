@@ -213,6 +213,30 @@ pub fn next_accessible_conference_after<'a>(
         .find(|c| user.has_membership(c))
 }
 
+/// Returns the highest-numbered [`Conference`] in `conferences` whose
+/// number is strictly less than `before_number` and which the user
+/// has a granted membership for. `None` when no such conference
+/// exists — the caller decides the edge behaviour (the legacy `<`
+/// command falls into the interactive join prompt, no wraparound).
+/// Mirrors the downward walk of `internalCommandLT`
+/// (`amiexpress/express.e:24535-24538`) over the ascending catalogue,
+/// the dual of [`next_accessible_conference_after`].
+#[must_use]
+pub fn prev_accessible_conference_before<'a>(
+    user: &User,
+    conferences: &'a [Conference],
+    before_number: u32,
+) -> Option<&'a Conference> {
+    // The catalogue is in ascending number order per the
+    // `ConferenceRepository::load_all` contract, so a reverse scan
+    // visits candidates nearest-first.
+    conferences
+        .iter()
+        .rev()
+        .filter(|c| c.number() < before_number)
+        .find(|c| user.has_membership(c))
+}
+
 /// Returns a [`MessageBase`] in `conference` with `number == 1`, or
 /// the first declared base when no number-1 base exists. Mirrors the
 /// spec's `primary_msgbase_of(conference)` helper.
@@ -464,6 +488,71 @@ mod tests {
         let user = make_user(&[(1, true)], Some(1));
         let outcome = resolve_auto_rejoin(&user, &confs);
         assert_resolved(&outcome, 1, 1);
+    }
+
+    #[test]
+    fn next_accessible_walk_picks_the_nearest_higher_granted_conference() {
+        // Legacy `internalCommandGT` walk (`amiexpress/express.e:24554-24557`):
+        // upward from current+1, skipping conferences the caller has no
+        // grant for.
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
+        let user = make_user(&[(1, true), (2, false), (3, true)], None);
+        let next = next_accessible_conference_after(&user, &confs, 1).expect("conference 3");
+        assert_eq!(next.number(), 3, "the revoked conference 2 is skipped");
+    }
+
+    #[test]
+    fn next_accessible_walk_returns_none_past_the_top_edge() {
+        // No wraparound (`amiexpress/express.e:24559`): past the top
+        // the legacy falls into the interactive J prompt.
+        let confs = vec![make_conf(1), make_conf(2)];
+        let user = make_user(&[(1, true), (2, true)], None);
+        assert!(next_accessible_conference_after(&user, &confs, 2).is_none());
+    }
+
+    #[test]
+    fn prev_accessible_walk_picks_the_nearest_lower_granted_conference() {
+        // Legacy `internalCommandLT` walk (`amiexpress/express.e:24535-24538`):
+        // downward from current-1. With every grant in place the
+        // nearest lower neighbour wins — not the lowest one.
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3)];
+        let user = make_user(&[(1, true), (2, true), (3, true)], None);
+        let prev = prev_accessible_conference_before(&user, &confs, 3).expect("conference 2");
+        assert_eq!(prev.number(), 2);
+    }
+
+    #[test]
+    fn prev_accessible_walk_skips_conferences_without_a_grant() {
+        // Revoked membership for 2 and no membership row at all for 3:
+        // both are skipped transparently, landing on 1.
+        let confs = vec![make_conf(1), make_conf(2), make_conf(3), make_conf(4)];
+        let user = make_user(&[(1, true), (2, false), (4, true)], None);
+        let prev = prev_accessible_conference_before(&user, &confs, 4).expect("conference 1");
+        assert_eq!(prev.number(), 1);
+    }
+
+    #[test]
+    fn prev_accessible_walk_handles_non_contiguous_numbering() {
+        // NextExpress allows catalogue gaps; the walk follows the
+        // sorted catalogue, not `n - 1` arithmetic.
+        let confs = vec![make_conf(2), make_conf(5), make_conf(9)];
+        let user = make_user(&[(2, true), (5, true), (9, true)], None);
+        let prev = prev_accessible_conference_before(&user, &confs, 9).expect("conference 5");
+        assert_eq!(prev.number(), 5);
+        let prev = prev_accessible_conference_before(&user, &confs, 5).expect("conference 2");
+        assert_eq!(prev.number(), 2);
+    }
+
+    #[test]
+    fn prev_accessible_walk_returns_none_at_the_bottom_edge() {
+        // No wraparound (`amiexpress/express.e:24540`): below the
+        // lowest grant the legacy falls into the interactive J prompt.
+        let confs = vec![make_conf(1), make_conf(2)];
+        let user = make_user(&[(1, true), (2, true)], None);
+        assert!(prev_accessible_conference_before(&user, &confs, 1).is_none());
+        // Same when every lower-numbered conference is revoked.
+        let user = make_user(&[(1, false), (2, true)], None);
+        assert!(prev_accessible_conference_before(&user, &confs, 2).is_none());
     }
 
     #[test]

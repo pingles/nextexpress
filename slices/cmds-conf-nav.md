@@ -59,6 +59,26 @@ prompt) — `TODO(C4a)` markers sit in `menu_command.rs` / `join.rs`.
 
 ## Slice C3 — `<` / `>` (prev / next accessible conference)
 
+**Status: Done (2026-06-10), pinned against the live AmiExpress 5.6.0
+reference (`comparison/evidence-tierC/live-observations.md`).**
+Decisions: the walk follows the sorted conference catalogue (so
+non-contiguous numbering works), skipping inaccessible conferences
+silently (`express.e:24536-24538` / `:24555-24557`); a hit joins
+through the same `handle_explicit_join` machinery as a direct `J <n>`
+— the wire output is byte-identical (`joinConf(newConf,1,FALSE,FALSE)`,
+`:24543` / `:24562`); past either edge the command runs the C2
+interactive prompt (`internalCommandJ('')`, `:24541` / `:24560`) — no
+wraparound. The parser dispatches on the head token alone, so trailing
+parameters are discarded (`< 2` is `<`) while `<<` / `>>` / `<2` stay
+unknown until C4b (exact `StrCmp` dispatch, `express.e:28322-28329`).
+**Deliberate deviation**: the legacy `ACS_JOIN_CONFERENCE` gate
+(`:24531` / `:24550`) is not ported — the port has no join right yet
+and `J` does not gate today, so `<` / `>` stay consistent with it
+(rationale in the handler doc comments, `menu_flow/join.rs`). The
+missing post-join mail-stats block (`express.e:5092-5109`) is the
+already-known `J` divergence, shared automatically; the eventual stats
+slice extends `<` / `>` for free via the shared join machinery.
+
 - **In Scope**
   - Parser: `MenuCommand::PrevConference` /
     `MenuCommand::NextConference`.

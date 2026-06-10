@@ -64,6 +64,19 @@ pub(crate) enum MenuCommand {
     /// `CF`: edit the caller's per-conference scan flags (Tier C C5).
     /// Mirrors `internalCommandCF()` at `amiexpress/express.e:24672`.
     ConferenceFlags,
+    /// `<`: join the nearest lower-numbered accessible conference
+    /// (Tier C C3). Mirrors `internalCommandLT()` at
+    /// `amiexpress/express.e:24529-24546`. The legacy tokenizer keeps
+    /// only the text before the first space as the command
+    /// (`processCommand`, `amiexpress/express.e:28236-28244`) and the
+    /// handler reads no parameters, so anything after the token is
+    /// discarded.
+    PrevConference,
+    /// `>`: join the nearest higher-numbered accessible conference
+    /// (Tier C C3). Mirrors `internalCommandGT()` at
+    /// `amiexpress/express.e:24548-24564`; parameters are discarded
+    /// exactly as for [`MenuCommand::PrevConference`].
+    NextConference,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -183,6 +196,17 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if trimmed.eq_ignore_ascii_case("M") {
         return MenuCommand::AnsiToggle;
+    }
+    // `<` / `>` dispatch on the head token alone — the legacy
+    // tokenizer keeps everything before the first space as the
+    // command (`processCommand`, `amiexpress/express.e:28236-28244`)
+    // and `internalCommandLT`/`GT` take no parameters. The match is
+    // exact-token (`StrCmp`, `amiexpress/express.e:28322-28329`), so
+    // `<<` / `>>` / `<2` never bind here.
+    match trimmed.split_ascii_whitespace().next() {
+        Some("<") => return MenuCommand::PrevConference,
+        Some(">") => return MenuCommand::NextConference,
+        _ => {}
     }
     if let Some(arg) = parse_join_command(trimmed) {
         return MenuCommand::Join(arg);
@@ -349,6 +373,53 @@ mod tests {
     fn val_prefix_saturates_instead_of_overflowing() {
         assert_eq!(val_prefix("99999999999999999999999"), i64::MAX);
         assert_eq!(val_prefix("-99999999999999999999999"), i64::MIN);
+    }
+
+    #[test]
+    fn parses_prev_and_next_conference_commands() {
+        // Tier C C3: `<` / `>` are the prev/next-accessible-conference
+        // commands (`internalCommandLT`/`GT`,
+        // `amiexpress/express.e:24529-24564`).
+        assert_eq!(parse_menu_command("<"), MenuCommand::PrevConference);
+        assert_eq!(parse_menu_command(">"), MenuCommand::NextConference);
+    }
+
+    #[test]
+    fn prev_and_next_conference_discard_parameters() {
+        // The legacy tokenizer keeps only the text before the first
+        // space (`processCommand`, `amiexpress/express.e:28236-28244`)
+        // and neither handler reads `cmdparams` — so any trailing
+        // tokens are silently discarded.
+        assert_eq!(parse_menu_command("< 2"), MenuCommand::PrevConference);
+        assert_eq!(
+            parse_menu_command("< anything at all"),
+            MenuCommand::PrevConference
+        );
+        assert_eq!(parse_menu_command("> 2"), MenuCommand::NextConference);
+        assert_eq!(parse_menu_command("> next"), MenuCommand::NextConference);
+    }
+
+    #[test]
+    fn doubled_angle_brackets_stay_unknown_until_c4b() {
+        // `<<` / `>>` are distinct whole tokens dispatched to
+        // `internalCommandLT2`/`GT2` (`amiexpress/express.e:28324-28329`)
+        // — slice C4b. Until it lands they must fall through to
+        // Unknown, never prefix-match `<` / `>`.
+        assert_eq!(parse_menu_command("<<"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command(">>"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("<< 2"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command(">> 2"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn angle_bracket_tokens_with_attached_text_are_unknown() {
+        // The command token is everything before the first space, so
+        // `<2` is a single unknown token (`StrCmp` dispatch is exact,
+        // `amiexpress/express.e:28322-28329`), not `<` with a
+        // parameter.
+        assert_eq!(parse_menu_command("<2"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command(">2"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("<>"), MenuCommand::Unknown);
     }
 
     #[test]
@@ -717,6 +788,8 @@ mod tests {
             MenuCommand::TopicHelp(_) => Some("^"),
             MenuCommand::AnsiToggle => Some("M"),
             MenuCommand::ConferenceFlags => Some("CF"),
+            MenuCommand::PrevConference => Some("<"),
+            MenuCommand::NextConference => Some(">"),
             MenuCommand::Unknown => None,
         }
     }
@@ -742,6 +815,8 @@ mod tests {
             MenuCommand::TopicHelp(String::new()),
             MenuCommand::AnsiToggle,
             MenuCommand::ConferenceFlags,
+            MenuCommand::PrevConference,
+            MenuCommand::NextConference,
             MenuCommand::Unknown,
         ]
     }
