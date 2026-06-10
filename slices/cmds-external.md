@@ -15,6 +15,19 @@ and the headline external command (`WALL`) so the default
 `Conf02/Menu.txt` doesn't have a typeable label that the BBS
 silently rejects.
 
+**Dispatch order is door-first, live-verified (2026-06-10).** The
+legacy runs SYSCmd icons, then BBSCmd icons, then internal commands
+(`processCommand`, `amiexpress/express.e:28229-28256`) — installed
+commands *shadow* internals. The stock deployment exploits this:
+AquaScan door icons own `F`, `FR` and `N` on the board as shipped
+(byte evidence in
+[`comparison/evidence-tierD/live-observations.md`](../comparison/evidence-tierD/live-observations.md);
+Tier D implements that experience natively). **Note:** X1 as
+written dispatches external commands only for tokens that are *not*
+internal commands — the inverse of the legacy order. A sysop who
+configures an external `F` would expect it to shadow the built-in
+one, as the legacy does. Revisit X1's ordering when it is sliced.
+
 See [SLICES.md](../SLICES.md). The deeper door / shell-out subsystem
 that this leans on is also referenced from
 [cmds-sysop-console.md](cmds-sysop-console.md)'s `0` slice (remote

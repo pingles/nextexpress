@@ -41,8 +41,10 @@ The canonical record of what each shipped slice covers is the
 `M` was rebound to its legacy ANSI-toggle meaning in Tier A (A8); the
 scan-all it used to carry now lives on `MS`. `N`'s mail-scan binding
 (a NextExpress drift) was removed in Tier B (B2) — `N` is now an
-unknown command until Tier D ships the legacy new-files scan
-(`express.e:25275`).
+unknown command until Tier D ships the new-files scan (the
+board-as-shipped AquaScan date-scan experience; the internal scan at
+`express.e:25275` is door-shadowed — see
+[cmds-files-list.md](slices/cmds-files-list.md)).
 
 ## Login-sequence fixes
 
@@ -90,13 +92,13 @@ done.
 | `J` no-arg prompt | `express.e:25113-25183` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C2 — bare / non-numeric / out-of-range `J` opens the single-shot `Conference Number (1-N): ` prompt (`Val` + clamp, blank aborts); denied joins keep the caller in their current conference with the legacy notice instead of falling through; dotted / two-token msgbase forms joined the requested base when C4a landed, the base request surviving the conference prompt) |
 | `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C5 — landed first in Tier C; M/A/F/Z editor, flags on `ConferenceMembership` (SQLite-persisted), `*` honours the advertised toggle-all the legacy no-ops) |
 | **D. Files — browsing first, transfer second** ||||
-| `F` (file listings) | `express.e:24877` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
-| `FR` (reverse listings) | `express.e:24883` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
+| `F` (file listings) | AquaScan door (shadows `express.e:24877` — see [evidence-tierD](comparison/evidence-tierD/live-observations.md)) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
+| `FR` (reverse listings) | AquaScan door (shadows `express.e:24883`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
 | `Z` (zippy search) | `express.e:26123` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
 | `A` list flagged set | `express.e:24601` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (D6a) |
 | `A` add/remove flagged | `express.e:24604` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (D6b) |
 | `FS` (file status) | `express.e:24872` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
-| `N` (new files scan) | `express.e:25275` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (after the mail-`N` semantic fix) |
+| `N` (new files scan) | AquaScan door (shadows `express.e:25275`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (after the mail-`N` semantic fix) |
 | `D` / `DS` (download) | `express.e:24853` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
 | `U` (upload, baseline) | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4a) |
 | `U` upload accounting refinements | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4b) |

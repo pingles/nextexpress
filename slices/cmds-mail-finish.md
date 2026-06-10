@@ -113,7 +113,10 @@ new-files scan, `express.e:25275`) is removed. Rather than a silent
 no-op, `N` is now an **unknown command** (it falls through to
 `MenuCommand::Unknown` and emits the standard unknown-command notice),
 and its line is dropped from `Conf02/Menu5.txt`. `N` and its menu entry
-return in Tier D (`cmds-files-list.md`) as the real new-files scan.
+return in Tier D (`cmds-files-list.md`) as the new-files scan — the
+board-as-shipped AquaScan date-scan experience, since the stock
+deployment's door icons shadow the internal `N` (see
+`comparison/evidence-tierD/live-observations.md`).
 
 - **What was removed:** since `N` was the only consumer of
   `MenuCommand::Scan(ScanArg)`, the whole `Scan` variant, the `ScanArg`

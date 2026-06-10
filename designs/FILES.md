@@ -383,8 +383,11 @@ adapters/files/
   sqlite_files.rs    — rusqlite + FTS5 trigram implementation
   fs_blob_store.rs   — blob read/write/move/delete on disk
   file_metadata.rs   — DIZ/comment extraction + content metadata
-  legacy_dir.rs      — read-only ingest of AmiExpress DIR text files
 ```
+
+(`legacy_dir.rs`, the read-only ingest of AmiExpress DIR text files,
+was dropped 2026-06-10: no legacy on-disk data compatibility — see
+`slices/cmds-files-list.md`'s parity-target section.)
 
 The `FileRepository` port stays narrow: methods named after the rules
 that need them (`find_in_area`, `list_new_since`, `search_descriptions`,
@@ -393,9 +396,12 @@ add indexes for the queries the domain actually uses.
 
 ## Things to nail down
 
-- **Round-tripping the legacy DIR text format.** Does the port need to
-  *write* DIR files for backward compatibility, or only *read* them as a
-  one-shot ingest? Affects whether `legacy_dir.rs` needs a serialiser.
+- ~~**Round-tripping the legacy DIR text format.**~~ Settled 2026-06-10:
+  neither read nor write — no legacy data compatibility. Listings are
+  generated at runtime from repository data; the DIR row *format*
+  survives only as part of the rendered wire output (the AquaScan-style
+  listing re-renders the same fields — see
+  `comparison/evidence-tierD/live-observations.md`).
 - **Full-text search scope.** v1 indexes short descriptions plus
   `FILE_ID.DIZ` / archive-comment metadata. Decide later whether full
   text/art file search is worth a separate content index.
