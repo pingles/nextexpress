@@ -29,7 +29,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 
 **Key caveat — data vs. behaviour.** The two installs carry **different seeded data**: different conference names and numbers (Rust auto-rejoins `Conference 1: Main`, AE `Conference 2: Amiga`), different user records, different clocks, different message bases, and a different configured BBS name (the AE fixture's board name is `"NextExpress Reference"`, which is *not* the software — it is the genuine AmiExpress binary with that board name configured). Consequently this comparison is about **behaviour and wire format**, not data values. Wherever a difference reduces to a seeded name, number, clock, or build string, it is tagged **COSMETIC** and explicitly attributed to seed data.
 
-**Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference join (`J`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), and logoff (`G`). AmiExpress carries many more top-level commands (new-files scan `N`/AquaScan, `ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
+**Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference and message-base navigation (`J` with its interactive prompt, `JM`, `<` / `>`, `<<` / `>>` — Tier C), conference scan flags (`CF`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), and logoff (`G`). AmiExpress carries many more top-level commands (new-files scan `N`/AquaScan, `ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
 
 **Tag legend.** Each finding is tagged **MATCH** (byte-for-byte or behaviourally identical), **COSMETIC** (differs only in wording, spacing, ANSI byte-encoding, or seed data), or **BEHAVIOURAL** (a difference in control flow, an output line present in one and absent in the other, or an interactive step missing on one side).
 
@@ -53,9 +53,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `H` (return code) | Returns `Ok(())` on unavailable path | Returns `RESULT_FAILURE` (latent, not wire-visible) |
 | `^ <topic>` (pause on hit) | Writes screen bytes, no pause, no trailing newline | `displayFile` + `(Pause)...Space To Resume` + trailing newline |
 | `^ <topic>` (sanitisation) | Rejects topics outside `[A-Za-z0-9_-]` (path-traversal guard) | Passes raw param into `help/<param>`, no sanitisation |
-| `J` (no argument) | One-line rejection `Usage: J <conference-number>`; stays put | Interactive `Conference Number (1-2): ` sub-prompt; blank aborts |
-| `J abc` (invalid) | Dedicated `Invalid conference number.` | Same interactive `Conference Number (1-2):` re-prompt (no such string in AE) |
-| `J 99` (out of range) | Prints no-access notice then **silently falls through to join Main** | Interactive `Conference Number (1-2):` re-prompt; stays in current conf; never reaches access check |
+| `J` (no/invalid/out-of-range argument) | ~~Rejections + fall-through-to-Main drift~~ **Resolved by Tier C (C2)**: the interactive `Conference Number (1-N): ` single-shot prompt, blank aborts, prompt input clamped, direct args never clamped — byte-matched against the live reference (see [Tier C navigation](#tier-c--conference-and-message-base-navigation)) | Interactive `Conference Number (1-2): ` sub-prompt; blank aborts; prompt input clamped |
 | `R <num>` not found | Single `Message not found.` for any bad number | Out-of-range → `The last message in this conference is <high>` (live); mid-base gap → silent |
 | `MS` (`Found Mail!`) | Emitted nowhere | Prints `Found Mail!` on single-conf/auto-join path |
 | `MS` (pagination) | Builds whole output, flushes once; never pauses | Paginates with `checkForPause()` after each row |
@@ -339,7 +337,7 @@ Exists in both (AE `internalCommandUpHat`, `express.e:25089-25111`; Rust `MenuCo
 
 ## J — Join Conference
 
-The `J` command switches the caller's active conference. The successful-join wire format matches exactly between the two systems; every error/edge path diverges behaviourally, and the no-arg case is a known parity gap (the interactive no-arg prompt is unimplemented in Rust). Legacy reference: `express.e` `internalCommandJ` (~25113) and `joinConf` (~4975, announcement at 5083). Rust: `app/menu_flow/mod.rs:141-152`, `app/menu_flow/join.rs`, `app/menu/join.rs`, `app/wire_text.rs:228-243`.
+The `J` command switches the caller's active conference. The successful-join wire format matches exactly between the two systems, and **as of Tier C (slice C2) the error/edge paths match too**: the one-line rejections and the fall-through-to-Main drift documented below were replaced by the legacy interactive prompt — see [Tier C navigation](#tier-c--conference-and-message-base-navigation) for the live-vs-live comparison. Legacy reference: `express.e` `internalCommandJ` (~25113) and `joinConf` (~4975, announcement at 5083). Rust: `app/menu_flow/mod.rs` (Join arm), `app/menu_flow/join.rs`.
 
 ### `J <num>` (successful join) — MATCH
 
@@ -350,26 +348,35 @@ Both emit an identical announcement. The legacy `StringF` at `express.e:5083` is
 
 The differing conference names (Programming vs Amiga) and the post-join body (Rust `No new mail.` vs AE's `Total messages` stats block) come from the different seeded data and the mail-scan-on-join path, not from a format difference. **COSMETIC** (data/line-ending only).
 
-### `J` (no argument) — BEHAVIOURAL
+### `J` with no / invalid / out-of-range argument — MATCH (Tier C, slice C2)
 
-- **Rust:** rejects non-interactively — `J\r\n\r\nUsage: J <conference-number>\r\n` then redraws the menu, staying in the current conference (transcript 574-616; `mod.rs:150`, `NumberArg::Missing -> JOIN_REQUIRES_NUMBER_LINE`).
-- **AmiExpress:** interactive — `Val("")` yields an out-of-range number, so it runs `displayScreen(SCREEN_JOINCONF)` then `lineInput` with `Conference Number (1-2): ` (`express.e:25142-25151`); blank input aborts silently to the menu. Transcript 301-309: `J\r\nConference Number (1-2): \r\n`.
+The pre-Tier-C drift (a `Usage: J <conference-number>` rejection for bare `J`, a NextExpress-only `Invalid conference number.` for `J abc`, and a no-access notice followed by a **silent fall-through join of Main** for `J 99`) is gone. Both systems now run the same flow (`express.e:25142-25158`): any argument whose `Val` is missing or outside `1..numConf` opens the `SCREEN_JOINCONF` asset (nothing, when not installed) and the single-shot `Conference Number (1-N): ` prompt; blank input aborts silently with one CRLF; prompt input is `Val`ed and **clamped** into range (`:25153-25154`); an in-range conference failing the access check prints `You do not have access to the requested conference` and stays put — there is no fall-through join and no logoff. Direct arguments are **never** clamped — they prompt instead. The prompt/clamp/abort paths are verified live on both systems (`ae_tierc{,2,3,4}.txt`, `rust_tierc.txt`); the denied-stays-put arm is not observable live (the reference sysop holds access to every conference) and is pinned from source (`express.e:25156-25158`) plus unit tests and the smoke's revoked-conference fixture. Details and byte quotes in [Tier C navigation](#tier-c--conference-and-message-base-navigation).
 
-The legacy is a prompt sub-flow; Rust is a one-line rejection. **BEHAVIOURAL.**
+---
 
-### `J abc` (invalid argument) — BEHAVIOURAL
+## Tier C — conference and message-base navigation
 
-- **Rust:** `J abc\r\n\r\nInvalid conference number.\r\n` then menu (transcript 808-850; `mod.rs:151`, `NumberArg::Invalid -> INVALID_CONFERENCE_NUMBER_LINE`). Rust's parser distinguishes "missing" from "invalid" and emits a dedicated message.
-- **AmiExpress:** `Val("abc")=0` → out-of-range → the *same* interactive `Conference Number (1-2): ` re-prompt as the no-arg case (`express.e:25131`, `:25142`). AE has no "invalid conference number" string at all.
+Live-vs-live comparison of the Tier C navigation surface: AmiExpress captures `comparison/transcripts/ae_tierc.txt`, `ae_tierc2.txt`, `ae_tierc3.txt`, `ae_tierc4.txt`; NextExpress capture `comparison/transcripts/rust_tierc.txt` (the compiled binary on the repo's seed config, two single-base conferences — directly comparable to the reference's two single-base conferences). Multi-base behaviour is not observable on the reference install (its conferences carry no `NMSGBASES` tooltype), so those flows are pinned from the legacy source and exercised end-to-end by `rust/tests/confnav_smoke.rs`.
 
-Different control flow (one-shot rejection vs re-prompt) and a Rust-only message with no legacy counterpart. **BEHAVIOURAL.**
+### The `Conference Number (1-N): ` prompt — MATCH
 
-### `J 99` (out of range / "no access") — BEHAVIOURAL
+Trigger set, observed identically on both systems: `J`, `J 99`, `J 0`, `J abc`, `J -1`, `J +2` all yield exactly `<echo>\r\nConference Number (1-N): ` (no blank line, nothing before the prompt when no `JoinConf` screen is installed). At the prompt: blank → `\r\n\r\n` + menu prompt, conference unchanged; `99` → clamps to the top conference; `0` / `abc` → clamp to conference 1; `2abc` → conference 2 (`Val` digit-prefix); a leading `+` is not a `Val` sign (AE live: `J +2` prompts, `ae_tierc4.txt`). Rust reproduces each captured case byte-for-byte (`rust_tierc.txt`; the `2abc`-typed-at-the-prompt variant was captured on AE only — the Rust side shares the same `val_prefix` path as the direct form, pinned by unit tests).
 
-- **Rust:** `J 99\r\n\r\nYou do not have access to the requested conference\r\n\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Main\r\n\r\nNo new mail.\r\n` — it prints the no-access notice and then **silently falls through to join the first accessible conference (Main)**, rendering a full announcement + mail scan + menu (transcript 759-806; `join.rs:55-59`, `matched_request=false`).
-- **AmiExpress:** `99 > numConf (2)` is out-of-range, so AE re-prompts interactively `J 99\r\nConference Number (1-2): \r\n` and stays in the current conference (transcript 291-299). It **never reaches the access check** — the legacy `You do not have access to the requested conference` string (`express.e:25157`) only fires for an *in-range* conference that fails `checkConfAccess`.
+### `<` / `>` (prev / next conference) — MATCH
 
-Note the subtlety: Rust reuses the exact legacy "no access" string but reaches it under a different condition (out-of-range request) and then performs a fall-through join, whereas AE re-prompts. The live AE transcript contradicts treating `J 99` as a no-access notice. **BEHAVIOURAL** (different control flow: silent fall-through-to-Main vs interactive re-prompt).
+In-range hop: join output byte-identical to a direct `J <n>` (AE: `>` from conf 1 joined conf 2, `<` from conf 2 joined conf 1 — `ae_tierc.txt` / `ae_tierc3.txt`; Rust identical). At either edge both systems fall into the `Conference Number (1-N): ` prompt — no wraparound (`express.e:24540/:24559`); blank abort stays put. The walk skips inaccessible conferences (source `:24536-24538`; pinned in the Rust smoke with a revoked middle conference). The legacy `ACS_JOIN_CONFERENCE` gate is not ported (the port has no join right yet; `J` does not gate either) — **BEHAVIOURAL (latent)**, invisible for the all-access sysop.
+
+### `<<` / `>>` / `JM` on single-base conferences — MATCH
+
+Every non-dotted form (`<<`, `>>`, `JM`, `JM 1`, `JM 9`, `JM abc`) prints exactly `\r\nThis conference does not contain multiple message bases\r\n\r\n` and neither joins nor prompts (AE `ae_tierc.txt`; legacy probe `express.e:25211-25215`; Rust byte-identical, `rust_tierc.txt`). NextExpress equates the legacy "`NMSGBASES` tooltype absent" with a single-base conference; the legacy nuance of an explicitly-set `NMSGBASES=1` (which prompts `(1-1)` instead) is deliberately not modelled — **COSMETIC** (configuration nuance with no counterpart in file-based config; recorded in `slices/cmds-conf-nav.md`).
+
+### Dotted / two-token arguments — MATCH
+
+`J 2.1` joins conference 2; `JM 1.1` delegates to `J` and joins conference 1 (both live on both systems). `J 1 2` (base 2 of single-base conference 1) opens `Message Base Number (1-1): ` — observed byte-identically on both (`ae_tierc2.txt` EXTRA, `rust_tierc.txt`). The answer to *that* prompt goes to the join unclamped, where an out-of-range base resets to the primary (`express.e:25179` + `:4995`) — `JM`'s own prompt clamps into `[1,N]` instead (`:25233-25234`). The asymmetry is source-pinned and covered by unit tests plus the smoke; the reference cannot demonstrate it live (no multi-base conference).
+
+### Residual cosmetic deltas
+
+The post-join body still differs (`No new mail.` vs AE's `Total messages` stats block — the known Tier-A-era divergence, deferred with the mail-stats slice), and the menu-screen redraw depends on the seeded expert flag. AE's menu loop also writes one `\b\n` before *every* menu prompt (`express.e:28589`), so e.g. the single-base notice reads `…\r\n\r\n\r\n` + prompt on AE vs `…\r\n\r\n` + prompt on the port — the same global prompt-spacing convention already tagged COSMETIC for the Tier A toggles. All of these pre-date Tier C and apply to every command equally.
 
 ---
 

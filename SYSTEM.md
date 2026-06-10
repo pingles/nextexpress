@@ -207,15 +207,13 @@ module under `app::menu_flow/`):
 | Command | Variant | Handler |
 |---|---|---|
 | `G` | `Logoff` | dispatch |
-| `J` / `J <n>` | `Join(JoinArg)` | `join` (direct in-range arg joins; everything else opens the legacy `Conference Number (1-N): ` single-shot prompt) |
-| `R` / `R <n>` | `Read(NumberArg)` | `read_mail` → `read_subprompt` (bare `R` = prompt-first at the read-pointer resume point; `R <n>` = read-first) |
+| `J` / `J <n>` / `J <n>.<b>` / `J <n> <b>` | `Join(JoinArg)` | `join` (direct in-range arg joins; everything else opens the legacy `Conference Number (1-N): ` single-shot prompt; the dotted / two-token forms carry a message-base request, out-of-range bases opening the `Message Base Number (1-N): ` prompt whose answer goes to the join unclamped) |
+| `JM` / `JM <b>` | `JoinMsgBase(MsgBaseArg)` | `join` (message base of the current conference; single-base conferences get the legacy "does not contain multiple message bases" notice; missing/out-of-range args open the base prompt, whose answer is clamped — the legacy `J`/`JM` asymmetry; a dotted arg delegates to `J`) |
+| `<` / `>` | `PrevConference` / `NextConference` | `join` (nearest granted conference below/above, primary base, skipping revoked; past the edge → the `J` prompt) |
+| `<<` / `>>` | `PrevMsgBase` / `NextMsgBase` | `join` (current base ∓ 1; past either edge → the `JM` no-arg flow) |
+| `R` / `R <n>` | `Read(NumberArg)` | `read_mail` → `read_subprompt` (bare `R` = prompt-first at the read-pointer resume point; `R <n>` = read-first; the `RP`/`FW`/`K`/`MV`/`EH` verbs live inside the sub-prompt, not at the menu — Tier B B8) |
 | `E` / `E <to>` | `Post(PostArg)` | `post_mail` (body via `read_editor_body` — the ruler / numbered-line editor + `Msg. Options:` save menu) |
 | `C` | `CommentToSysop` | `post_mail` (same ruler editor) |
-| `RP <n>` | `Reply(NumberArg)` | `reply_forward` |
-| `FW <n>` | `Forward(NumberArg)` | `reply_forward` |
-| `K <n>` | `Kill(NumberArg)` | `sysop_admin` |
-| `MV <n>` | `Move(NumberArg)` | `sysop_admin` |
-| `EH <n>` | `EditHeader(NumberArg)` | `sysop_admin` |
 | `T` | `ShowTime` | dispatch (`render_time_line`) |
 | `VER` | `ShowVersion` | dispatch (`VERSION_BANNER`) |
 | `H` | `ShowHelp` | dispatch (`bbs_help_screen` asset) |

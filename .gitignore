@@ -26,3 +26,4 @@ target
 .claude/scheduled_tasks.lock
 /**/MsgBase
 .DS_Store
+__pycache__/

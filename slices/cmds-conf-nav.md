@@ -213,6 +213,16 @@ single `readChar` — the wire echo is identical.
 
 ## Slice C-wire — Tier C wire-and-smoke
 
+**Status: Done (2026-06-10).** `rust/tests/confnav_smoke.rs` drives one
+in-process telnet session through the whole Tier C battery in the
+order of the live reference captures (prompt + clamp + abort framing,
+`<` / `>` incl. the revoked-conference skip and edge prompts, the
+single-base notice, dotted forms, and the multi-base `JM` / `<<` /
+`>>` flows the single-base reference could not exercise). `CF` keeps
+its own end-to-end smoke from C5. The compiled binary was additionally
+replayed against the reference battery
+(`comparison/transcripts/rust_tierc.txt` vs `ae_tierc{,2,3,4}.txt`).
+
 - **In Scope**
   - Smoke test: log in, hop via `<` / `>` / `JM`, and edit conference
     flags via `CF`. (`CF` already has its own end-to-end telnet smoke,

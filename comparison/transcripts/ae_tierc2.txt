@@ -1,0 +1,282 @@
+@@@@@ CONNECT @@@@@
+(landed on node, attempt 0)
+\r\n
+/X Native Telnet:  Searching for free node...\r\n
+/X Native Telnet:  Successful connection to node 0\r\n
+\r\n
+CONNECT 19200\r\n
+**EMSI_IRQ8E08\r\n
+\r\n
+⟨ESC[0m⟩Welcome to NextExpress Reference, located in Docker\r\n
+\r\n
+Running AmiExpress 5.6.0 Copyright ⟨a9⟩2018-2023 Darren Coles\r\n
+Registration NONE. You are connected to Node 0 at 19200 baud\r\n
+Connection occured at Wed 10-Jun-2026 00:30:59.\r\n
+\r\n
+ANSI, RIP or No graphics (A/r/n)? 
+
+@@@@@ graphics -> A @@@@@ [MATCHED]
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+Enter your Name: 
+----- REPR -----
+b'A\r\n\r\nEnter your Name: '
+
+@@@@@ name -> sysop @@@@@ [MATCHED]
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+Password: 
+----- REPR -----
+b'sysop\r\nPassword: '
+
+@@@@@ password -> POST-LOGIN @@@@@ [MENU]
+>>> SENT b'sysop\r'
+----- RENDER -----
+*****\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩New Users - No mail today!\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Amiga - No mail today!\r\n
+\r\n
+⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩Space To Resume⟨ESC[33m⟩: ⟨ESC[0m⟩<<<harness sends SPACE>>>\r\n
+\r\n
+\r\n
+\r\n
+⟨ESC[32m⟩Area Name  ⟨ESC[33m⟩:⟨ESC[0m⟩ Sysop\r\n
+⟨ESC[32m⟩Caller Num.⟨ESC[33m⟩:⟨ESC[0m⟩ 29\r\n
+⟨ESC[32m⟩Lst Date On⟨ESC[33m⟩:⟨ESC[0m⟩ Wed 10-Jun-2026 00:29:08\r\n
+⟨ESC[32m⟩Security Lv⟨ESC[33m⟩:⟨ESC[0m⟩ 255\r\n
+⟨ESC[32m⟩# Times On ⟨ESC[33m⟩:⟨ESC[0m⟩ 17\r\n
+⟨ESC[32m⟩Times Today⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩Msgs Posted⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Online Baud⟨ESC[33m⟩:⟨ESC[0m⟩ 19200\r\n
+⟨ESC[32m⟩Rate CPS UP⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Rate CPS DN⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Screen  Clr⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+⟨ESC[32m⟩Protocol   ⟨ESC[33m⟩:⟨ESC[0m⟩ /X ZMODEM\r\n
+⟨ESC[32m⟩Sysop  Here⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+\r\n
+⟨ESC[32m⟩              Uploads                 Downloads\r\n
+\r\n
+⟨ESC[32m⟩    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n
+⟨ESC[0m⟩    ----  -------  -------------- -------  -------------- -----------  -----\r\n
+⟨ESC[33m⟩       1⟨ESC[0m⟩> ⟨ESC[33m⟩      0               0       0               0    Infinite  ⟨ESC[31m⟩DSBLD\r\n
+⟨ESC[0m⟩\r\n
+\r\n
+Conference 1: New Users Auto-ReJoined\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩597⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'*****\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mNew Users - No mail today!\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mAmiga - No mail today!\r\n\r\n\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32mSpace To Resume\x1b[33m: \x1b[0m<<<harness sends SPACE>>>\r\n\r\n\r\n\r\n\x1b[32mArea Name  \x1b[33m:\x1b[0m Sysop\r\n\x1b[32mCaller Num.\x1b[33m:\x1b[0m 29\r\n\x1b[32mLst Date On\x1b[33m:\x1b[0m Wed 10-Jun-2026 00:29:08\r\n\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\x1b[32m# Times On \x1b[33m:\x1b[0m 17\r\n\x1b[32mTimes Today\x1b[33m:\x1b[0m 1\r\n\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 0\r\n\x1b[32mOnline Baud\x1b[33m:\x1b[0m 19200\r\n\x1b[32mRate CPS UP\x1b[33m:\x1b[0m 0\r\n\x1b[32mRate CPS DN\x1b[33m:\x1b[0m 0\r\n\x1b[32mScreen  Clr\x1b[33m:\x1b[0m NO\r\n\x1b[32mProtocol   \x1b[33m:\x1b[0m /X ZMODEM\r\n\x1b[32mSysop  Here\x1b[33m:\x1b[0m NO\r\n\r\n\x1b[32m              Uploads                 Downloads\r\n\r\n\x1b[32m    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n\x1b[0m    ----  -------  -------------- -------  -------------- -----------  -----\r\n\x1b[33m       1\x1b[0m> \x1b[33m      0               0       0               0    Infinite  \x1b[31mDSBLD\r\n\x1b[0m\r\n\r\nConference 1: New Users Auto-ReJoined\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 0\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 0\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 0\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mNew Users\x1b[0m] Menu (\x1b[33m597\x1b[0m mins. left): '
+
+@@@@@ GAP1: < from conf 2 (clean success path) @@@@@ [TIMEOUT]
+>>> SENT b'<\r'
+----- RENDER -----
+<\r\n
+Conference Number (1-2): 
+----- REPR -----
+b'<\r\nConference Number (1-2): '
+
+@@@@@ GAP2: J 1.1 at clean menu (in conf 1) @@@@@ [MENU]
+>>> SENT b'J 1.1\r'
+----- RENDER -----
+J 1.1\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ New Users\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 1.1\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m New Users\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 0\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 0\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 0\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mNew Users\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP2b: J 2.1 then back to conf 1 via J 1 @@@@@ [MENU]
+>>> SENT b'J 2.1\r'
+----- RENDER -----
+J 2.1\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Amiga\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 2.1\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Amiga\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP2c: J 1 (reposition to conf 1) @@@@@ [MENU]
+>>> SENT b'J 1\r'
+----- RENDER -----
+J 1\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ New Users\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 1\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m New Users\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 0\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 0\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 0\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mNew Users\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP3: J 99 direct -> prompt? @@@@@ [MATCHED]
+>>> SENT b'J 99\r'
+----- RENDER -----
+J 99\r\n
+Conference Number (1-2): 
+----- REPR -----
+b'J 99\r\nConference Number (1-2): '
+
+@@@@@ GAP3: blank abort @@@@@ [MENU]
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mNew Users\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP3b: J 0 direct -> prompt? @@@@@ [MATCHED]
+>>> SENT b'J 0\r'
+----- RENDER -----
+J 0\r\n
+Conference Number (1-2): 
+----- REPR -----
+b'J 0\r\nConference Number (1-2): '
+
+@@@@@ GAP3b: blank abort @@@@@ [MENU]
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mNew Users\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP3c: J abc direct -> prompt? @@@@@ [MATCHED]
+>>> SENT b'J abc\r'
+----- RENDER -----
+J abc\r\n
+Conference Number (1-2): 
+----- REPR -----
+b'J abc\r\nConference Number (1-2): '
+
+@@@@@ GAP3c: answer 2 (join Amiga from prompt) @@@@@ [MENU]
+>>> SENT b'2\r'
+----- RENDER -----
+2\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Amiga\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Amiga\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP4: > at conf 2 -> prompt? @@@@@ [MATCHED]
+>>> SENT b'>\r'
+----- RENDER -----
+>\r\n
+Conference Number (1-2): 
+----- REPR -----
+b'>\r\nConference Number (1-2): '
+
+@@@@@ GAP4: blank abort at edge prompt @@@@@ [MENU]
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP4b: T (confirm still conf 2) @@@@@ [MENU]
+>>> SENT b'T\r'
+----- RENDER -----
+T\r\n
+\r\n
+It is 06-10-26 00:31:45\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'T\r\n\r\nIt is 06-10-26 00:31:45\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP5: J 1 (to conf 1) @@@@@ [MENU]
+>>> SENT b'J 1\r'
+----- RENDER -----
+J 1\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ New Users\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 1\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m New Users\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 0\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 0\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 0\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mNew Users\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ GAP5: < at conf 1 -> prompt? @@@@@ [MATCHED]
+>>> SENT b'<\r'
+----- RENDER -----
+<\r\n
+Conference Number (1-2): 
+----- REPR -----
+b'<\r\nConference Number (1-2): '
+
+@@@@@ GAP5: blank abort at < edge prompt @@@@@ [MENU]
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mNew Users\x1b[0m] Menu (\x1b[33m596\x1b[0m mins. left): '
+
+@@@@@ EXTRA: J 1 2 (two tokens) @@@@@ [TIMEOUT]
+>>> SENT b'J 1 2\r'
+----- RENDER -----
+J 1 2\r\n
+Message Base Number (1-1): 
+----- REPR -----
+b'J 1 2\r\nMessage Base Number (1-1): '
+
+@@@@@ LOGOFF round @@@@@
+G Y\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ New Users\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩New Users⟨ESC[0m⟩] Menu (⟨ESC[33m⟩596⟨ESC[0m⟩ mins. left): 
+
+@@@@@ LOGOFF round @@@@@
