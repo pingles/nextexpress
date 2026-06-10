@@ -96,8 +96,58 @@ pub(crate) enum MenuCommand {
     /// `amiexpress/express.e:24580-24592`; parameters are discarded
     /// exactly as for [`MenuCommand::PrevMsgBase`].
     NextMsgBase,
+    /// `F …`: file listings via the NextScan lister (slice D2). The
+    /// parity target is the AquaScan v1.0 door the stock deployment
+    /// installs over `F` (`comparison/evidence-tierD/live-observations.md`);
+    /// the shadowed internal is `internalCommandF`
+    /// (`amiexpress/express.e:24877`), kept for the stock diff record.
+    FileList(FileListArg),
     /// Any command not recognised by this slice.
     Unknown,
+}
+
+/// Parsed argument shape of the `F` command, mirroring the captured
+/// AquaScan grammar (`F ?` help, `ae_tierd_aquascan3.txt` S1):
+/// `F [R] dir [Q] [NS]` with dir = `U` | `A` | number | `H`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileListArg {
+    /// Bare `F`: open the door's own `Directories: …` prompt.
+    Prompt,
+    /// `F ?`: show the NextScan help screen.
+    Help,
+    /// `F <dir> [NS]`: scan immediately, optionally without pausing.
+    Span {
+        /// Which directories to scan.
+        span: FileSpan,
+        /// `NS` token present — non-stop scrolling, no pager.
+        non_stop: bool,
+    },
+    /// Any other argument form — the captured
+    /// `Argument error! Type 'f ?' for help.` path
+    /// (`ae_tierd_aquascan4.txt` U4). Includes the unported tokens:
+    /// `R` (reverse — flipped by slice D3), `Q` (quick scan — capture
+    /// first), `W` (door self-configuration — NextExpress config is
+    /// TOML, a permanent departure).
+    Invalid,
+}
+
+/// The directory selection of an `F` scan (captured grammar: dir =
+/// `U`pload | `A`ll | number | `H`old).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileSpan {
+    /// `F <n>` — one directory by number, carrying the raw `Val`
+    /// result; the dispatch range-checks into `1..=areas` and answers
+    /// out-of-range with the highest-dir error
+    /// (`ae_tierd_aquascan.txt` A7).
+    Dir(i64),
+    /// `F A` — all directories, first to last.
+    All,
+    /// `F U` — the upload directory (the highest-numbered area;
+    /// confirmed both as argument and prompt answer,
+    /// `ae_tierd_aquascan.txt` A8 / `ae_tierd_aquascan4.txt` U6).
+    Upload,
+    /// `F H` — the hold directory (held-for-review files).
+    Hold,
 }
 
 /// Parsed numeric argument of the `R` command.
@@ -269,7 +319,53 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if let Some(post) = parse_post_command(trimmed) {
         return MenuCommand::Post(post);
     }
+    if let Some(arg) = parse_file_list_command(trimmed) {
+        return MenuCommand::FileList(arg);
+    }
     MenuCommand::Unknown
+}
+
+/// Parses the `F` command line into a [`FileListArg`] following the
+/// captured AquaScan grammar (dir = `U` | `A` | number | `H`,
+/// optional trailing `NS`). Tokens the D2 slice does not port (`R`,
+/// `Q`, `W`) and any other unrecognised shape map to
+/// [`FileListArg::Invalid`] — the `Argument error!` path. Numeric
+/// directory tokens carry their [`val_prefix`] result raw; range
+/// checks happen at dispatch.
+fn parse_file_list_command(line: &str) -> Option<FileListArg> {
+    let mut tokens = line.split_ascii_whitespace();
+    if !tokens.next()?.eq_ignore_ascii_case("F") {
+        return None;
+    }
+    let Some(first) = tokens.next() else {
+        return Some(FileListArg::Prompt);
+    };
+    if first == "?" {
+        return Some(if tokens.next().is_none() {
+            FileListArg::Help
+        } else {
+            FileListArg::Invalid
+        });
+    }
+
+    let span = if first.eq_ignore_ascii_case("A") {
+        FileSpan::All
+    } else if first.eq_ignore_ascii_case("U") {
+        FileSpan::Upload
+    } else if first.eq_ignore_ascii_case("H") {
+        FileSpan::Hold
+    } else if first.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        FileSpan::Dir(val_prefix(first))
+    } else {
+        return Some(FileListArg::Invalid);
+    };
+
+    let non_stop = match tokens.next() {
+        None => false,
+        Some(token) if token.eq_ignore_ascii_case("NS") && tokens.next().is_none() => true,
+        Some(_) => return Some(FileListArg::Invalid),
+    };
+    Some(FileListArg::Span { span, non_stop })
 }
 
 /// Parses the `J` command line into a [`JoinArg`]. Mirrors the legacy
@@ -956,6 +1052,93 @@ mod tests {
 
     /// The checked-in main menu (`Conf02/Menu5.txt`) must advertise
     /// **exactly** the set of menu commands the parser implements. The
+    #[test]
+    fn f_command_parses_the_nextscan_grammar() {
+        // The captured AquaScan syntax (`F ?` help, aquascan3.txt S1):
+        // `F [R] dir [Q] [NS]` with dir = U | A | x | H. D2 ships the
+        // un-R/Q forms; bare F prompts and `F ?` shows the help.
+        assert_eq!(
+            parse_menu_command("F"),
+            MenuCommand::FileList(FileListArg::Prompt)
+        );
+        assert_eq!(
+            parse_menu_command("F ?"),
+            MenuCommand::FileList(FileListArg::Help)
+        );
+        assert_eq!(
+            parse_menu_command("f 1"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F A"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::All,
+                non_stop: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F u"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Upload,
+                non_stop: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F H"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Hold,
+                non_stop: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F 1 NS"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: true,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F A ns"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::All,
+                non_stop: true,
+            })
+        );
+        // Raw Val carry: range checks happen at dispatch, where 0 (and
+        // anything past the area count) takes the highest-dir error.
+        assert_eq!(
+            parse_menu_command("F 0"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(0),
+                non_stop: false,
+            })
+        );
+    }
+
+    #[test]
+    fn f_command_rejects_unsupported_argument_forms() {
+        // Each takes the captured `Argument error! Type 'f ?' for
+        // help.` path (aquascan4.txt U4). `F R` is a temporary
+        // divergence D3 flips; `F W` is permanent (config is TOML);
+        // `Q` waits for a quick-scan capture.
+        for line in ["F R 1", "F W", "F XYZ", "F ? extra", "F 1 XYZ", "F 1 NS x"] {
+            assert_eq!(
+                parse_menu_command(line),
+                MenuCommand::FileList(FileListArg::Invalid),
+                "line {line:?} must parse as Invalid",
+            );
+        }
+    }
+
+    #[test]
+    fn fr_stays_unknown_until_d3() {
+        assert_eq!(parse_menu_command("FR"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("FR 1"), MenuCommand::Unknown);
+    }
+
     /// expected set is derived from [`advertised_token`] applied to
     /// every `MenuCommand` variant ([`every_menu_command`]), so adding
     /// a command fails this test — first to *compile*, because
@@ -1035,6 +1218,7 @@ mod tests {
             MenuCommand::NextConference => Some(">"),
             MenuCommand::PrevMsgBase => Some("<<"),
             MenuCommand::NextMsgBase => Some(">>"),
+            MenuCommand::FileList(_) => Some("F"),
             MenuCommand::Unknown => None,
         }
     }
@@ -1065,6 +1249,7 @@ mod tests {
             MenuCommand::NextConference,
             MenuCommand::PrevMsgBase,
             MenuCommand::NextMsgBase,
+            MenuCommand::FileList(FileListArg::Prompt),
             MenuCommand::Unknown,
         ]
     }

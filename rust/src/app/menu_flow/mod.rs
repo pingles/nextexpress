@@ -13,6 +13,7 @@
 //! shared terminal-I/O helpers.
 
 mod conf_flags;
+mod file_list;
 mod join;
 mod list_messages;
 mod pager;
@@ -313,6 +314,12 @@ where
                 } else {
                     self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
                 }
+            }
+            MenuCommand::FileList(arg) => {
+                // Slice D2 (`F`): the NextScan file lister — AquaScan
+                // door parity with NextScan branding
+                // (`comparison/evidence-tierD/live-observations.md`).
+                self.handle_file_list(&mut session, arg).await?;
             }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }

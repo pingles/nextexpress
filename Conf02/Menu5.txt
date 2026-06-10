@@ -27,6 +27,9 @@
     >>       Join next message base
     CF       Edit conference scan flags
 
+  FILES
+    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)
+
   SESSION
     S        User stats
     T        Show current time
