@@ -11,6 +11,7 @@ pub mod conference;
 pub mod conference_flags;
 pub mod conference_repository;
 pub mod conference_visit;
+pub mod files;
 pub mod messaging;
 pub mod node;
 pub mod password;
