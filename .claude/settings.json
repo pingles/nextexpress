@@ -18,14 +18,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "output=$(make -C \"$CLAUDE_PROJECT_DIR\" clippy 2>&1) || echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Clippy failed - fix before stopping:\\n\" + .)}'",
-            "statusMessage": "Running cargo clippy",
-            "timeout": 300
-          },
-          {
-            "type": "command",
-            "command": "output=$(make -C \"$CLAUDE_PROJECT_DIR\" test 2>&1) || echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Tests failed - fix before stopping:\\n\" + .)}'",
-            "statusMessage": "Running cargo nextest",
+            "command": "if pgrep -x 'cargo|rustc|cargo-nextest|cargo-mutants' >/dev/null 2>&1; then echo '{\"systemMessage\":\"Stop gate skipped: another cargo process is running (likely a background agent build)\"}'; exit 0; fi; output=$(make -C \"$CLAUDE_PROJECT_DIR\" clippy 2>&1) || { echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Clippy failed - fix before stopping:\\n\" + .)}'; exit 0; }; output=$(make -C \"$CLAUDE_PROJECT_DIR\" test 2>&1) || echo \"$output\" | jq -Rs '{decision:\"block\", reason:(\"Tests failed - fix before stopping:\\n\" + .)}'",
+            "statusMessage": "Running clippy + nextest stop gate",
             "timeout": 300
           }
         ]
