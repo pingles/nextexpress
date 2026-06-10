@@ -468,6 +468,12 @@ mod tests {
             screens,
             conferences: Arc::new(conferences),
             mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
             new_user_gate: Arc::new(gate),
@@ -563,6 +569,12 @@ mod tests {
             screens,
             conferences: Arc::new(conferences),
             mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
             new_user_gate: Arc::new(gate),
@@ -636,6 +648,12 @@ mod tests {
             screens,
             conferences: Arc::new(conferences),
             mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
             new_user_gate: Arc::new(gate),
@@ -797,6 +815,12 @@ mod tests {
             screens,
             conferences: Arc::new(vec![]),
             mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
             new_user_gate: Arc::new(gate),

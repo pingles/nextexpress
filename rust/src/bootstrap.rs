@@ -27,6 +27,7 @@ use crate::adapters::file_conference_repository::FileConferenceRepository;
 use crate::adapters::file_mail_store::FileMailStore;
 use crate::adapters::file_screen_repository::FileScreenRepository;
 use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+use crate::adapters::in_memory_file_repository::InMemoryFileRepository;
 use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
@@ -38,8 +39,8 @@ use crate::app::mail_stores::MailStores;
 use crate::app::runtime::Runtime;
 use crate::app::seed;
 use crate::app::services::{
-    SharedCallerLog, SharedConferences, SharedHasher, SharedMailStores, SharedScreens,
-    SharedUserRepo,
+    SharedCallerLog, SharedConferences, SharedFileRepo, SharedHasher, SharedMailStores,
+    SharedScreens, SharedUserRepo,
 };
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::{Conference, MessageBaseRef};
@@ -108,6 +109,18 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
     // resolve a backing store for the session's open visit.
     let mail_stores: SharedMailStores = open_mail_stores(&config.bbs_path, &conferences)?;
 
+    // Slice D1: no `file_storage` config exists yet (it arrives with
+    // the SQLite metadata store, slice D2s), so every boot serves the
+    // demo catalogue from memory — the file-side analogue of the
+    // seeded sysop, keeping a fresh boot's `F` listing populated.
+    let (file_areas, file_records) = seed::demo_file_catalogue(&conferences);
+    let file_repo: SharedFileRepo = Arc::new(InMemoryFileRepository::new(file_areas, file_records));
+    eprintln!(
+        "WARNING: using in-memory demo file catalogue (fixture data in the \
+         first conference). File data is not persistent — the SQLite file \
+         store lands in slice D2s."
+    );
+
     let conferences_handle: SharedConferences = Arc::new(conferences);
     let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
 
@@ -119,6 +132,7 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
         screens,
         conferences_handle,
         mail_stores,
+        file_repo,
     );
     let listen_addr = format!("127.0.0.1:{}", config.port);
     let listener = TelnetListener::bind(&listen_addr, runtime).await?;
@@ -233,6 +247,7 @@ pub fn build_runtime(
     caller_log: SharedCallerLog,
     conferences: SharedConferences,
     mail_stores: SharedMailStores,
+    file_repo: SharedFileRepo,
 ) -> Runtime {
     let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
     Runtime::new(
@@ -243,12 +258,50 @@ pub fn build_runtime(
         screens,
         conferences,
         mail_stores,
+        file_repo,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_runtime_serves_the_seeded_demo_file_catalogue() {
+        use crate::adapters::in_memory_file_repository::InMemoryFileRepository;
+        use crate::domain::conference::MessageBase;
+
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid conference")];
+        let (areas, files) = seed::demo_file_catalogue(&conferences);
+        let file_repo: SharedFileRepo = Arc::new(InMemoryFileRepository::new(areas, files));
+
+        let user_repo: SharedUserRepo = Arc::new(InMemoryUserRepository::new(Vec::new()));
+        let hasher: SharedHasher = Arc::new(Pbkdf2PasswordHasher::new());
+        let caller_log: SharedCallerLog = Arc::new(InMemoryCallerLog::new());
+        let mail_stores: SharedMailStores = Arc::new(InMemoryMailStores::new());
+        let conferences_handle: SharedConferences = Arc::new(conferences);
+        let config = Config::default();
+
+        let runtime = build_runtime(
+            &config,
+            user_repo,
+            hasher,
+            caller_log,
+            conferences_handle,
+            mail_stores,
+            file_repo,
+        );
+
+        let services = runtime.services();
+        assert_eq!(services.file_repo.areas_in_conference(1).len(), 2);
+        assert_eq!(services.file_repo.find_in_area(1, 1).len(), 27);
+        assert_eq!(services.file_repo.find_in_area(1, 2).len(), 3);
+    }
 
     #[test]
     fn startup_version_line_wraps_git_sha_in_parens() {

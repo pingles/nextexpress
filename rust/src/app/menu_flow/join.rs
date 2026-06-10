@@ -747,6 +747,12 @@ mod tests {
             screens: Arc::new(FileScreenRepository::new(bbs_path.to_path_buf())),
             conferences: Arc::new(conferences),
             mail_stores: Arc::new(stores),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
                 mode: RatioMode::Disabled,

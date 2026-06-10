@@ -244,6 +244,12 @@ mod tests {
             caller_log,
             conferences,
             mail_stores,
+            std::sync::Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
         )
     }
 

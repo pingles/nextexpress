@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime};
 
 use nextexpress::adapters::file_mail_store::FileMailStore;
 use nextexpress::adapters::in_memory_caller_log::InMemoryCallerLog;
+use nextexpress::adapters::in_memory_file_repository::InMemoryFileRepository;
 use nextexpress::adapters::in_memory_mail_stores::InMemoryMailStores;
 use nextexpress::adapters::in_memory_user_repository::InMemoryUserRepository;
 use nextexpress::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
@@ -1148,6 +1149,7 @@ async fn spawn_one_conference_listener(
         caller_log,
         conferences_handle,
         mail_stores,
+        Arc::new(InMemoryFileRepository::new(Vec::new(), Vec::new())),
     );
 
     let listener = TelnetListener::bind("127.0.0.1:0", runtime)

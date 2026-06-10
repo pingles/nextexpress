@@ -461,6 +461,12 @@ mod tests {
             screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
             conferences: Arc::new(Vec::new()),
             mail_stores: Arc::new(InMemoryMailStores::new()),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
                 mode: RatioMode::Disabled,
