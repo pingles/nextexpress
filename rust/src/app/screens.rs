@@ -55,6 +55,27 @@ pub trait ScreenRepository {
     /// [`crate::app::wire_text::explicit_join_line`].
     fn joinconf_screen(&self) -> ScreenFuture<'_>;
 
+    /// Returns the screen shown before the
+    /// `Message Base Number (1-N): ` prompt (Tier C C4b), resolved
+    /// for `conference_number`: the conference-local
+    /// `SCREEN_CONF_JOINMSGBASE` asset (`Conf<NN>/JoinMsgBase.txt`,
+    /// `amiexpress/express.e:6591-6593`) first, else the node-level
+    /// `SCREEN_JOINMSGBASE` (`Screens/JoinMsgBase.txt`,
+    /// `amiexpress/express.e:6594-6596`) — the lookup order of
+    /// `internalCommandJM` (`amiexpress/express.e:25221-25222`) and
+    /// `internalCommandJ`'s message-base prompt (`:25169-25172`).
+    ///
+    /// `conference_number` is the *current* conference at prompt
+    /// time: the legacy `confScreenDir` is repointed only inside
+    /// `joinConf` (`amiexpress/express.e:5052`), so even when `J`
+    /// prompts for another conference's bases the screen comes from
+    /// the conference the caller is still in.
+    ///
+    /// Returns empty bytes when neither asset is installed — the
+    /// reference renders nothing before the prompt, so the caller
+    /// writes the screen only when non-empty.
+    fn joinmsgbase_screen(&self, conference_number: u32) -> ScreenFuture<'_>;
+
     /// Returns the `SCREEN_REALNAMES` asset (Slice 34,
     /// `amiexpress/express.e:28169`). Rendered the first time a join
     /// flips the session's `display_name_type` to

@@ -45,6 +45,17 @@ const FALLBACK_NO_NEW_USERS: &[u8] = b"\r\nNew user registration is not availabl
 /// registration flow (`:30057`, `:30125`).
 const FALLBACK_JOINCONF: &[u8] = b"";
 
+/// Built-in fallback for the `JoinMsgBase` screen pair — the screen
+/// shown before the `Message Base Number (1-N): ` prompt
+/// (`amiexpress/express.e:25221-25222`, resolved at `:6591-6596`).
+/// The reference renders NOTHING when neither the conference-local
+/// nor the node-level file is installed (verified live against
+/// `AmiExpress` 5.6.0,
+/// `comparison/evidence-tierC/live-observations.md`), so the
+/// fallback is empty: the screen appears only when the sysop
+/// installs an asset.
+const FALLBACK_JOINMSGBASE: &[u8] = b"";
+
 /// Built-in fallback for `Screens/REALNAMES.txt` (Slice 34,
 /// `amiexpress/express.e:28169`). Rendered the first time a join
 /// promotes the session into a real-name conference.
@@ -96,6 +107,12 @@ pub struct FileScreenRepository {
     new_user_password: Mutex<Option<Vec<u8>>>,
     no_new_users: Mutex<Option<Vec<u8>>>,
     joinconf: Mutex<Option<Vec<u8>>>,
+    /// Per-conference cache for
+    /// [`ScreenRepository::joinmsgbase_screen`] (Tier C C4b): the
+    /// resolution is conference-local-first, so the bytes differ per
+    /// conference. Filled lazily on first lookup, like
+    /// [`Self::conference_menu`].
+    joinmsgbase: Mutex<HashMap<u32, Vec<u8>>>,
     realnames: Mutex<Option<Vec<u8>>>,
     internetnames: Mutex<Option<Vec<u8>>>,
     mailscan: Mutex<Option<Vec<u8>>>,
@@ -115,6 +132,7 @@ impl FileScreenRepository {
             new_user_password: Mutex::new(None),
             no_new_users: Mutex::new(None),
             joinconf: Mutex::new(None),
+            joinmsgbase: Mutex::new(HashMap::new()),
             realnames: Mutex::new(None),
             internetnames: Mutex::new(None),
             mailscan: Mutex::new(None),
@@ -253,6 +271,46 @@ impl FileScreenRepository {
             .await
     }
 
+    async fn joinmsgbase_bytes(&self, conference_number: u32) -> Vec<u8> {
+        if let Some(bytes) = self
+            .joinmsgbase
+            .lock()
+            .await
+            .get(&conference_number)
+            .cloned()
+        {
+            return bytes;
+        }
+        let loaded = self.resolve_joinmsgbase(conference_number).await;
+        let mut cached = self.joinmsgbase.lock().await;
+        cached
+            .entry(conference_number)
+            .or_insert_with(|| loaded.clone())
+            .clone()
+    }
+
+    /// Walks the legacy `JoinMsgBase` screen lookup
+    /// (`amiexpress/express.e:25221-25222`): the conference-local
+    /// `Conf<NN>/JoinMsgBase.txt` (`SCREEN_CONF_JOINMSGBASE`,
+    /// `:6592`) wins over the node-level `Screens/JoinMsgBase.txt`
+    /// (`SCREEN_JOINMSGBASE`, `:6595`); with neither installed the
+    /// result is [`FALLBACK_JOINMSGBASE`] (empty — nothing precedes
+    /// the prompt, as on the reference).
+    async fn resolve_joinmsgbase(&self, conference_number: u32) -> Vec<u8> {
+        let candidates = [
+            self.bbs_path
+                .join(format!("Conf{conference_number:02}"))
+                .join("JoinMsgBase.txt"),
+            self.bbs_path.join("Screens").join("JoinMsgBase.txt"),
+        ];
+        for path in candidates {
+            if let Ok(bytes) = tokio::fs::read(&path).await {
+                return normalise_to_crlf(&bytes);
+            }
+        }
+        FALLBACK_JOINMSGBASE.to_vec()
+    }
+
     async fn realnames_bytes(&self) -> Vec<u8> {
         let path = self.bbs_path.join("Screens").join("REALNAMES.txt");
         self.cached_file(&self.realnames, &path, FALLBACK_REALNAMES)
@@ -343,6 +401,10 @@ impl ScreenRepository for FileScreenRepository {
 
     fn joinconf_screen(&self) -> ScreenFuture<'_> {
         Box::pin(async move { self.joinconf_bytes().await })
+    }
+
+    fn joinmsgbase_screen(&self, conference_number: u32) -> ScreenFuture<'_> {
+        Box::pin(async move { self.joinmsgbase_bytes(conference_number).await })
     }
 
     fn realnames_screen(&self) -> ScreenFuture<'_> {
@@ -659,6 +721,76 @@ mod tests {
         .unwrap();
         let repo = FileScreenRepository::new(dir.path().to_path_buf());
         assert_eq!(repo.joinconf_screen().await, b"PICK A CONF\r\n");
+    }
+
+    #[tokio::test]
+    async fn joinmsgbase_screen_prefers_the_conference_local_asset() {
+        // SCREEN_CONF_JOINMSGBASE resolves first
+        // (`amiexpress/express.e:25221`, file lookup `:6592`): the
+        // conference-local `Conf<NN>/JoinMsgBase.txt` wins over the
+        // node-level `Screens/JoinMsgBase.txt`.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf03")).unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Conf03").join("JoinMsgBase.txt"),
+            b"CONF LOCAL\x08\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("JoinMsgBase.txt"),
+            b"NODE LEVEL\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.joinmsgbase_screen(3).await, b"CONF LOCAL\r\n");
+    }
+
+    #[tokio::test]
+    async fn joinmsgbase_screen_falls_back_to_the_node_level_asset() {
+        // With no conference-local file the legacy falls back to
+        // SCREEN_JOINMSGBASE in the node screen dir
+        // (`amiexpress/express.e:25222`, file lookup `:6595`).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Screens")).unwrap();
+        std::fs::write(
+            dir.path().join("Screens").join("JoinMsgBase.txt"),
+            b"NODE LEVEL\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.joinmsgbase_screen(3).await, b"NODE LEVEL\r\n");
+    }
+
+    #[tokio::test]
+    async fn joinmsgbase_screen_returns_empty_bytes_when_no_asset_exists() {
+        // The AmiExpress 5.6.0 reference shows NOTHING before the
+        // `Message Base Number (1-N): ` prompt when neither screen
+        // file is installed — the fallback must be empty so the
+        // caller writes nothing.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert!(repo.joinmsgbase_screen(1).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn joinmsgbase_screen_caches_per_conference() {
+        // The cache is keyed by conference number: conference 1's
+        // local asset must not leak into conference 2's lookup.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Conf01")).unwrap();
+        std::fs::write(
+            dir.path().join("Conf01").join("JoinMsgBase.txt"),
+            b"ONE\x08\n",
+        )
+        .unwrap();
+        let repo = FileScreenRepository::new(dir.path().to_path_buf());
+        assert_eq!(repo.joinmsgbase_screen(1).await, b"ONE\r\n");
+        assert!(repo.joinmsgbase_screen(2).await.is_empty());
+        // Second read of conference 1 is served from cache even after
+        // the file is gone.
+        std::fs::remove_file(dir.path().join("Conf01").join("JoinMsgBase.txt")).unwrap();
+        assert_eq!(repo.joinmsgbase_screen(1).await, b"ONE\r\n");
     }
 
     #[tokio::test]

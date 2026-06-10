@@ -127,13 +127,13 @@ equates the legacy "`NMSGBASES` tooltype absent" with
 not modelled** (NextExpress has no per-conference tooltype layer; the
 base count in `conference.toml` is the single source of truth).
 
-**Interim until C4b** (TODO markers in `menu_flow/join.rs`): `JM`
-with a missing/out-of-range argument on a multi-base conference, and
-`J` with an explicit out-of-range base (`J 1 2` on a single-base
-conference — the live reference prompts even there), eventually open
-the `Message Base Number (1-N): ` prompt (`express.e:25169-25180` /
-`:25220-25230`); until C4b they return to the menu silently — no
-invented messages, no join.
+**Interim until C4b** (closed when C4b landed): `JM` with a
+missing/out-of-range argument on a multi-base conference, and `J`
+with an explicit out-of-range base (`J 1 2` on a single-base
+conference — the live reference prompts even there), returned to the
+menu silently until C4b shipped the
+`Message Base Number (1-N): ` prompt (`express.e:25169-25180` /
+`:25220-25230`).
 
 - **In Scope**
   - `MenuCommand::JoinMsgBase(MsgBaseArg)` for the numeric-arg form
@@ -148,6 +148,34 @@ invented messages, no join.
   accessible-neighbour walk in C4b.
 
 ## Slice C4b — `<<` / `>>` and `JM` interactive prompt
+
+**Status: Done (2026-06-10), pinned against the live AmiExpress 5.6.0
+reference (`comparison/evidence-tierC/live-observations.md`) and the
+raw source (`comparison/evidence-tierC/legacy-prevnext.md` /
+`legacy-JM.md`).**
+Decisions: `<<` / `>>` dispatch on the exact head token (trailing
+parameters discarded, `<<<` unknown — `StrCmp`,
+`express.e:28324-28329`) and step `currentMsgBase ∓ 1`
+(`internalCommandLT2`/`GT2`, `express.e:24566-24592`): in bounds the
+step is a full message-base join byte-identical to `JM <n>`; past
+either edge it runs the `JM` no-arg flow — the single-base notice on
+a single-base conference (observed live for both commands), the
+interactive prompt on a multi-base one. No wraparound, and no
+security gate on the direct path (the legacy has none there). The
+`Message Base Number (1-N): ` prompt is single-shot: the
+`JoinMsgBase` screen precedes it when installed (conference-local
+`Conf<NN>/JoinMsgBase.txt` wins over `Screens/JoinMsgBase.txt`,
+`express.e:25221-25222`; empty built-in fallback for parity), and it
+resolves against the conference the caller is *currently* in — the
+legacy `confScreenDir` is repointed only inside `joinConf`
+(`:5052`) — while the `(1-N)` bound is the TARGET conference's base
+count (`:25167`). Blank input aborts with one CRLF; Eof / idle
+returns silently. **Clamp asymmetry, pinned by tests**: `JM`'s
+prompt answer is clamped into `[1,N]` (`express.e:25233-25234`);
+`J`'s message-base prompt answer is passed to the join *unclamped*
+(`:25179`), where the domain resets a base the conference does not
+hold to the primary (`:4995`) — so `9` at a `(1-2)` prompt joins
+base 2 via `JM` but base 1 via `J`.
 
 - **In Scope**
   - `<<` / `>>` step through the current conference's message-bases,

@@ -210,6 +210,18 @@ where
                 // argument runs the full join sequence.
                 session = self.handle_join_msgbase_command(session, arg).await?;
             }
+            MenuCommand::PrevMsgBase => {
+                // Tier C C4b (`<<`): step to the previous message base
+                // of the current conference, falling into the `JM`
+                // no-arg flow past the bottom (`internalCommandLT2`,
+                // `amiexpress/express.e:24566-24578`).
+                session = self.handle_prev_msgbase(session).await?;
+            }
+            MenuCommand::NextMsgBase => {
+                // Tier C C4b (`>>`): the upward mirror
+                // (`internalCommandGT2`, `amiexpress/express.e:24580-24592`).
+                session = self.handle_next_msgbase(session).await?;
+            }
             MenuCommand::Read(arg) => match arg {
                 NumberArg::Number(n) => self.handle_read_mail(&mut session, n).await?,
                 // Bare `R` opens the sub-prompt at the read-resume point

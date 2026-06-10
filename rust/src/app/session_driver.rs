@@ -387,6 +387,10 @@ mod tests {
             bytes(b"JOINCONF\r\n")
         }
 
+        fn joinmsgbase_screen(&self, _conference_number: u32) -> ScreenFuture<'_> {
+            bytes(b"JOINMSGBASE\r\n")
+        }
+
         fn realnames_screen(&self) -> ScreenFuture<'_> {
             bytes(b"REALNAMES\r\n")
         }

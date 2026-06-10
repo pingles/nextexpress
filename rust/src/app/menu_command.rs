@@ -84,6 +84,18 @@ pub(crate) enum MenuCommand {
     /// `amiexpress/express.e:24548-24564`; parameters are discarded
     /// exactly as for [`MenuCommand::PrevConference`].
     NextConference,
+    /// `<<`: join the previous message base of the current conference
+    /// (Tier C C4b). Mirrors `internalCommandLT2()` at
+    /// `amiexpress/express.e:24566-24578`. A distinct dispatch-table
+    /// token from `<` (`StrCmp`, `amiexpress/express.e:28324`); the
+    /// handler reads no parameters, so anything after the token is
+    /// discarded.
+    PrevMsgBase,
+    /// `>>`: join the next message base of the current conference
+    /// (Tier C C4b). Mirrors `internalCommandGT2()` at
+    /// `amiexpress/express.e:24580-24592`; parameters are discarded
+    /// exactly as for [`MenuCommand::PrevMsgBase`].
+    NextMsgBase,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -225,15 +237,18 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if trimmed.eq_ignore_ascii_case("M") {
         return MenuCommand::AnsiToggle;
     }
-    // `<` / `>` dispatch on the head token alone — the legacy
-    // tokenizer keeps everything before the first space as the
+    // `<` / `>` / `<<` / `>>` dispatch on the head token alone — the
+    // legacy tokenizer keeps everything before the first space as the
     // command (`processCommand`, `amiexpress/express.e:28236-28244`)
-    // and `internalCommandLT`/`GT` take no parameters. The match is
-    // exact-token (`StrCmp`, `amiexpress/express.e:28322-28329`), so
-    // `<<` / `>>` / `<2` never bind here.
+    // and none of `internalCommandLT`/`GT`/`LT2`/`GT2` take
+    // parameters. The match is exact-token (`StrCmp`,
+    // `amiexpress/express.e:28322-28329`), so `<<<` / `<2` / `<>`
+    // never bind here.
     match trimmed.split_ascii_whitespace().next() {
         Some("<") => return MenuCommand::PrevConference,
         Some(">") => return MenuCommand::NextConference,
+        Some("<<") => return MenuCommand::PrevMsgBase,
+        Some(">>") => return MenuCommand::NextMsgBase,
         _ => {}
     }
     if let Some(arg) = parse_join_command(trimmed) {
@@ -589,15 +604,53 @@ mod tests {
     }
 
     #[test]
-    fn doubled_angle_brackets_stay_unknown_until_c4b() {
-        // `<<` / `>>` are distinct whole tokens dispatched to
-        // `internalCommandLT2`/`GT2` (`amiexpress/express.e:28324-28329`)
-        // — slice C4b. Until it lands they must fall through to
-        // Unknown, never prefix-match `<` / `>`.
-        assert_eq!(parse_menu_command("<<"), MenuCommand::Unknown);
-        assert_eq!(parse_menu_command(">>"), MenuCommand::Unknown);
-        assert_eq!(parse_menu_command("<< 2"), MenuCommand::Unknown);
-        assert_eq!(parse_menu_command(">> 2"), MenuCommand::Unknown);
+    fn parses_prev_and_next_msgbase_commands() {
+        // Tier C C4b: `<<` / `>>` are the prev/next-message-base
+        // commands (`internalCommandLT2`/`GT2`,
+        // `amiexpress/express.e:24566-24592`), dispatched as distinct
+        // whole tokens (`StrCmp`, `amiexpress/express.e:28324-28329`)
+        // — they never prefix-match `<` / `>`.
+        assert_eq!(parse_menu_command("<<"), MenuCommand::PrevMsgBase);
+        assert_eq!(parse_menu_command(">>"), MenuCommand::NextMsgBase);
+    }
+
+    #[test]
+    fn prev_and_next_msgbase_discard_parameters() {
+        // The legacy tokenizer keeps only the text before the first
+        // space (`processCommand`, `amiexpress/express.e:28236-28244`)
+        // and neither `internalCommandLT2` nor `GT2` reads
+        // `cmdparams` — trailing tokens are silently discarded.
+        assert_eq!(parse_menu_command("<< 2"), MenuCommand::PrevMsgBase);
+        assert_eq!(
+            parse_menu_command("<< anything at all"),
+            MenuCommand::PrevMsgBase
+        );
+        assert_eq!(parse_menu_command(">> 2"), MenuCommand::NextMsgBase);
+        assert_eq!(parse_menu_command(">> next"), MenuCommand::NextMsgBase);
+    }
+
+    #[test]
+    fn longer_angle_bracket_runs_are_unknown() {
+        // Exact-token dispatch: `<<<` is a single token matching
+        // neither `<` nor `<<` (`amiexpress/express.e:28322-28329`).
+        assert_eq!(parse_menu_command("<<<"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command(">>>"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("<<2"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command(">>2"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("<<>"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    fn single_and_double_angle_brackets_stay_distinct() {
+        // `<` hops conferences, `<<` hops message bases — the two
+        // dispatch-table entries are independent
+        // (`amiexpress/express.e:28322-28325`).
+        assert_eq!(parse_menu_command("<"), MenuCommand::PrevConference);
+        assert_eq!(parse_menu_command("<<"), MenuCommand::PrevMsgBase);
+        assert_eq!(parse_menu_command(">"), MenuCommand::NextConference);
+        assert_eq!(parse_menu_command(">>"), MenuCommand::NextMsgBase);
+        // `< <` is token `<` with a discarded parameter, not `<<`.
+        assert_eq!(parse_menu_command("< <"), MenuCommand::PrevConference);
     }
 
     #[test]
@@ -980,6 +1033,8 @@ mod tests {
             MenuCommand::JoinMsgBase(_) => Some("JM"),
             MenuCommand::PrevConference => Some("<"),
             MenuCommand::NextConference => Some(">"),
+            MenuCommand::PrevMsgBase => Some("<<"),
+            MenuCommand::NextMsgBase => Some(">>"),
             MenuCommand::Unknown => None,
         }
     }
@@ -1008,6 +1063,8 @@ mod tests {
             MenuCommand::JoinMsgBase(MsgBaseArg::Missing),
             MenuCommand::PrevConference,
             MenuCommand::NextConference,
+            MenuCommand::PrevMsgBase,
+            MenuCommand::NextMsgBase,
             MenuCommand::Unknown,
         ]
     }

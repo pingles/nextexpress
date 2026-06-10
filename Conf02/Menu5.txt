@@ -23,6 +23,8 @@
     JM <n>   Join message base number <n>
     <        Join previous accessible conference
     >        Join next accessible conference
+    <<       Join previous message base
+    >>       Join next message base
     CF       Edit conference scan flags
 
   SESSION

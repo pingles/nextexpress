@@ -248,6 +248,18 @@ pub(crate) fn render_conference_number_prompt(highest_conference_number: u32) ->
     format!("Conference Number (1-{highest_conference_number}): ").into_bytes()
 }
 
+/// Prompt of the interactive join-message-base flow
+/// (`amiexpress/express.e:25224`, identical literal at `:25173` in
+/// `internalCommandJ`'s message-base prompt):
+/// `'Message Base Number (1-\d): '` with `\d` = the current/target
+/// conference's message-base count (legacy `getConfMsgBaseCount`).
+/// Written immediately after the echoed command line (or the
+/// `JoinMsgBase` screen when installed) — no leading CRLF — and ends
+/// with the prompt's trailing space, no trailing CRLF.
+pub(crate) fn render_msgbase_number_prompt(msgbase_count: u32) -> Vec<u8> {
+    format!("Message Base Number (1-{msgbase_count}): ").into_bytes()
+}
+
 /// Sent when `JM` (any non-dotted form, argument or not) is used in a
 /// conference holding a single message base. The legacy probes the
 /// `NMSGBASES` tooltype and fails before any range logic when it is

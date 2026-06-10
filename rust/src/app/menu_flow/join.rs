@@ -30,8 +30,8 @@ use crate::app::menu_command::{val_prefix, JoinArg, MsgBaseArg};
 use crate::app::session_presenter::{format_explicit_join_line, render_name_type_promotion};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_conference_number_prompt, render_scan_summary, MAIL_STORE_ERROR_LINE,
-    NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE, SINGLE_MSGBASE_CONFERENCE_LINE,
+    render_conference_number_prompt, render_msgbase_number_prompt, render_scan_summary,
+    MAIL_STORE_ERROR_LINE, NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE, SINGLE_MSGBASE_CONFERENCE_LINE,
 };
 use crate::domain::conference::{find_msgbase_in, Conference, MessageBase};
 use crate::domain::conference_visit::{
@@ -105,26 +105,44 @@ where
         // conference (`amiexpress/express.e:25156`) before
         // range-checking the base (`:25168`), so a denied conference
         // always wins over an out-of-range base.
-        let granted_base = match resolve_explicit_join(target, None, session.user(), conferences) {
-            ExplicitJoinResolution::Denied => {
-                self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
-                    .await?;
-                return Ok(session);
-            }
-            ExplicitJoinResolution::Granted { conference, .. } => u32::try_from(msgbase)
-                .ok()
-                .filter(|&n| conference.find_msgbase(n).is_some()),
+        let base_info = match resolve_explicit_join(target, None, session.user(), conferences) {
+            ExplicitJoinResolution::Denied => None,
+            ExplicitJoinResolution::Granted { conference, .. } => Some((
+                u32::try_from(msgbase)
+                    .ok()
+                    .filter(|&n| conference.find_msgbase(n).is_some()),
+                msgbase_count_of(conference),
+            )),
+        };
+        let Some((granted_base, base_count)) = base_info else {
+            self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
+                .await?;
+            return Ok(session);
         };
         match granted_base {
             Some(base) => self.handle_explicit_join(session, target, Some(base)).await,
             None => {
-                // TODO(C4b): an explicit out-of-range message base
-                // opens J's `Message Base Number (1-N): ` prompt
+                // An explicit out-of-range message base opens J's
+                // `Message Base Number (1-N): ` prompt
                 // (`amiexpress/express.e:25169-25180`) — observed live
-                // even on a single-base conference (`J 1 2`). Interim,
-                // return to the menu silently: no invented messages,
-                // no join.
-                Ok(session)
+                // even on a single-base conference (`J 1 2` yields the
+                // `(1-1)` prompt; the single-base notice is JM-only).
+                // N is the TARGET conference's base count (`:25167`).
+                match self
+                    .prompt_for_msgbase_number(&mut session, base_count)
+                    .await?
+                {
+                    None => Ok(session),
+                    Some(value) => {
+                        // J's prompt answer is NOT clamped
+                        // (`amiexpress/express.e:25179`): `joinConf`
+                        // resets a base the conference does not hold
+                        // to the primary (`:4995`); a negative `Val`
+                        // collapses to the same reset path.
+                        let base = u32::try_from(value).unwrap_or(0);
+                        self.handle_explicit_join(session, target, Some(base)).await
+                    }
+                }
             }
         }
     }
@@ -147,17 +165,18 @@ where
     ///
     /// An in-range argument runs the full join sequence — there is no
     /// "already there" check, so `JM <current>` re-joins in full. A
-    /// missing or out-of-range argument is deferred to C4b: the
-    /// legacy opens the `JoinMsgBase` screen and the single-shot
-    /// `Message Base Number (1-N): ` prompt
-    /// (`amiexpress/express.e:25220-25230`); interim it returns to
-    /// the menu silently.
+    /// missing or out-of-range argument opens the `JoinMsgBase`
+    /// screen and the single-shot `Message Base Number (1-N): `
+    /// prompt (`amiexpress/express.e:25220-25230`), whose answer is
+    /// clamped into `1..=N` (`:25233-25234`) — unlike `J`'s
+    /// message-base prompt, which passes its answer to the join
+    /// unclamped.
     ///
     /// # Errors
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_join_msgbase_command(
         &mut self,
-        session: MenuSession,
+        mut session: MenuSession,
         arg: MsgBaseArg,
     ) -> Result<MenuSession, T::Error> {
         let conferences = self.services.conferences.as_ref();
@@ -175,6 +194,7 @@ where
             return Ok(session);
         }
         let current = conference.number();
+        let base_count = msgbase_count_of(conference);
         let granted_base = match arg {
             MsgBaseArg::Base(n) => u32::try_from(n)
                 .ok()
@@ -187,11 +207,24 @@ where
                     .await
             }
             None => {
-                // TODO(C4b): missing / out-of-range arguments open the
-                // JoinMsgBase screen and the `Message Base Number
-                // (1-N): ` prompt (`amiexpress/express.e:25220-25230`);
-                // interim, return to the menu silently.
-                Ok(session)
+                // Missing / out-of-range arguments open the JoinMsgBase
+                // screen and the `Message Base Number (1-N): ` prompt
+                // (`amiexpress/express.e:25220-25230`).
+                match self
+                    .prompt_for_msgbase_number(&mut session, base_count)
+                    .await?
+                {
+                    None => Ok(session),
+                    Some(value) => {
+                        // JM's prompt answer IS clamped into `1..=N`
+                        // (`amiexpress/express.e:25233-25234`) — the
+                        // documented asymmetry with `J`'s prompt.
+                        let base = value.clamp(1, i64::from(base_count));
+                        let base = u32::try_from(base).expect("clamped into 1..=base_count");
+                        self.handle_explicit_join(session, current, Some(base))
+                            .await
+                    }
+                }
             }
         }
     }
@@ -259,6 +292,131 @@ where
             Some(number) => self.handle_explicit_join(session, number, None).await,
             None => self.handle_join_command(session, JoinArg::Missing).await,
         }
+    }
+
+    /// Drives the `<<` menu command (`internalCommandLT2`,
+    /// `amiexpress/express.e:24566-24578`): steps to the previous
+    /// message base of the current conference. In bounds the step is
+    /// a full message-base join
+    /// (`joinConf(currentConf,newMsgBase,FALSE,FALSE)`, `:24576`);
+    /// past the bottom (`newMsgBase<1`, `:24573`) it falls into the
+    /// `JM` no-arg flow (`:24574`) — the single-base notice or the
+    /// interactive prompt. Unlike `<` / `>` the legacy runs NO
+    /// security check on the direct path, and there is no
+    /// per-message-base access concept. A session without an open
+    /// visit defensively takes the `JM` no-arg flow too.
+    ///
+    /// # Errors
+    /// Propagates terminal I/O errors.
+    pub(super) async fn handle_prev_msgbase(
+        &mut self,
+        session: MenuSession,
+    ) -> Result<MenuSession, T::Error> {
+        self.step_msgbase(session, -1).await
+    }
+
+    /// Drives the `>>` menu command (`internalCommandGT2`,
+    /// `amiexpress/express.e:24580-24592`): the upward mirror of
+    /// [`Self::handle_prev_msgbase`] — past the top
+    /// (`newMsgBase>getConfMsgBaseCount(currentConf)`, `:24587`) it
+    /// falls into the `JM` no-arg flow (`:24588`). No wraparound.
+    ///
+    /// # Errors
+    /// Propagates terminal I/O errors.
+    pub(super) async fn handle_next_msgbase(
+        &mut self,
+        session: MenuSession,
+    ) -> Result<MenuSession, T::Error> {
+        self.step_msgbase(session, 1).await
+    }
+
+    /// Shared `<<` / `>>` walk: `currentMsgBase ± 1`, joined in full
+    /// when the current conference holds that base, otherwise the
+    /// `JM` no-arg flow (`amiexpress/express.e:24571-24577` /
+    /// `:24585-24591` — `LT2` only checks the lower bound and `GT2`
+    /// only the upper, but `currentMsgBase` is always in range so a
+    /// full range check is equivalent).
+    async fn step_msgbase(
+        &mut self,
+        session: MenuSession,
+        delta: i64,
+    ) -> Result<MenuSession, T::Error> {
+        let conferences = self.services.conferences.as_ref();
+        let target = session.current_msgbase().and_then(|(conf, base)| {
+            let stepped = i64::from(base) + delta;
+            let count = conferences
+                .iter()
+                .find(|c| c.number() == conf)
+                .map(msgbase_count_of)?;
+            if (1..=i64::from(count)).contains(&stepped) {
+                Some((conf, u32::try_from(stepped).expect("in 1..=count")))
+            } else {
+                None
+            }
+        });
+        match target {
+            Some((conf, base)) => self.handle_explicit_join(session, conf, Some(base)).await,
+            None => {
+                self.handle_join_msgbase_command(session, MsgBaseArg::Missing)
+                    .await
+            }
+        }
+    }
+
+    /// Runs the single-shot interactive message-base prompt
+    /// (`amiexpress/express.e:25169-25176` in `internalCommandJ`,
+    /// `:25220-25230` in `internalCommandJM`): the optional
+    /// `JoinMsgBase` screen — resolved for the conference the caller
+    /// is *currently* in, because the legacy `confScreenDir` is
+    /// repointed only inside `joinConf` (`:5052`) — then the
+    /// `Message Base Number (1-N): ` prompt and exactly one line of
+    /// input; the legacy never re-prompts.
+    ///
+    /// Returns `Some(Val)` of a non-empty line, UNCLAMPED — the two
+    /// callers disagree about clamping (`internalCommandJM` clamps
+    /// into `1..=N`, `:25233-25234`; `internalCommandJ` passes the
+    /// raw value to `joinConf`, which resets a base the conference
+    /// does not hold to the primary, `:25179` + `:4995`), so the
+    /// decision stays with them. Returns `None` when the caller
+    /// aborted: a blank line (exact emptiness, no trimming) writes
+    /// the lone CRLF the legacy `lineInput` emits (`:2378`); Eof /
+    /// idle timeout return silently and the menu loop's next read
+    /// applies the carrier-loss / idle transitions.
+    ///
+    /// # Errors
+    /// Propagates terminal I/O errors.
+    async fn prompt_for_msgbase_number(
+        &mut self,
+        session: &mut MenuSession,
+        msgbase_count: u32,
+    ) -> Result<Option<i64>, T::Error> {
+        let screen = match session.current_conference_number() {
+            Some(current) => {
+                self.services
+                    .screens
+                    .as_ref()
+                    .joinmsgbase_screen(current)
+                    .await
+            }
+            None => Vec::new(),
+        };
+        if !screen.is_empty() {
+            self.terminal.write(&screen).await?;
+        }
+        let prompt = render_msgbase_number_prompt(msgbase_count);
+        let TerminalRead::Line(line) = self.read_prompted(&prompt, TerminalEcho::Visible).await?
+        else {
+            return Ok(None);
+        };
+        session.record_input(SystemTime::now());
+        if line.is_empty() {
+            // Blank aborts silently (`amiexpress/express.e:25228`);
+            // the only wire output is `lineInput`'s trailing `\b\n`
+            // (`:2378`) — one CRLF after the echoed empty line.
+            self.write_and_flush(b"\r\n").await?;
+            return Ok(None);
+        }
+        Ok(Some(val_prefix(&line)))
     }
 
     /// Runs the single-shot interactive conference prompt
@@ -431,6 +589,16 @@ where
 /// an empty catalogue, where every join request is denied.
 fn highest_conference_number(conferences: &[Conference]) -> u32 {
     conferences.last().map_or(0, Conference::number)
+}
+
+/// The conference's message-base count — the legacy
+/// `getConfMsgBaseCount` (`amiexpress/express.e:2048-2052`), which
+/// the `Message Base Number (1-N): ` prompt advertises (`:25167`,
+/// `:25218`) and `JM`'s clamp bounds (`:25233-25234`).
+/// `Conference::new` enforces a non-empty base list, so the count is
+/// at least 1.
+fn msgbase_count_of(conference: &Conference) -> u32 {
+    u32::try_from(conference.msgbases().len()).expect("message-base count fits in u32")
 }
 
 #[cfg(test)]
@@ -993,31 +1161,157 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn join_explicit_out_of_range_base_returns_silently_until_c4b() {
-        // Live capture: `J 1 2` on single-base conference 1 opens the
-        // legacy `Message Base Number (1-1): ` prompt
-        // (`amiexpress/express.e:25169-25180`) — it fires even on a
-        // single-base conference. TODO(C4b) ships that prompt;
-        // interim the command returns to the menu silently — no
-        // invented messages, no join.
+    async fn join_explicit_out_of_range_base_opens_the_msgbase_prompt_and_blank_aborts() {
+        // Live capture: `J 1 2` on single-base conference 1 yields
+        // exactly `b'J 1 2\r\nMessage Base Number (1-1): '` — the
+        // legacy message-base prompt (`amiexpress/express.e:25169-25180`)
+        // fires even on a single-base conference, and the single-base
+        // notice is JM-only and must NOT appear here. A blank line
+        // aborts with one CRLF (`:25176`, lineInput `:2378`) and stays
+        // put.
         let dir = tempfile::tempdir().expect("tempdir");
         let conferences = vec![conference(1, "One"), conference(2, "Two")];
         let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
         for line in ["J 1 2", "J 1.9", "J 1."] {
-            let mut terminal = ScriptTerminal::new([]);
+            let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
             let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
             let session = run_join(&services, &mut terminal, session, join_arg(line)).await;
-            assert!(
-                terminal.output.is_empty(),
-                "`{line}` must write nothing until C4b, got {:?}",
+            assert_eq!(
+                terminal.output,
+                b"Message Base Number (1-1): \r\n".to_vec(),
+                "`{line}` must open the (1-1) prompt and blank-abort, got {:?}",
                 String::from_utf8_lossy(&terminal.output)
             );
             assert_eq!(
                 session.current_msgbase(),
                 Some((2, 1)),
-                "`{line}` must not join anywhere"
+                "`{line}` + blank must not join anywhere"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn join_msgbase_prompt_answer_is_not_clamped_the_domain_resets_to_the_primary_base() {
+        // The J/JM post-prompt asymmetry (Tier C C4b): J's message-base
+        // prompt passes its `Val` to `joinConf` UNCLAMPED
+        // (`amiexpress/express.e:25179`), and `joinConf` resets an
+        // out-of-range base to the primary (`:4995`) — so answering
+        // `9` at a `(1-2)` prompt joins base 1 [main], NOT the clamped
+        // base 2 [tech] that JM's own prompt would produce
+        // (`:25233-25234`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![multi_base_conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("9")]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 1 9")).await;
+        assert_eq!(
+            session.current_msgbase(),
+            Some((1, 1)),
+            "an out-of-range prompt answer must land on the primary base, not clamp to the top"
+        );
+        assert_eq!(
+            terminal.output,
+            b"Message Base Number (1-2): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One [main]\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_msgbase_prompt_on_a_single_base_conference_joins_the_only_base_unclamped() {
+        // Observed semantics chained end-to-end: `J 1 2` on
+        // single-base conference 1, answering `5` at the `(1-1)`
+        // prompt — the unclamped 5 reaches the domain join, which
+        // resets it to the primary base, so the caller lands on base 1
+        // with the plain (no-bracket) announcement and never sees the
+        // JM-only single-base notice.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("5")]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 1 2")).await;
+        assert_eq!(session.current_msgbase(), Some((1, 1)));
+        assert_eq!(
+            terminal.output,
+            b"Message Base Number (1-1): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_msgbase_prompt_in_range_answer_joins_that_base() {
+        // An in-range prompt answer joins exactly that base of the
+        // already-resolved target conference
+        // (`amiexpress/express.e:25179`, then `joinConf`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![multi_base_conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("2")]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 1 9")).await;
+        assert_eq!(session.current_msgbase(), Some((1, 2)));
+        assert_eq!(
+            terminal.output,
+            b"Message Base Number (1-2): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One [tech]\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn join_msgbase_prompt_eof_returns_to_menu_silently() {
+        // Eof / idle at the message-base prompt writes nothing extra
+        // (`amiexpress/express.e:25175` propagates the status); the
+        // menu loop's next read applies the carrier/idle transitions —
+        // the conference-prompt precedent.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
+        let session = run_join(&services, &mut terminal, session, join_arg("J 1 2")).await;
+        assert_eq!(terminal.output, b"Message Base Number (1-1): ");
+        assert_eq!(session.current_msgbase(), Some((2, 1)));
+    }
+
+    #[tokio::test]
+    async fn join_msgbase_prompt_screen_comes_from_the_current_conference() {
+        // The legacy `confScreenDir` is repointed only inside
+        // `joinConf` (`amiexpress/express.e:5052`), so when `J`
+        // prompts for *another* conference's bases the `JoinMsgBase`
+        // screen resolves against the conference the caller is still
+        // in — while the prompt's `(1-N)` bound is the TARGET's count
+        // (`:25167`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("Conf01")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join("Conf02")).expect("mkdir");
+        std::fs::write(
+            dir.path().join("Conf01").join("JoinMsgBase.txt"),
+            b"TARGET CONF\n",
+        )
+        .expect("write screen");
+        std::fs::write(
+            dir.path().join("Conf02").join("JoinMsgBase.txt"),
+            b"CURRENT CONF\n",
+        )
+        .expect("write screen");
+        let conferences = vec![multi_base_conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
+        let _session = run_join(&services, &mut terminal, session, join_arg("J 1 9")).await;
+        assert_eq!(
+            terminal.output,
+            b"CURRENT CONF\r\nMessage Base Number (1-2): \r\n".to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
     }
 
     #[tokio::test]
@@ -1152,29 +1446,231 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn jm_missing_or_out_of_range_on_a_multi_base_conference_is_silent_until_c4b() {
-        // TODO(C4b): these forms open the JoinMsgBase screen and the
-        // single-shot `Message Base Number (1-N): ` prompt
-        // (`amiexpress/express.e:25220-25230`). Interim they return
-        // to the menu silently — no invented messages, no join.
+    async fn jm_missing_or_out_of_range_opens_the_prompt_whose_answer_is_clamped() {
+        // Every non-dotted `JM` form without an in-range base on a
+        // multi-base conference opens the single-shot
+        // `Message Base Number (1-N): ` prompt
+        // (`amiexpress/express.e:25220-25230`), and the answer is
+        // CLAMPED into `1..=N` (`:25233-25234`) — answering `9` at a
+        // `(1-2)` prompt joins base 2 [tech], the documented asymmetry
+        // with `J`'s unclamped prompt (which would land on base 1).
         let dir = tempfile::tempdir().expect("tempdir");
         let conferences = vec![multi_base_conference(1, "One")];
         let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
         for line in ["JM", "JM 9", "JM abc", "JM 0", "JM -1"] {
-            let mut terminal = ScriptTerminal::new([]);
+            let mut terminal = ScriptTerminal::new([ScriptTerminal::line("9")]);
             let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
             let session =
                 run_command(&services, &mut terminal, session, parse_menu_command(line)).await;
-            assert!(
-                terminal.output.is_empty(),
-                "`{line}` must write nothing until C4b, got {:?}",
-                String::from_utf8_lossy(&terminal.output)
-            );
             assert_eq!(
                 session.current_msgbase(),
-                Some((1, 1)),
-                "`{line}` must not join anywhere"
+                Some((1, 2)),
+                "`{line}` + `9` must clamp to the top base"
             );
+            assert_eq!(
+                terminal.output,
+                b"Message Base Number (1-2): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One [tech]\r\n"
+                    .to_vec(),
+                "`{line}` got {:?}",
+                String::from_utf8_lossy(&terminal.output)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn jm_prompt_answer_below_range_clamps_to_base_one() {
+        // The low side of `JM`'s clamp (`amiexpress/express.e:25233`):
+        // `0` (and any non-numeric `Val` of 0) joins base 1.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![multi_base_conference(1, "One")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("0")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let session = run_command(
+            &services,
+            &mut terminal,
+            session,
+            parse_menu_command("JM 9"),
+        )
+        .await;
+        assert_eq!(session.current_msgbase(), Some((1, 1)));
+        assert_eq!(
+            terminal.output,
+            b"Message Base Number (1-2): \r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One [main]\r\n"
+                .to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn jm_prompt_blank_aborts_with_one_crlf_and_stays_put() {
+        // Blank input at the `JM` prompt aborts silently
+        // (`amiexpress/express.e:25228`) — the only wire output is
+        // `lineInput`'s trailing CRLF (`:2378`); the session keeps its
+        // base. Eof writes nothing at all.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![multi_base_conference(1, "One")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let session =
+            run_command(&services, &mut terminal, session, parse_menu_command("JM")).await;
+        assert_eq!(terminal.output, b"Message Base Number (1-2): \r\n".to_vec());
+        assert_eq!(session.current_msgbase(), Some((1, 1)));
+
+        let mut terminal = ScriptTerminal::new([]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let session =
+            run_command(&services, &mut terminal, session, parse_menu_command("JM")).await;
+        assert_eq!(terminal.output, b"Message Base Number (1-2): ".to_vec());
+        assert_eq!(session.current_msgbase(), Some((1, 1)));
+    }
+
+    #[tokio::test]
+    async fn jm_prompt_renders_the_conference_local_joinmsgbase_screen() {
+        // The `JoinMsgBase` screen precedes the prompt when installed
+        // (`amiexpress/express.e:25221-25222`): the conference-local
+        // asset wins over the node-level one; with neither, nothing
+        // precedes the prompt (live reference).
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join("Conf01")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join("Screens")).expect("mkdir");
+        std::fs::write(
+            dir.path().join("Conf01").join("JoinMsgBase.txt"),
+            b"CONF LOCAL\n",
+        )
+        .expect("write screen");
+        std::fs::write(
+            dir.path().join("Screens").join("JoinMsgBase.txt"),
+            b"NODE LEVEL\n",
+        )
+        .expect("write screen");
+        let conferences = vec![multi_base_conference(1, "One")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let _session =
+            run_command(&services, &mut terminal, session, parse_menu_command("JM")).await;
+        assert_eq!(
+            terminal.output,
+            b"CONF LOCAL\r\nMessage Base Number (1-2): \r\n".to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn next_msgbase_steps_up_and_joins_in_full() {
+        // `>>` in bounds is a full message-base join of the current
+        // conference (`internalCommandGT2`,
+        // `amiexpress/express.e:24585-24590`) — byte-identical to
+        // `JM <n>`'s output, bracketed base name included.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![multi_base_conference(1, "One")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        assert_eq!(session.current_msgbase(), Some((1, 1)));
+        let session =
+            run_command(&services, &mut terminal, session, parse_menu_command(">>")).await;
+        assert_eq!(session.current_msgbase(), Some((1, 2)));
+        assert_eq!(
+            terminal.output,
+            b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One [tech]\r\n".to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn prev_msgbase_steps_down_and_joins_in_full() {
+        // `<<` in bounds mirrors `>>` downward (`internalCommandLT2`,
+        // `amiexpress/express.e:24571-24576`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![multi_base_conference(1, "One")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        let mut terminal = ScriptTerminal::new([]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let session = run_command(
+            &services,
+            &mut terminal,
+            session,
+            parse_menu_command("JM 2"),
+        )
+        .await;
+        assert_eq!(session.current_msgbase(), Some((1, 2)));
+        terminal.output.clear();
+        let session =
+            run_command(&services, &mut terminal, session, parse_menu_command("<<")).await;
+        assert_eq!(session.current_msgbase(), Some((1, 1)));
+        assert_eq!(
+            terminal.output,
+            b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m One [main]\r\n".to_vec(),
+            "got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn msgbase_steps_past_either_edge_fall_into_the_jm_prompt() {
+        // `<<` below base 1 (`amiexpress/express.e:24573-24574`) and
+        // `>>` above the count (`:24587-24588`) both run the `JM`
+        // no-arg flow: on a multi-base conference that is the
+        // `Message Base Number (1-N): ` prompt; blank stays put. No
+        // wraparound.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![multi_base_conference(1, "One")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+
+        // `<<` at the bottom.
+        let mut terminal = ScriptTerminal::new([ScriptTerminal::line("")]);
+        let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+        let session =
+            run_command(&services, &mut terminal, session, parse_menu_command("<<")).await;
+        assert_eq!(terminal.output, b"Message Base Number (1-2): \r\n".to_vec());
+        assert_eq!(session.current_msgbase(), Some((1, 1)));
+
+        // `>>` at the top (position there first).
+        let mut terminal = ScriptTerminal::new([]);
+        let session = run_command(
+            &services,
+            &mut terminal,
+            session,
+            parse_menu_command("JM 2"),
+        )
+        .await;
+        assert_eq!(session.current_msgbase(), Some((1, 2)));
+        terminal.output.clear();
+        terminal.inputs.push_back(ScriptTerminal::line(""));
+        let session =
+            run_command(&services, &mut terminal, session, parse_menu_command(">>")).await;
+        assert_eq!(terminal.output, b"Message Base Number (1-2): \r\n".to_vec());
+        assert_eq!(session.current_msgbase(), Some((1, 2)));
+    }
+
+    #[tokio::test]
+    async fn msgbase_steps_on_a_single_base_conference_write_the_exact_failure_bytes() {
+        // Live capture: both `<<` and `>>` on a single-base conference
+        // print exactly the legacy single-base notice — the edge falls
+        // into `internalCommandJM('')`, whose `NMSGBASES` probe fails
+        // first (`amiexpress/express.e:25211-25215`).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let conferences = vec![conference(1, "One"), conference(2, "Two")];
+        let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
+        for line in ["<<", ">>", "<< 2", ">> 2"] {
+            let mut terminal = ScriptTerminal::new([]);
+            let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2]));
+            let session =
+                run_command(&services, &mut terminal, session, parse_menu_command(line)).await;
+            assert_eq!(
+                terminal.output,
+                b"\r\nThis conference does not contain multiple message bases\r\n\r\n".to_vec(),
+                "`{line}` must write the single-base notice, got {:?}",
+                String::from_utf8_lossy(&terminal.output)
+            );
+            assert_eq!(session.current_msgbase(), Some((1, 1)));
         }
     }
 
