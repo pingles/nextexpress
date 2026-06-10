@@ -14,10 +14,10 @@ Door-derived strings carry capture citations (`// comparison/transcripts/ae_tier
 After the menu loop's command echo (`F 1\r\n`):
 ```
 \x1b[0m\r\n
-\x1b[0m\x1b[34m--[ \x1b[36mNextScan v1.0 by NextExpress/Rust \x1b[34m]---------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n
+\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n
 \r\n
 ```
-(aquascan3.txt:163/217/257. Centre label 34 incl. trailing space; 15 dashes; right label `'f ?' for options ` = 18; visible total 77 — see §7 width math.)
+(aquascan3.txt:163/217/257. Centre label `NextScan ` = 9 incl. trailing space (AquaScan's was 34); dash run stretched 15→40 to hold visible total 77; right label `'f ?' for options ` = 18 — see §7 width math.)
 
 ### 1.2 Scan headers (plain, no ANSI)
 - `Scanning dir N from top... Ok!\r\n` + `\r\n` before the first frame line (aquascan3.txt:217).
@@ -173,15 +173,15 @@ Deferred methods, first reader named: `list_new_since` (D9/N), `search_descripti
 - Records mirror SysopUploadFile's output shape (files.allium:431-449): status Available; `check_char` = `Some(b'P')` except BADUPLD.LHA `Some(b'F')` and `None` for the three no-char rows (THIRTEENCH.LZ, ALONGFILENAME.LHA, README1ST.TXT — never rendered at col 13 anyway); fixture dates as fixed mid-day-UTC `SystemTime` constants (deterministic MM-DD-YY on any TZ); `Sent by: SYSOP` as PTREPLAY's continuation text; descriptions within the 44-char legacy bound (files.allium:558-560). No held, no lcfiles records (wire stays capture-identical; those variants are exercised by unit tests only).
 - Because the corpus and order match the live board, the `F 1` first page (29 lines), File# numbering incl. 2-digit pads, plain-row fallbacks, and the `F U`/`F 2` trio are **directly byte-comparable to the captures modulo the three branding swaps** — pager positions from page 3 excepted (§1.5).
 
-## 7. NextScan branding — three byte-length-identical swaps, **zero dash flexing**
+## 7. NextScan branding — plain `NextScan`, dash runs stretched (user decision 2026-06-10)
 
-| # | AquaScan original (verified) | NextScan replacement | width |
+| # | AquaScan original (verified) | NextScan replacement | width math |
 |---|---|---|---|
-| 1 | listing+help banner centre `AquaScan v1.0 by Aquarius/Outlaws ` (34) | `NextScan v1.0 by NextExpress/Rust ` | 34 = 34 |
-| 2 | help banner right `Copyright \xa9 1994 Aquarius ` (26) | `Copyright \xa9 2026 NextScan ` | 26 = 26 |
-| 3 | help line `- Configure AquaScan` (20) | `- Configure NextScan` | 20 = 20 |
+| 1 | banner centre `AquaScan v1.0 by Aquarius/Outlaws ` (34) | `NextScan ` (9) | dash run +25 |
+| 2 | help banner right `Copyright \xa9 1994 Aquarius ` (26) | `Copyright \xa9 2026 NextScan ` (26) | unchanged |
+| 3 | help line `- Configure AquaScan` (20) | `- Configure NextScan` (20) | unchanged |
 
-Dash runs unchanged (15 listing / 9 help; D3's `'fr ?'` variant uses 14+19, D9's `'n ?'` 15+18 — all verified). Listing banner visible width 77, help banner 79. Unit tests assert visible-width equality with the captured originals. The `\xa9` stays a Latin-1 byte inside `&[u8]` consts.
+Dash-run stretch per banner (centre flex +25): listing `'f ?'` 15→40; help 9→34; D3's `'fr ?'` 14→39; D9's date-scan variants when they land (door `'scan ?'` 12, `'nsu ?'` 13 — +25 likewise). Visible totals preserved: listing banner 77, help banner 79. Unit tests assert visible-width equality with the captured AquaScan originals (count bytes excluding `ESC[..m`). The `\xa9` stays a Latin-1 byte inside `&[u8]` consts.
 
 ## 8. Parser, dispatch, composition
 
