@@ -21,6 +21,11 @@ pub(crate) enum TerminalEcho {
     Visible,
     /// Hide the original characters and render masking characters.
     Masked,
+    /// Echo nothing — the caller emits any user-visible echo bytes
+    /// itself. Used by the NextScan pager's sub-prompts (slice D2),
+    /// whose captured echo behaviour (partial echoes, erases,
+    /// overprints) is handler-rendered.
+    Silent,
 }
 
 /// Result of a bounded line read from a terminal.

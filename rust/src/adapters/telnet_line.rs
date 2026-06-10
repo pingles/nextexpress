@@ -33,6 +33,11 @@ pub(crate) enum EchoMode {
     /// Echo `*` instead of the accepted byte. Used at the password
     /// prompt so passwords don't appear on the user's terminal.
     Masked,
+    /// Echo nothing at all — no per-character echo, no `\r\n` on
+    /// Enter, no BS-SP-BS erase. Used by the NextScan pager's
+    /// sub-prompts (slice D2), whose handlers emit every captured
+    /// echo byte themselves.
+    Silent,
 }
 
 /// Reads one line of input from `stream`, stripping IAC sequences and
@@ -97,11 +102,15 @@ pub(crate) async fn read_telnet_line(
                 // trailer, swallow it; otherwise push it back so the
                 // next prompt's `read_telnet_line` sees it.
                 try_consume_cr_trailer(stream, pushback)?;
-                stream.write_all(b"\r\n").await?;
+                if echo != EchoMode::Silent {
+                    stream.write_all(b"\r\n").await?;
+                }
                 return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
             }
             b'\n' => {
-                stream.write_all(b"\r\n").await?;
+                if echo != EchoMode::Silent {
+                    stream.write_all(b"\r\n").await?;
+                }
                 return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
             }
             0x08 | 0x7F
@@ -110,7 +119,9 @@ pub(crate) async fn read_telnet_line(
                 // classic <BS><SPACE><BS> triplet.
                 if buf.pop().is_some() =>
             {
-                stream.write_all(b"\x08 \x08").await?;
+                if echo != EchoMode::Silent {
+                    stream.write_all(b"\x08 \x08").await?;
+                }
             }
             b if b >= 0x20 => {
                 if buf.len() >= MAX_TERMINAL_LINE_BYTES {
@@ -123,6 +134,9 @@ pub(crate) async fn read_telnet_line(
                 let echoed = match echo {
                     EchoMode::Visible => b,
                     EchoMode::Masked => b'*',
+                    EchoMode::Silent => {
+                        continue;
+                    }
                 };
                 stream.write_all(&[echoed]).await?;
             }
@@ -180,6 +194,31 @@ mod tests {
         let client = TcpStream::connect(addr).await.unwrap();
         let (server, _) = listener.accept().await.unwrap();
         (server, client)
+    }
+
+    #[tokio::test]
+    async fn silent_mode_accepts_a_line_while_echoing_nothing() {
+        // Slice D2: the NextScan pager's sub-prompts emit every echo
+        // byte from the handler itself, so the adapter read must be
+        // byte-silent — no per-char echo, no `\r\n` on Enter, no
+        // BS-SP-BS triplet.
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"ab\x08c\r").await.unwrap();
+        let mut pushback = None;
+
+        let line = read_telnet_line(&mut server, &mut pushback, EchoMode::Silent)
+            .await
+            .unwrap()
+            .expect("line");
+        assert_eq!(line, "ac");
+
+        // Close the server side so the drain below terminates: the
+        // client must have received zero echo bytes.
+        drop(server);
+        let mut echoed = Vec::new();
+        use tokio::io::AsyncReadExt;
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(echoed, b"", "Silent read must write zero bytes");
     }
 
     #[tokio::test]
