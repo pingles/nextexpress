@@ -197,6 +197,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn silent_mode_is_silent_for_bare_lf_terminators() {
+        // The `\n` arm has its own echo guard: a client that ends
+        // lines with a lone LF must also get zero bytes back in
+        // Silent mode.
+        use tokio::io::AsyncReadExt;
+
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"ok\n").await.unwrap();
+        let mut pushback = None;
+
+        let line = read_telnet_line(&mut server, &mut pushback, EchoMode::Silent)
+            .await
+            .unwrap()
+            .expect("line");
+        assert_eq!(line, "ok");
+
+        drop(server);
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(echoed, b"", "Silent read must write zero bytes");
+    }
+
+    #[tokio::test]
     async fn silent_mode_accepts_a_line_while_echoing_nothing() {
         // Slice D2: the NextScan pager's sub-prompts emit every echo
         // byte from the handler itself, so the adapter read must be
