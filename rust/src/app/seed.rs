@@ -285,12 +285,12 @@ mod tests {
         let conf1_areas: Vec<u32> = areas
             .iter()
             .filter(|a| a.conference() == 1)
-            .map(|a| a.number())
+            .map(FileArea::number)
             .collect();
         let conf2_areas: Vec<u32> = areas
             .iter()
             .filter(|a| a.conference() == 2)
-            .map(|a| a.number())
+            .map(FileArea::number)
             .collect();
         assert_eq!(conf1_areas, vec![1, 2]);
         assert_eq!(conf2_areas, vec![1]);

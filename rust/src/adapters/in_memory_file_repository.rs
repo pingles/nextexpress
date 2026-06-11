@@ -3,7 +3,7 @@
 //! Phase-1 storage for the file-browse unit (slices D1+D2): the
 //! composition root seeds it with the demo catalogue when no real
 //! file data is configured, so a fresh boot always has something to
-//! list. The SQLite metadata store (designs/FILES.md) lands in slice
+//! list. The `SQLite` metadata store (`designs/FILES.md`) lands in slice
 //! D2s. Read-only port — the adapter holds plain owned `Vec`s with no
 //! interior mutability.
 

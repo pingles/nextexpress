@@ -6,7 +6,7 @@
 //! live in [`crate::adapters`]. It stays narrow — methods are named
 //! after the rules that need them, not generic CRUD — and read-only:
 //! `Result` plumbing arrives with the first fallible adapter (the
-//! SQLite store, slice D2s).
+//! `SQLite` store, slice `D2s`).
 
 use crate::domain::files::area::FileArea;
 use crate::domain::files::file::File;

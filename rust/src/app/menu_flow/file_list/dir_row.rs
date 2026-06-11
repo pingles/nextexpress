@@ -1,17 +1,17 @@
-//! Legacy DIR row rendering — layer 1 of the NextScan listing.
+//! Legacy DIR row rendering — layer 1 of the `NextScan` listing.
 //!
 //! Reproduces, at runtime from [`File`] fields, the row format the
 //! legacy upload writer authored into `DIR<n>` files
 //! (`amiexpress/express.e:19450-19509`; size via
 //! `formatFileSizeForDirList` `:18918-18942`; date `formatLongDate`,
-//! `MiscFuncs.e:278`, FORMAT_USA → `MM-DD-YY`; offsets independently
-//! confirmed by the FTP parser, `ftpd.e:1093-1132`). NextScan emits
+//! `MiscFuncs.e:278`, `FORMAT_USA` → `MM-DD-YY`; offsets independently
+//! confirmed by the FTP parser, `ftpd.e:1093-1132`). `NextScan` emits
 //! these bytes verbatim for rows its framer cannot frame, and reads
 //! the same field layout when colouring framed rows.
 
 use crate::domain::files::file::File;
 
-/// `MM-DD-YY` — `formatLongDate`'s FORMAT_USA shape
+/// `MM-DD-YY` — `formatLongDate`'s `FORMAT_USA` shape
 /// (`MiscFuncs.e:278-297`), rendered in UTC.
 const DIR_DATE: &[time::format_description::FormatItem<'_>] =
     time::macros::format_description!("[month]-[day]-[year repr:last_two]");
@@ -54,7 +54,7 @@ pub(super) fn dir_row_lines(file: &File) -> Vec<Vec<u8>> {
 
 /// `formatFileSizeForDirList` (`express.e:18918-18942`), untoggled
 /// branch: right-justified width 7 up to 9,999,999 octets, unpadded
-/// past it (the authentic column drift; CREDITBYKB / CONVERT_TO_MB
+/// past it (the authentic column drift; `CREDITBYKB` / `CONVERT_TO_MB`
 /// variants are unconfigured on the reference board and unported).
 fn size_column(count: u64) -> String {
     if count <= 9_999_999 {

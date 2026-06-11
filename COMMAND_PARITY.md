@@ -29,7 +29,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 
 **Key caveat — data vs. behaviour.** The two installs carry **different seeded data**: different conference names and numbers (Rust auto-rejoins `Conference 1: Main`, AE `Conference 2: Amiga`), different user records, different clocks, different message bases, and a different configured BBS name (the AE fixture's board name is `"NextExpress Reference"`, which is *not* the software — it is the genuine AmiExpress binary with that board name configured). Consequently this comparison is about **behaviour and wire format**, not data values. Wherever a difference reduces to a seeded name, number, clock, or build string, it is tagged **COSMETIC** and explicitly attributed to seed data.
 
-**Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference and message-base navigation (`J` with its interactive prompt, `JM`, `<` / `>`, `<<` / `>>` — Tier C), conference scan flags (`CF`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), and logoff (`G`). AmiExpress carries many more top-level commands (new-files scan `N`/AquaScan, `ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
+**Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference and message-base navigation (`J` with its interactive prompt, `JM`, `<` / `>`, `<<` / `>>` — Tier C), conference scan flags (`CF`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), file listings (`F` — the NextScan lister, Tier D), and logoff (`G`). AmiExpress carries many more top-level commands (new-files scan `N`/AquaScan, `ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
 
 **Tag legend.** Each finding is tagged **MATCH** (byte-for-byte or behaviourally identical), **COSMETIC** (differs only in wording, spacing, ANSI byte-encoding, or seed data), or **BEHAVIOURAL** (a difference in control flow, an output line present in one and absent in the other, or an interactive step missing on one side).
 
@@ -104,6 +104,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 - **`R <num>`:** header block (`Date`/`To`/`Recv'd`/`From`/`Status`/`Subject` labels + ANSI), `Recv'd` `N/A`-vs-timestamp logic, deleted-message notice `That message has been deleted.`, the `Msg. Options:` sub-prompt skeleton (incl. doubled-`[36m` seam and range), `<CR>`/`A`gain/`L`ist/`Q`uit behaviour, and the shared `?`/`??` help entries — all byte-for-byte.
 - **`MS`:** scan header, conference banner, message-base sub-line, `No mail today!`, and the full listing table (`Type/From/Subject/Msg` columns + rule + status rows) — all byte-for-byte.
 - **`E`/`C`:** default-N private flag, unknown-user rejection, conference-access gating, blank-subject abort *trigger* — same behaviour.
+- **`F`:** the NextScan lister matches the captured AquaScan door byte-for-byte across the listing body, pager verbs, prompts, errors and exit tails — modulo the three deliberate branding swaps and the documented COSMETIC items (see [F — File Listings](#f--file-listings-nextscan-vs-the-aquascan-door)).
 
 ---
 
@@ -675,6 +676,66 @@ Rust's `MenuCommand::Logoff` (`menu_flow/mod.rs:125-139`) has no flagged-file mo
 ### Note on the sysop gate
 
 In AE, both `SCREEN_LOGOFF` and the `Click...` line are guarded by `logonType<>LOGON_TYPE_SYSOP` (`express.e:8187`, `8191`). The live `amiexpress_sysop.txt` transcript nonetheless shows `Click...`, so the observed teardown notice is taken from the live wire (authoritative) rather than the source gate. Rust gates its logoff splash on asset presence (empty fallback) rather than on logon type; the practical result on a fresh install — no splash shown — matches.
+
+---
+
+## F — File Listings (NextScan vs the AquaScan door)
+
+**Parity target.** The stock deployment shadows `F`/`FR`/`N` with
+AquaScan v1.0 door icons (`processCommand` runs BBSCmd icons before
+internal commands, `express.e:28229-28256`), so the reference
+experience for `F` is the door's, and that is what NextExpress
+implements — the **NextScan** lister (user decision 2026-06-10;
+ground truth `comparison/evidence-tierD/live-observations.md`,
+cleanest transcript `comparison/transcripts/ae_tierd_aquascan3.txt`).
+The internal `internalCommandF` (`express.e:24877`, raw DIR-file
+streaming with LF-CR line endings and the `(Pause)...(f)lags,
+More(Y/n/ns)? ` pager) is recorded in the evidence doc as the stock
+diff and is not implemented. Live captures win over source-derived
+expectations throughout.
+
+**MATCH (byte-for-byte against the captures).** The entry preamble +
+banner frame shape; `Scanning dir N from top... Ok!/Nothing found!`
+and the HOLD variant; the date-group separator art (Latin-1 bytes);
+`[ File #N ]` headers incl. the 2-digit pad shrink; colour-framed
+rows over the upload-writer column layout (check byte at col 13,
+RJ-7 size, `MM-DD-YY`, col-33 continuations); plain fall-through for
+unframeable rows (13-char/over-long names, 8-digit sizes);
+`[ End of File List ]` + the unconditional post-End `More?`; the
+`More?` verb set — `Y`/unknown resume via the 69-space overprint
+clear, `C` form-feed, `Q` → `Quit`, lone `n` held as the ambiguous
+`N`/`ns` prefix and erased `\x08 \x08` by the next verb, `ns` →
+`Non-stop scrolling! Are you sure (Y/n)? ` (decline redraws),
+`F`/`R` → the two distinct silent flag prompts with the 79-space
+clear, `?` → the in-pager pause help; `F A` per-dir
+footer/More?/transition choreography incl. back-to-back headers over
+empty dirs; bare `F` → `Directories: (1-N), …(Enter)=None ? ` with
+silent Enter-abort and `Error in input!`; `F 99` →
+`The highest directory number is N!`; junk args → the help banner +
+`Argument error! Type 'f ?' for help.`; the `F ?` help screen; the
+per-path exit-tail asymmetry (two resets for listing exits, one for
+aborts/argument errors).
+
+**COSMETIC (deliberate, documented).**
+
+| Divergence | Detail |
+|---|---|
+| NextScan branding | Three swaps, frame widths held by stretched dash runs: banner centre `NextScan ` (40/34 dashes), `Copyright © 2026 NextScan `, `- Configure NextScan` (`designs/NEXTSCAN.md` §7) |
+| Enter-required pager keys | `More?`/confirm/flag reads are Silent line reads until slice D2b lands `Terminal::read_key`; server-emitted bytes identical |
+| Page positions ≥ page 3 | NextScan pages at a flat 29 lines (matches captured pages 1–2 exactly); the door's own counter drifts from page 3 |
+| `?` redraw window | NextScan redraws exactly the current page's lines; the door redraws a drifted window of its internal page memory |
+| Flag entries | Read and discarded (silently, as captured) until D5 wires `FlaggedFile` |
+
+**UNVERIFIED (provisional, tagged in test names).** `F 0` →
+highest-dir error; unknown `More?` keys continue; the counter reset
+at dir transitions; zero-area conferences; the `H` prompt option for
+non-hold users; framed rendering of real held files (unit-pinned
+only); whether the door accepts `F R 1`/`Q`-token/`F W` rather than
+Argument-erroring (capture before D3 flips `F R`). The
+help-advertised navigation verbs (`3`/`9`/arrows/`7`/`5`/`K`/`L`)
+and cross-tier verbs (`D`/`X`/`V`/`O`/`Z`/`A`) are
+advertised-but-inert — unknown keys continue, the door's own
+default — each owed to its owning slice.
 
 ---
 

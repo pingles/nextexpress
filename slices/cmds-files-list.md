@@ -43,7 +43,21 @@ path — kept for the stock difference record, not as the wire target.
 `Z`, `A`, `FS` and friends have **no** door icons on the stock board,
 so their slices still target the internal commands.
 
-## Slice D1 — `Bytes` value type + `FileArea` + `File` entities
+## Slice D1 — `Bytes` value type + `FileArea` + `File` entities — **Done**
+
+Landed 2026-06-10/11 together with D2 (commits `6c15e03`, `cf4a595`).
+`FileStatus` shipped with three variants — `available`, `lcfiles`
+(the spec's listing-visible set, `files.allium:52-53`) and
+`held_for_review` (what `F H` shows) — the remaining variants and the
+transition table arrive with their first writers (schema-growth).
+`File` carries the six browse fields plus `check_char: Option<u8>`
+(the upload-writer's col-13 status byte, raw row data orthogonal to
+`FileStatus`; now also recorded as `File.check` in the spec). The
+conference/area association lives in the repository keying — no
+browse rule reads `file.area` directly. The seed corpus mirrors
+`comparison/evidence-tierD/fixtures/` byte-for-byte into the landing
+conference so dev-boot listings are directly comparable to the live
+captures.
 
 - **In Scope**
   - **Expands** the existing `core.allium:Bytes` value type. `Bytes`
@@ -70,7 +84,23 @@ so their slices still target the internal commands.
   - Sysop-uploaded files (in `cmds-files-sysop.md`).
 - **Why first**: every downstream slice depends on these entities.
 
-## Slice D2 — `F` (file listings, read-only)
+## Slice D2 — `F` (file listings, read-only) — **Done**
+
+Landed 2026-06-10/11 (commits `4725b61`, `ee3521e`): the NextScan
+lister reproduces the captured AquaScan UX end-to-end —
+`rust/src/app/menu_flow/file_list/` (handler + `dir_row` + `wire` +
+the 29-line `ScanPager`), `TerminalEcho::Silent` through the telnet
+adapters, six-scenario telnet smoke
+(`rust/tests/tierd_file_list_smoke.rs`). Scope notes vs. the original
+plan, per the design pass (`designs/NEXTSCAN.md`) and the recapture
+session: the `More?` verbs `C`/`F`/`R`/`?` shipped IN D2
+(wire-identical; flag entries read-and-discarded until D5 wires
+`FlaggedFile`; `?` emits the captured in-pager pause help + a page
+redraw), the `NS` token shipped IN D2, lone `n` is the captured
+buffered `N`/`ns` prefix (erased by the next verb — not a stop key),
+and junk arguments take the captured help-banner
+`Argument error! Type 'f ?' for help.` path. Mutation-tested to zero
+missed across the unit's modules.
 
 - **In Scope**
   - Parser: `MenuCommand::FileList(…)` mirroring **AquaScan's token
@@ -100,6 +130,38 @@ so their slices still target the internal commands.
   - `F W` (door self-configuration) — not ported; NextExpress config
     is TOML.
   - Flagged-files integration (slice D5).
+
+## Slice D2s — SQLite file metadata store
+
+- **In Scope**
+  - `adapters/files/sqlite_files.rs` per
+    [`designs/FILES.md`](../designs/FILES.md) (WAL,
+    `synchronous = NORMAL`, prepared statements), serving the same
+    three-method `FileRepository` port; a near-copy of
+    `sqlite_user_repository.rs`'s shape.
+  - The `file_storage` config key (reserved by D2's deferral): set,
+    it opens/creates the SQLite store and the in-memory demo
+    catalogue is **not** seeded — demo records never enter real
+    data; unset, the seeded in-memory repository serves as today.
+  - `Result` plumbing through the port (the first fallible adapter).
+- **Why deferred from D2**: nothing can write real rows until the
+  upload/maintenance slices land, so a SQLite adapter would have
+  served only the dummy seed — a schema-growth violation. Scheduled
+  no later than the first file-writer slice; pull forward if a
+  hand-loaded real deployment is wanted sooner.
+
+## Slice D2b — true single-key pager hotkeys
+
+- **In Scope**
+  - `Terminal::read_key` through both telnet adapters,
+    `ColourTerminal` and every test fake; the NextScan `More?` /
+    ns-confirm prompts switch from Silent line reads to single-key
+    reads, implementing the captured `n`-buffering at the byte level.
+- **Why deferred from D2**: with Silent line reads the server-emitted
+  bytes are capture-identical, but the user must press Enter after
+  each pager key — a documented COSMETIC/ergonomics divergence.
+  Scheduled immediately behind the D1+D2 unit (user decision
+  2026-06-10): the AquaScan feel is hotkey-driven.
 
 ## Slice D3 — `FR` (reverse listing)
 
@@ -205,12 +267,13 @@ so their slices still target the internal commands.
 ## Slice D-wire — Tier D (browse) wire-and-smoke
 
 - **In Scope**
-  - Seed a small fixture file area; smoke test runs `F`, `FR`,
-    `Z foo`, `A`, `FS`, `N` against the running binary and asserts
-    the wire bytes — NextScan-branded AquaScan bytes for `F`/`FR`/`N`
-    (cross-checked against `comparison/evidence-tierD/fixtures/` +
-    the capture transcripts), internal-command bytes for the
-    unshadowed `Z`/`A`/`FS`.
+  - Smoke coverage of the remaining tier commands as they land:
+    `FR`, `Z foo`, `A`, `FS`, `N` against the running binary —
+    NextScan-branded AquaScan bytes for `FR`/`N`, internal-command
+    bytes for the unshadowed `Z`/`A`/`FS`. (`F`'s six-scenario smoke
+    shipped with D2 — `rust/tests/tierd_file_list_smoke.rs`, driving
+    the seeded demo corpus that mirrors
+    `comparison/evidence-tierD/fixtures/`.)
 - **Out of Scope**
   - Asserting against a real lha — deflate / extraction is a
     transfer-side concern.

@@ -1,9 +1,9 @@
-//! Tier D `F` (NextScan file listings) in-process integration tests.
+//! Tier D `F` (`NextScan` file listings) in-process integration tests.
 //!
 //! Each scenario boots a [`TelnetListener`] in-process, signs in as
-//! the seeded sysop, drives the NextScan lister over a real telnet
+//! the seeded sysop, drives the `NextScan` lister over a real telnet
 //! client, and asserts the captured wire bytes (parity target: the
-//! AquaScan door with NextScan branding —
+//! `AquaScan` door with `NextScan` branding —
 //! `comparison/evidence-tierD/live-observations.md`; cleanest capture
 //! `comparison/transcripts/ae_tierd_aquascan3.txt`). The expected
 //! literals are restated here independently of the production
@@ -36,7 +36,7 @@ use tokio::net::TcpStream;
 
 const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
 
-/// The NextScan listing banner (branding per `designs/NEXTSCAN.md` §7).
+/// The `NextScan` listing banner (branding per `designs/NEXTSCAN.md` §7).
 const LISTING_BANNER: &[u8] =
     b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n";
 

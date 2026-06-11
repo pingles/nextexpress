@@ -10,9 +10,10 @@ top-level modules under `rust/src/`:
 
 - **`domain/`** — pure behaviour and entities distilled from the Allium specs in
   `specs/`. Aggregates (`Session`, `User`, `Conference`, `ConferenceVisit`,
-  `Mail`, `Node`), value objects (`ReadPointers`, `MessageBaseRef`, `Bytes`),
+  `Mail`, `Node`, `File`, `FileArea`), value objects (`ReadPointers`,
+  `MessageBaseRef`, `Bytes`),
   port traits (`UserRepository`, `ConferenceRepository`, `MailStore`,
-  `PasswordHasher`, `CallerLogAppender`), phase-typed session wrappers, the
+  `PasswordHasher`, `CallerLogAppender`, `FileRepository`), phase-typed session wrappers, the
   `messaging.allium` rule family (`read_mail`, `scan_mail`, `post_mail`,
   `post_comment_to_sysop`, `reply_to_mail`, `forward_mail`, `delete_mail`,
   `edit_mail_header`, `move_mail`, `attach_file_to_mail`), the password
@@ -22,8 +23,10 @@ top-level modules under `rust/src/`:
   `FileConferenceRepository`, `FileScreenRepository` (file-backed assets with
   caching), `FileMailStore` (one JSON file per message),
   `InMemoryMailStores` (registry), `InMemoryUserRepository`,
-  `SqliteUserRepository`, `InMemoryCallerLog`, `Pbkdf2PasswordHasher`,
-  `telnet_line` codec.
+  `SqliteUserRepository`, `InMemoryFileRepository` (the seeded demo
+  file catalogue, slice D1), `InMemoryCallerLog`, `Pbkdf2PasswordHasher`,
+  `telnet_line` codec (whose `EchoMode::Silent` lets the NextScan pager
+  emit its own captured echo bytes).
 
 - **`app/`** — application layer: ports, services, flows, and
   transport-agnostic drivers. Carries application-layer ports
@@ -101,6 +104,7 @@ flowchart LR
     AppRun --> CallerLog["InMemoryCallerLog"]
     AppRun --> Screens["SharedScreens\n(FileScreenRepository)"]
     AppRun --> MailRegistry["InMemoryMailStores\nregistry"]
+    AppRun --> FileCatalogue["InMemoryFileRepository\n(seed::demo_file_catalogue,\nSQLite store = slice D2s)"]
     MailRegistry --> FileMailStore["FileMailStore\n(per conference/msgbase)"]
 
     AppRun --> Runtime["app::runtime::Runtime"]
@@ -113,6 +117,7 @@ flowchart LR
     Services --> SharedScreens
     Services --> SharedConfs["SharedConferences\n(Arc&lt;Vec&lt;Conference&gt;&gt;)"]
     Services --> SharedMail["SharedMailStores"]
+    Services --> SharedFiles["SharedFileRepo"]
     Services --> Policy["SessionPolicy / DefaultRatio\nNewUserGateConfig / bbs_name"]
 
     AppRun --> Telnet["TelnetListener::bind"]
@@ -136,12 +141,15 @@ flowchart LR
     Driver --> Presenter["session_presenter\n+ wire_text"]
 
     Menu --> Parse["menu_command::parse_menu_command"]
-    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, ScanAllMail,\nPost, CommentToSysop,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle,\nShowMenu, TopicHelp, AnsiToggle,\nConferenceFlags, Unknown}"]
+    Parse --> Cmds["MenuCommand\n{Logoff, Join, Read, ScanAllMail,\nPost, CommentToSysop,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle,\nShowMenu, TopicHelp, AnsiToggle,\nConferenceFlags, FileList, Unknown}"]
     Menu --> MenuFlowHandlers["menu_flow/*\n(one module per command:\nterminal-free core + handler)"]
 
     MenuFlowHandlers --> ReadSub["read_subprompt loop\n(legacy readMSG: CR/A/R/F/\nD/M/EH/L/Q options)"]
     MenuFlowHandlers --> BaseHelpers["menu_flow shared helpers\n(lock_current_base,\nallowed_addressing_for)"]
     BaseHelpers --> MailRegistryPort
+    MenuFlowHandlers --> FileList["file_list\n(NextScan lister: dir_row + wire\n+ 29-line ScanPager)"]
+    FileList --> FilePort["FileRepository (port)"]
+    FileCatalogue -.implements.-> FilePort
     MenuFlowHandlers --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment)"]
     ReadSub --> Rules
 
@@ -191,6 +199,7 @@ listener clones per accepted connection. `AppServices` carries:
 | `screens` | `Arc<dyn ScreenRepository + Send + Sync>` |
 | `conferences` | `Arc<Vec<Conference>>` |
 | `mail_stores` | `Arc<dyn MailStores + Send + Sync>` |
+| `file_repo` | `Arc<dyn FileRepository + Send + Sync>` (slice D1: file areas + listings for the `F` family; the seeded in-memory demo catalogue until slice D2s lands the SQLite metadata store) |
 | `session_policy` / `default_ratio` / `new_user_gate` | `Copy` / small `Arc` |
 | `bbs_name` | `Arc<str>` (menu-prompt BBS name) |
 
@@ -225,6 +234,7 @@ module under `app::menu_flow/`):
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
 | `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail`; per base with matched mail, offers `Would you like to read it now` and (on Yes) attaches that base as a transient read visit and drops into `read_subprompt`, restoring the home conference after |
 | `CF` | `ConferenceFlags` | `conf_flags` — the M/A/F/Z scan-flag editor (legacy `internalCommandCF`); redraws the listing, reads a mask key then a conference expression (`+`/`-`/`*`/list) and applies it to the caller's own `ConferenceMembership` flags via `domain::conference_flags`. Gated on `Right::EditConferenceFlags`. |
+| `F` / `F <dir>` / `F A`/`U`/`H` / `… NS` / `F ?` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`) over `TerminalEcho::Silent` line reads (true hotkeys = slice D2b). Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 `read_subprompt` is the legacy `readMSG` sub-prompt loop (Tier B). `R <n>`

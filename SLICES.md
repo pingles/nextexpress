@@ -33,7 +33,8 @@ legacy-format menu prompt (`<bbsName> [<conf>:<name>] Menu (<n> mins.
 left): `, Tier A A4) are in place. The commands shipped so far are:
 `G`, `J`, `R`, `E`, `C`, `RP`, `FW`, `K`, `MV`, `EH`, `T`, `VER`, `H`,
 `Q`, plus the whole of Tier A's quick wins — `S`, `X`, `?`, `^`, `M`
-(and `MS`) — and the auto-mail-scan and auto-rejoin hooks fired by `J`.
+(and `MS`) — the auto-mail-scan and auto-rejoin hooks fired by `J`,
+and Tier D's `F` (the NextScan file lister, slices D1+D2).
 The canonical record of what each shipped slice covers is the
 [Allium specs](specs/) plus the code and its tests; the per-slice
 "In Scope" history is in git.
@@ -92,7 +93,7 @@ done.
 | `J` no-arg prompt | `express.e:25113-25183` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C2 — bare / non-numeric / out-of-range `J` opens the single-shot `Conference Number (1-N): ` prompt (`Val` + clamp, blank aborts); denied joins keep the caller in their current conference with the legacy notice instead of falling through; dotted / two-token msgbase forms joined the requested base when C4a landed, the base request surviving the conference prompt) |
 | `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C5 — landed first in Tier C; M/A/F/Z editor, flags on `ConferenceMembership` (SQLite-persisted), `*` honours the advertised toggle-all the legacy no-ops) |
 | **D. Files — browsing first, transfer second** ||||
-| `F` (file listings) | AquaScan door (shadows `express.e:24877` — see [evidence-tierD](comparison/evidence-tierD/live-observations.md)) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
+| `F` (file listings) | AquaScan door (shadows `express.e:24877` — see [evidence-tierD](comparison/evidence-tierD/live-observations.md)) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D1+D2 — the NextScan lister over the seeded in-memory catalogue, byte-pinned to the live captures with the three NextScan branding swaps; pager verbs incl. the in-pager help; six-scenario telnet smoke. SQLite store = slice D2s; true single-key hotkeys = slice D2b) |
 | `FR` (reverse listings) | AquaScan door (shadows `express.e:24883`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
 | `Z` (zippy search) | `express.e:26123` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
 | `A` list flagged set | `express.e:24601` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (D6a) |

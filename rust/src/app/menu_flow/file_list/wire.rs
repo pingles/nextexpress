@@ -1,5 +1,5 @@
-//! NextScan wire constants and render helpers — every byte pinned
-//! against the live AquaScan captures, with the three NextScan
+//! `NextScan` wire constants and render helpers — every byte pinned
+//! against the live `AquaScan` captures, with the three `NextScan`
 //! branding swaps (deliberate departure, user decision 2026-06-10:
 //! plain `NextScan` centre label, dash runs stretched +25 to hold the
 //! frame widths; see `designs/NEXTSCAN.md` §7).
@@ -13,8 +13,8 @@
 
 use crate::domain::files::file::File;
 
-/// Listing banner — NextScan-branded; dash run stretched 15→40 so the
-/// frame keeps AquaScan's 77 visible columns
+/// Listing banner — `NextScan`-branded; dash run stretched 15→40 so the
+/// frame keeps `AquaScan`'s 77 visible columns
 /// (`ae_tierd_aquascan3.txt:163`, branding per `designs/NEXTSCAN.md` §7).
 pub(super) const LISTING_BANNER: &[u8] =
     b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m";
@@ -156,7 +156,7 @@ pub(super) const PAUSE_HELP: &[u8] = b"\x0c\r\n\
 ";
 
 /// The `F ?` help screen — byte-exact from `ae_tierd_aquascan3.txt`
-/// S1 (:100-129) with the three NextScan branding swaps: form feed,
+/// S1 (:100-129) with the three `NextScan` branding swaps: form feed,
 /// the Copyright help banner, the verbatim syntax/diagram text, and
 /// the captured epilogue (one reset blank, a doubled-reset blank, a
 /// reset blank).
@@ -185,7 +185,7 @@ pub(super) const HELP_SCREEN: &[u8] = b"\x1b[0m\x0c\r\n\
 \x1b[0m\r\n\
 ";
 
-/// Whether the NextScan framer can frame this row: the captured
+/// Whether the `NextScan` framer can frame this row: the captured
 /// fall-through cases are names that fill the check-byte column
 /// (≥ 13 chars) and sizes past the 7-column field — both leave the
 /// colour boundaries nowhere fixed to land.
@@ -290,8 +290,8 @@ mod tests {
         width
     }
 
-    /// The captured AquaScan originals the NextScan swaps must match
-    /// in visible width (ae_tierd_aquascan3.txt:163 / :105).
+    /// The captured `AquaScan` originals the `NextScan` swaps must match
+    /// in visible width (`ae_tierd_aquascan3.txt:163` / `:105`).
     const AQUASCAN_LISTING_BANNER: &[u8] =
         b"\x1b[0m\x1b[34m--[ \x1b[36mAquaScan v1.0 by Aquarius/Outlaws \x1b[34m]---------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m";
     const AQUASCAN_HELP_BANNER: &[u8] =

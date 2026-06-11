@@ -96,8 +96,8 @@ pub(crate) enum MenuCommand {
     /// `amiexpress/express.e:24580-24592`; parameters are discarded
     /// exactly as for [`MenuCommand::PrevMsgBase`].
     NextMsgBase,
-    /// `F …`: file listings via the NextScan lister (slice D2). The
-    /// parity target is the AquaScan v1.0 door the stock deployment
+    /// `F …`: file listings via the `NextScan` lister (slice D2). The
+    /// parity target is the `AquaScan` v1.0 door the stock deployment
     /// installs over `F` (`comparison/evidence-tierD/live-observations.md`);
     /// the shadowed internal is `internalCommandF`
     /// (`amiexpress/express.e:24877`), kept for the stock diff record.
@@ -107,13 +107,13 @@ pub(crate) enum MenuCommand {
 }
 
 /// Parsed argument shape of the `F` command, mirroring the captured
-/// AquaScan grammar (`F ?` help, `ae_tierd_aquascan3.txt` S1):
+/// `AquaScan` grammar (`F ?` help, `ae_tierd_aquascan3.txt` S1):
 /// `F [R] dir [Q] [NS]` with dir = `U` | `A` | number | `H`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileListArg {
     /// Bare `F`: open the door's own `Directories: …` prompt.
     Prompt,
-    /// `F ?`: show the NextScan help screen.
+    /// `F ?`: show the `NextScan` help screen.
     Help,
     /// `F <dir> [NS]`: scan immediately, optionally without pausing.
     Span {
@@ -126,7 +126,7 @@ pub(crate) enum FileListArg {
     /// `Argument error! Type 'f ?' for help.` path
     /// (`ae_tierd_aquascan4.txt` U4). Includes the unported tokens:
     /// `R` (reverse — flipped by slice D3), `Q` (quick scan — capture
-    /// first), `W` (door self-configuration — NextExpress config is
+    /// first), `W` (door self-configuration — `NextExpress` config is
     /// TOML, a permanent departure).
     Invalid,
 }
@@ -326,7 +326,7 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
 }
 
 /// Parses the `F` command line into a [`FileListArg`] following the
-/// captured AquaScan grammar (dir = `U` | `A` | number | `H`,
+/// captured `AquaScan` grammar (dir = `U` | `A` | number | `H`,
 /// optional trailing `NS`). Tokens the D2 slice does not port (`R`,
 /// `Q`, `W`) and any other unrecognised shape map to
 /// [`FileListArg::Invalid`] — the `Argument error!` path. Numeric

@@ -34,7 +34,7 @@ pub(crate) enum EchoMode {
     /// prompt so passwords don't appear on the user's terminal.
     Masked,
     /// Echo nothing at all — no per-character echo, no `\r\n` on
-    /// Enter, no BS-SP-BS erase. Used by the NextScan pager's
+    /// Enter, no BS-SP-BS erase. Used by the `NextScan` pager's
     /// sub-prompts (slice D2), whose handlers emit every captured
     /// echo byte themselves.
     Silent,
@@ -202,6 +202,8 @@ mod tests {
         // byte from the handler itself, so the adapter read must be
         // byte-silent — no per-char echo, no `\r\n` on Enter, no
         // BS-SP-BS triplet.
+        use tokio::io::AsyncReadExt;
+
         let (mut server, mut client) = connected_pair().await;
         client.write_all(b"ab\x08c\r").await.unwrap();
         let mut pushback = None;
@@ -216,7 +218,6 @@ mod tests {
         // client must have received zero echo bytes.
         drop(server);
         let mut echoed = Vec::new();
-        use tokio::io::AsyncReadExt;
         client.read_to_end(&mut echoed).await.unwrap();
         assert_eq!(echoed, b"", "Silent read must write zero bytes");
     }

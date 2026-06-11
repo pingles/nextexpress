@@ -1,6 +1,6 @@
-//! The `F` command — NextScan file listings (slice D2).
+//! The `F` command — `NextScan` file listings (slice D2).
 //!
-//! Parity target: the AquaScan v1.0 door experience with NextScan
+//! Parity target: the `AquaScan` v1.0 door experience with `NextScan`
 //! branding (`comparison/evidence-tierD/live-observations.md`;
 //! cleanest captures in `comparison/transcripts/ae_tierd_aquascan3.txt`).
 //! The shadowed internal `internalCommandF`
@@ -11,6 +11,7 @@ mod wire;
 
 use crate::app::menu_command::{FileListArg, FileSpan};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::domain::files::area::FileArea;
 use crate::domain::files::file::File;
 use crate::domain::session::typed::MenuSession;
 
@@ -30,7 +31,7 @@ impl<T> super::MenuFlow<'_, T>
 where
     T: Terminal,
 {
-    /// Drives the `F` menu command — the NextScan lister.
+    /// Drives the `F` menu command — the `NextScan` lister.
     pub(super) async fn handle_file_list(
         &mut self,
         session: &mut MenuSession,
@@ -59,7 +60,7 @@ where
     async fn file_list_prompt(&mut self, session: &mut MenuSession) -> Result<(), T::Error> {
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
-        let max = areas.last().map_or(0, |area| area.number());
+        let max = areas.last().map_or(0, FileArea::number);
         let mut state = ScanState::new(false);
 
         for line in [&b"\x1b[0m"[..], wire::LISTING_BANNER, b""] {
@@ -122,7 +123,7 @@ where
         // joined conference before any command dispatches.
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
-        let max = areas.last().map_or(0, |area| area.number());
+        let max = areas.last().map_or(0, FileArea::number);
         let mut state = ScanState::new(non_stop);
 
         // Entry preamble — every argument form (§1.1). Counted: the
@@ -145,7 +146,7 @@ where
         conference: u32,
         span: FileSpan,
         max: u32,
-        areas: &[crate::domain::files::area::FileArea],
+        areas: &[FileArea],
     ) -> Result<(), T::Error> {
         let dirs: Vec<u32> = match span {
             FileSpan::Dir(n) => {
@@ -156,7 +157,7 @@ where
                 }
                 vec![u32::try_from(n).expect("range-checked above")]
             }
-            FileSpan::All => areas.iter().map(|area| area.number()).collect(),
+            FileSpan::All => areas.iter().map(FileArea::number).collect(),
             FileSpan::Upload => vec![max],
             FileSpan::Hold => {
                 let held = self.services.file_repo.list_held(conference);
@@ -164,13 +165,12 @@ where
                 if self.emit_scan_line(state, &header).await? == ScanFlow::Quit {
                     return self.finish_listing().await;
                 }
-                if !held.is_empty() {
-                    if self.stream_dir_body(state, &held).await? == ScanFlow::Quit {
-                        return self.finish_listing().await;
-                    }
-                    if self.post_end_pause(state).await? == ScanFlow::Quit {
-                        return self.finish_listing().await;
-                    }
+                if !held.is_empty()
+                    && self.stream_dir_body(state, &held).await? == ScanFlow::Continue
+                {
+                    // Hold is a single-dir span: whatever the
+                    // post-End verb says, the listing ends here.
+                    let _ = self.post_end_pause(state).await?;
                 }
                 return self.finish_listing().await;
             }
@@ -237,8 +237,8 @@ where
 
     /// Writes one listing line and, in paged mode, runs the `More?`
     /// interaction once the captured 29-line page fills
-    /// (`ae_tierd_aquascan3.txt:212` — the threshold is a NextScan
-    /// constant; AquaScan owns its paging via its own config, and
+    /// (`ae_tierd_aquascan3.txt:212` — the threshold is a `NextScan`
+    /// constant; `AquaScan` owns its paging via its own config, and
     /// positions from page 3 onward are a documented COSMETIC
     /// divergence).
     async fn emit_scan_line(
@@ -377,11 +377,11 @@ where
     }
 }
 
-/// The NextScan page height — fitted against every captured More?
+/// The `NextScan` page height — fitted against every captured `More?`
 /// boundary (29/29 exact on pages 1-2; see `designs/NEXTSCAN.md` §1.5).
 const PAGE_LINES: u32 = 29;
 
-/// `\r` + 69 spaces + `\r`: the captured More?/ns-confirm overprint
+/// `\r` + 69 spaces + `\r`: the captured `More?`/ns-confirm overprint
 /// clear (never `ESC[K`).
 fn more_overprint_clear() -> Vec<u8> {
     let mut bytes = vec![b'\r'];
@@ -704,7 +704,7 @@ mod tests {
         bytes
     }
 
-    /// `\r` + 69 spaces + `\r` — the captured More?/ns-confirm
+    /// `\r` + 69 spaces + `\r` — the captured `More?`/ns-confirm
     /// overprint clear (counted programmatically from the
     /// transcripts).
     fn more_clear() -> Vec<u8> {
@@ -911,7 +911,7 @@ mod tests {
     }
 
     /// `\r` + 79 spaces + `\r` — the wider overprint after a flag
-    /// entry (counted from ae_tierd_aquascan3.txt S4).
+    /// entry (counted from `ae_tierd_aquascan3.txt` S4).
     fn flag_clear() -> Vec<u8> {
         let mut bytes = vec![b'\r'];
         bytes.extend(std::iter::repeat_n(b' ', 79));
@@ -1284,6 +1284,71 @@ mod tests {
             String::from_utf8_lossy(&terminal.output),
             String::from_utf8_lossy(&expected),
         );
+    }
+
+    #[tokio::test]
+    async fn paged_hold_listing_quits_cleanly_at_the_mid_list_more() {
+        // Held files render through the same framed body as normal
+        // listings (no live capture exists with held files — the
+        // seed board held none — so this pins the unit-level
+        // inference). A `Q` at the mid-list More? must end the
+        // listing with the Quit echo and the exit tail and nothing
+        // else: quitting must skip the post-End pause entirely.
+        use crate::domain::bytes::Bytes;
+        use crate::domain::files::area::FileArea;
+        use crate::domain::files::file::{File, FileStatus};
+        let held: Vec<(u32, u32, File)> = (0u64..30)
+            .map(|i| {
+                (
+                    1,
+                    1,
+                    File::new(
+                        format!("HELD{i:02}.LHA"),
+                        Bytes::new(1_000),
+                        FileStatus::HeldForReview,
+                        Some(b'P'),
+                        format!("Held file {i}"),
+                        SystemTime::from(time::macros::datetime!(2026-05-01 12:00 UTC))
+                            + Duration::from_secs(86_400 * i),
+                    ),
+                )
+            })
+            .collect();
+        let services = services_with(InMemoryFileRepository::new(
+            vec![FileArea::new(1, 1, "Main".to_string())],
+            held,
+        ));
+        let mut terminal = CaptureTerminal::new(vec![TerminalRead::Line("Q".to_string())]);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Hold,
+                non_stop: false,
+            },
+        )
+        .await;
+        let output = String::from_utf8_lossy(&terminal.output);
+        assert!(
+            output.contains("Scanning HOLD dir from top... Ok!"),
+            "held files report Ok!: {output}",
+        );
+        assert!(
+            output.contains("HELD00.LHA"),
+            "held files render framed rows: {output}",
+        );
+        let mut quit_tail = b"Quit\r\n".to_vec();
+        quit_tail.extend_from_slice(EXIT_TAIL);
+        assert!(
+            terminal.output.ends_with(&quit_tail),
+            "Q ends the listing immediately — no post-End pause after a quit: {output}",
+        );
+        let more_count = terminal
+            .output
+            .windows(super::wire::MORE_PROMPT.len())
+            .filter(|w| *w == super::wire::MORE_PROMPT)
+            .count();
+        assert_eq!(more_count, 1, "exactly one More? before the quit: {output}");
     }
 
     #[tokio::test]

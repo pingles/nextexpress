@@ -92,6 +92,10 @@ entity File {
     size: core/Bytes
     status: FileStatus
     description: String            -- listing text: first DIR line plus continuation text
+    check: String?                 -- legacy upload-writer status byte at DIR col 13
+                                   -- (P/F/N/D, express.e:19458-19470); raw row data,
+                                   -- orthogonal to status; absent when the name fills
+                                   -- the column
     description_source: FileDescriptionSource
     description_private_to_sysop: Boolean -- legacy: first description line begins with "/"
     file_id_diz: String?           -- NextExpress extension: extracted archive description
@@ -156,6 +160,29 @@ value DownloadEstimate {
 ------------------------------------------------------------
 -- Rules
 ------------------------------------------------------------
+
+-- List the files of one or more areas (the F command family). The
+-- listing-visible set is {available, lcfiles}; held_for_review files
+-- appear only through the hold listing (F H). Files list in
+-- uploaded_at order, oldest first, insertion order breaking ties —
+-- the order the legacy DIR file accumulated rows in. Wire
+-- presentation follows the captured AquaScan door UX with NextScan
+-- branding (the stock deployment shadows F/FR/N with door icons —
+-- comparison/evidence-tierD/live-observations.md); pagination,
+-- prompts and frames are surface concerns outside this spec.
+rule ListFiles {
+    when: ListFiles(s, areas)
+    requires: s.state = menu
+    requires: s.user != null
+    -- Areas resolve within the session's current conference; the
+    -- upload area defaults to the conference's highest-numbered area
+    -- (the legacy last-dir convention, also the default of
+    -- upload_area_for).
+
+    ensures: emitted(s,
+        Files where area in areas and status in {available, lcfiles}
+        order by uploaded_at)
+}
 
 -- Flag a file for download.
 rule FlagFile {
