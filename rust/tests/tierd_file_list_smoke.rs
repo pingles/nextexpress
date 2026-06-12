@@ -220,14 +220,15 @@ async fn f_in_an_unseeded_conference_reports_nothing_found() {
 #[tokio::test]
 async fn utf8_gate_every_session_byte_decodes() {
     // Encoding policy (AGENTS.md): the wire is valid UTF-8. Drive the
-    // full F surface — listing, pager, help — and assert the entire
-    // received stream decodes. Any future capture-pinned constant
-    // that re-introduces raw Latin-1 bytes fails here.
+    // listing body (wave art) and the F ? help (©) and assert the
+    // entire received stream decodes. The More?/flag prompt constants
+    // are pinned in wire.rs unit tests and join this gate once the
+    // hotkey pager lands; the login banner is gated by its own slice.
     let addr = spawn_listener_with_demo_files().await;
     let mut stream = sign_in_seeded_sysop(&addr).await;
     let mut all = Vec::new();
     // sign_in_seeded_sysop already drains through "mins. left): ";
-    // drive the full F surface from the main command prompt.
+    // the F surfaces below are what this gate owns.
     write_line(&mut stream, b"F ?").await;
     all.extend(drain_until(&mut stream, b"mins. left): ").await);
     write_line(&mut stream, b"F A NS").await;
