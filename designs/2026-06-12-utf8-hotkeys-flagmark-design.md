@@ -85,9 +85,11 @@ interaction divergences can never be tagged COSMETIC; the Tier A–C `©` rows
 `KeyEvent { Char(char), Enter, Other }` (exact shape may grow during TDD, but
 stays this small unless a test forces more):
 - Telnet adapter feeds it byte-at-a-time, IAC-aware.
-- `CR`, `CR LF`, `CR NUL` normalise to one `Enter`. Bare `LF` also maps to
-  `Enter` (inference for line-mode clients — probe P2 in §6.1 confirms or
-  corrects).
+- `CR`, `CR LF`, `CR NUL` normalise to one `Enter`. A bare `LF` is swallowed
+  — **no `KeyEvent` at all** (probe P2 corrected the earlier LF-as-Enter
+  inference: `ae_tierd_probes.txt:140-175`, a lone `\n` at More? returned
+  zero bytes in 5s — the board neither continued nor quit, so LF cannot map
+  to `Enter` nor even `Other`, since `Other` continues the pager).
 - `ESC [ … final-byte` sequences are swallowed as ONE `Other` event so an
   arrow key cannot fire three verbs; a lone `ESC` is `Other`.
 
@@ -100,10 +102,13 @@ matching the captured door byte-for-byte:
 - `?` → in-pager pause help + full page redraw (existing D2 bytes).
 - `F`/`f`, `R`/`r` → flag prompts (line reads, §below).
 - `n`/`N` → echo `n` immediately, hold. Next key: `s`/`S` → prompt line wipe
-  + non-stop confirm; **Enter → Quit** (uncaptured corner — in-pager help
-  pins `N … Quit`; probe P1 verifies before this is hard-coded); any other
-  key → `BS SP BS` erasing the held `n`, then that key's verb runs
-  (captured, U1).
+  + non-stop confirm; **Enter → quits, with its own wire shape** (probe P1,
+  `ae_tierd_probes.txt:100-138`): the CR echoes `\r\n` and the exit tail
+  `\x1b[0m\r\n\x1b[0m\r\n` + menu follows directly — **no `Quit` echo and no
+  `BS SP BS`** (the held `n` stays on the prompt line; the tail is
+  byte-identical to `Q`'s with the `Quit` word replaced by the echoed
+  `\r\n`); any other key → `BS SP BS` erasing the held `n`, then that key's
+  verb runs (captured, U1).
 - Case-insensitivity is assumed door-wide (only `Q/Y` upper and `n/ns` lower
   were captured) and recorded as inference in COMMAND_PARITY.md.
 
@@ -182,6 +187,13 @@ per step:
 Results land in `comparison/transcripts/` + `live-observations.md`; if the
 board contradicts a design assumption, the board wins and this doc is
 amended.
+
+**Ran 2026-06-12 → `comparison/transcripts/ae_tierd_probes.txt`** (verdicts
+detailed in `live-observations.md` §"Probe battery 2026-06-12"): P1 quit
+confirmed but with different bytes than provisionally guessed (§4 held-`n`
+rule amended — no `Quit` echo, no `BS SP BS`); P2 contradicted (bare LF is
+swallowed, §4 LF rule amended); P3 confirmed (per-keystroke echo at the
+flag prompt, `T`→`T` … `8`→`8` each within its 2s window).
 
 ### 6.2 Keystroke-granular tests (the structurally missing shape)
 

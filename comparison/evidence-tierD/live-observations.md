@@ -37,6 +37,7 @@ Raw transcripts (every block has RENDER + Python-repr byte forms):
 | `comparison/transcripts/ae_tierd_stock2.txt` | Stock internal corrected pass — T1–T14 captured (some with recovery noise); T15 onward died in internal `N`'s looping date prompt |
 | `comparison/transcripts/ae_tierd_aquascan4.txt` | Recapture of the six unverified pager corners (U1–U7), all pinned — three corrected the design's provisionals |
 | `comparison/transcripts/ae_tierd_aquascan5.txt` | `F A` across an emptied Dir1 (V1) + `F 1` on the empty dir (V2); Dir1 restored from fixtures afterwards |
+| `comparison/transcripts/ae_tierd_probes.txt` | **Byte-at-a-time probe battery** (P1 held-`n`+CR, P2 bare LF, P3 per-byte flag echo) — per-step `<<<sent … got>>>` idle snapshots expose echo timing; the final `Q` recovery sits under a mislabelled `PARTIAL (pre-failure)` block (script wart; the run succeeded), and P2's recovery bytes were consumed unrecorded |
 
 ## The headline discovery: door icons shadow the internal commands
 
@@ -307,3 +308,87 @@ transition. Folded into the sections above.)
   byte-for-byte.
 - Whether AquaScan's date-bearing separator art varies for same-date
   consecutive files (it repeats the date per file in all captures).
+
+## Probe battery 2026-06-12 — the three uncaptured interaction corners
+
+Run via `comparison/harness/ae_tierd_probes.py` →
+`comparison/transcripts/ae_tierd_probes.txt`. Single session, each probe
+byte sent alone with a per-step idle snapshot (the `<<<sent … got>>>`
+markers inline in the stream) — built specifically to expose the echo
+timing that flat captures hide. Verdicts feed design
+`2026-06-12-utf8-hotkeys-flagmark-design.md` §4 (slice D2b).
+
+### P1 — held lone `n`, then bare CR: quits to the menu (probes.txt:100-138)
+
+At More?, the `n` echoed back alone within its 3s snapshot window and the
+door held — `<<<sent b'n' got>>>n` — nothing else followed. The follow-up
+CR went straight to the menu:
+
+```
+<<<sent b'\r' got>>>\r\n\x1b[0m\r\n\x1b[0m\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left):
+```
+
+So `n`+Enter = Quit, as the in-pager help promised — but the wire shape is
+NOT `Q`'s: **no `\x08 \x08` erase of the held `n`, and no `Quit` echo**.
+The same session's `Q` keypress (the mislabelled PARTIAL block, :217/:222)
+shows `Quit\r\n\x1b[0m\r\n\x1b[0m\r\n` + menu; the n+CR exit is
+byte-identical except the `Quit` word is replaced by the echoed `\r\n`
+(the held `n` stays on the prompt line). Design §4 amended to pin this.
+
+### P2 — bare LF at a fresh More?: swallowed entirely (probes.txt:140-175)
+
+```
+<<<sent b'\n' got>>><<<end P2 bare LF>>>
+```
+
+Zero bytes back in a 5-second window. No echo, no page stream (a continue
+would have streamed File #4 onward — the dir holds 28), no Quit/menu. So
+LF is not Enter, and not even an unknown-key continue: the input layer
+drops it outright. This CONTRADICTS the design's provisional
+"bare LF maps to Enter" rule — design §4 amended (bare LF → no key event).
+
+### P3 — flag prompt echoes per keystroke (probes.txt:177-212)
+
+`F` at More? wiped the prompt (`\r` + 69sp + `\r`) and opened
+`File name(s) to flag: `. Every single byte sent came back alone within
+its 2-second window:
+
+```
+<<<sent b'T' got>>>T<<<end P3 byte T>>><<<sent b'E' got>>>E<<<end P3 byte E>>><<<sent b'R' got>>>R<<<end P3 byte R>>><<<sent b'M' got>>>M<<<end P3 byte M>>><<<sent b'V' got>>>V<<<end P3 byte V>>><<<sent b'4' got>>>4<<<end P3 byte 4>>><<<sent b'8' got>>>8<<<end P3 byte 8>>>
+```
+
+Per-keystroke echo at the door's line prompt is proven. The finishing
+`.LHA\r` echoed `.LHA` then `\r` + 79sp + `\r` + the More? redraw — the
+already-captured silent-flag wipe shape, now with its echo timing pinned.
+
+### Side effects observed (the frame-effects hazard made real)
+
+This session's logon greeted with `** Flagged File(s) Exist **\r\n\x07`
+(:77-78) — flags left by earlier capture sessions persist on the board —
+and the post-P3 logoff emitted
+`** AutoSaving File Flags **\r\n\x07\r\nClick...` (:224-229): P3's flag of
+TERMV48.LHA was genuinely recorded and saved. The board now carries that
+flag for sysop; future capture sessions will see the logon banner.
+
+## Methodology blind spots
+
+What flat transcript captures structurally cannot show (each bit us once):
+
+1. **Echo timing at prompts.** A flat capture of `n` + CR contains the same
+   bytes whether the door echoes per keystroke or echoed the whole line
+   after Enter — interaction granularity (hotkey vs line read, immediate vs
+   deferred echo) is invisible unless each byte is sent alone and the wire
+   snapshotted before the next byte (this battery's `<<<sent … got>>>`
+   shape). The D2 dead-prompt defect shipped exactly through this gap.
+2. **Charset/encoding context of high-bit bytes.** Captures record `\xb8`,
+   `\xf8`, `\xa9` … but not which glyph the sender meant — the Latin-1/
+   Topaz intent is an out-of-band fact about the platform, so byte-faithful
+   replay onto a UTF-8 wire produced mojibake (the D2u defect). A capture
+   can never arbitrate encoding; that is a policy decision to document.
+3. **Effects outside the scenario frame.** A capture frames one command's
+   bytes; consequences that surface elsewhere — the silent flag's
+   `** Flagged File(s) Exist **` at next logon, the
+   `** AutoSaving File Flags **` logoff banner, ratio/state changes — are
+   absent unless a scenario deliberately spans the frame. The probe
+   session's own logon and logoff (above) caught both flag surfaces,
+   proving the "silent" flag prompt was never a no-op.
