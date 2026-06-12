@@ -390,7 +390,9 @@ git commit -m "Docs: wire-encoding policy — UTF-8 always, parity tags fixed (s
 pub(crate) enum KeyEvent {
     /// A printable ASCII key (0x20..=0x7E).
     Char(u8),
-    /// Enter — any of CR, CR LF, CR NUL, or a bare LF.
+    /// Enter — CR with an optional LF/NUL trailer. A bare LF is NOT
+    /// Enter: the board swallows it entirely (probe P2,
+    /// `ae_tierd_probes.txt:140-175`), so the adapter emits no event.
     Enter,
     /// Backspace (0x08) or DEL (0x7F).
     Backspace,
@@ -458,11 +460,15 @@ git commit -m "App: Terminal::read_key port — hot-key events for the pager (sl
 
     #[tokio::test]
     async fn read_key_maps_printables_enter_variants_and_backspace() {
+        // Bare LF is swallowed with no event — the board drops it
+        // entirely (probe P2, ae_tierd_probes.txt:140-175) — so the
+        // lone `\n` below yields nothing and the next event after `x`
+        // is the Backspace.
         let (mut server, mut client) = connected_pair().await;
         client.write_all(b"n\r\x00Q\r\nx\n\x08").await.unwrap();
         let mut pushback = None;
         let mut keys = Vec::new();
-        for _ in 0..7 {
+        for _ in 0..6 {
             keys.push(read_telnet_key(&mut server, &mut pushback).await.unwrap().unwrap());
         }
         assert_eq!(
@@ -473,8 +479,7 @@ git commit -m "App: Terminal::read_key port — hot-key events for the pager (sl
                 KeyEvent::Char(b'Q'),
                 KeyEvent::Enter, // CR LF
                 KeyEvent::Char(b'x'),
-                KeyEvent::Enter, // bare LF
-                KeyEvent::Backspace,
+                KeyEvent::Backspace, // the bare LF before it: no event
             ]
         );
     }
@@ -563,7 +568,10 @@ pub(crate) async fn read_telnet_key(
                 try_consume_cr_trailer(stream, pushback)?;
                 return Ok(Some(KeyEvent::Enter));
             }
-            b'\n' => return Ok(Some(KeyEvent::Enter)),
+            // Bare LF: the board swallows it — no event, not even
+            // Other (which would continue the pager). Probe P2,
+            // ae_tierd_probes.txt:140-175.
+            b'\n' => {}
             0x08 | 0x7F => return Ok(Some(KeyEvent::Backspace)),
             0x1b => {
                 swallow_buffered_csi(stream, pushback)?;
@@ -681,7 +689,7 @@ git commit -m "Tests: file_list fake terminal learns scripted key events (slice 
 - Modify: `rust/src/app/menu_flow/file_list/mod.rs` (:266-371 `scan_more_prompt`; tests)
 - Modify: `rust/src/app/menu_flow/mod.rs` (add a `read_key` helper next to `read_prompted` at :329)
 
-**PRE-REQUISITE: consume the Task 0.2 probe verdicts.** The code below encodes the design defaults — held-`n`+Enter ⇒ `\x08 \x08Quit\r\n` and quit. If P1 said otherwise, write what the board does instead (and quote the probe transcript in the code comment).
+**PRE-REQUISITE: the Task 0.2 probe verdicts are in and ALREADY encoded below.** P1 (`ae_tierd_probes.txt:100-138`): held-`n`+Enter quits with the CR echoed as `\r\n` and then the normal exit tail — NO `Quit` word, NO `BS SP BS` (the held `n` stays on the prompt line). P2 (`:140-175`): bare LF is swallowed by the adapter (Task 2.2), so it never reaches this loop.
 
 - [ ] **Step 1: Write the failing tests** (replace the line-based pager tests' input scripting; key sequences instead of `TerminalRead::Line` verbs). The four load-bearing cases:
 
@@ -704,11 +712,14 @@ git commit -m "Tests: file_list fake terminal learns scripted key events (slice 
 
     #[tokio::test]
     async fn lone_n_echoes_holds_then_enter_quits() {
-        // Probe P1 (comparison/transcripts/ae_tierd_probes.txt):
-        // n echoes immediately; Enter resolves the held n as N=Quit.
+        // Probe P1 (comparison/transcripts/ae_tierd_probes.txt:100-138):
+        // n echoes immediately; Enter quits WITHOUT the Quit word and
+        // WITHOUT BS-SP-BS — the CR echoes "\r\n" and the exit tail
+        // follows directly (byte-identical to Q's exit with "Quit"
+        // replaced by the echoed "\r\n").
         // Keys: [key(b'n'), KeyRead::Key(KeyEvent::Enter)].
-        // Assert output contains prompt + "n" then "\x08 \x08Quit\r\n",
-        // and the listing ended (exit tail follows).
+        // Assert output contains prompt + "n" then "\r\n" +
+        // LISTING_EXIT_TAIL, and does NOT contain "Quit" after the n.
     }
 
     #[tokio::test]
@@ -778,9 +789,12 @@ Replace `scan_more_prompt` (file_list/mod.rs:284-371) with the hot-key loop:
                         continue;
                     }
                     KeyEvent::Enter => {
-                        // Probe P1: Enter resolves the held n as
-                        // N = Quit (the in-pager help's N verb).
-                        self.terminal.write(b"\x08 \x08Quit\r\n").await?;
+                        // Probe P1 (ae_tierd_probes.txt:100-138):
+                        // Enter after a held n quits with the CR
+                        // echoed as \r\n and the exit tail following
+                        // directly — no Quit word, no BS-SP-BS; the
+                        // held n stays on the prompt line.
+                        self.terminal.write(b"\r\n").await?;
                         return Ok(ScanFlow::Quit);
                     }
                     other => {
@@ -962,9 +976,15 @@ async fn n_echoes_on_keypress_and_enter_quits() {
 
     send_byte(&mut stream, b'\r').await;
     let after = drain_until(&mut stream, b"mins. left): ").await;
+    // Probe P1 (ae_tierd_probes.txt:100-138): the CR echoes \r\n and
+    // the exit tail follows directly — no Quit word, no BS-SP-BS.
     assert!(
-        contains(&after, b"\x08 \x08Quit\r\n"),
-        "Enter after held n erases it and quits (probe P1)"
+        contains(&after, b"\r\n\x1b[0m\r\n\x1b[0m\r\n"),
+        "Enter after held n quits straight into the exit tail (probe P1)"
+    );
+    assert!(
+        !contains(&after, b"Quit"),
+        "held-n + Enter must NOT echo the Quit word (probe P1)"
     );
     end_session(&mut stream).await;
 }
