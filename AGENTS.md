@@ -68,6 +68,16 @@ surviving mutant is equivalent or intentionally deferred.
    by its own startup tests. The existing `tests/quickwins_smoke.rs` is the
    reference shape for new command-family smokes.
 
+## Wire encoding
+
+The NextExpress wire is **valid UTF-8, always**. The legacy board emits
+ISO-8859-1 (Amiga) bytes; when porting captured output, re-encode each
+high-bit byte to the same code point in UTF-8 (`\xa9` → `\u{a9}`) and
+record the departure as a COMMAND_PARITY.md row. Never emit raw bytes
+≥ 0x80 outside a valid UTF-8 sequence — the e2e UTF-8 gate
+(`tierd_file_list_smoke.rs::utf8_gate_every_session_byte_decodes`)
+enforces this. Rust consts carrying re-encoded glyphs are `&str`.
+
 ## System Design
 
 * Lean towards hexagonal architecture: core domain components shouldn't depend on non-domain code.

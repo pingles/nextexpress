@@ -305,7 +305,10 @@ Concretely, each slice that introduces a user-facing string must:
   telnet `\r\n`; legacy `[<n>m` ANSI escapes pass through unchanged;
   the textual content is preserved character-for-character (modulo
   obvious mojibake of `©` / `é` / similar from the original file's
-  encoding, which we restore via `\u{...}` escapes).
+  encoding, which we restore via `\u{...}` escapes). The wire is
+  valid UTF-8 always — encoding policy is owned by the "Wire
+  encoding" section in AGENTS.md; that section supersedes any
+  earlier slice-level guidance about emitting raw Latin-1 bytes.
 - **Document any deliberate departure** in the slice's In Scope, with
   reasoning. "We renamed X to Y because Z" belongs in the slice spec
   so it isn't quietly drift.

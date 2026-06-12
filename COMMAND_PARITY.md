@@ -31,7 +31,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 
 **Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference and message-base navigation (`J` with its interactive prompt, `JM`, `<` / `>`, `<<` / `>>` — Tier C), conference scan flags (`CF`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), file listings (`F` — the NextScan lister, Tier D), and logoff (`G`). AmiExpress carries many more top-level commands (new-files scan `N`/AquaScan, `ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
 
-**Tag legend.** Each finding is tagged **MATCH** (byte-for-byte or behaviourally identical), **COSMETIC** (differs only in wording, spacing, ANSI byte-encoding, or seed data), or **BEHAVIOURAL** (a difference in control flow, an output line present in one and absent in the other, or an interactive step missing on one side).
+**Tag legend.** Each finding is tagged **MATCH** (byte-for-byte or behaviourally identical), **COSMETIC** (differs only in wording, spacing, ANSI byte-encoding, or seed data), or **BEHAVIOURAL** (a difference in control flow, an output line present in one and absent in the other, or an interactive step missing on one side). Encoding and interaction divergences are at minimum **BEHAVIOURAL**, never COSMETIC — a byte-encoding difference that survives at the wire level is never a pure presentation choice.
 
 ---
 
@@ -75,7 +75,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | Login (mins. left) | Prompt shows `0` (seed `time_limit_per_call = 0`) | Prompt shows `599` |
 | `VER` (product line) | `NextExpress 0.1.0 (93e5d36) Copyright ©2026 Paul Ingles` | `AmiExpress 5.6.0 (02-Jan-2024) Copyright ©2018-2023 Darren Coles` |
 | `VER` (lineage block) | Labelled `Based on Versions:`; folds extra `AmiExpress 5` line | Labelled `Original Version:`; Coles attribution in header |
-| `VER` / `S` (© encoding) | UTF-8 `\xc2\xa9` | Latin-1 single byte `\xa9` |
+| `VER` / `S` (© encoding) | UTF-8 `\xc2\xa9` (deliberate policy — see AGENTS.md "Wire encoding") | Latin-1 single byte `\xa9` |
 | `T` (trailing blank) | `\r\nIt is ...\r\n`, menu follows immediately | Trailing blank line after the time (`...\r\n\r\n`) |
 | `S` (`Lst Date On`) | `31-May-2026 09:45:19` (no weekday) | `Sun 31-May-2026 10:15:56` (leading weekday) |
 | `Q`/`M`/`X` (prompt spacing) | Goes straight into prompt | One extra trailing `\r\n` after every toggle status line |
@@ -201,7 +201,7 @@ Based on Versions:\r\n
 
 - **COSMETIC — lineage label & structure.** AE labels the block `Original Version:` and keeps the Darren Coles / AmiExpress attribution in the header line. Rust labels it `Based on Versions:` and folds an extra `  AmiExpress 5 Copyright ©2018-2023 Darren Coles` line in as the first lineage entry. The credited parties (Coles, Thomas, Hodge) and years are the same; only the grouping and label wording change, so the behaviour (display lineage) is equivalent.
 
-- **COSMETIC (with a wire-bytes caveat) — © encoding.** AE emits a bare `\xa9` (Amiga/Latin-1 single byte; RENDER shows `⟨a9⟩`). Rust emits `\xc2\xa9` (UTF-8 encoding of U+00A9; RENDER shows `⟨c2⟩⟨a9⟩`). The glyph © is identical; the on-wire byte encoding is not. This recurs in the Rust lineage line. Pure glyph-level cosmetic, but worth flagging for Latin-1-decoding clients.
+- **BEHAVIOURAL — © encoding (resolved by wire-encoding policy).** AE emits a bare `\xa9` (Amiga/Latin-1 single byte; RENDER shows `⟨a9⟩`). Rust emits `\xc2\xa9` (UTF-8 encoding of U+00A9; RENDER shows `⟨c2⟩⟨a9⟩`). The glyph © is identical; the on-wire byte encoding is not — this is a BEHAVIOURAL difference for any client decoding at the byte level. The departure is deliberate and policy-mandated: see AGENTS.md "Wire encoding". The summary table above is tagged accordingly.
 
 - **BEHAVIOURAL — registration status line.** AE prints `Registered to NONE.` from `internalCommandVER` (`express.e:25696-25697`, `StringF(...,'Registered to \s.\b\n',regKey)`). Rust **omits this line entirely** — `VERSION_BANNER` has no registration field and the banner ends after the author lines plus a trailing blank line. NextExpress has no registration-key concept, so this is a feature present in AE and absent in Rust. The `wire_text.rs` doc comment states the elision is deliberate (per `slices/cmds-quickwins.md` A2 "Out of Scope"). Classified BEHAVIOURAL because a line of output present in one system is absent in the other, not merely reworded.
 
@@ -721,6 +721,7 @@ aborts/argument errors).
 | Divergence | Detail |
 |---|---|
 | NextScan branding | Three swaps, frame widths held by stretched dash runs: banner centre `NextScan ` (40/34 dashes), `Copyright © 2026 NextScan `, `- Configure NextScan` (`designs/NEXTSCAN.md` §7) |
+| Art/© byte encoding | NextScan emits UTF-8 multi-byte sequences for high-bit glyphs (art `\xb8\xf8\xa4…` → `\u{b8}\u{f8}\u{a4}…`, © `\xa9` → `\u{a9}`); the AquaScan door emitted raw Latin-1 single bytes. Deliberate policy — see AGENTS.md "Wire encoding"; design rationale in `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. |
 | Enter-required pager keys | `More?`/confirm/flag reads are Silent line reads until slice D2b lands `Terminal::read_key`; server-emitted bytes identical |
 | Page positions ≥ page 3 | NextScan pages at a flat 29 lines (matches captured pages 1–2 exactly); the door's own counter drifts from page 3 |
 | `?` redraw window | NextScan redraws exactly the current page's lines; the door redraws a drifted window of its internal page memory |
