@@ -19,7 +19,7 @@
 //! current wire behaviour; wiring the preference awaits a slice that
 //! establishes a sensible source for it.
 
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 use std::time::Duration;
 
 /// Removes ANSI SGR (Select Graphic Rendition) escape sequences —
@@ -91,6 +91,10 @@ impl<T: Terminal + Send> Terminal for ColourTerminal<T> {
         timeout: Duration,
     ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
         self.inner.read_line(echo, timeout)
+    }
+
+    fn read_key(&mut self, timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
+        self.inner.read_key(timeout)
     }
 
     fn ansi_colour(&self) -> bool {
@@ -180,5 +184,55 @@ mod tests {
         assert!(!term.ansi_colour());
         term.write(b"\x1b[32mHi\x1b[0m").await.unwrap();
         assert_eq!(term.inner.written, b"Hi");
+    }
+
+    /// The trait default for `read_key` returns `Eof`; `CaptureTerminal`
+    /// does NOT override it, so this exercises the default path.
+    /// We also construct the remaining variants here so that Rust's
+    /// dead-code lint stays quiet while the consuming code is still in
+    /// the next task.
+    #[tokio::test]
+    async fn capture_terminal_default_read_key_returns_eof() {
+        use crate::app::terminal::{KeyEvent, KeyRead};
+        let mut term = CaptureTerminal::default();
+        let result = term.read_key(Duration::from_secs(1)).await.unwrap();
+        assert_eq!(result, KeyRead::Eof);
+        // Mention all variants so the dead-code lint stays quiet until
+        // the consuming code lands in the next task.
+        let _ = KeyRead::Key(KeyEvent::Enter);
+        let _ = KeyRead::Key(KeyEvent::Backspace);
+        let _ = KeyRead::Key(KeyEvent::Other);
+        let _ = KeyRead::IdleTimedOut;
+    }
+
+    #[tokio::test]
+    async fn colour_terminal_delegates_read_key() {
+        use crate::app::terminal::{KeyEvent, KeyRead};
+        // A stub terminal that returns a scripted keystroke so we can
+        // observe that ColourTerminal passes the call through rather
+        // than answering it itself.
+        struct OneKey;
+        impl Terminal for OneKey {
+            type Error = std::convert::Infallible;
+            fn write<'a>(&'a mut self, _b: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
+                Box::pin(async { Ok(()) })
+            }
+            fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+                Box::pin(async { Ok(()) })
+            }
+            fn read_line(
+                &mut self,
+                _echo: TerminalEcho,
+                _timeout: Duration,
+            ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+                Box::pin(async { Ok(TerminalRead::Eof) })
+            }
+            fn read_key(&mut self, _timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
+                Box::pin(async { Ok(KeyRead::Key(KeyEvent::Char(b'q'))) })
+            }
+        }
+        let mut term = ColourTerminal::new(OneKey, true);
+        let key = term.read_key(Duration::from_secs(1)).await.unwrap();
+        assert_eq!(key, KeyRead::Key(KeyEvent::Char(b'q')));
     }
 }

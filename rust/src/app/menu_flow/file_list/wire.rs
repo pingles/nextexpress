@@ -8,7 +8,7 @@
 //! legacy single Latin-1 art/© bytes are re-encoded as their UTF-8
 //! equivalents (same Unicode code points: U+00B8 ¸, U+00F8 ø,
 //! U+00A4 ¤, U+00B0 °, U+00AC ¬, U+00AF ¯, U+00A9 ©), recorded
-//! in COMMAND_PARITY.md.
+//! in `COMMAND_PARITY.md`.
 
 use crate::domain::files::file::File;
 
@@ -51,7 +51,7 @@ pub(super) const ERROR_IN_INPUT: &[u8] = b"Error in input!";
 /// (`ae_tierd_aquascan4.txt` U4).
 pub(super) const ARGUMENT_ERROR: &[u8] = b"Argument error! Type 'f ?' for help.";
 
-/// Separator art line A motif (44-space indent) — the AquaScan wave,
+/// Separator art line A motif (44-space indent) — the `AquaScan` wave,
 /// `_¸,ø*¤°¬°¤*ø,¸_…`, re-encoded UTF-8.
 const SEPARATOR_ART_A: &str =
     "_\u{b8},\u{f8}*\u{a4}\u{b0}\u{ac}\u{b0}\u{a4}*\u{f8},\u{b8}_\u{b8},\u{f8}*\u{a4}\u{b0}\u{ac}\u{ac}\u{b0}\u{a4}*\u{f8},\u{b8}_";
@@ -311,7 +311,7 @@ mod tests {
     }
 
     /// Visible columns of a UTF-8 string: every char outside `ESC[..m`
-    /// SGR runs is one column (all NextScan glyphs are single-cell).
+    /// SGR runs is one column (all `NextScan` glyphs are single-cell).
     fn visible_width_str(s: &str) -> usize {
         let mut width = 0;
         let mut rest = s;

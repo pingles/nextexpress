@@ -39,6 +39,40 @@ pub(crate) enum TerminalRead {
     IdleTimedOut,
 }
 
+/// A single keystroke read from the terminal in hot-key mode
+/// (slice D2b — the `AquaScan` pager prompts act per key, no Enter).
+// Consumed by read_telnet_key + the pager in the next task (D2b);
+// #[allow] rather than #[expect] because --all-targets test-module uses
+// satisfy the lib test binary, making #[expect] report "unfulfilled".
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyEvent {
+    /// A printable ASCII key (0x20..=0x7E).
+    Char(u8),
+    /// Enter — CR with an optional LF/NUL trailer. A bare LF is NOT
+    /// Enter: the board swallows it entirely (probe P2,
+    /// `ae_tierd_probes.txt:140-175`), so the adapter emits no event.
+    Enter,
+    /// Backspace (0x08) or DEL (0x7F).
+    Backspace,
+    /// Anything else: other control bytes, bytes ≥ 0x80, or one
+    /// swallowed `ESC[…` sequence (an arrow press is ONE event, so it
+    /// cannot fire three pager verbs).
+    Other,
+}
+
+/// Result of a bounded single-key read.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KeyRead {
+    /// One keystroke arrived.
+    Key(KeyEvent),
+    /// The peer disconnected cleanly.
+    Eof,
+    /// No key arrived before the supplied timeout elapsed.
+    IdleTimedOut,
+}
+
 /// Application-facing terminal port.
 ///
 /// Transport adapters implement this with protocol-specific byte IO.
@@ -62,6 +96,18 @@ pub(crate) trait Terminal {
         echo: TerminalEcho,
         timeout: Duration,
     ) -> TerminalFuture<'_, TerminalRead, Self::Error>;
+
+    /// Reads one keystroke in hot-key mode. The adapter echoes
+    /// NOTHING — the caller owns every user-visible byte (the door
+    /// echoes verbs itself, `amiexpress/express.e:5154-5179` readChar).
+    ///
+    /// The default returns `Eof` so line-only test fakes need no
+    /// override; transports and decorators MUST override (gated by
+    /// the keystroke smoke in `tierd_hotkey_smoke.rs`).
+    #[allow(dead_code)]
+    fn read_key(&mut self, _timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
+        Box::pin(async { Ok(KeyRead::Eof) })
+    }
 
     /// Whether ANSI colour output is currently enabled on this terminal
     /// (Tier A quickwin A8). The default is `true` — adapters that
