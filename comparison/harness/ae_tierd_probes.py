@@ -150,7 +150,10 @@ def main():
         # If a probe raised before its emit(), surface whatever bytes were
         # collected so the transcript is not silently incomplete.
         if pending:
-            emit("PARTIAL (pre-failure)", b"-", b"".join(pending), "ABORTED")
+            try:
+                emit("PARTIAL (pre-failure)", b"-", b"".join(pending), "ABORTED")
+            except Exception:
+                pass  # never let diagnostics block the mandatory logoff
         # Clean logoff — MANDATORY: abrupt close causes FS-UAE node spin-wait.
         try:
             bbs.send(b"G Y\r")
