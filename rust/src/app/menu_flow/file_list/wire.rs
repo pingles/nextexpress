@@ -4,12 +4,11 @@
 //! plain `NextScan` centre label, dash runs stretched +25 to hold the
 //! frame widths; see `designs/NEXTSCAN.md` §7).
 //!
-//! All decorated constants are `&[u8]` byte strings: the separator
-//! art and the copyright sign are single Latin-1 bytes
-//! (`\xb8 \xf8 \xa4 \xb0 \xac \xaf \xa9`) on the wire — `&str`
-//! literals would re-encode them as multi-byte UTF-8 and break
-//! parity (departure from `wire_text.rs`'s `\u{}` habit, recorded in
-//! the slice doc).
+//! All output is valid UTF-8 — encoding policy in AGENTS.md; the
+//! legacy single Latin-1 art/© bytes are re-encoded as their UTF-8
+//! equivalents (same Unicode code points: U+00B8 ¸, U+00F8 ø,
+//! U+00A4 ¤, U+00B0 °, U+00AC ¬, U+00AF ¯, U+00A9 ©), recorded
+//! in COMMAND_PARITY.md.
 
 use crate::domain::files::file::File;
 
@@ -20,10 +19,10 @@ pub(super) const LISTING_BANNER: &[u8] =
     b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m";
 
 /// Help banner — carries the rebranded copyright; dash run stretched
-/// 9→34, 79 visible columns (`ae_tierd_aquascan3.txt:105`). `\xa9` is
-/// the Latin-1 copyright sign, one byte on the wire.
-pub(super) const HELP_BANNER: &[u8] =
-    b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \xa9 2026 NextScan \x1b[34m]--\x1b[0m";
+/// 9→34, 79 visible columns (`ae_tierd_aquascan3.txt:105`). `\u{a9}`
+/// is the copyright sign © re-encoded as UTF-8.
+pub(super) const HELP_BANNER: &str =
+    "\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \u{a9} 2026 NextScan \x1b[34m]--\x1b[0m";
 
 /// The `More?` pager prompt (`ae_tierd_aquascan3.txt:158`), trailing
 /// space included, no line terminator.
@@ -52,13 +51,14 @@ pub(super) const ERROR_IN_INPUT: &[u8] = b"Error in input!";
 /// (`ae_tierd_aquascan4.txt` U4).
 pub(super) const ARGUMENT_ERROR: &[u8] = b"Argument error! Type 'f ?' for help.";
 
-/// Separator art line A motif (44-space indent).
-const SEPARATOR_ART_A: &[u8] =
-    b"_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_";
+/// Separator art line A motif (44-space indent) — the AquaScan wave,
+/// `_¸,ø*¤°¬°¤*ø,¸_…`, re-encoded UTF-8.
+const SEPARATOR_ART_A: &str =
+    "_\u{b8},\u{f8}*\u{a4}\u{b0}\u{ac}\u{b0}\u{a4}*\u{f8},\u{b8}_\u{b8},\u{f8}*\u{a4}\u{b0}\u{ac}\u{ac}\u{b0}\u{a4}*\u{f8},\u{b8}_";
 
 /// Separator art line B motif (6-space indent, date appended).
-const SEPARATOR_ART_B: &[u8] =
-    b"\xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,";
+const SEPARATOR_ART_B: &str =
+    "\u{b8},\u{f8}*\u{a4}\u{b0}\u{ac}\u{af}\u{ac}\u{b0}\u{a4}*\u{f8},\u{b8}_\u{b8},\u{f8}*\u{a4}\u{b0}\u{ac}\u{b0}\u{a4}*\u{f8},";
 
 const RESET: &[u8] = b"\x1b[0m";
 
@@ -69,10 +69,10 @@ const RESET: &[u8] = b"\x1b[0m";
 pub(super) fn separator_block(date_mmddyy: &str) -> Vec<Vec<u8>> {
     let mut line_a = RESET.to_vec();
     line_a.extend_from_slice(&[b' '; 44]);
-    line_a.extend_from_slice(SEPARATOR_ART_A);
+    line_a.extend_from_slice(SEPARATOR_ART_A.as_bytes());
     let mut line_b = RESET.to_vec();
     line_b.extend_from_slice(&[b' '; 6]);
-    line_b.extend_from_slice(SEPARATOR_ART_B);
+    line_b.extend_from_slice(SEPARATOR_ART_B.as_bytes());
     line_b.push(b' ');
     line_b.extend_from_slice(date_mmddyy.as_bytes());
     vec![RESET.to_vec(), line_a, line_b, RESET.to_vec()]
@@ -160,8 +160,8 @@ pub(super) const PAUSE_HELP: &[u8] = b"\x0c\r\n\
 /// the Copyright help banner, the verbatim syntax/diagram text, and
 /// the captured epilogue (one reset blank, a doubled-reset blank, a
 /// reset blank).
-pub(super) const HELP_SCREEN: &[u8] = b"\x1b[0m\x0c\r\n\
-\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \xa9 2026 NextScan \x1b[34m]--\x1b[0m\r\n\
+pub(super) const HELP_SCREEN: &str = "\x1b[0m\x0c\r\n\
+\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \u{a9} 2026 NextScan \x1b[34m]--\x1b[0m\r\n\
 \r\n\
 \r\n\
 \x1b[0m  F                           \x1b[36m- Show the FileHelp and prompt for date and dir\r\n\
@@ -310,16 +310,43 @@ mod tests {
         );
     }
 
+    /// Visible columns of a UTF-8 string: every char outside `ESC[..m`
+    /// SGR runs is one column (all NextScan glyphs are single-cell).
+    fn visible_width_str(s: &str) -> usize {
+        let mut width = 0;
+        let mut rest = s;
+        while let Some(c) = rest.chars().next() {
+            if c == '\x1b' {
+                let end = rest.find('m').expect("SGR sequence terminated");
+                rest = &rest[end + 1..];
+            } else {
+                width += 1;
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+        width
+    }
+
+    #[test]
+    fn all_wire_output_is_valid_utf8() {
+        // Encoding policy (AGENTS.md "Wire encoding"): the NextExpress
+        // wire is valid UTF-8. The art/© constants are &str by type;
+        // this gates the assembled byte paths that splice them.
+        assert!(String::from_utf8(separator_block("01-15-26").concat()).is_ok());
+        assert!(std::str::from_utf8(HELP_SCREEN.as_bytes()).is_ok());
+        assert!(std::str::from_utf8(HELP_BANNER.as_bytes()).is_ok());
+    }
+
     #[test]
     fn help_banner_swaps_brand_and_copyright_and_holds_width() {
         assert_eq!(
             HELP_BANNER,
-            &b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \xa9 2026 NextScan \x1b[34m]--\x1b[0m"[..],
+            "\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \u{a9} 2026 NextScan \x1b[34m]--\x1b[0m",
         );
-        assert_eq!(visible_width(HELP_BANNER), 79);
+        assert_eq!(visible_width_str(HELP_BANNER), 79);
         assert_eq!(
-            visible_width(HELP_BANNER),
-            visible_width(AQUASCAN_HELP_BANNER),
+            visible_width_str(HELP_BANNER),
+            visible_width(AQUASCAN_HELP_BANNER)
         );
     }
 
@@ -332,15 +359,11 @@ mod tests {
         assert_eq!(block[0], b"\x1b[0m".to_vec());
         let mut line_a = b"\x1b[0m".to_vec();
         line_a.extend_from_slice(&[b' '; 44]);
-        line_a.extend_from_slice(
-            b"_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xac\xb0\xa4*\xf8,\xb8_",
-        );
+        line_a.extend_from_slice("_¸,ø*¤°¬°¤*ø,¸_¸,ø*¤°¬¬°¤*ø,¸_".as_bytes());
         assert_eq!(block[1], line_a);
         let mut line_b = b"\x1b[0m".to_vec();
         line_b.extend_from_slice(&[b' '; 6]);
-        line_b.extend_from_slice(
-            b"\xb8,\xf8*\xa4\xb0\xac\xaf\xac\xb0\xa4*\xf8,\xb8_\xb8,\xf8*\xa4\xb0\xac\xb0\xa4*\xf8, 01-15-26",
-        );
+        line_b.extend_from_slice("¸,ø*¤°¬¯¬°¤*ø,¸_¸,ø*¤°¬°¤*ø, 01-15-26".as_bytes());
         assert_eq!(block[2], line_b);
         assert_eq!(block[3], b"\x1b[0m".to_vec());
     }

@@ -45,7 +45,7 @@ where
             FileListArg::Prompt => self.file_list_prompt(session).await,
             FileListArg::Help => {
                 // `F ?` (`ae_tierd_aquascan3.txt` S1).
-                self.terminal.write(wire::HELP_SCREEN).await?;
+                self.terminal.write(wire::HELP_SCREEN.as_bytes()).await?;
                 self.terminal.flush().await
             }
         }
@@ -105,7 +105,7 @@ where
     /// (`ae_tierd_aquascan4.txt` U4; single-reset tail).
     async fn file_list_argument_error(&mut self) -> Result<(), T::Error> {
         self.terminal.write(b"\x1b[0m\r\n").await?;
-        self.terminal.write(wire::HELP_BANNER).await?;
+        self.terminal.write(wire::HELP_BANNER.as_bytes()).await?;
         self.terminal.write(b"\r\n\r\n").await?;
         self.terminal.write(wire::ARGUMENT_ERROR).await?;
         self.terminal.write(b"\r\n\r\n\x1b[0m\r\n").await?;
@@ -632,7 +632,7 @@ mod tests {
         let mut terminal = CaptureTerminal::new(Vec::new());
         run_file_list(&services, &mut terminal, FileListArg::Invalid).await;
         let mut expected = b"\x1b[0m\r\n".to_vec();
-        expected.extend_from_slice(super::wire::HELP_BANNER);
+        expected.extend_from_slice(super::wire::HELP_BANNER.as_bytes());
         expected.extend_from_slice(b"\r\n\r\n");
         expected.extend_from_slice(b"Argument error! Type 'f ?' for help.\r\n");
         expected.extend_from_slice(b"\r\n\x1b[0m\r\n");
@@ -1361,13 +1361,13 @@ mod tests {
         run_file_list(&services, &mut terminal, FileListArg::Help).await;
         assert_eq!(
             String::from_utf8_lossy(&terminal.output),
-            String::from_utf8_lossy(super::wire::HELP_SCREEN),
+            String::from_utf8_lossy(super::wire::HELP_SCREEN.as_bytes()),
         );
         assert!(
             terminal
                 .output
                 .windows(super::wire::HELP_BANNER.len())
-                .any(|w| w == super::wire::HELP_BANNER),
+                .any(|w| w == super::wire::HELP_BANNER.as_bytes()),
             "the help screen embeds the help banner",
         );
     }
