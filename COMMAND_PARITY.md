@@ -65,6 +65,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `RP`/`FW`/`K`/`MV`/`EH` (top-level) | Menu **still advertises** all five, but every one is rejected as Unknown (internal inconsistency) | Never top-level; menu and dispatcher agree (they live in the `R` sub-prompt) |
 | `G` (plain) | Always logs off immediately | Plain `G` runs `checkFlagged()`: confirms if files flagged, else returns to menu without logging off |
 | `G` (side effects) | No flagged-file or history persistence | Runs `saveFlagged()` + `saveHistory()` on logoff |
+| `VER` / `S` (© encoding) | UTF-8 `\xc2\xa9` (deliberate policy — see AGENTS.md "Wire encoding") | Latin-1 single byte `\xa9` |
 
 ### Cosmetic differences
 
@@ -75,7 +76,6 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | Login (mins. left) | Prompt shows `0` (seed `time_limit_per_call = 0`) | Prompt shows `599` |
 | `VER` (product line) | `NextExpress 0.1.0 (93e5d36) Copyright ©2026 Paul Ingles` | `AmiExpress 5.6.0 (02-Jan-2024) Copyright ©2018-2023 Darren Coles` |
 | `VER` (lineage block) | Labelled `Based on Versions:`; folds extra `AmiExpress 5` line | Labelled `Original Version:`; Coles attribution in header |
-| `VER` / `S` (© encoding) | UTF-8 `\xc2\xa9` (deliberate policy — see AGENTS.md "Wire encoding") | Latin-1 single byte `\xa9` |
 | `T` (trailing blank) | `\r\nIt is ...\r\n`, menu follows immediately | Trailing blank line after the time (`...\r\n\r\n`) |
 | `S` (`Lst Date On`) | `31-May-2026 09:45:19` (no weekday) | `Sun 31-May-2026 10:15:56` (leading weekday) |
 | `Q`/`M`/`X` (prompt spacing) | Goes straight into prompt | One extra trailing `\r\n` after every toggle status line |
@@ -205,7 +205,7 @@ Based on Versions:\r\n
 
 - **BEHAVIOURAL — registration status line.** AE prints `Registered to NONE.` from `internalCommandVER` (`express.e:25696-25697`, `StringF(...,'Registered to \s.\b\n',regKey)`). Rust **omits this line entirely** — `VERSION_BANNER` has no registration field and the banner ends after the author lines plus a trailing blank line. NextExpress has no registration-key concept, so this is a feature present in AE and absent in Rust. The `wire_text.rs` doc comment states the elision is deliberate (per `slices/cmds-quickwins.md` A2 "Out of Scope"). Classified BEHAVIOURAL because a line of output present in one system is absent in the other, not merely reworded.
 
-**Verdict: mixed** — the banner framing and © encoding are cosmetic, but the missing `Registered to` line is a deliberate behavioural omission.
+**Verdict: mixed** — the banner framing is cosmetic; the © encoding is a deliberate behavioural departure resolved by the wire-encoding policy (AGENTS.md); the missing `Registered to` line is a deliberate behavioural omission.
 
 ---
 
@@ -721,11 +721,16 @@ aborts/argument errors).
 | Divergence | Detail |
 |---|---|
 | NextScan branding | Three swaps, frame widths held by stretched dash runs: banner centre `NextScan ` (40/34 dashes), `Copyright © 2026 NextScan `, `- Configure NextScan` (`designs/NEXTSCAN.md` §7) |
-| Art/© byte encoding | NextScan emits UTF-8 multi-byte sequences for high-bit glyphs (art `\xb8\xf8\xa4…` → `\u{b8}\u{f8}\u{a4}…`, © `\xa9` → `\u{a9}`); the AquaScan door emitted raw Latin-1 single bytes. Deliberate policy — see AGENTS.md "Wire encoding"; design rationale in `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. |
 | Enter-required pager keys | `More?`/confirm/flag reads are Silent line reads until slice D2b lands `Terminal::read_key`; server-emitted bytes identical |
 | Page positions ≥ page 3 | NextScan pages at a flat 29 lines (matches captured pages 1–2 exactly); the door's own counter drifts from page 3 |
 | `?` redraw window | NextScan redraws exactly the current page's lines; the door redraws a drifted window of its internal page memory |
 | Flag entries | Read and discarded (silently, as captured) until D5 wires `FlaggedFile` |
+
+**BEHAVIOURAL (deliberate, documented).**
+
+| Divergence | Detail |
+|---|---|
+| Art/© byte encoding | NextScan emits UTF-8 multi-byte sequences for high-bit glyphs (art `\xb8\xf8\xa4…` → `\u{b8}\u{f8}\u{a4}…`, © `\xa9` → `\u{a9}`); the AquaScan door emitted raw Latin-1 single bytes. Deliberate policy — see AGENTS.md "Wire encoding"; design rationale in `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. |
 
 **UNVERIFIED (provisional, tagged in test names).** `F 0` →
 highest-dir error; unknown `More?` keys continue; the counter reset
@@ -764,7 +769,7 @@ The most important behavioural gaps, in rough order of user impact:
 
 10. **`S` shares an exact six-row core but Rust implements only a subset.** The shared rows are byte-identical, yet Rust omits the `Area Name`/`Caller Num.` lead-in, the `Online Baud`/CPS/`Protocol`/`Sysop Here` block, and the entire Uploads/Downloads ratio table (deferred to slice A11).
 
-11. **`VER` drops AE's `Registered to NONE.` line.** A deliberate omission (NextExpress has no registration-key concept); the rest of the banner is cosmetic re-framing plus a UTF-8-vs-Latin-1 `©` byte-encoding difference worth noting for Latin-1-decoding clients.
+11. **`VER` drops AE's `Registered to NONE.` line.** A deliberate omission (NextExpress has no registration-key concept); the rest of the banner is cosmetic re-framing plus a deliberate behavioural departure on the UTF-8-vs-Latin-1 `©` byte-encoding (resolved by the wire-encoding policy — see AGENTS.md).
 
 12. **`G` (plain) always logs off in Rust, but AE's plain `G` confirms or returns to the menu.** Rust's `G` behaves like AE's `G Y` unconditionally; AE's plain `G` runs `checkFlagged()` and returns to the menu when nothing is flagged. Rust also performs none of AE's logoff side effects (`saveFlagged()`, `saveHistory()`) — a no-op gap today, but a missing side effect.
 
