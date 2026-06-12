@@ -330,11 +330,12 @@ mod tests {
     #[test]
     fn all_wire_output_is_valid_utf8() {
         // Encoding policy (AGENTS.md "Wire encoding"): the NextExpress
-        // wire is valid UTF-8. The art/© constants are &str by type;
-        // this gates the assembled byte paths that splice them.
+        // wire is valid UTF-8. The art constants are &str by type so
+        // only the assembled byte path (which splices them alongside
+        // raw &[u8] segments) needs checking here. The whole-session
+        // gate lives in
+        // tierd_file_list_smoke.rs::utf8_gate_every_session_byte_decodes.
         assert!(String::from_utf8(separator_block("01-15-26").concat()).is_ok());
-        assert!(std::str::from_utf8(HELP_SCREEN.as_bytes()).is_ok());
-        assert!(std::str::from_utf8(HELP_BANNER.as_bytes()).is_ok());
     }
 
     #[test]

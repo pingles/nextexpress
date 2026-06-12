@@ -217,6 +217,29 @@ async fn f_in_an_unseeded_conference_reports_nothing_found() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn utf8_gate_every_session_byte_decodes() {
+    // Encoding policy (AGENTS.md): the wire is valid UTF-8. Drive the
+    // full F surface — listing, pager, help — and assert the entire
+    // received stream decodes. Any future capture-pinned constant
+    // that re-introduces raw Latin-1 bytes fails here.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+    let mut all = Vec::new();
+    // sign_in_seeded_sysop already drains through "mins. left): ";
+    // drive the full F surface from the main command prompt.
+    write_line(&mut stream, b"F ?").await;
+    all.extend(drain_until(&mut stream, b"mins. left): ").await);
+    write_line(&mut stream, b"F A NS").await;
+    all.extend(drain_until(&mut stream, b"mins. left): ").await);
+    assert!(
+        std::str::from_utf8(&all).is_ok(),
+        "session stream contains non-UTF-8 bytes: {:?}",
+        String::from_utf8_lossy(&all)
+    );
+    end_session(&mut stream).await;
+}
+
 /// Boots an in-process listener whose file catalogue is the seeded
 /// demo corpus (landing conference 1: areas 1-2; conference 2: one
 /// empty area) — the same wiring `bootstrap::run` performs.
