@@ -26,6 +26,10 @@ from bbsdrive import render  # noqa: E402
 MORE = b"uit:"      # ...(Q)uit:
 FLAG = b"to flag:"  # File name(s) to flag:
 
+# Bytes accumulated by the probe currently in flight.  Cleared after each
+# successful emit() so that finally can detect un-emitted in-flight bytes.
+pending: list[bytes] = []
+
 
 def snapshot(bbs, label, data, collected, settle=3):
     """Send `data` raw, then read everything that arrives within `settle`
@@ -33,14 +37,17 @@ def snapshot(bbs, label, data, collected, settle=3):
 
     Uses an impossible sentinel so ``read_until_any`` runs to its timeout
     and returns whatever arrived, which is exactly the idle-snapshot we want.
-    Returns the received bytes and appends a labelled record to ``collected``.
+    Returns the received bytes and appends a labelled record to ``collected``
+    and to the module-level ``pending`` list (for partial-transcript recovery).
     """
     bbs.send(data)
     got, _ = read_until_any(bbs, [b"\xde\xad\xbe\xef"], maxwait=settle)
-    collected.append(
+    chunk = (
         b"<<<sent " + repr(data).encode() + b" got>>>" + got
-        + b"<<<end " + label.encode() + b">>>",
+        + b"<<<end " + label.encode() + b">>>"
     )
+    collected.append(chunk)
+    pending.append(chunk)
     return got
 
 
@@ -48,11 +55,12 @@ def to_more(bbs, collected):
     """Send ``F 1\\r`` and block until the More? pager prompt appears.
 
     Asserts the pager prompt is reached and appends raw received bytes to
-    ``collected``.
+    ``collected`` and to the module-level ``pending`` list.
     """
     bbs.send(b"F 1\r")
     got, hit = read_until_any(bbs, [MORE], maxwait=45)
     collected.append(got)
+    pending.append(got)
     assert hit == MORE, "never reached More? prompt"
 
 
@@ -61,11 +69,15 @@ def recover(bbs, collected):
 
     Tries ``Q``, bare CR, and ``q\\r`` in turn; stops as soon as the menu
     sentinel appears.  Raises ``RuntimeError`` if all attempts fail.
+    Appends recovery bytes to ``collected`` and to the module-level ``pending``
+    list so a subsequent failure still preserves them.
     """
     for esc in (b"Q", b"\r", b"q\r"):
         bbs.send(esc)
         got, hit = read_until_any(bbs, [MENU_SENTINEL], maxwait=20)
-        collected.append(b"<<<recovery " + repr(esc).encode() + b">>>" + got)
+        chunk = b"<<<recovery " + repr(esc).encode() + b">>>" + got
+        collected.append(chunk)
+        pending.append(chunk)
         if hit == MENU_SENTINEL:
             return
     raise RuntimeError("could not recover to menu")
@@ -87,11 +99,14 @@ def main():
         # ------------------------------------------------------------------
         c = []
         to_more(bbs, c)
-        snapshot(bbs, "P1 lone n", b"n", c)
-        got = snapshot(bbs, "P1 n then CR", b"\r", c, settle=5)
+        got_n = snapshot(bbs, "P1 lone n", b"n", c)
+        # settle=5: give the pager time to flush after the CR/LF sequence
+        got_cr = snapshot(bbs, "P1 n then CR", b"\r", c, settle=5)
+        combined = got_n + got_cr  # either byte may have triggered the menu
         emit("P1: held n + Enter", b"n,\\r", b"".join(c),
-             "MENU" if MENU_SENTINEL in got else "STILL IN PAGER")
-        if MENU_SENTINEL not in got:
+             "MENU" if MENU_SENTINEL in combined else "STILL IN PAGER")
+        pending.clear()
+        if MENU_SENTINEL not in combined:
             recover(bbs, c)
 
         # ------------------------------------------------------------------
@@ -100,9 +115,11 @@ def main():
         # ------------------------------------------------------------------
         c = []
         to_more(bbs, c)
+        # settle=5: same flush window as P1 — LF may cause a full page stream
         got = snapshot(bbs, "P2 bare LF", b"\n", c, settle=5)
         emit("P2: bare LF at More?", b"\\n", b"".join(c),
              "MENU" if MENU_SENTINEL in got else "PAGER/STREAMED")
+        pending.clear()
         if MENU_SENTINEL not in got:
             recover(bbs, c)
 
@@ -115,16 +132,25 @@ def main():
         bbs.send(b"F")
         got, hit = read_until_any(bbs, [FLAG], maxwait=20)
         c.append(got)
+        pending.append(got)
         assert hit == FLAG, "flag prompt never appeared"
         for byte in b"TERMV48":
+            # settle=2 + 0.3s sleep: short window to capture per-byte echo;
+            # the sleep is load-bearing — without it, bytes blur into one chunk
             snapshot(bbs, "P3 byte %c" % byte, bytes([byte]), c, settle=2)
             time.sleep(0.3)
+        # settle=5: filename + CR may trigger a slow listing response
         snapshot(bbs, "P3 finish", b".LHA\r", c, settle=5)
         emit("P3: flag entry per-byte echo", b"T,E,R,M,V,4,8,.LHA\\r",
              b"".join(c), "DONE")
+        pending.clear()
         recover(bbs, c)
 
     finally:
+        # If a probe raised before its emit(), surface whatever bytes were
+        # collected so the transcript is not silently incomplete.
+        if pending:
+            emit("PARTIAL (pre-failure)", b"-", b"".join(pending), "ABORTED")
         # Clean logoff — MANDATORY: abrupt close causes FS-UAE node spin-wait.
         try:
             bbs.send(b"G Y\r")
