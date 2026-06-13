@@ -82,7 +82,10 @@ async fn f_1_pages_the_seeded_corpus_and_q_quits() {
         String::from_utf8_lossy(&page[page.len().saturating_sub(120)..]),
     );
 
-    write_line(&mut stream, b"Q").await;
+    // D2b re-pin: `Q` is a single bare keypress, no Enter
+    // (ae_tierd_aquascan3.txt:321 — the capture harness sent the
+    // lone byte); the echoed Quit and tail bytes are unchanged.
+    write_key(&mut stream, b"Q").await;
     let quit = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
         quit.starts_with(b"Quit\r\n\x1b[0m\r\n\x1b[0m\r\n"),
@@ -120,14 +123,17 @@ async fn f_2_butt_joins_same_date_files_and_post_end_n_is_erased_by_q() {
         String::from_utf8_lossy(&listing[listing.len().saturating_sub(160)..]),
     );
 
-    write_line(&mut stream, b"n").await;
+    // D2b re-pin: bare keys, no terminators (ae_tierd_aquascan4.txt
+    // U1 :133 — `n` echoes on its own keypress and holds; a
+    // terminated `n\r\n` would now quit via probe P1 instead).
+    write_key(&mut stream, b"n").await;
     let held = drain_until(&mut stream, b"n").await;
     assert!(
         held.ends_with(b"n"),
         "lone n echoes and holds, got {:?}",
         String::from_utf8_lossy(&held),
     );
-    write_line(&mut stream, b"Q").await;
+    write_key(&mut stream, b"Q").await;
     let quit = drain_until(&mut stream, b"mins. left): ").await;
     assert!(
         quit.starts_with(b"\x08 \x08Quit\r\n"),
@@ -320,6 +326,15 @@ async fn end_session(stream: &mut TcpStream) {
 async fn write_line(stream: &mut TcpStream, body: &[u8]) {
     stream.write_all(body).await.expect("write body");
     stream.write_all(b"\r\n").await.expect("write CRLF");
+    stream.flush().await.expect("flush");
+}
+
+/// Sends one bare pager hotkey — no line terminator (slice D2b: the
+/// `More?` prompt acts per keypress, `ae_tierd_aquascan3.txt:321`,
+/// `ae_tierd_aquascan4.txt` U1; a terminated `n\r\n` would now mean
+/// held-n + Enter = the probe-P1 quit).
+async fn write_key(stream: &mut TcpStream, key: &[u8]) {
+    stream.write_all(key).await.expect("write key");
     stream.flush().await.expect("flush");
 }
 

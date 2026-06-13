@@ -221,9 +221,6 @@ async fn skip_iac(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Resu
 ///
 /// # Errors
 /// Returns the underlying [`io::Error`] on transport failure.
-// Called from TelnetTerminal::read_key; the pager caller lands in task
-// D2b-2.4 so no top-level call site exists yet in this crate.
-#[allow(dead_code)]
 pub(crate) async fn read_telnet_key(
     stream: &mut TcpStream,
     pushback: &mut Option<u8>,

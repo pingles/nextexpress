@@ -22,9 +22,12 @@ pub(crate) enum TerminalEcho {
     /// Hide the original characters and render masking characters.
     Masked,
     /// Echo nothing — the caller emits any user-visible echo bytes
-    /// itself. Used by the `NextScan` pager's sub-prompts (slice D2),
-    /// whose captured echo behaviour (partial echoes, erases,
-    /// overprints) is handler-rendered.
+    /// itself. The `NextScan` pager (its only consumer) went hot-key
+    /// in slice D2b, so no lib code constructs this any more; the
+    /// variant and its adapter plumbing are deleted in task D2b-2.5.
+    // #[allow] rather than #[expect]: --all-targets compiles test
+    // binaries that still construct Silent (the adapter echo pins).
+    #[allow(dead_code)]
     Silent,
 }
 
@@ -41,11 +44,6 @@ pub(crate) enum TerminalRead {
 
 /// A single keystroke read from the terminal in hot-key mode
 /// (slice D2b — the `AquaScan` pager prompts act per key, no Enter).
-// The pager caller lands in task D2b-2.4; until then no code invokes
-// read_key so the lint fires on the enum and method.  #[allow] rather
-// than #[expect]: --all-targets compiles test binaries that DO use
-// `KeyRead::Eof`, which would make #[expect] report "unfulfilled".
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyEvent {
     /// A printable ASCII key (0x20..=0x7E).
@@ -63,7 +61,6 @@ pub(crate) enum KeyEvent {
 }
 
 /// Result of a bounded single-key read.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyRead {
     /// One keystroke arrived.
@@ -105,7 +102,6 @@ pub(crate) trait Terminal {
     /// The default returns `Eof` so line-only test fakes need no
     /// override; transports and decorators MUST override (gated by
     /// the keystroke smoke in `tierd_hotkey_smoke.rs`).
-    #[allow(dead_code)]
     fn read_key(&mut self, _timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
         Box::pin(async { Ok(KeyRead::Eof) })
     }

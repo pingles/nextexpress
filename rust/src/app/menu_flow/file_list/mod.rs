@@ -10,7 +10,7 @@ mod dir_row;
 mod wire;
 
 use crate::app::menu_command::{FileListArg, FileSpan};
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
 use crate::domain::files::area::FileArea;
 use crate::domain::files::file::File;
 use crate::domain::session::typed::MenuSession;
@@ -263,92 +263,113 @@ where
         self.scan_more_prompt(state).await
     }
 
-    /// One `More?` interaction (`ae_tierd_aquascan3.txt:158`): Silent
-    /// line reads with handler-emitted echoes.
+    /// One `More?` interaction — true hotkeys (slice D2b): every verb
+    /// acts on a single keypress with door-style immediate echo
+    /// (`ae_tierd_aquascan3.txt` S2/S4-S7, `ae_tierd_aquascan4.txt`
+    /// U1-U3, probe battery `ae_tierd_probes.txt` P1/P2).
     ///
-    /// - `Q` echoes `Quit` and quits (`:321`).
+    /// - `Q` echoes `Quit` and quits (`ae_tierd_aquascan3.txt:321`).
     /// - `C` form-feeds and resumes — no clear, no re-prompt
     ///   (`:292-321`).
-    /// - `n` echoes and **holds**: it is ambiguous between `N` (=
-    ///   Quit, per the in-pager help) and the `ns` prefix, so the
-    ///   door waits; the next input first erases it with BS-SP-BS,
-    ///   then runs as its own verb (`ae_tierd_aquascan4.txt` U1,
-    ///   `ae_tierd_aquascan3.txt` S2 — identical mid-list and
-    ///   post-End).
-    /// - `ns` echoes the `n`, clears, and asks the Are-you-sure
-    ///   confirm: `Y` (unechoed) clears and switches to non-stop;
-    ///   declining clears and redraws `More?` (`ae_tierd_aquascan4.txt`
-    ///   U3).
-    /// - `Y`, empty and unknown keys clear with the captured
-    ///   69-space overprint and resume.
+    /// - `n` echoes immediately and **holds**: it is ambiguous
+    ///   between `N` (= Quit) and the `ns` prefix, so the door waits
+    ///   (U1, identical mid-list and post-End). The next key resolves
+    ///   it: `s` wipes the prompt line and asks the Are-you-sure
+    ///   confirm (U3); Enter quits with the CR echoed as `\r\n` — no
+    ///   `Quit` word, no BS-SP-BS (probe P1); anything else erases
+    ///   the held `n` with BS-SP-BS and runs as its own verb (U1).
+    /// - `Y`, Enter, unknown keys clear with the captured 69-space
+    ///   overprint and resume. A bare LF never reaches here — the
+    ///   adapter swallows it (probe P2).
+    /// - Case-insensitivity is door-wide inference (only `Q`/`Y`
+    ///   upper and `n`/`ns` lower were captured).
     async fn scan_more_prompt(&mut self, state: &mut ScanState) -> Result<ScanFlow, T::Error> {
+        self.terminal.write(wire::MORE_PROMPT).await?;
         let mut held_n = false;
-        let mut show_prompt = true;
         loop {
-            let prompt: &[u8] = if show_prompt { wire::MORE_PROMPT } else { b"" };
-            let read = self.read_prompted(prompt, TerminalEcho::Silent).await?;
-            let TerminalRead::Line(answer) = read else {
+            let read = self.read_key().await?;
+            let KeyRead::Key(mut key) = read else {
                 // Carrier loss / idle at the pager aborts the listing.
                 return Ok(ScanFlow::Quit);
             };
-            let verb = answer.trim().to_ascii_uppercase();
             if held_n {
-                self.terminal.write(b"\x08 \x08").await?;
                 held_n = false;
+                match key {
+                    KeyEvent::Char(b's' | b'S') => {
+                        // `ns`: wipe the prompt line (echoed n
+                        // included) and confirm (U3). The n-echo +
+                        // wipe aggregate is byte-identical to the old
+                        // same-packet `ns` line.
+                        self.terminal.write(&more_overprint_clear()).await?;
+                        self.terminal.write(wire::NS_CONFIRM_PROMPT).await?;
+                        let confirm = self.read_key().await?;
+                        let KeyRead::Key(confirm) = confirm else {
+                            return Ok(ScanFlow::Quit);
+                        };
+                        self.terminal.write(&more_overprint_clear()).await?;
+                        if matches!(confirm, KeyEvent::Char(b'y' | b'Y')) {
+                            state.non_stop = true;
+                            return Ok(ScanFlow::Continue);
+                        }
+                        // Declined: More? redraws and paging stays on
+                        // (U3).
+                        self.terminal.write(wire::MORE_PROMPT).await?;
+                        continue;
+                    }
+                    KeyEvent::Enter => {
+                        // Probe P1 (ae_tierd_probes.txt:100-138):
+                        // Enter after a held n quits with the CR
+                        // echoed as \r\n and the exit tail following
+                        // directly — no Quit word, no BS-SP-BS; the
+                        // held n stays on the prompt line.
+                        self.terminal.write(b"\r\n").await?;
+                        return Ok(ScanFlow::Quit);
+                    }
+                    other => {
+                        // The next key erases the held n, then runs as
+                        // its own verb (U1).
+                        self.terminal.write(b"\x08 \x08").await?;
+                        key = other;
+                    }
+                }
             }
-            match verb.as_str() {
-                "N" => {
+            match key {
+                KeyEvent::Char(b'n' | b'N') => {
+                    // Ambiguous N/ns prefix: echo and hold for the
+                    // next key (U1; mid-list and post-End identical).
                     self.terminal.write(b"n").await?;
                     self.terminal.flush().await?;
                     held_n = true;
-                    show_prompt = false;
                 }
-                "NS" => {
-                    self.terminal.write(b"n").await?;
-                    self.terminal.write(&more_overprint_clear()).await?;
-                    let confirm = self
-                        .read_prompted(wire::NS_CONFIRM_PROMPT, TerminalEcho::Silent)
-                        .await?;
-                    let TerminalRead::Line(confirm) = confirm else {
-                        return Ok(ScanFlow::Quit);
-                    };
-                    self.terminal.write(&more_overprint_clear()).await?;
-                    if confirm.trim().eq_ignore_ascii_case("Y") {
-                        state.non_stop = true;
-                        return Ok(ScanFlow::Continue);
-                    }
-                    show_prompt = true;
-                }
-                "Q" => {
+                KeyEvent::Char(b'q' | b'Q') => {
                     self.terminal.write(b"Quit\r\n").await?;
                     return Ok(ScanFlow::Quit);
                 }
-                "C" => {
+                KeyEvent::Char(b'c' | b'C') => {
                     self.terminal.write(b"\r\x0c").await?;
                     return Ok(ScanFlow::Continue);
                 }
-                "F" | "R" => {
+                KeyEvent::Char(verb @ (b'f' | b'F' | b'r' | b'R')) => {
                     // Flagging is silent in the captures
-                    // (`ae_tierd_aquascan3.txt` S4/S5): the entry is
-                    // echoed verbatim, cleared with the wider
-                    // overprint, and More? redraws. The input is read
-                    // and discarded until slice D5 wires FlaggedFile —
-                    // wire-identical either way.
-                    let prompt = if verb == "F" {
+                    // (`ae_tierd_aquascan3.txt` S4/S5): the entry
+                    // echoes as typed (probe P3), is cleared with the
+                    // wider overprint, and More? redraws. The entry is
+                    // read and discarded until slice D2f wires
+                    // FlaggedFiles — wire-identical either way.
+                    let prompt: &[u8] = if matches!(verb, b'f' | b'F') {
                         wire::FLAG_BY_NAME_PROMPT
                     } else {
                         wire::FLAG_BY_NUMBER_PROMPT
                     };
                     self.terminal.write(&more_overprint_clear()).await?;
-                    let entry = self.read_prompted(prompt, TerminalEcho::Silent).await?;
-                    let TerminalRead::Line(entry) = entry else {
+                    self.terminal.write(prompt).await?;
+                    let Some(_entry) = self.read_flag_entry().await? else {
                         return Ok(ScanFlow::Quit);
                     };
-                    self.terminal.write(entry.as_bytes()).await?;
                     self.terminal.write(&flag_overprint_clear()).await?;
-                    show_prompt = true;
+                    self.terminal.write(wire::MORE_PROMPT).await?;
                 }
-                "?" => {
+                KeyEvent::Char(b'?') => {
                     // The in-pager pause help, then a redraw of the
                     // current page (`ae_tierd_aquascan4.txt` U2; the
                     // door's redraw window drifts with its internal
@@ -360,12 +381,48 @@ where
                         self.terminal.write(line).await?;
                         self.terminal.write(b"\r\n").await?;
                     }
-                    show_prompt = true;
+                    self.terminal.write(wire::MORE_PROMPT).await?;
                 }
                 _ => {
+                    // Y, Enter (no held n), Space, unknown keys: the
+                    // captured overprint resume.
                     self.terminal.write(&more_overprint_clear()).await?;
                     return Ok(ScanFlow::Continue);
                 }
+            }
+        }
+    }
+
+    /// Hot-key line collector for the flag prompts: each printable
+    /// echoes as it arrives (probe P3 — the door's flag read echoes
+    /// per keystroke), Backspace erases with BS-SP-BS, and Enter
+    /// finishes WITHOUT a terminator echo (the captured exchange has
+    /// no CRLF before the 79-space overprint,
+    /// `ae_tierd_aquascan3.txt` S4). `None` = carrier loss / idle
+    /// timeout.
+    async fn read_flag_entry(&mut self) -> Result<Option<String>, T::Error> {
+        let mut entry: Vec<u8> = Vec::new();
+        loop {
+            let read = self.read_key().await?;
+            let KeyRead::Key(key) = read else {
+                return Ok(None);
+            };
+            match key {
+                KeyEvent::Enter => {
+                    return Ok(Some(String::from_utf8_lossy(&entry).into_owned()));
+                }
+                KeyEvent::Backspace => {
+                    if entry.pop().is_some() {
+                        self.terminal.write(b"\x08 \x08").await?;
+                    }
+                }
+                KeyEvent::Char(b)
+                    if entry.len() < crate::app::input_limits::MAX_TERMINAL_LINE_BYTES =>
+                {
+                    entry.push(b);
+                    self.terminal.write(&[b]).await?;
+                }
+                _ => {}
             }
         }
     }
@@ -436,7 +493,9 @@ mod tests {
     use crate::app::seed;
     use crate::app::services::AppServices;
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
-    use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+    use crate::app::terminal::{
+        KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
+    };
     use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::typed::MenuSession;
@@ -461,8 +520,6 @@ mod tests {
         /// Constructs a terminal with both scripted line reads and scripted
         /// key events, so tests that exercise the hot-key pager can supply
         /// both kinds of input.
-        // Task 2.4 will call this; suppress dead_code until then.
-        #[allow(dead_code)]
         fn with_keys(reads: Vec<TerminalRead>, keys: Vec<KeyRead>) -> Self {
             Self {
                 output: Vec::new(),
@@ -498,6 +555,16 @@ mod tests {
             let key = self.keys.pop_front().unwrap_or(KeyRead::Eof);
             Box::pin(async move { Ok(key) })
         }
+    }
+
+    /// One scripted printable keypress for the hot-key pager (D2b).
+    fn key(c: u8) -> KeyRead {
+        KeyRead::Key(KeyEvent::Char(c))
+    }
+
+    /// A terminal scripted with pager keys only — no line reads.
+    fn keyed_terminal(keys: Vec<KeyRead>) -> CaptureTerminal {
+        CaptureTerminal::with_keys(Vec::new(), keys)
     }
 
     fn conference(number: u32) -> Conference {
@@ -735,13 +802,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn paged_f_1_pauses_at_29_lines_and_q_quits() {
+    async fn q_at_more_quits_on_a_single_keypress() {
         // The captured page-1 boundary (ae_tierd_aquascan3.txt:212,
         // S4): More? fires after exactly 29 emitted lines — right
-        // after the 02-03-26 separator block — and `Q` echoes `Quit`
-        // with no clear, then the listing exit tail.
+        // after the 02-03-26 separator block. `Q` is a bare key, no
+        // Enter (ae_tierd_aquascan3.txt:321, harness sent the single
+        // byte): it echoes `Quit` with no clear, then the listing
+        // exit tail.
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![TerminalRead::Line("Q".to_string())]);
+        let mut terminal = keyed_terminal(vec![key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -764,14 +833,11 @@ mod tests {
 
     #[tokio::test]
     async fn y_at_more_clears_the_prompt_and_streams_a_fresh_page() {
-        // `Y` (ae_tierd_aquascan3.txt S4): overprint clear, the
-        // counter resets, and the next 29 lines stream to the next
-        // More?.
+        // `Y` (ae_tierd_aquascan3.txt S4, bare keypress): overprint
+        // clear, the counter resets, and the next 29 lines stream to
+        // the next More?.
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("Y".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'Y'), key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -797,14 +863,11 @@ mod tests {
 
     #[tokio::test]
     async fn c_at_more_form_feeds_and_resumes_without_reprompt() {
-        // `C` (ae_tierd_aquascan3.txt:292-321, S6): `\r` + form feed,
-        // no overprint clear, no prompt redraw — the listing resumes
-        // immediately with a reset counter.
+        // `C` (ae_tierd_aquascan3.txt:292-321, S6, bare keypress):
+        // `\r` + form feed, no overprint clear, no prompt redraw —
+        // the listing resumes immediately with a reset counter.
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("C".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'C'), key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -829,16 +892,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ns_at_more_confirms_then_streams_the_remainder_non_stop() {
-        // ae_tierd_aquascan3.txt S7 (:361 + repr :490): `ns` echoes
-        // just the `n`, clears, asks the Are-you-sure confirm; `Y`
-        // (unechoed) clears and the rest of the listing streams with
-        // no further More? — footer straight to the exit tail.
+    async fn n_then_s_opens_the_nonstop_confirm_and_y_goes_nonstop() {
+        // ae_tierd_aquascan3.txt S7 (:361 + repr :490) +
+        // ae_tierd_aquascan4.txt U3 (:154-156): `n` echoes on its own
+        // keypress, `s` wipes the prompt line (echoed n included)
+        // with the 69-space overprint and asks the Are-you-sure
+        // confirm; `Y` (unechoed) clears again and the rest of the
+        // listing streams with no further More? — footer straight to
+        // the exit tail. The aggregate bytes for n-then-s are
+        // identical to the old same-packet `ns` line.
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("ns".to_string()),
-            TerminalRead::Line("Y".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'n'), key(b's'), key(b'Y')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -865,14 +929,11 @@ mod tests {
 
     #[tokio::test]
     async fn declining_the_ns_confirm_redraws_more_and_stays_paged() {
-        // ae_tierd_aquascan4.txt U3: `n` at the confirm (unechoed)
-        // clears and More? redraws; paged mode continues.
+        // ae_tierd_aquascan4.txt U3: `n` at the confirm (a single
+        // unechoed keypress) clears and More? redraws; paged mode
+        // continues.
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("ns".to_string()),
-            TerminalRead::Line("n".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'n'), key(b's'), key(b'n'), key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -899,15 +960,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lone_n_at_more_is_held_and_erased_by_the_next_verb() {
-        // ae_tierd_aquascan4.txt U1: `n` echoes and holds (ambiguous
-        // N=Quit / ns prefix); the next input first erases it with
-        // BS-SP-BS, then runs — `n` then `Q` gives `n` … `\x08 \x08Quit`.
+    async fn held_n_then_other_key_erases_and_runs_the_verb() {
+        // ae_tierd_aquascan4.txt U1 (:133): `n` echoes on its own
+        // keypress and holds (ambiguous N=Quit / ns prefix); the next
+        // key first erases it with BS-SP-BS, then runs as its own
+        // verb — `n` then `Q` gives `n` … `\x08 \x08Quit`.
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("n".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'n'), key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -930,6 +989,94 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn lone_n_echoes_holds_then_enter_quits() {
+        // Probe P1 (ae_tierd_probes.txt:100-138): Enter after a held
+        // `n` quits with the CR echoed as `\r\n` and the exit tail
+        // following directly — NO `Quit` word, NO BS-SP-BS; the held
+        // `n` stays on the prompt line.
+        let services = services_with_demo_catalogue();
+        let mut terminal = keyed_terminal(vec![key(b'n'), KeyRead::Key(KeyEvent::Enter)]);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            },
+        )
+        .await;
+        let lines = f_1_emitted_lines(&services);
+        let mut expected = joined(&lines[..29]);
+        expected.extend_from_slice(super::wire::MORE_PROMPT);
+        expected.extend_from_slice(b"n");
+        expected.extend_from_slice(b"\r\n");
+        expected.extend_from_slice(EXIT_TAIL);
+        assert_eq!(
+            String::from_utf8_lossy(&terminal.output),
+            String::from_utf8_lossy(&expected),
+        );
+    }
+
+    /// Runs `F 2` with `keys` scripted at its post-End `More?` and
+    /// returns `(actual output, expected bytes up to and including
+    /// the More? prompt)` — shared by the single-key resume pins
+    /// below, which append their verb's bytes to the expectation.
+    async fn f_2_more_output(keys: Vec<KeyRead>) -> (Vec<u8>, Vec<u8>) {
+        let services = services_with_demo_catalogue();
+        let mut terminal = keyed_terminal(keys);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(2),
+                non_stop: false,
+            },
+        )
+        .await;
+        let mut expected = joined(&[
+            b"\x1b[0m".to_vec(),
+            super::wire::LISTING_BANNER.to_vec(),
+            Vec::new(),
+            b"Scanning dir 2 from top... Ok!".to_vec(),
+            Vec::new(),
+        ]);
+        expected.extend_from_slice(&joined(&area_lines(&services, 2)));
+        expected.extend_from_slice(super::wire::MORE_PROMPT);
+        (terminal.output, expected)
+    }
+
+    #[tokio::test]
+    async fn enter_at_more_without_a_held_n_resumes_via_the_overprint() {
+        // Design §4 (2026-06-12, probe-corrected): Enter at More?
+        // with no held `n` is a continue — the captured 69-space
+        // overprint resume (ae_tierd_aquascan3.txt S4 shape), NOT
+        // the held-n quit of probe P1. Dir 2 is the last dir, so
+        // the resume runs straight into the exit tail.
+        let (output, mut expected) = f_2_more_output(vec![KeyRead::Key(KeyEvent::Enter)]).await;
+        expected.extend_from_slice(&more_clear());
+        expected.extend_from_slice(EXIT_TAIL);
+        assert_eq!(
+            String::from_utf8_lossy(&output),
+            String::from_utf8_lossy(&expected),
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_key_at_more_resumes_via_the_overprint() {
+        // The door's default verb: unknown keys clear with the
+        // 69-space overprint and resume (ae_tierd_aquascan3.txt S4
+        // overprint shape; specific key uncaptured — inference
+        // recorded in COMMAND_PARITY.md).
+        let (output, mut expected) = f_2_more_output(vec![key(b'X')]).await;
+        expected.extend_from_slice(&more_clear());
+        expected.extend_from_slice(EXIT_TAIL);
+        assert_eq!(
+            String::from_utf8_lossy(&output),
+            String::from_utf8_lossy(&expected),
+        );
+    }
+
     /// `\r` + 79 spaces + `\r` — the wider overprint after a flag
     /// entry (counted from `ae_tierd_aquascan3.txt` S4).
     fn flag_clear() -> Vec<u8> {
@@ -941,16 +1088,19 @@ mod tests {
 
     #[tokio::test]
     async fn f_at_more_opens_the_flag_by_name_prompt_and_discards_silently() {
-        // ae_tierd_aquascan3.txt S4 (:212-217): clear, the line-read
-        // flag prompt, the input echoed verbatim with NO trailing
-        // CRLF, the wider clear, More? redrawn — and no confirmation
-        // text anywhere (flag state itself lands with slice D5).
+        // ae_tierd_aquascan3.txt S4 (:212-217) + probe P3
+        // (ae_tierd_probes.txt, per-keystroke echo at the flag read):
+        // clear, the flag prompt, each typed char echoed as it
+        // arrives (aggregate identical to the old verbatim replay),
+        // Enter finishing with NO trailing CRLF, the wider clear,
+        // More? redrawn — and no confirmation text anywhere (flag
+        // state itself lands with slice D2f/D5).
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("F".to_string()),
-            TerminalRead::Line("TERMV48.LHA".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut keys = vec![key(b'F')];
+        keys.extend(b"TERMV48.LHA".iter().map(|&c| key(c)));
+        keys.push(KeyRead::Key(KeyEvent::Enter));
+        keys.push(key(b'Q'));
+        let mut terminal = keyed_terminal(keys);
         run_file_list(
             &services,
             &mut terminal,
@@ -977,14 +1127,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn flag_entry_backspace_erases_with_bs_sp_bs_and_skips_an_empty_entry() {
+        // Design §4 (2026-06-12; uncaptured — the probe battery only
+        // exercised printables, P3): Backspace at the flag entry
+        // erases the last char with BS-SP-BS, and a Backspace on an
+        // empty entry emits nothing. Keys: F, BS (empty — silent),
+        // T, X, BS, Enter — the echo stream is `TX` + BS-SP-BS, then
+        // the captured wider clear and More? redraw.
+        let services = services_with_demo_catalogue();
+        let mut terminal = keyed_terminal(vec![
+            key(b'F'),
+            KeyRead::Key(KeyEvent::Backspace),
+            key(b'T'),
+            key(b'X'),
+            KeyRead::Key(KeyEvent::Backspace),
+            KeyRead::Key(KeyEvent::Enter),
+            key(b'Q'),
+        ]);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            },
+        )
+        .await;
+        let lines = f_1_emitted_lines(&services);
+        let mut expected = joined(&lines[..29]);
+        expected.extend_from_slice(super::wire::MORE_PROMPT);
+        expected.extend_from_slice(&more_clear());
+        expected.extend_from_slice(super::wire::FLAG_BY_NAME_PROMPT);
+        expected.extend_from_slice(b"TX\x08 \x08");
+        expected.extend_from_slice(&flag_clear());
+        expected.extend_from_slice(super::wire::MORE_PROMPT);
+        expected.extend_from_slice(b"Quit\r\n");
+        expected.extend_from_slice(EXIT_TAIL);
+        assert_eq!(
+            String::from_utf8_lossy(&terminal.output),
+            String::from_utf8_lossy(&expected),
+        );
+    }
+
+    #[tokio::test]
+    async fn flag_entry_stops_echoing_at_the_terminal_line_byte_limit() {
+        // NextExpress bound, not captured behaviour: the flag entry
+        // collector shares MAX_TERMINAL_LINE_BYTES (4096) with the
+        // line reads — the 4097th printable is dropped unechoed.
+        let services = services_with_demo_catalogue();
+        let limit = crate::app::input_limits::MAX_TERMINAL_LINE_BYTES;
+        let mut keys = vec![key(b'F')];
+        keys.extend(std::iter::repeat_n(key(b'A'), limit + 1));
+        keys.push(KeyRead::Key(KeyEvent::Enter));
+        keys.push(key(b'Q'));
+        let mut terminal = keyed_terminal(keys);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            },
+        )
+        .await;
+        let lines = f_1_emitted_lines(&services);
+        let mut expected = joined(&lines[..29]);
+        expected.extend_from_slice(super::wire::MORE_PROMPT);
+        expected.extend_from_slice(&more_clear());
+        expected.extend_from_slice(super::wire::FLAG_BY_NAME_PROMPT);
+        expected.extend(std::iter::repeat_n(b'A', limit));
+        expected.extend_from_slice(&flag_clear());
+        expected.extend_from_slice(super::wire::MORE_PROMPT);
+        expected.extend_from_slice(b"Quit\r\n");
+        expected.extend_from_slice(EXIT_TAIL);
+        assert_eq!(
+            String::from_utf8_lossy(&terminal.output),
+            String::from_utf8_lossy(&expected),
+        );
+    }
+
+    #[tokio::test]
     async fn r_at_more_opens_the_distinct_flag_by_number_prompt() {
         // ae_tierd_aquascan3.txt S5 (:252-257): `R` uses the
-        // `File number(s) to flag:` wording.
+        // `File number(s) to flag:` wording; the entry is typed
+        // per-keystroke (probe P3) and finished with Enter.
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("R".to_string()),
-            TerminalRead::Line("2".to_string()),
-            TerminalRead::Line("Q".to_string()),
+        let mut terminal = keyed_terminal(vec![
+            key(b'R'),
+            key(b'2'),
+            KeyRead::Key(KeyEvent::Enter),
+            key(b'Q'),
         ]);
         run_file_list(
             &services,
@@ -1013,17 +1245,15 @@ mod tests {
 
     #[tokio::test]
     async fn question_mark_at_more_shows_the_pause_help_and_redraws_the_page() {
-        // ae_tierd_aquascan4.txt U2: `?` emits the in-pager pause
-        // help (byte-exact, incl. the trailing `~SP|`+FF marker)
-        // followed by a page redraw and More? again. COSMETIC
-        // divergence: NextScan redraws exactly the lines of the
-        // current page; the door redraws a drifted window (its
-        // internal paging quirk — designs/NEXTSCAN.md §1.5/§9).
+        // ae_tierd_aquascan4.txt U2 (bare `?` keypress): `?` emits
+        // the in-pager pause help (byte-exact, incl. the trailing
+        // `~SP|`+FF marker) followed by a page redraw and More?
+        // again. COSMETIC divergence: NextScan redraws exactly the
+        // lines of the current page; the door redraws a drifted
+        // window (its internal paging quirk — designs/NEXTSCAN.md
+        // §1.5/§9).
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("?".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'?'), key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -1080,13 +1310,11 @@ mod tests {
     async fn paged_listing_shows_the_post_end_more_and_held_n_then_q_exits() {
         // ae_tierd_aquascan3.txt S2 + :158-163: the More? appears
         // right after the footer even for a listing far below a
-        // page; `n` is held and the following `Q` erases it —
-        // `n` … `\x08 \x08Quit`.
+        // page; `n` (bare keypress) is held and the following `Q`
+        // erases it — `n` … `\x08 \x08Quit` (U1, identical mid-list
+        // and post-End).
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("n".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'n'), key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -1118,15 +1346,12 @@ mod tests {
     #[tokio::test]
     async fn f_a_transitions_between_dirs_through_the_post_end_more() {
         // ae_tierd_aquascan3.txt S8 (repr :673): every non-empty dir
-        // gets its own footer + post-End More?; `Y` at a non-last dir
-        // clears, emits CRLF and the next Scanning header; `Y` at the
-        // last dir clears straight into the exit tail
-        // (ae_tierd_aquascan5.txt V1).
+        // gets its own footer + post-End More?; `Y` (bare keypress)
+        // at a non-last dir clears, emits CRLF and the next Scanning
+        // header; `Y` at the last dir clears straight into the exit
+        // tail (ae_tierd_aquascan5.txt V1).
         let services = services_with_two_small_areas();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("Y".to_string()),
-            TerminalRead::Line("Y".to_string()),
-        ]);
+        let mut terminal = keyed_terminal(vec![key(b'Y'), key(b'Y')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -1165,7 +1390,8 @@ mod tests {
     async fn f_a_with_an_empty_first_dir_runs_its_headers_back_to_back() {
         // ae_tierd_aquascan5.txt V1: the empty dir emits exactly its
         // Nothing-found line with the next dir's Scanning line
-        // directly beneath — no blank, no More? between.
+        // directly beneath — no blank, no More? between; `Y` is a
+        // bare keypress.
         use crate::domain::files::area::FileArea;
         let services = {
             use crate::domain::bytes::Bytes;
@@ -1189,7 +1415,7 @@ mod tests {
                 )],
             ))
         };
-        let mut terminal = CaptureTerminal::new(vec![TerminalRead::Line("Y".to_string())]);
+        let mut terminal = keyed_terminal(vec![key(b'Y')]);
         run_file_list(
             &services,
             &mut terminal,
@@ -1254,13 +1480,12 @@ mod tests {
     #[tokio::test]
     async fn bare_f_numeric_answer_scans_that_dir() {
         // ae_tierd_aquascan3.txt S2 (:131-163): `2` at the prompt —
-        // blank, then the dir-2 scan with NO banner re-emit, through
-        // the post-End More?.
+        // a Visible LINE read, unchanged by D2b — then the dir-2
+        // scan with NO banner re-emit, through the post-End More?
+        // where `Q` is a bare keypress (:321).
         let services = services_with_demo_catalogue();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("2".to_string()),
-            TerminalRead::Line("Q".to_string()),
-        ]);
+        let mut terminal =
+            CaptureTerminal::with_keys(vec![TerminalRead::Line("2".to_string())], vec![key(b'Q')]);
         run_file_list(&services, &mut terminal, FileListArg::Prompt).await;
         let mut expected = listing_preamble();
         expected.extend_from_slice(&super::wire::directories_prompt(2));
@@ -1281,13 +1506,13 @@ mod tests {
 
     #[tokio::test]
     async fn bare_f_u_answer_scans_the_upload_dir() {
-        // ae_tierd_aquascan4.txt U6: `U` at the prompt resolves to
-        // the highest-numbered area.
+        // ae_tierd_aquascan4.txt U6: `U` at the prompt (a Visible
+        // LINE read, unchanged by D2b) resolves to the
+        // highest-numbered area; `Y` at the post-End More? is a bare
+        // keypress.
         let services = services_with_two_small_areas();
-        let mut terminal = CaptureTerminal::new(vec![
-            TerminalRead::Line("U".to_string()),
-            TerminalRead::Line("Y".to_string()),
-        ]);
+        let mut terminal =
+            CaptureTerminal::with_keys(vec![TerminalRead::Line("U".to_string())], vec![key(b'Y')]);
         run_file_list(&services, &mut terminal, FileListArg::Prompt).await;
         let mut expected = listing_preamble();
         expected.extend_from_slice(&super::wire::directories_prompt(2));
@@ -1338,7 +1563,9 @@ mod tests {
             vec![FileArea::new(1, 1, "Main".to_string())],
             held,
         ));
-        let mut terminal = CaptureTerminal::new(vec![TerminalRead::Line("Q".to_string())]);
+        // `Q` at the mid-list More? is a bare keypress (D2b;
+        // ae_tierd_aquascan3.txt:321).
+        let mut terminal = keyed_terminal(vec![key(b'Q')]);
         run_file_list(
             &services,
             &mut terminal,

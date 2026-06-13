@@ -335,6 +335,15 @@ where
         crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
     }
 
+    /// Flushes pending output, then reads one keystroke in hot-key
+    /// mode with the session's input timeout (slice D2b — the
+    /// `NextScan` pager prompts act per key).
+    async fn read_key(&mut self) -> Result<crate::app::terminal::KeyRead, T::Error> {
+        let timeout = self.services.session_policy.input_timeout();
+        self.terminal.flush().await?;
+        self.terminal.read_key(timeout).await
+    }
+
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
         crate::app::terminal::write_and_flush(self.terminal, bytes).await
     }
