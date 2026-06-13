@@ -41,9 +41,10 @@ pub(crate) enum TerminalRead {
 
 /// A single keystroke read from the terminal in hot-key mode
 /// (slice D2b — the `AquaScan` pager prompts act per key, no Enter).
-// Consumed by read_telnet_key + the pager in the next task (D2b);
-// #[allow] rather than #[expect] because --all-targets test-module uses
-// satisfy the lib test binary, making #[expect] report "unfulfilled".
+// The pager caller lands in task D2b-2.4; until then no code invokes
+// read_key so the lint fires on the enum and method.  #[allow] rather
+// than #[expect]: --all-targets compiles test binaries that DO use
+// `KeyRead::Eof`, which would make #[expect] report "unfulfilled".
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyEvent {

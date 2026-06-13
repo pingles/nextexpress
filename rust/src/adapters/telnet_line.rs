@@ -10,6 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::app::input_limits::MAX_TERMINAL_LINE_BYTES;
+use crate::app::terminal::KeyEvent;
 
 /// How [`read_telnet_line`] should echo the bytes it accepts.
 ///
@@ -69,29 +70,10 @@ pub(crate) async fn read_telnet_line(
         };
         match b {
             0xFF => {
-                // IAC. Consume the command (and option byte for the
-                // 3-byte negotiations).
-                let Some(cmd) = read_one(stream, pushback).await? else {
+                // IAC. Delegate to the shared helper that handles
+                // 3-byte negotiations and SB…IAC SE subnegotiations.
+                if !skip_iac(stream, pushback).await? {
                     return Ok(None);
-                };
-                if (0xFB..=0xFE).contains(&cmd) {
-                    // WILL / WONT / DO / DONT: one option byte follows.
-                    let _ = read_one(stream, pushback).await?;
-                } else if cmd == 0xFA {
-                    // SB ... IAC SE; consume until SE.
-                    loop {
-                        let Some(b1) = read_one(stream, pushback).await? else {
-                            return Ok(None);
-                        };
-                        if b1 == 0xFF {
-                            let Some(b2) = read_one(stream, pushback).await? else {
-                                return Ok(None);
-                            };
-                            if b2 == 0xF0 {
-                                break;
-                            }
-                        }
-                    }
                 }
             }
             b'\r' => {
@@ -182,11 +164,150 @@ fn try_consume_cr_trailer(stream: &mut TcpStream, pushback: &mut Option<u8>) -> 
     Ok(())
 }
 
+/// Consumes the remainder of an IAC sequence whose `0xFF` has already
+/// been read: 3-byte negotiations (`WILL`/`WONT`/`DO`/`DONT` + option),
+/// and `SB … IAC SE` subnegotiation.
+///
+/// # Parameters
+/// - `stream`: the telnet TCP stream.
+/// - `pushback`: one-byte look-ahead slot shared with the caller.
+///
+/// # Returns
+/// `Ok(true)` when the sequence was consumed cleanly; `Ok(false)` when
+/// EOF arrived mid-sequence.
+///
+/// # Errors
+/// Returns the underlying [`io::Error`] on transport failure.
+async fn skip_iac(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Result<bool> {
+    let Some(cmd) = read_one(stream, pushback).await? else {
+        return Ok(false);
+    };
+    if (0xFB..=0xFE).contains(&cmd) {
+        // WILL / WONT / DO / DONT: one option byte follows.
+        let _ = read_one(stream, pushback).await?;
+    } else if cmd == 0xFA {
+        // SB … IAC SE: consume until the `IAC SE` (0xFF 0xF0) pair.
+        loop {
+            let Some(b1) = read_one(stream, pushback).await? else {
+                return Ok(false);
+            };
+            if b1 == 0xFF {
+                let Some(b2) = read_one(stream, pushback).await? else {
+                    return Ok(false);
+                };
+                if b2 == 0xF0 {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Reads one keystroke in IAC-aware hot-key mode. Echoes nothing — hot-key
+/// echo is the handler's responsibility (`express.e:5154-5179`).
+///
+/// CR (with optional LF/NUL trailer) → [`KeyEvent::Enter`]; a bare LF is
+/// swallowed with no event (probe P2, `ae_tierd_probes.txt:140-175`); a
+/// buffered `ESC[…` sequence is collapsed into one [`KeyEvent::Other`] so
+/// an arrow press cannot fire several pager verbs. `Ok(None)` = EOF.
+///
+/// # Parameters
+/// - `stream`: the telnet TCP stream.
+/// - `pushback`: one-byte look-ahead slot shared with the caller.
+///
+/// # Returns
+/// `Ok(Some(key))` on a keystroke, `Ok(None)` on EOF.
+///
+/// # Errors
+/// Returns the underlying [`io::Error`] on transport failure.
+// Called from TelnetTerminal::read_key; the pager caller lands in task
+// D2b-2.4 so no top-level call site exists yet in this crate.
+#[allow(dead_code)]
+pub(crate) async fn read_telnet_key(
+    stream: &mut TcpStream,
+    pushback: &mut Option<u8>,
+) -> io::Result<Option<KeyEvent>> {
+    loop {
+        let Some(b) = read_one(stream, pushback).await? else {
+            return Ok(None);
+        };
+        match b {
+            0xFF => {
+                if !skip_iac(stream, pushback).await? {
+                    return Ok(None);
+                }
+            }
+            b'\r' => {
+                try_consume_cr_trailer(stream, pushback)?;
+                return Ok(Some(KeyEvent::Enter));
+            }
+            // Bare LF: the board swallows it — no event, not even
+            // Other (which would advance the pager). Probe P2,
+            // ae_tierd_probes.txt:140-175.
+            b'\n' => {}
+            0x08 | 0x7F => return Ok(Some(KeyEvent::Backspace)),
+            0x1b => {
+                swallow_buffered_csi(stream, pushback)?;
+                return Ok(Some(KeyEvent::Other));
+            }
+            b if (0x20..=0x7E).contains(&b) => return Ok(Some(KeyEvent::Char(b))),
+            _ => return Ok(Some(KeyEvent::Other)),
+        }
+    }
+}
+
+/// Best-effort, non-blocking swallow of an already-buffered CSI remainder
+/// (`[ <params> <final>`). A full arrow/function sequence arrives in one
+/// packet so its bytes are queued; a lone ESC press has nothing queued
+/// and is left alone. Bounded at 8 bytes to avoid unbounded consumption.
+///
+/// # Parameters
+/// - `stream`: the telnet TCP stream.
+/// - `pushback`: one-byte look-ahead slot shared with the caller.
+///
+/// # Errors
+/// Returns the underlying [`io::Error`] on transport failure (not
+/// `WouldBlock`, which is treated as "nothing buffered").
+fn swallow_buffered_csi(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Result<()> {
+    // If pushback holds a byte it came from a previous look-ahead, not a
+    // buffered CSI continuation — leave it for the next read.
+    if pushback.is_some() {
+        return Ok(());
+    }
+    let mut byte = [0u8; 1];
+    match stream.try_read(&mut byte) {
+        Ok(n) if n > 0 && byte[0] == b'[' => {}
+        Ok(n) if n > 0 => {
+            *pushback = Some(byte[0]);
+            return Ok(());
+        }
+        Ok(_) => return Ok(()), // EOF
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    for _ in 0..8 {
+        match stream.try_read(&mut byte) {
+            Ok(n) if n > 0 => {
+                if (0x40..=0x7E).contains(&byte[0]) {
+                    return Ok(()); // final byte — sequence complete
+                }
+                // Parameter/intermediate byte: keep consuming.
+            }
+            Ok(_) => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+    use crate::app::terminal::KeyEvent;
 
     async fn connected_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -274,5 +395,91 @@ mod tests {
             .expect_err("overlong line must fail");
 
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[tokio::test]
+    async fn read_key_maps_printables_enter_variants_and_backspace() {
+        // Bare LF is swallowed with no event — the board drops it
+        // entirely (probe P2, ae_tierd_probes.txt:140-175) — so the
+        // lone `\n` below yields nothing and the next event after `x`
+        // is the Backspace.
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"n\r\x00Q\r\nx\n\x08").await.unwrap();
+        let mut pushback = None;
+        let mut keys = Vec::new();
+        for _ in 0..6 {
+            keys.push(
+                read_telnet_key(&mut server, &mut pushback)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            keys,
+            vec![
+                KeyEvent::Char(b'n'),
+                KeyEvent::Enter, // CR NUL
+                KeyEvent::Char(b'Q'),
+                KeyEvent::Enter, // CR LF
+                KeyEvent::Char(b'x'),
+                KeyEvent::Backspace, // the bare LF before it: no event
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_swallows_a_csi_sequence_as_one_event() {
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"\x1b[Ay").await.unwrap();
+        let mut pushback = None;
+        let first = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, KeyEvent::Other, "arrow = one event");
+        assert_eq!(second, KeyEvent::Char(b'y'));
+    }
+
+    #[tokio::test]
+    async fn read_key_skips_iac_and_echoes_nothing() {
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(&[0xFF, 0xFD, 0x01, b'n']).await.unwrap();
+        let mut pushback = None;
+        let key = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(key, KeyEvent::Char(b'n'));
+        drop(server);
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(echoed, b"", "key reads must write zero bytes");
+    }
+
+    #[tokio::test]
+    async fn read_key_maps_unprintable_control_bytes_to_other() {
+        // Ctrl-A (0x01) is below 0x20 and is not \r, \n, BS, or ESC —
+        // it must produce Other, not Char. This pins the printable-range
+        // guard so mutants that widen it to include control bytes are
+        // caught.
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(&[0x01, b'z']).await.unwrap();
+        let mut pushback = None;
+        let ctrl = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        let printable = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ctrl, KeyEvent::Other, "Ctrl-A must be Other");
+        assert_eq!(printable, KeyEvent::Char(b'z'));
     }
 }

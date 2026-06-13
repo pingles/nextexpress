@@ -22,7 +22,7 @@ use crate::app::node_pool::NodePool;
 use crate::app::runtime::Runtime;
 use crate::app::services::AppServices;
 use crate::app::session_driver::SessionDriver;
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 #[cfg(test)]
 use crate::app::wire_text::{
     ANSI_PROMPT, EMAIL_PROMPT, LINE_LENGTH_PROMPT, LOCATION_PROMPT, MENU_PROMPT_SUFFIX,
@@ -31,7 +31,7 @@ use crate::app::wire_text::{
 };
 use crate::domain::session::LogonChannel;
 
-use super::telnet_line::{read_telnet_line, EchoMode};
+use super::telnet_line::{read_telnet_key, read_telnet_line, EchoMode};
 
 /// Bytes sent at the start of every accepted connection to set up
 /// telnet line-mode in a way that is friendly to common clients:
@@ -188,6 +188,20 @@ impl Terminal for TelnetTerminal<'_> {
                     None => Ok(TerminalRead::Eof),
                 },
                 Err(_elapsed) => Ok(TerminalRead::IdleTimedOut),
+            }
+        })
+    }
+
+    fn read_key(&mut self, timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
+        Box::pin(async move {
+            match tokio::time::timeout(timeout, read_telnet_key(self.stream, &mut self.pushback))
+                .await
+            {
+                Ok(result) => match result? {
+                    Some(key) => Ok(KeyRead::Key(key)),
+                    None => Ok(KeyRead::Eof),
+                },
+                Err(_elapsed) => Ok(KeyRead::IdleTimedOut),
             }
         })
     }

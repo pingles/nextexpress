@@ -188,21 +188,12 @@ mod tests {
 
     /// The trait default for `read_key` returns `Eof`; `CaptureTerminal`
     /// does NOT override it, so this exercises the default path.
-    /// We also construct the remaining variants here so that Rust's
-    /// dead-code lint stays quiet while the consuming code is still in
-    /// the next task.
     #[tokio::test]
     async fn capture_terminal_default_read_key_returns_eof() {
-        use crate::app::terminal::{KeyEvent, KeyRead};
+        use crate::app::terminal::KeyRead;
         let mut term = CaptureTerminal::default();
         let result = term.read_key(Duration::from_secs(1)).await.unwrap();
         assert_eq!(result, KeyRead::Eof);
-        // Mention all variants so the dead-code lint stays quiet until
-        // the consuming code lands in the next task.
-        let _ = KeyRead::Key(KeyEvent::Enter);
-        let _ = KeyRead::Key(KeyEvent::Backspace);
-        let _ = KeyRead::Key(KeyEvent::Other);
-        let _ = KeyRead::IdleTimedOut;
     }
 
     #[tokio::test]
