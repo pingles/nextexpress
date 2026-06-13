@@ -8,6 +8,7 @@
 use std::time::{Duration, SystemTime};
 
 use crate::domain::conference::NameType;
+use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::user::User;
 
 mod budget;
@@ -130,6 +131,10 @@ pub struct Session {
     /// in-progress `CS` scan. Held outside [`SessionPhase`] so it
     /// survives `Onboarded -> Menu` transitions.
     activity: ConferenceActivity,
+    /// Per-session flagged-file set (slice D2f); held outside
+    /// [`SessionPhase`] so it survives transitions. Slice D5 will
+    /// persist it.
+    flagged_files: FlaggedFiles,
 }
 
 /// Session fields that are valid for every lifecycle phase.
@@ -360,6 +365,7 @@ impl Session {
             },
             phase: SessionPhase::Connecting,
             activity: ConferenceActivity::new(),
+            flagged_files: FlaggedFiles::default(),
         }
     }
 
@@ -389,6 +395,15 @@ impl Session {
     /// through [`crate::domain::session::typed::MenuSession::toggle_quiet_mode`].
     pub fn set_quiet_mode(&mut self, quiet: bool) {
         self.shared.quiet_mode = quiet;
+    }
+
+    /// The session's flagged files (slice D2f; D5 persists). The F/R
+    /// pager verbs mutate it.
+    // Reached through `MenuSession::flagged_files_mut`; the pager
+    // (Task 3.4) is the first production caller.
+    #[allow(dead_code)]
+    pub(crate) fn flagged_files_mut(&mut self) -> &mut FlaggedFiles {
+        &mut self.flagged_files
     }
 
     /// Returns the [`NameType`] the session is currently rendering

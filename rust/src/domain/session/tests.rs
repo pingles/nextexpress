@@ -1982,6 +1982,30 @@ mod quiet {
     }
 }
 
+mod flagging {
+    use std::time::SystemTime;
+
+    use super::super::typed::MenuSession;
+    use super::fixtures::{make_conf, session_at_onboarded_with, user_with_grants};
+
+    #[test]
+    fn menu_session_exposes_the_flag_set() {
+        // Slice D2f: the per-session flagged-file set rides the
+        // `Session` and is reachable from the menu so the F/R pager
+        // verbs (Task 3.4) can mutate it.
+        let confs = vec![make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[2]));
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        let mut menu = MenuSession::from_session(s);
+
+        let key = crate::domain::files::flagged::FlaggedKey::new(2, 1, "TERMV48.LHA");
+        assert!(menu.flagged_files_mut().flag(key.clone()));
+        assert!(menu.flagged_files_mut().contains(&key));
+    }
+}
+
 mod mail {
     use std::time::{Duration, SystemTime};
 

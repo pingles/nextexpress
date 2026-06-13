@@ -30,6 +30,7 @@
 use std::time::SystemTime;
 
 use crate::domain::conference::{Conference, NameType};
+use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::session::{
     AcceptConnectionError, AutoRejoinOutcome, ExplicitJoinOutcome, LogonChannel, Session,
     SessionState,
@@ -329,6 +330,14 @@ impl MenuSession {
         let new_value = !self.session.quiet_mode();
         self.session.set_quiet_mode(new_value);
         new_value
+    }
+
+    /// The session's flagged-file set — the F/R pager verbs mutate it.
+    // Task 3.4 (the pager) is the first production caller; until then
+    // only the session-wiring test exercises it.
+    #[allow(dead_code)]
+    pub(crate) fn flagged_files_mut(&mut self) -> &mut FlaggedFiles {
+        self.session.flagged_files_mut()
     }
 
     /// Toggles the bound user's expert-mode flag and returns the new

@@ -38,7 +38,7 @@ impl FlaggedKey {
 
 /// The session's flagged-file set. Slice D5 will persist it; until
 /// then it lives and dies with the session.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct FlaggedFiles {
     set: BTreeSet<FlaggedKey>,
 }
