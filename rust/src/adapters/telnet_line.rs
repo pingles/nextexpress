@@ -262,6 +262,14 @@ pub(crate) async fn read_telnet_key(
 /// packet so its bytes are queued; a lone ESC press has nothing queued
 /// and is left alone. Bounded at 8 bytes to avoid unbounded consumption.
 ///
+/// **Single-packet assumption:** this function only works correctly when
+/// the entire CSI sequence (`ESC`, `[`, params, and final byte) arrives
+/// in a single TCP segment. If the delivery is split (ESC in one segment,
+/// the `[…` body in a later one), the body is NOT swallowed: the ESC maps
+/// to one `Other` and the body bytes then arrive as individual `Char`
+/// events — accepted, because real arrow presses ship in one segment and
+/// the pager treats stray printables as harmless continue verbs.
+///
 /// # Parameters
 /// - `stream`: the telnet TCP stream.
 /// - `pushback`: one-byte look-ahead slot shared with the caller.
@@ -481,5 +489,54 @@ mod tests {
             .unwrap();
         assert_eq!(ctrl, KeyEvent::Other, "Ctrl-A must be Other");
         assert_eq!(printable, KeyEvent::Char(b'z'));
+    }
+
+    #[tokio::test]
+    async fn read_key_pushes_back_a_non_bracket_byte_after_esc() {
+        // ESC followed by a non-'[' byte: swallow_buffered_csi must push
+        // the byte back rather than discard it.  The lone ESC maps to
+        // Other; the pushed-back 'z' must surface as the next Char.
+        // This kills the `byte[0] == b'['` guard mutants.
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"\x1bz").await.unwrap();
+        // try_read inside swallow_buffered_csi needs both bytes already
+        // queued in the kernel socket buffer before the first read_telnet_key
+        // returns, so we flush and give the OS a moment to deliver them.
+        client.flush().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        let mut pushback = None;
+        let first = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, KeyEvent::Other, "lone ESC = Other");
+        assert_eq!(second, KeyEvent::Char(b'z'), "pushed-back byte = Char");
+    }
+
+    #[tokio::test]
+    async fn read_key_swallows_a_multi_param_csi_sequence() {
+        // A Ctrl-Up style CSI with params (`ESC [ 1 ; 5 A`) followed by
+        // a printable.  The entire sequence through the final byte 'A'
+        // must be collapsed into one Other; 'w' must surface separately.
+        // This kills the inner-loop n>0 and final-byte-range mutants.
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"\x1b[1;5Aw").await.unwrap();
+        client.flush().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        let mut pushback = None;
+        let first = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, KeyEvent::Other, "CSI sequence = one Other");
+        assert_eq!(second, KeyEvent::Char(b'w'), "trailing byte = Char");
     }
 }
