@@ -7,4 +7,5 @@
 
 pub mod area;
 pub mod file;
+pub mod flagged;
 pub mod repository;
