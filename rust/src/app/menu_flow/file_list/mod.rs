@@ -436,7 +436,7 @@ mod tests {
     use crate::app::seed;
     use crate::app::services::AppServices;
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
-    use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+    use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead};
     use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::typed::MenuSession;
@@ -446,6 +446,7 @@ mod tests {
     struct CaptureTerminal {
         output: Vec<u8>,
         inputs: VecDeque<TerminalRead>,
+        keys: VecDeque<KeyRead>,
     }
 
     impl CaptureTerminal {
@@ -453,6 +454,20 @@ mod tests {
             Self {
                 output: Vec::new(),
                 inputs: inputs.into(),
+                keys: VecDeque::new(),
+            }
+        }
+
+        /// Constructs a terminal with both scripted line reads and scripted
+        /// key events, so tests that exercise the hot-key pager can supply
+        /// both kinds of input.
+        // Task 2.4 will call this; suppress dead_code until then.
+        #[allow(dead_code)]
+        fn with_keys(reads: Vec<TerminalRead>, keys: Vec<KeyRead>) -> Self {
+            Self {
+                output: Vec::new(),
+                inputs: reads.into(),
+                keys: keys.into(),
             }
         }
     }
@@ -477,6 +492,11 @@ mod tests {
             _timeout: Duration,
         ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
             Box::pin(async move { Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof)) })
+        }
+
+        fn read_key(&mut self, _timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
+            let key = self.keys.pop_front().unwrap_or(KeyRead::Eof);
+            Box::pin(async move { Ok(key) })
         }
     }
 
