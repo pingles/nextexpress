@@ -25,8 +25,9 @@ top-level modules under `rust/src/`:
   `InMemoryMailStores` (registry), `InMemoryUserRepository`,
   `SqliteUserRepository`, `InMemoryFileRepository` (the seeded demo
   file catalogue, slice D1), `InMemoryCallerLog`, `Pbkdf2PasswordHasher`,
-  `telnet_line` codec (whose `EchoMode::Silent` lets the NextScan pager
-  emit its own captured echo bytes).
+  `telnet_line` codec (`read_telnet_line` with an `EchoMode` plus
+  `read_telnet_key`, the single-keystroke decoder that lets the NextScan
+  pager run true hotkeys and emit its own captured echo bytes — slice D2b).
 
 - **`app/`** — application layer: ports, services, flows, and
   transport-agnostic drivers. Carries application-layer ports
@@ -80,6 +81,13 @@ messaging rules and session rules stay free of `await`, while the
 listener and the menu loop drive I/O cooperatively. The async traits
 return `Pin<Box<dyn Future + Send + 'a>>` so they remain object-safe
 behind `Arc<dyn …>`.
+
+The `Terminal` port offers `write` and `flush` (raw byte IO),
+`read_line` (one line under an echo policy + timeout), `read_key` (one
+single hotkey, no echo — the caller owns every visible byte; the
+NextScan pager drives its `More?`/ns-confirm/flag prompts off this,
+slice D2b), and `ansi_colour`/`set_ansi_colour` (the `M`-toggle colour
+state the `ColourTerminal` decorator reads).
 
 ### Build-time provenance
 
@@ -234,7 +242,7 @@ module under `app::menu_flow/`):
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
 | `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail`; per base with matched mail, offers `Would you like to read it now` and (on Yes) attaches that base as a transient read visit and drops into `read_subprompt`, restoring the home conference after |
 | `CF` | `ConferenceFlags` | `conf_flags` — the M/A/F/Z scan-flag editor (legacy `internalCommandCF`); redraws the listing, reads a mask key then a conference expression (`+`/`-`/`*`/list) and applies it to the caller's own `ConferenceMembership` flags via `domain::conference_flags`. Gated on `Right::EditConferenceFlags`. |
-| `F` / `F <dir>` / `F A`/`U`/`H` / `… NS` / `F ?` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`) over `TerminalEcho::Silent` line reads (true hotkeys = slice D2b). Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
+| `F` / `F <dir>` / `F A`/`U`/`H` / `… NS` / `F ?` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`) over true single-key hotkey reads (`Terminal::read_key`, slice D2b; held-`n`/Enter and bare-LF corners probe-pinned). Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 `read_subprompt` is the legacy `readMSG` sub-prompt loop (Tier B). `R <n>`
