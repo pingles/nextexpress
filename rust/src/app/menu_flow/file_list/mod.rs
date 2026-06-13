@@ -61,14 +61,16 @@ where
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
-        // The flag set is read-only here; borrow it for the whole
-        // span (`session` is otherwise untouched after this point).
-        let flagged = session.flagged_files();
+        // The renderer reads the flag set immutably to mark rows, but
+        // the `F`/`R` pager verbs mutate it — so borrow it mutably for
+        // the whole span and reborrow immutably only at the assemble
+        // call. `session` is otherwise untouched after this point.
+        let flagged = session.flagged_files_mut();
         let mut state = ScanState::new(false);
 
         for line in [&b"\x1b[0m"[..], wire::LISTING_BANNER, b""] {
             if self
-                .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()))
+                .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()), flagged)
                 .await?
                 == ScanFlow::Quit
             {
@@ -131,16 +133,17 @@ where
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
-        // Read-only flag set for the whole span; `session` is otherwise
-        // untouched from here on.
-        let flagged = session.flagged_files();
+        // Mutable flag set for the whole span: the renderer reborrows
+        // it immutably at the assemble call, the `F`/`R` verbs mutate
+        // it. `session` is otherwise untouched from here on.
+        let flagged = session.flagged_files_mut();
         let mut state = ScanState::new(non_stop);
 
         // Entry preamble — every argument form (§1.1). Counted: the
         // captured page-1 More? boundary includes these lines.
         for line in [&b"\x1b[0m"[..], wire::LISTING_BANNER, b""] {
             if self
-                .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()))
+                .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()), flagged)
                 .await?
                 == ScanFlow::Quit
             {
@@ -161,7 +164,7 @@ where
         span: FileSpan,
         max: u32,
         areas: &[FileArea],
-        flagged: &crate::domain::files::flagged::FlaggedFiles,
+        flagged: &mut crate::domain::files::flagged::FlaggedFiles,
     ) -> Result<(), T::Error> {
         let dirs: Vec<u32> = match span {
             FileSpan::Dir(n) => {
@@ -178,7 +181,7 @@ where
                 let held = self.services.file_repo.list_held(conference);
                 let header = wire::scanning_hold_header(!held.is_empty());
                 if self
-                    .emit_scan_line(state, wire::ScanLine::raw(header))
+                    .emit_scan_line(state, wire::ScanLine::raw(header), flagged)
                     .await?
                     == ScanFlow::Quit
                 {
@@ -193,7 +196,7 @@ where
                 {
                     // Hold is a single-dir span: whatever the
                     // post-End verb says, the listing ends here.
-                    let _ = self.post_end_pause(state).await?;
+                    let _ = self.post_end_pause(state, flagged).await?;
                 }
                 return self.finish_listing().await;
             }
@@ -203,7 +206,7 @@ where
             let files = self.services.file_repo.find_in_area(conference, *dir);
             let header = wire::scanning_dir_header(*dir, !files.is_empty());
             if self
-                .emit_scan_line(state, wire::ScanLine::raw(header))
+                .emit_scan_line(state, wire::ScanLine::raw(header), flagged)
                 .await?
                 == ScanFlow::Quit
             {
@@ -222,7 +225,7 @@ where
             {
                 return self.finish_listing().await;
             }
-            if self.post_end_pause(state).await? == ScanFlow::Quit {
+            if self.post_end_pause(state, flagged).await? == ScanFlow::Quit {
                 return self.finish_listing().await;
             }
             if index + 1 < dirs.len() {
@@ -239,11 +242,15 @@ where
     /// mode (`ae_tierd_aquascan3.txt:157-158`; suppressed entirely in
     /// non-stop mode, S7 repr :490). Resets the page counter on
     /// resume — each dir pages afresh.
-    async fn post_end_pause(&mut self, state: &mut ScanState) -> Result<ScanFlow, T::Error> {
+    async fn post_end_pause(
+        &mut self,
+        state: &mut ScanState,
+        flagged: &mut crate::domain::files::flagged::FlaggedFiles,
+    ) -> Result<ScanFlow, T::Error> {
         if state.non_stop {
             return Ok(ScanFlow::Continue);
         }
-        let flow = self.scan_more_prompt(state).await?;
+        let flow = self.scan_more_prompt(state, flagged).await?;
         state.emitted = 0;
         Ok(flow)
     }
@@ -256,17 +263,21 @@ where
         conference: u32,
         area: u32,
         files: &[File],
-        flagged: &crate::domain::files::flagged::FlaggedFiles,
+        flagged: &mut crate::domain::files::flagged::FlaggedFiles,
     ) -> Result<ScanFlow, T::Error> {
         if self
-            .emit_scan_line(state, wire::ScanLine::raw(Vec::new()))
+            .emit_scan_line(state, wire::ScanLine::raw(Vec::new()), flagged)
             .await?
             == ScanFlow::Quit
         {
             return Ok(ScanFlow::Quit);
         }
-        for line in wire::assemble_dir_lines(files, conference, area, flagged) {
-            if self.emit_scan_line(state, line).await? == ScanFlow::Quit {
+        // Reborrow `flagged` immutably only for the assemble call: it
+        // returns an owned `Vec`, so the immutable borrow ends here and
+        // the pager loop below can hand the `&mut` to `emit_scan_line`.
+        let lines = wire::assemble_dir_lines(files, conference, area, flagged);
+        for line in lines {
+            if self.emit_scan_line(state, line, flagged).await? == ScanFlow::Quit {
                 return Ok(ScanFlow::Quit);
             }
         }
@@ -283,11 +294,12 @@ where
         &mut self,
         state: &mut ScanState,
         line: wire::ScanLine,
+        flagged: &mut crate::domain::files::flagged::FlaggedFiles,
     ) -> Result<ScanFlow, T::Error> {
         self.terminal.write(&line.bytes).await?;
         self.terminal.write(b"\r\n").await?;
-        // A listed file row joins the scan-wide registry (Task 3.4's
-        // F/R verbs read it) regardless of paging mode.
+        // A listed file row joins the scan-wide registry (the F/R
+        // verbs match against it) regardless of paging mode.
         if let Some(listed) = &line.listed {
             state.listed.push(listed.clone());
         }
@@ -303,7 +315,7 @@ where
             return Ok(ScanFlow::Continue);
         }
         state.emitted = 0;
-        self.scan_more_prompt(state).await
+        self.scan_more_prompt(state, flagged).await
     }
 
     /// One `More?` interaction — true hotkeys (slice D2b): every verb
@@ -326,7 +338,11 @@ where
     ///   adapter swallows it (probe P2).
     /// - Case-insensitivity is door-wide inference (only `Q`/`Y`
     ///   upper and `n`/`ns` lower were captured).
-    async fn scan_more_prompt(&mut self, state: &mut ScanState) -> Result<ScanFlow, T::Error> {
+    async fn scan_more_prompt(
+        &mut self,
+        state: &mut ScanState,
+        flagged: &mut crate::domain::files::flagged::FlaggedFiles,
+    ) -> Result<ScanFlow, T::Error> {
         self.terminal.write(wire::MORE_PROMPT).await?;
         let mut held_n = false;
         loop {
@@ -397,19 +413,22 @@ where
                     // Flagging is silent in the captures
                     // (`ae_tierd_aquascan3.txt` S4/S5): the entry
                     // echoes as typed (probe P3), is cleared with the
-                    // wider overprint, and More? redraws. The entry is
-                    // read and discarded until slice D2f wires
-                    // FlaggedFiles — wire-identical either way.
-                    let prompt: &[u8] = if matches!(verb, b'f' | b'F') {
-                        wire::FLAG_BY_NAME_PROMPT
-                    } else {
+                    // wider overprint, and More? redraws — no new wire
+                    // bytes. Only the session flag set changes; the
+                    // in-place repaint of the newly flagged rows is
+                    // Task 3.4b's work (`_newly` is its hook).
+                    let by_number = matches!(verb, b'r' | b'R');
+                    let prompt: &[u8] = if by_number {
                         wire::FLAG_BY_NUMBER_PROMPT
+                    } else {
+                        wire::FLAG_BY_NAME_PROMPT
                     };
                     self.terminal.write(&more_overprint_clear()).await?;
                     self.terminal.write(prompt).await?;
-                    let Some(_entry) = self.read_flag_entry().await? else {
+                    let Some(entry) = self.read_flag_entry().await? else {
                         return Ok(ScanFlow::Quit);
                     };
+                    let _newly = apply_flags(&entry, by_number, &state.listed, flagged);
                     self.terminal.write(&flag_overprint_clear()).await?;
                     self.terminal.write(wire::MORE_PROMPT).await?;
                 }
@@ -502,6 +521,39 @@ fn flag_overprint_clear() -> Vec<u8> {
     bytes
 }
 
+/// Flags the files named/numbered in a `More?` flag entry against the
+/// scan's listed registry. `F` matches whitespace-separated names
+/// (case-insensitively, via the uppercase-folded `FlaggedKey::name`);
+/// `R` matches `[ File #N ]` numbers. Tokens that match nothing are
+/// silently ignored (the door accepts junk silently — the accidental
+/// capture fed `99`/`A`/`U` with no feedback). Returns the NEWLY
+/// flagged keys (the repaint set — Task 3.4b consumes it).
+fn apply_flags(
+    entry: &str,
+    by_number: bool,
+    listed: &[wire::ListedRow],
+    flagged: &mut crate::domain::files::flagged::FlaggedFiles,
+) -> Vec<crate::domain::files::flagged::FlaggedKey> {
+    let mut newly = Vec::new();
+    for token in entry.split_whitespace() {
+        let matched = if by_number {
+            token
+                .parse::<u32>()
+                .ok()
+                .and_then(|n| listed.iter().find(|row| row.number == Some(n)))
+        } else {
+            let wanted = token.to_ascii_uppercase();
+            listed.iter().find(|row| row.key.name() == wanted)
+        };
+        if let Some(row) = matched {
+            if flagged.flag(row.key.clone()) {
+                newly.push(row.key.clone());
+            }
+        }
+    }
+    newly
+}
+
 /// Per-span pager state.
 struct ScanState {
     /// Lines emitted since the last page boundary.
@@ -512,8 +564,7 @@ struct ScanState {
     page: Vec<wire::ScanLine>,
     /// Every listed file's identity, scan-wide — the registry the
     /// F/R flag verbs match against (slice D2f, Task 3.4). Populated
-    /// as rows stream; dead until the flag verbs read it.
-    #[allow(dead_code)]
+    /// as rows stream.
     listed: Vec<wire::ListedRow>,
 }
 
@@ -1147,14 +1198,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn f_at_more_opens_the_flag_by_name_prompt_and_discards_silently() {
+    async fn f_at_more_flag_prompt_emits_no_confirmation_bytes() {
         // ae_tierd_aquascan3.txt S4 (:212-217) + probe P3
         // (ae_tierd_probes.txt, per-keystroke echo at the flag read):
         // clear, the flag prompt, each typed char echoed as it
         // arrives (aggregate identical to the old verbatim replay),
         // Enter finishing with NO trailing CRLF, the wider clear,
-        // More? redrawn — and no confirmation text anywhere (flag
-        // state itself lands with slice D2f/D5).
+        // More? redrawn — and no confirmation text anywhere. Flagging
+        // is silent at the prompt (only the session set changes); here
+        // the typed TERMV48.LHA is not in the dir-1 registry, so it
+        // matches nothing and the wire bytes are unaffected either way.
         let services = services_with_demo_catalogue();
         let mut keys = vec![key(b'F')];
         keys.extend(b"TERMV48.LHA".iter().map(|&c| key(c)));
@@ -1300,6 +1353,110 @@ mod tests {
         assert_eq!(
             String::from_utf8_lossy(&terminal.output),
             String::from_utf8_lossy(&expected),
+        );
+    }
+
+    #[test]
+    fn apply_flags_matches_names_case_insensitively_and_numbers() {
+        use crate::domain::files::flagged::FlaggedKey;
+        let listed = vec![
+            super::wire::ListedRow {
+                key: FlaggedKey::new(1, 1, "ANSIPACK.LHA"),
+                number: Some(1),
+                aligned: true,
+            },
+            super::wire::ListedRow {
+                key: FlaggedKey::new(1, 1, "THIRTEENCH.LZ"),
+                number: None,
+                aligned: false,
+            },
+        ];
+
+        // `F` matches by name, case-insensitively, and reports the new key.
+        let mut flagged = FlaggedFiles::default();
+        let newly = super::apply_flags("ansipack.lha", false, &listed, &mut flagged);
+        assert_eq!(newly, vec![FlaggedKey::new(1, 1, "ANSIPACK.LHA")]);
+        assert!(flagged.contains(&FlaggedKey::new(1, 1, "ANSIPACK.LHA")));
+        // Re-flagging is idempotent: nothing new.
+        assert!(super::apply_flags("ANSIPACK.LHA", false, &listed, &mut flagged).is_empty());
+        // An unlisted name matches nothing.
+        assert!(super::apply_flags("NOSUCH.LHA", false, &listed, &mut flagged).is_empty());
+
+        // `R` matches by `[ File #N ]` number (framed rows only).
+        let mut by_num = FlaggedFiles::default();
+        assert_eq!(
+            super::apply_flags("1", true, &listed, &mut by_num),
+            vec![FlaggedKey::new(1, 1, "ANSIPACK.LHA")],
+        );
+        // No such number, and a plain row (number None) is never `R`-matched.
+        assert!(super::apply_flags("9", true, &listed, &mut by_num).is_empty());
+        assert!(super::apply_flags("2", true, &listed, &mut by_num).is_empty());
+    }
+
+    #[tokio::test]
+    async fn flagging_a_file_makes_it_render_with_the_marker_on_re_list() {
+        // End-to-end (slice D2f): flag a dir-1 file via the `F` verb,
+        // then re-run `F 1` on the SAME session — the row now renders
+        // the `[X]` slot the first listing showed blank. Proves the
+        // lister reads the session flag set the verb mutated.
+        let services = services_with_demo_catalogue();
+        let mut session = menu_session();
+
+        // First listing: pause at More?, flag ANSIPACK.LHA (dir-1 #1,
+        // on page 1), then quit.
+        let mut keys = vec![key(b'F')];
+        keys.extend(b"ANSIPACK.LHA".iter().map(|&c| key(c)));
+        keys.push(KeyRead::Key(KeyEvent::Enter));
+        keys.push(key(b'Q'));
+        let mut terminal = keyed_terminal(keys);
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_file_list(
+                &mut session,
+                FileListArg::Span {
+                    span: FileSpan::Dir(1),
+                    non_stop: false,
+                },
+            )
+            .await
+            .expect("first listing");
+        }
+        let first_len = terminal.output.len();
+        let unflagged = b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P";
+        assert!(
+            terminal.output[..first_len]
+                .windows(unflagged.len())
+                .any(|w| w == unflagged),
+            "the first listing must render ANSIPACK unflagged",
+        );
+
+        // Second listing on the same session: page, then quit.
+        terminal.keys = VecDeque::from(vec![key(b'Q')]);
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_file_list(
+                &mut session,
+                FileListArg::Span {
+                    span: FileSpan::Dir(1),
+                    non_stop: false,
+                },
+            )
+            .await
+            .expect("second listing");
+        }
+        let flagged_row = b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m[X] P";
+        assert!(
+            terminal.output[first_len..]
+                .windows(flagged_row.len())
+                .any(|w| w == flagged_row),
+            "re-listing must render ANSIPACK flagged: {:?}",
+            String::from_utf8_lossy(&terminal.output[first_len..]),
         );
     }
 

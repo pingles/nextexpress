@@ -333,17 +333,11 @@ impl MenuSession {
     }
 
     /// The session's flagged-file set — the F/R pager verbs mutate it.
-    // Task 3.4 (the pager) is the first production caller; until then
-    // only the session-wiring test exercises it.
-    #[allow(dead_code)]
+    /// The session's flagged-file set — the lister reborrows it
+    /// immutably to mark flagged rows, and the `F`/`R` pager verbs
+    /// flag listed files into it (slice D2f).
     pub(crate) fn flagged_files_mut(&mut self) -> &mut FlaggedFiles {
         self.session.flagged_files_mut()
-    }
-
-    /// The session's flagged-file set for read-only rendering — the
-    /// lister consults it to mark flagged rows (slice D2f, Task 3.3).
-    pub(crate) fn flagged_files(&self) -> &FlaggedFiles {
-        self.session.flagged_files()
     }
 
     /// Toggles the bound user's expert-mode flag and returns the new

@@ -399,18 +399,11 @@ impl Session {
 
     /// The session's flagged files (slice D2f; D5 persists). The F/R
     /// pager verbs mutate it.
-    // Reached through `MenuSession::flagged_files_mut`; the pager
-    // (Task 3.4) is the first production caller.
-    #[allow(dead_code)]
+    /// The session's flagged-file set (slice D2f; D5 persists). The
+    /// `F`/`R` pager verbs flag listed files into it, and the lister
+    /// reborrows it immutably to mark flagged rows.
     pub(crate) fn flagged_files_mut(&mut self) -> &mut FlaggedFiles {
         &mut self.flagged_files
-    }
-
-    /// The session's flagged files for read-only rendering (slice
-    /// D2f). The lister consults it to mark flagged rows; mutation
-    /// goes through [`Self::flagged_files_mut`].
-    pub(crate) fn flagged_files(&self) -> &FlaggedFiles {
-        &self.flagged_files
     }
 
     /// Returns the [`NameType`] the session is currently rendering
