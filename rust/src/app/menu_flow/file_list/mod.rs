@@ -327,7 +327,8 @@ where
                     }
                     other => {
                         // The next key erases the held n, then runs as
-                        // its own verb (U1).
+                        // its own verb (U1): rebind the scrutinee and
+                        // fall through to the verb match below.
                         self.terminal.write(b"\x08 \x08").await?;
                         key = other;
                     }
@@ -398,8 +399,10 @@ where
     /// per keystroke), Backspace erases with BS-SP-BS, and Enter
     /// finishes WITHOUT a terminator echo (the captured exchange has
     /// no CRLF before the 79-space overprint,
-    /// `ae_tierd_aquascan3.txt` S4). `None` = carrier loss / idle
-    /// timeout.
+    /// `ae_tierd_aquascan3.txt` S4). The entry caps at
+    /// `MAX_TERMINAL_LINE_BYTES`; further printables are dropped
+    /// unechoed (a NextExpress bound, not captured). `None` = carrier
+    /// loss / idle timeout.
     async fn read_flag_entry(&mut self) -> Result<Option<String>, T::Error> {
         let mut entry: Vec<u8> = Vec::new();
         loop {
