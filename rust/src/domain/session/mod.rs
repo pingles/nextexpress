@@ -406,6 +406,13 @@ impl Session {
         &mut self.flagged_files
     }
 
+    /// The session's flagged files for read-only rendering (slice
+    /// D2f). The lister consults it to mark flagged rows; mutation
+    /// goes through [`Self::flagged_files_mut`].
+    pub(crate) fn flagged_files(&self) -> &FlaggedFiles {
+        &self.flagged_files
+    }
+
     /// Returns the [`NameType`] the session is currently rendering
     /// the user's identity as
     /// (`session.allium:Session.display_name_type`, Slice 34).

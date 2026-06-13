@@ -11,6 +11,47 @@
 //! in `COMMAND_PARITY.md`.
 
 use crate::domain::files::file::File;
+use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
+
+/// One assembled listing line plus, on a file's first row, its
+/// catalogue identity — the pager records these for flag matching
+/// and in-place repaint (slice D2f). Non-file lines carry `None`.
+#[derive(Clone)]
+pub(super) struct ScanLine {
+    pub(super) bytes: Vec<u8>,
+    pub(super) listed: Option<ListedRow>,
+}
+
+impl ScanLine {
+    /// A non-file line (banner, header, separator, blank, footer).
+    pub(super) fn raw(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            listed: None,
+        }
+    }
+}
+
+/// A listed file: its flag key, its `[ File #N ]` number (framed rows
+/// only; plain rows consume no number), and whether it carries the
+/// aligned marker slot (name < 13) vs a trailing ` [X]` (over-long).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ListedRow {
+    pub(super) key: FlaggedKey,
+    pub(super) number: Option<u32>,
+    pub(super) aligned: bool,
+}
+
+/// The 4-column marker slot spliced between the name field and the
+/// check byte on aligned rows (design 2026-06-12 §5; a deliberate
+/// `NextExpress` departure recorded in `COMMAND_PARITY.md`).
+const MARKER_FLAGGED: &[u8] = b"[X] ";
+const MARKER_EMPTY: &[u8] = b"    ";
+
+/// The trailing marker appended to an over-long (unframeable) row when
+/// it is flagged — no column shift, the slot has nowhere to land
+/// (design 2026-06-12 §5).
+const MARKER_TRAILING: &[u8] = b" [X]";
 
 /// Listing banner — `NextScan`-branded; dash run stretched 15→40 so the
 /// frame keeps `AquaScan`'s 77 visible columns
@@ -92,18 +133,29 @@ pub(super) fn file_number_header(n: u32) -> Vec<u8> {
 }
 
 /// A framed (colour-coded) DIR row (`ae_tierd_aquascan3.txt:147`):
-/// cyan name padded to col 13, blue check byte, green size + two
-/// spaces, yellow date, reset before the description. Only called for
-/// frameable rows (name < 13 chars, size within the 7-column field),
-/// so the colour boundaries always land on the fixed offsets.
-pub(super) fn framed_row(file: &File) -> Vec<u8> {
+/// cyan name padded to col 13, the 4-column flag-marker slot, blue
+/// check byte, green size + two spaces, yellow date, reset before the
+/// description. Only called for frameable rows (name < 13 chars, size
+/// within the 7-column field), so the colour boundaries always land on
+/// the fixed offsets.
+///
+/// The marker slot sits inside the existing blue run with the check
+/// byte — `[X] ` when `is_flagged`, four spaces otherwise (no new SGR;
+/// design 2026-06-12 §5).
+pub(super) fn framed_row(file: &File, is_flagged: bool) -> Vec<u8> {
     let plain = super::dir_row::dir_row_lines(file)
         .into_iter()
         .next()
         .unwrap_or_default();
+    let slot = if is_flagged {
+        MARKER_FLAGGED
+    } else {
+        MARKER_EMPTY
+    };
     let mut row = b"\x1b[0m\x1b[36m".to_vec();
     row.extend_from_slice(&plain[..13]);
     row.extend_from_slice(b"\x1b[34m");
+    row.extend_from_slice(slot);
     row.push(plain[13]);
     row.extend_from_slice(b"\x1b[32m");
     row.extend_from_slice(&plain[14..23]);
@@ -207,35 +259,90 @@ fn frameable(file: &File) -> bool {
 /// (`ae_tierd_aquascan5.txt` V1, `ae_tierd_aquascan3.txt` S7).
 /// Empty input assembles nothing — `Nothing found!` dirs get neither
 /// body nor footer.
-pub(super) fn assemble_dir_lines(files: &[File]) -> Vec<Vec<u8>> {
-    let mut lines: Vec<Vec<u8>> = Vec::new();
+///
+/// Each file's identity (`conference`, `area`, name) keys the flag set:
+/// an aligned (framed) row carries the 4-column marker slot, an
+/// over-long (plain) row appends a trailing ` [X]` when flagged. The
+/// `ScanLine` of a file's first row carries its [`ListedRow`]; every
+/// other line (separators, headers, continuations, footer) is raw.
+pub(super) fn assemble_dir_lines(
+    files: &[File],
+    conference: u32,
+    area: u32,
+    flagged: &FlaggedFiles,
+) -> Vec<ScanLine> {
+    let mut lines: Vec<ScanLine> = Vec::new();
     let mut previous_framed_date: Option<String> = None;
     let mut file_number = 0u32;
 
     for file in files {
+        let key = FlaggedKey::new(conference, area, file.name());
+        let is_flagged = flagged.contains(&key);
         let mut rows = super::dir_row::dir_row_lines(file).into_iter();
         let Some(first_row) = rows.next() else {
             continue;
         };
-        if frameable(file) {
+        let indent = if frameable(file) {
             let date = String::from_utf8_lossy(&first_row[23..31]).into_owned();
             if previous_framed_date.as_deref() != Some(date.as_str()) {
-                lines.extend(separator_block(&date));
+                lines.extend(separator_block(&date).into_iter().map(ScanLine::raw));
                 previous_framed_date = Some(date);
             }
             file_number += 1;
-            lines.push(file_number_header(file_number));
-            lines.push(framed_row(file));
+            lines.push(ScanLine::raw(file_number_header(file_number)));
+            lines.push(ScanLine {
+                bytes: framed_row(file, is_flagged),
+                listed: Some(ListedRow {
+                    key,
+                    number: Some(file_number),
+                    aligned: true,
+                }),
+            });
+            // Framed continuations indent past the wider marker slot:
+            // the legacy 33-space indent plus the 4-column slot.
+            37
         } else {
-            lines.push(plain_line(&first_row));
-        }
-        lines.extend(rows.map(|continuation| plain_line(&continuation)));
+            let mut bytes = plain_line(&first_row);
+            if is_flagged {
+                bytes.extend_from_slice(MARKER_TRAILING);
+            }
+            lines.push(ScanLine {
+                bytes,
+                listed: Some(ListedRow {
+                    key,
+                    number: None,
+                    aligned: false,
+                }),
+            });
+            // Plain continuations keep the legacy 33-space indent.
+            33
+        };
+        lines.extend(
+            rows.map(|continuation| ScanLine::raw(plain_line(&reindent(&continuation, indent)))),
+        );
     }
 
     if !lines.is_empty() {
-        lines.push(END_OF_FILE_LIST.to_vec());
+        lines.push(ScanLine::raw(END_OF_FILE_LIST.to_vec()));
     }
     lines
+}
+
+/// The legacy `dir_row` continuation indent (`express.e:19499`); every
+/// continuation arrives padded to exactly this width.
+const LEGACY_CONTINUATION_INDENT: usize = 33;
+
+/// Re-indents a `dir_row` continuation (authored at the legacy
+/// 33-space indent) to `indent` leading spaces, preserving the
+/// description text verbatim. Framed rows widen this to 37 for the
+/// marker slot; plain rows pass the legacy indent straight through.
+fn reindent(continuation: &[u8], indent: usize) -> Vec<u8> {
+    let text = continuation
+        .get(LEGACY_CONTINUATION_INDENT..)
+        .unwrap_or_default();
+    let mut line = vec![b' '; indent];
+    line.extend_from_slice(text);
+    line
 }
 
 /// `Scanning dir N from top... Ok! / Nothing found!`
@@ -404,8 +511,8 @@ mod tests {
             std::time::SystemTime::from(time::macros::datetime!(2026-06-09 12:00 UTC)),
         );
         assert_eq!(
-            framed_row(&file),
-            b"\x1b[0m\x1b[36mFRESHUPL.LHA \x1b[34mP\x1b[32m  43210  \x1b[33m06-09-26\x1b[0m  Uploaded last night, awaiting sort".to_vec(),
+            framed_row(&file, false),
+            b"\x1b[0m\x1b[36mFRESHUPL.LHA \x1b[34m    P\x1b[32m  43210  \x1b[33m06-09-26\x1b[0m  Uploaded last night, awaiting sort".to_vec(),
         );
     }
 
@@ -521,17 +628,23 @@ mod tests {
         let mut expected: Vec<Vec<u8>> = Vec::new();
         expected.extend(separator_block("06-09-26"));
         expected.push(file_number_header(1));
-        expected.push(framed_row(&files[0]));
+        expected.push(framed_row(&files[0], false));
         expected.extend(separator_block("06-10-26"));
         expected.push(file_number_header(2));
-        expected.push(framed_row(&files[1]));
+        expected.push(framed_row(&files[1], false));
+        // Framed continuation: the legacy 33-space indent widened to
+        // 37 for the marker slot.
         expected.push(plain_line(
-            b"                                 Greets to everyone on node 1.",
+            b"                                     Greets to everyone on node 1.",
         ));
         expected.push(file_number_header(3));
-        expected.push(framed_row(&files[2]));
+        expected.push(framed_row(&files[2], false));
         expected.push(END_OF_FILE_LIST.to_vec());
-        assert_eq!(assemble_dir_lines(&files), expected);
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, 1, &FlaggedFiles::default())
+            .into_iter()
+            .map(|line| line.bytes)
+            .collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -568,15 +681,19 @@ mod tests {
         let mut expected: Vec<Vec<u8>> = Vec::new();
         expected.extend(separator_block("04-22-26"));
         expected.push(file_number_header(1));
-        expected.push(framed_row(&files[0]));
+        expected.push(framed_row(&files[0], false));
         expected.push(plain_line(
             b"MEGADEMO.DMS P12345678  05-01-26  Spaceballs mega demo disk 1 of 2",
         ));
         expected.extend(separator_block("05-06-26"));
         expected.push(file_number_header(2));
-        expected.push(framed_row(&files[2]));
+        expected.push(framed_row(&files[2], false));
         expected.push(END_OF_FILE_LIST.to_vec());
-        assert_eq!(assemble_dir_lines(&files), expected);
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, 1, &FlaggedFiles::default())
+            .into_iter()
+            .map(|line| line.bytes)
+            .collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -593,12 +710,93 @@ mod tests {
             plain_line(b"THIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename"),
             END_OF_FILE_LIST.to_vec(),
         ];
-        assert_eq!(assemble_dir_lines(&files), expected);
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, 1, &FlaggedFiles::default())
+            .into_iter()
+            .map(|line| line.bytes)
+            .collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]
     fn empty_dir_assembles_no_lines() {
-        assert!(assemble_dir_lines(&[]).is_empty());
+        assert!(assemble_dir_lines(&[], 1, 1, &FlaggedFiles::default()).is_empty());
+    }
+
+    #[test]
+    fn aligned_rows_carry_the_marker_slot() {
+        // Design 2026-06-12 §5: an aligned (framed, name < 13) row
+        // splices the 4-column marker slot inside the blue run — four
+        // spaces unflagged, `[X] ` flagged — and the file's first
+        // `ScanLine` records its aligned identity for the F/R verbs.
+        use time::macros::datetime;
+        let file = seeded(
+            "ANSIPACK.LHA",
+            234_567,
+            Some(b'P'),
+            datetime!(2026-01-15 12:00 UTC),
+            "Collection of 40 ANSI screens from the",
+        );
+
+        let unflagged =
+            assemble_dir_lines(std::slice::from_ref(&file), 1, 1, &FlaggedFiles::default());
+        let row = &unflagged[unflagged.len() - 2];
+        assert_eq!(
+            row.bytes,
+            b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the".to_vec(),
+        );
+
+        let key = FlaggedKey::new(1, 1, "ANSIPACK.LHA");
+        let mut flags = FlaggedFiles::default();
+        flags.flag(key.clone());
+        let flagged = assemble_dir_lines(&[file], 1, 1, &flags);
+        let row = &flagged[flagged.len() - 2];
+        assert_eq!(
+            row.bytes,
+            b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m[X] P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the".to_vec(),
+        );
+        assert_eq!(
+            row.listed,
+            Some(ListedRow {
+                key: key.clone(),
+                number: Some(1),
+                aligned: true,
+            }),
+        );
+        assert!(flags.contains(&key), "the flagged key drives the slot");
+    }
+
+    #[test]
+    fn overlong_names_append_the_marker_when_flagged() {
+        // Design 2026-06-12 §5: an over-long (unframeable, name >= 13)
+        // row has no slot to splice — when flagged it appends a
+        // trailing ` [X]`; its identity records `aligned == false`,
+        // `number == None` (plain rows consume no file number).
+        use time::macros::datetime;
+        let file = seeded(
+            "THIRTEENCH.LZ",
+            66_666,
+            None,
+            datetime!(2026-05-20 12:00 UTC),
+            "Exactly thirteen character filename",
+        );
+
+        let key = FlaggedKey::new(1, 1, "THIRTEENCH.LZ");
+        let mut flags = FlaggedFiles::default();
+        flags.flag(key.clone());
+        let flagged = assemble_dir_lines(&[file], 1, 1, &flags);
+        let row = &flagged[0];
+        assert_eq!(
+            row.bytes,
+            plain_line(b"THIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename [X]"),
+        );
+        assert_eq!(
+            row.listed,
+            Some(ListedRow {
+                key,
+                number: None,
+                aligned: false,
+            }),
+        );
     }
 
     #[test]

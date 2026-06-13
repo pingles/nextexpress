@@ -340,6 +340,12 @@ impl MenuSession {
         self.session.flagged_files_mut()
     }
 
+    /// The session's flagged-file set for read-only rendering — the
+    /// lister consults it to mark flagged rows (slice D2f, Task 3.3).
+    pub(crate) fn flagged_files(&self) -> &FlaggedFiles {
+        self.session.flagged_files()
+    }
+
     /// Toggles the bound user's expert-mode flag and returns the new
     /// value. Implements the `X` menu command's mutation step
     /// (Tier A quickwin A6, `amiexpress/express.e:26114`'s

@@ -61,10 +61,17 @@ where
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
+        // The flag set is read-only here; borrow it for the whole
+        // span (`session` is otherwise untouched after this point).
+        let flagged = session.flagged_files();
         let mut state = ScanState::new(false);
 
         for line in [&b"\x1b[0m"[..], wire::LISTING_BANNER, b""] {
-            if self.emit_scan_line(&mut state, line).await? == ScanFlow::Quit {
+            if self
+                .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()))
+                .await?
+                == ScanFlow::Quit
+            {
                 return self.finish_listing().await;
             }
         }
@@ -96,7 +103,7 @@ where
             return self.terminal.flush().await;
         };
         self.terminal.write(b"\r\n").await?;
-        self.run_span(&mut state, conference, span, max, &areas)
+        self.run_span(&mut state, conference, span, max, &areas, flagged)
             .await
     }
 
@@ -124,16 +131,23 @@ where
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
+        // Read-only flag set for the whole span; `session` is otherwise
+        // untouched from here on.
+        let flagged = session.flagged_files();
         let mut state = ScanState::new(non_stop);
 
         // Entry preamble — every argument form (§1.1). Counted: the
         // captured page-1 More? boundary includes these lines.
         for line in [&b"\x1b[0m"[..], wire::LISTING_BANNER, b""] {
-            if self.emit_scan_line(&mut state, line).await? == ScanFlow::Quit {
+            if self
+                .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()))
+                .await?
+                == ScanFlow::Quit
+            {
                 return self.finish_listing().await;
             }
         }
-        self.run_span(&mut state, conference, span, max, &areas)
+        self.run_span(&mut state, conference, span, max, &areas, flagged)
             .await
     }
 
@@ -147,6 +161,7 @@ where
         span: FileSpan,
         max: u32,
         areas: &[FileArea],
+        flagged: &crate::domain::files::flagged::FlaggedFiles,
     ) -> Result<(), T::Error> {
         let dirs: Vec<u32> = match span {
             FileSpan::Dir(n) => {
@@ -162,11 +177,19 @@ where
             FileSpan::Hold => {
                 let held = self.services.file_repo.list_held(conference);
                 let header = wire::scanning_hold_header(!held.is_empty());
-                if self.emit_scan_line(state, &header).await? == ScanFlow::Quit {
+                if self
+                    .emit_scan_line(state, wire::ScanLine::raw(header))
+                    .await?
+                    == ScanFlow::Quit
+                {
                     return self.finish_listing().await;
                 }
+                // Held files key on area 0 (provisional; hold is single-dir, no re-list).
                 if !held.is_empty()
-                    && self.stream_dir_body(state, &held).await? == ScanFlow::Continue
+                    && self
+                        .stream_dir_body(state, conference, 0, &held, flagged)
+                        .await?
+                        == ScanFlow::Continue
                 {
                     // Hold is a single-dir span: whatever the
                     // post-End verb says, the listing ends here.
@@ -179,7 +202,11 @@ where
         for (index, dir) in dirs.iter().enumerate() {
             let files = self.services.file_repo.find_in_area(conference, *dir);
             let header = wire::scanning_dir_header(*dir, !files.is_empty());
-            if self.emit_scan_line(state, &header).await? == ScanFlow::Quit {
+            if self
+                .emit_scan_line(state, wire::ScanLine::raw(header))
+                .await?
+                == ScanFlow::Quit
+            {
                 return self.finish_listing().await;
             }
             if files.is_empty() {
@@ -188,7 +215,11 @@ where
                 // (ae_tierd_aquascan5.txt V1).
                 continue;
             }
-            if self.stream_dir_body(state, &files).await? == ScanFlow::Quit {
+            if self
+                .stream_dir_body(state, conference, *dir, &files, flagged)
+                .await?
+                == ScanFlow::Quit
+            {
                 return self.finish_listing().await;
             }
             if self.post_end_pause(state).await? == ScanFlow::Quit {
@@ -222,13 +253,20 @@ where
     async fn stream_dir_body(
         &mut self,
         state: &mut ScanState,
+        conference: u32,
+        area: u32,
         files: &[File],
+        flagged: &crate::domain::files::flagged::FlaggedFiles,
     ) -> Result<ScanFlow, T::Error> {
-        if self.emit_scan_line(state, b"").await? == ScanFlow::Quit {
+        if self
+            .emit_scan_line(state, wire::ScanLine::raw(Vec::new()))
+            .await?
+            == ScanFlow::Quit
+        {
             return Ok(ScanFlow::Quit);
         }
-        for line in wire::assemble_dir_lines(files) {
-            if self.emit_scan_line(state, &line).await? == ScanFlow::Quit {
+        for line in wire::assemble_dir_lines(files, conference, area, flagged) {
+            if self.emit_scan_line(state, line).await? == ScanFlow::Quit {
                 return Ok(ScanFlow::Quit);
             }
         }
@@ -244,17 +282,22 @@ where
     async fn emit_scan_line(
         &mut self,
         state: &mut ScanState,
-        line: &[u8],
+        line: wire::ScanLine,
     ) -> Result<ScanFlow, T::Error> {
-        self.terminal.write(line).await?;
+        self.terminal.write(&line.bytes).await?;
         self.terminal.write(b"\r\n").await?;
+        // A listed file row joins the scan-wide registry (Task 3.4's
+        // F/R verbs read it) regardless of paging mode.
+        if let Some(listed) = &line.listed {
+            state.listed.push(listed.clone());
+        }
         if state.non_stop {
             return Ok(ScanFlow::Continue);
         }
         if state.emitted == 0 {
             state.page.clear();
         }
-        state.page.push(line.to_vec());
+        state.page.push(line);
         state.emitted += 1;
         if state.emitted < PAGE_LINES {
             return Ok(ScanFlow::Continue);
@@ -379,7 +422,7 @@ where
                     self.terminal.write(wire::PAUSE_HELP).await?;
                     let page = state.page.clone();
                     for line in &page {
-                        self.terminal.write(line).await?;
+                        self.terminal.write(&line.bytes).await?;
                         self.terminal.write(b"\r\n").await?;
                     }
                     self.terminal.write(wire::MORE_PROMPT).await?;
@@ -466,7 +509,12 @@ struct ScanState {
     /// `NS` requested — no pauses at all.
     non_stop: bool,
     /// The current page's lines, for the `?` help's page redraw.
-    page: Vec<Vec<u8>>,
+    page: Vec<wire::ScanLine>,
+    /// Every listed file's identity, scan-wide — the registry the
+    /// F/R flag verbs match against (slice D2f, Task 3.4). Populated
+    /// as rows stream; dead until the flag verbs read it.
+    #[allow(dead_code)]
+    listed: Vec<wire::ListedRow>,
 }
 
 impl ScanState {
@@ -475,6 +523,7 @@ impl ScanState {
             emitted: 0,
             non_stop,
             page: Vec::new(),
+            listed: Vec::new(),
         }
     }
 }
@@ -500,6 +549,7 @@ mod tests {
         KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
     };
     use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
+    use crate::domain::files::flagged::FlaggedFiles;
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::typed::MenuSession;
     use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
@@ -757,8 +807,8 @@ mod tests {
             .collect();
         let mut expected = listing_preamble();
         expected.extend_from_slice(b"Scanning dir 2 from top... Ok!\r\n\r\n");
-        for line in super::wire::assemble_dir_lines(&trio) {
-            expected.extend_from_slice(&line);
+        for line in super::wire::assemble_dir_lines(&trio, 1, 2, &FlaggedFiles::default()) {
+            expected.extend_from_slice(&line.bytes);
             expected.extend_from_slice(b"\r\n");
         }
         expected.extend_from_slice(EXIT_TAIL);
@@ -779,9 +829,16 @@ mod tests {
             b"Scanning dir 1 from top... Ok!".to_vec(),
             Vec::new(),
         ];
-        lines.extend(super::wire::assemble_dir_lines(
-            &services.file_repo.find_in_area(1, 1),
-        ));
+        lines.extend(
+            super::wire::assemble_dir_lines(
+                &services.file_repo.find_in_area(1, 1),
+                1,
+                1,
+                &FlaggedFiles::default(),
+            )
+            .into_iter()
+            .map(|line| line.bytes),
+        );
         lines
     }
 
@@ -1306,7 +1363,15 @@ mod tests {
     }
 
     fn area_lines(services: &AppServices, area: u32) -> Vec<Vec<u8>> {
-        super::wire::assemble_dir_lines(&services.file_repo.find_in_area(1, area))
+        super::wire::assemble_dir_lines(
+            &services.file_repo.find_in_area(1, area),
+            1,
+            area,
+            &FlaggedFiles::default(),
+        )
+        .into_iter()
+        .map(|line| line.bytes)
+        .collect()
     }
 
     #[tokio::test]

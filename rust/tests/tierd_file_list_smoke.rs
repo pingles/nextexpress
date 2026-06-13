@@ -67,7 +67,7 @@ async fn f_1_pages_the_seeded_corpus_and_q_quits() {
     assert!(
         contains(
             &page,
-            b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34mP\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n",
+            b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n",
         ),
         "first framed row missing: {:?}",
         String::from_utf8_lossy(&page),
