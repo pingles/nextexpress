@@ -345,6 +345,27 @@ fn reindent(continuation: &[u8], indent: usize) -> Vec<u8> {
     line
 }
 
+/// Visible columns of a rendered row — bytes outside `ESC[..m` SGR
+/// runs, one per byte. Repaint targets are file rows, which are ASCII
+/// outside SGR; the high-bit separator art is never a repaint target.
+pub(super) fn visible_columns(bytes: &[u8]) -> usize {
+    let mut width = 0;
+    let mut rest = bytes;
+    while let Some(&byte) = rest.first() {
+        if byte == 0x1b {
+            let end = rest
+                .iter()
+                .position(|&b| b == b'm')
+                .expect("SGR sequence terminated");
+            rest = &rest[end + 1..];
+        } else {
+            width += 1;
+            rest = &rest[1..];
+        }
+    }
+    width
+}
+
 /// `Scanning dir N from top... Ok! / Nothing found!`
 /// (`ae_tierd_aquascan3.txt:140`, `ae_tierd_aquascan.txt:522`).
 pub(super) fn scanning_dir_header(n: u32, found: bool) -> Vec<u8> {
@@ -377,24 +398,10 @@ pub(super) fn directories_prompt(max: u32) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// Visible columns of `bytes`: everything except `ESC[..m` SGR
-    /// sequences (each Latin-1 art byte is one column).
+    /// Visible columns of `bytes` — delegates to the module-scope
+    /// [`visible_columns`] (the repaint helper shares this logic).
     fn visible_width(bytes: &[u8]) -> usize {
-        let mut width = 0;
-        let mut rest = bytes;
-        while let Some(&byte) = rest.first() {
-            if byte == 0x1b {
-                let end = rest
-                    .iter()
-                    .position(|&b| b == b'm')
-                    .expect("SGR sequence terminated");
-                rest = &rest[end + 1..];
-            } else {
-                width += 1;
-                rest = &rest[1..];
-            }
-        }
-        width
+        visible_columns(bytes)
     }
 
     /// The captured `AquaScan` originals the `NextScan` swaps must match

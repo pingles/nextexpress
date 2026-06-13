@@ -428,8 +428,9 @@ where
                     let Some(entry) = self.read_flag_entry().await? else {
                         return Ok(ScanFlow::Quit);
                     };
-                    let _newly = apply_flags(&entry, by_number, &state.listed, flagged);
+                    let newly = apply_flags(&entry, by_number, &state.listed, flagged);
                     self.terminal.write(&flag_overprint_clear()).await?;
+                    self.repaint_flagged_rows(state, &newly).await?;
                     self.terminal.write(wire::MORE_PROMPT).await?;
                 }
                 KeyEvent::Char(b'?') => {
@@ -454,6 +455,48 @@ where
                 }
             }
         }
+    }
+
+    /// Paints `[X]` into the marker slot of any newly flagged row
+    /// still on the current page (slice D2f): for each such row,
+    /// `\r`, cursor up to it, write the marker at its column, then
+    /// cursor back to the prompt line. Aligned rows take the 4-col
+    /// slot at visible column 14; over-long rows take a trailing
+    /// ` [X]` after their last visible column. Rows that scrolled off
+    /// earlier pages show their marker at next render. Suppressed when
+    /// ANSI is off — the cursor CSI would garble a non-ANSI client.
+    ///
+    /// # Parameters
+    /// - `state`: the current pager state; `state.page` supplies the
+    ///   on-screen rows and their geometry.
+    /// - `newly`: the keys [`apply_flags`] just turned on — only these
+    ///   rows are repainted.
+    ///
+    /// # Errors
+    /// Propagates the terminal's write error.
+    async fn repaint_flagged_rows(
+        &mut self,
+        state: &ScanState,
+        newly: &[crate::domain::files::flagged::FlaggedKey],
+    ) -> Result<(), T::Error> {
+        if newly.is_empty() || !self.terminal.ansi_colour() {
+            return Ok(());
+        }
+        for (index, line) in state.page.iter().enumerate() {
+            let Some(listed) = &line.listed else { continue };
+            if !newly.contains(&listed.key) {
+                continue;
+            }
+            let up = state.page.len() - index;
+            let column_cmd = if listed.aligned {
+                "\x1b[14G[X]".to_string()
+            } else {
+                format!("\x1b[{}G [X]", wire::visible_columns(&line.bytes) + 1)
+            };
+            let seq = format!("\r\x1b[{up}A{column_cmd}\r\x1b[{up}B");
+            self.terminal.write(seq.as_bytes()).await?;
+        }
+        Ok(())
     }
 
     /// Hot-key line collector for the flag prompts: each printable
@@ -610,6 +653,9 @@ mod tests {
         output: Vec<u8>,
         inputs: VecDeque<TerminalRead>,
         keys: VecDeque<KeyRead>,
+        /// Live ANSI colour mode, surfaced through `ansi_colour()` so
+        /// the repaint gate (slice D2f) can be exercised both ways.
+        ansi: bool,
     }
 
     impl CaptureTerminal {
@@ -618,6 +664,7 @@ mod tests {
                 output: Vec::new(),
                 inputs: inputs.into(),
                 keys: VecDeque::new(),
+                ansi: true,
             }
         }
 
@@ -629,6 +676,7 @@ mod tests {
                 output: Vec::new(),
                 inputs: reads.into(),
                 keys: keys.into(),
+                ansi: true,
             }
         }
     }
@@ -659,6 +707,10 @@ mod tests {
             let key = self.keys.pop_front().unwrap_or(KeyRead::Eof);
             Box::pin(async move { Ok(key) })
         }
+
+        fn ansi_colour(&self) -> bool {
+            self.ansi
+        }
     }
 
     /// One scripted printable keypress for the hot-key pager (D2b).
@@ -669,6 +721,14 @@ mod tests {
     /// A terminal scripted with pager keys only — no line reads.
     fn keyed_terminal(keys: Vec<KeyRead>) -> CaptureTerminal {
         CaptureTerminal::with_keys(Vec::new(), keys)
+    }
+
+    /// A key-scripted terminal with ANSI colour off — for the repaint
+    /// gate (slice D2f): the cursor CSI must be suppressed.
+    fn keyed_terminal_no_ansi(keys: Vec<KeyRead>) -> CaptureTerminal {
+        let mut terminal = CaptureTerminal::with_keys(Vec::new(), keys);
+        terminal.ansi = false;
+        terminal
     }
 
     fn conference(number: u32) -> Conference {
@@ -1205,12 +1265,13 @@ mod tests {
         // arrives (aggregate identical to the old verbatim replay),
         // Enter finishing with NO trailing CRLF, the wider clear,
         // More? redrawn — and no confirmation text anywhere. Flagging
-        // is silent at the prompt (only the session set changes); here
-        // the typed TERMV48.LHA is not in the dir-1 registry, so it
-        // matches nothing and the wire bytes are unaffected either way.
+        // is silent at the prompt (only the session set changes); the
+        // typed TERMV48X.LHA is not in the dir-1 registry, so it
+        // matches nothing — no row is flagged and so no in-place
+        // repaint fires (Task 3.4b), leaving the wire bytes unaffected.
         let services = services_with_demo_catalogue();
         let mut keys = vec![key(b'F')];
-        keys.extend(b"TERMV48.LHA".iter().map(|&c| key(c)));
+        keys.extend(b"TERMV48X.LHA".iter().map(|&c| key(c)));
         keys.push(KeyRead::Key(KeyEvent::Enter));
         keys.push(key(b'Q'));
         let mut terminal = keyed_terminal(keys);
@@ -1228,7 +1289,7 @@ mod tests {
         expected.extend_from_slice(super::wire::MORE_PROMPT);
         expected.extend_from_slice(&more_clear());
         expected.extend_from_slice(super::wire::FLAG_BY_NAME_PROMPT);
-        expected.extend_from_slice(b"TERMV48.LHA");
+        expected.extend_from_slice(b"TERMV48X.LHA");
         expected.extend_from_slice(&flag_clear());
         expected.extend_from_slice(super::wire::MORE_PROMPT);
         expected.extend_from_slice(b"Quit\r\n");
@@ -1323,11 +1384,16 @@ mod tests {
     async fn r_at_more_opens_the_distinct_flag_by_number_prompt() {
         // ae_tierd_aquascan3.txt S5 (:252-257): `R` uses the
         // `File number(s) to flag:` wording; the entry is typed
-        // per-keystroke (probe P3) and finished with Enter.
+        // per-keystroke (probe P3) and finished with Enter. The number
+        // `99` matches no listed row, so nothing is flagged and no
+        // in-place repaint (Task 3.4b) fires — keeping this prompt-
+        // wording pin byte-exact; the repaint is exercised by
+        // `flagging_by_number_repaints_the_row`.
         let services = services_with_demo_catalogue();
         let mut terminal = keyed_terminal(vec![
             key(b'R'),
-            key(b'2'),
+            key(b'9'),
+            key(b'9'),
             KeyRead::Key(KeyEvent::Enter),
             key(b'Q'),
         ]);
@@ -1345,7 +1411,7 @@ mod tests {
         expected.extend_from_slice(super::wire::MORE_PROMPT);
         expected.extend_from_slice(&more_clear());
         expected.extend_from_slice(super::wire::FLAG_BY_NUMBER_PROMPT);
-        expected.extend_from_slice(b"2");
+        expected.extend_from_slice(b"99");
         expected.extend_from_slice(&flag_clear());
         expected.extend_from_slice(super::wire::MORE_PROMPT);
         expected.extend_from_slice(b"Quit\r\n");
@@ -1457,6 +1523,287 @@ mod tests {
                 .any(|w| w == flagged_row),
             "re-listing must render ANSIPACK flagged: {:?}",
             String::from_utf8_lossy(&terminal.output[first_len..]),
+        );
+    }
+
+    /// Derives the in-place repaint sequence for a row on the first
+    /// page of `F 1`: the row whose framed bytes start with `prefix`
+    /// sits `up` lines above the prompt (`up = 29 - index`), so the
+    /// expected wire is `\r ESC[<up>A <column_cmd> \r ESC[<up>B`.
+    /// Aligned rows take `ESC[14G[X]`; over-long rows a trailing slot.
+    fn f_1_repaint_sequence(services: &AppServices, prefix: &[u8]) -> Vec<u8> {
+        let lines = f_1_emitted_lines(services);
+        let page = &lines[..29];
+        let index = page
+            .iter()
+            .position(|line| line.starts_with(prefix))
+            .expect("the flagged row is on page 1");
+        let up = 29 - index;
+        let mut seq = format!("\r\x1b[{up}A").into_bytes();
+        // The seed's ANSIPACK is framed (aligned), so the slot lands
+        // at visible column 14.
+        seq.extend_from_slice(b"\x1b[14G[X]");
+        seq.extend_from_slice(format!("\r\x1b[{up}B").as_bytes());
+        seq
+    }
+
+    #[tokio::test]
+    async fn flagging_a_visible_aligned_row_repaints_the_marker_in_place() {
+        // Slice D2f (Task 3.4b): `F`-flagging ANSIPACK.LHA (dir-1 #1,
+        // on page 1) paints `[X]` into its marker slot in place —
+        // `\r`, cursor up to the row, `ESC[14G[X]`, cursor back —
+        // emitted AFTER the 79-space flag-overprint clear and BEFORE
+        // the More? redraw.
+        let services = services_with_demo_catalogue();
+        let mut keys = vec![key(b'F')];
+        keys.extend(b"ANSIPACK.LHA".iter().map(|&c| key(c)));
+        keys.push(KeyRead::Key(KeyEvent::Enter));
+        keys.push(key(b'Q'));
+        let mut terminal = keyed_terminal(keys);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            },
+        )
+        .await;
+
+        let repaint = f_1_repaint_sequence(&services, b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m");
+        // The repaint lands between the flag clear and the More? redraw.
+        let clear = flag_clear();
+        let clear_at = terminal
+            .output
+            .windows(clear.len())
+            .position(|w| w == clear.as_slice())
+            .expect("the flag overprint clear is emitted");
+        let after_clear = &terminal.output[clear_at + clear.len()..];
+        assert!(
+            after_clear.starts_with(&repaint),
+            "the repaint sequence follows the flag clear immediately: {:?}",
+            String::from_utf8_lossy(&after_clear[..repaint.len().min(after_clear.len())]),
+        );
+        let after_repaint = &after_clear[repaint.len()..];
+        assert!(
+            after_repaint.starts_with(super::wire::MORE_PROMPT),
+            "More? redraws right after the repaint",
+        );
+        // `ESC[14G[X]` appears exactly once — only the one flagged row.
+        let marker = b"\x1b[14G[X]";
+        assert_eq!(
+            terminal
+                .output
+                .windows(marker.len())
+                .filter(|w| *w == marker)
+                .count(),
+            1,
+            "exactly one aligned-slot repaint",
+        );
+    }
+
+    #[tokio::test]
+    async fn flagging_by_number_repaints_the_row() {
+        // Slice D2f (Task 3.4b): `R 1` flags ANSIPACK by its
+        // `[ File #1 ]` number and repaints its row identically to the
+        // by-name path.
+        let services = services_with_demo_catalogue();
+        let mut terminal = keyed_terminal(vec![
+            key(b'R'),
+            key(b'1'),
+            KeyRead::Key(KeyEvent::Enter),
+            key(b'Q'),
+        ]);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            },
+        )
+        .await;
+
+        let repaint = f_1_repaint_sequence(&services, b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m");
+        let clear = flag_clear();
+        let clear_at = terminal
+            .output
+            .windows(clear.len())
+            .position(|w| w == clear.as_slice())
+            .expect("the flag overprint clear is emitted");
+        let after_clear = &terminal.output[clear_at + clear.len()..];
+        assert!(
+            after_clear.starts_with(&repaint),
+            "the R-path repaint follows the flag clear: {:?}",
+            String::from_utf8_lossy(&after_clear[..repaint.len().min(after_clear.len())]),
+        );
+        assert!(
+            after_clear[repaint.len()..].starts_with(super::wire::MORE_PROMPT),
+            "More? redraws after the R-path repaint",
+        );
+    }
+
+    #[tokio::test]
+    async fn flagging_an_unlisted_name_emits_no_repaint() {
+        // Slice D2f (Task 3.4b): flagging a name absent from the
+        // listing flags nothing, so no row is repainted — no cursor-up
+        // CSI appears between the flag clear and the More? redraw,
+        // which still fires.
+        let services = services_with_demo_catalogue();
+        let mut keys = vec![key(b'F')];
+        keys.extend(b"NOSUCH.LHA".iter().map(|&c| key(c)));
+        keys.push(KeyRead::Key(KeyEvent::Enter));
+        keys.push(key(b'Q'));
+        let mut terminal = keyed_terminal(keys);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            },
+        )
+        .await;
+
+        let clear = flag_clear();
+        let clear_at = terminal
+            .output
+            .windows(clear.len())
+            .position(|w| w == clear.as_slice())
+            .expect("the flag overprint clear is emitted");
+        let after_clear = &terminal.output[clear_at + clear.len()..];
+        assert!(
+            after_clear.starts_with(super::wire::MORE_PROMPT),
+            "More? redraws directly after the clear with no repaint: {:?}",
+            String::from_utf8_lossy(
+                &after_clear[..super::wire::MORE_PROMPT.len().min(after_clear.len())]
+            ),
+        );
+        // No aligned-slot repaint move anywhere — nothing was flagged.
+        assert!(
+            !terminal
+                .output
+                .windows(b"\x1b[14G".len())
+                .any(|w| w == b"\x1b[14G"),
+            "no repaint CSI is emitted for an unlisted name",
+        );
+    }
+
+    #[tokio::test]
+    async fn repaint_is_suppressed_when_ansi_is_off() {
+        // Slice D2f (Task 3.4b): with ANSI colour off the flag STILL
+        // lands (the session set records it) but the cursor CSI is
+        // suppressed — a non-ANSI client would garble on it.
+        let services = services_with_demo_catalogue();
+        let mut session = menu_session();
+        let mut keys = vec![key(b'F')];
+        keys.extend(b"ANSIPACK.LHA".iter().map(|&c| key(c)));
+        keys.push(KeyRead::Key(KeyEvent::Enter));
+        keys.push(key(b'Q'));
+        let mut terminal = keyed_terminal_no_ansi(keys);
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_file_list(
+                &mut session,
+                FileListArg::Span {
+                    span: FileSpan::Dir(1),
+                    non_stop: false,
+                },
+            )
+            .await
+            .expect("listing with ansi off");
+        }
+
+        // The flag landed in the session set.
+        assert!(
+            session
+                .flagged_files_mut()
+                .contains(&crate::domain::files::flagged::FlaggedKey::new(
+                    1,
+                    1,
+                    "ANSIPACK.LHA",
+                )),
+            "the flag lands even with ANSI off",
+        );
+        // No repaint CSI: neither the aligned-slot move nor a cursor-up.
+        assert!(
+            !terminal
+                .output
+                .windows(b"\x1b[14G".len())
+                .any(|w| w == b"\x1b[14G"),
+            "the aligned-slot repaint is suppressed with ANSI off",
+        );
+    }
+
+    #[tokio::test]
+    async fn flagging_a_visible_overlong_row_repaints_a_trailing_slot() {
+        // Slice D2f (Task 3.4b): an over-long (unframeable) row has no
+        // aligned slot, so the repaint appends ` [X]` at the column
+        // just past its last visible column — `ESC[<vis+1>G [X]` —
+        // rather than the `ESC[14G[X]` of the aligned branch. A one-
+        // file area keeps the row on page 1 with a tiny page.
+        use crate::domain::bytes::Bytes;
+        use crate::domain::files::area::FileArea;
+        use crate::domain::files::file::{File, FileStatus};
+        let file = File::new(
+            "ALONGFILENAME.LHA".to_string(),
+            Bytes::new(77_777),
+            FileStatus::Available,
+            None,
+            "Long filename breaks the columns".to_string(),
+            SystemTime::from(time::macros::datetime!(2026-06-01 12:00 UTC)),
+        );
+        let services = services_with(InMemoryFileRepository::new(
+            vec![FileArea::new(1, 1, "Main".to_string())],
+            vec![(1, 1, file.clone())],
+        ));
+        let mut keys = vec![key(b'F')];
+        keys.extend(b"ALONGFILENAME.LHA".iter().map(|&c| key(c)));
+        keys.push(KeyRead::Key(KeyEvent::Enter));
+        keys.push(key(b'Q'));
+        let mut terminal = keyed_terminal(keys);
+        run_file_list(
+            &services,
+            &mut terminal,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+            },
+        )
+        .await;
+
+        // The page: 5 preamble lines, the over-long row (index 5), the
+        // footer (index 6) — page.len() == 7, so up == 7 - 5 == 2. The
+        // unflagged row's visible columns set the trailing-slot column.
+        let unflagged_row = super::wire::assemble_dir_lines(
+            std::slice::from_ref(&file),
+            1,
+            1,
+            &FlaggedFiles::default(),
+        );
+        let vis = super::wire::visible_columns(&unflagged_row[0].bytes);
+        let mut repaint = b"\r\x1b[2A".to_vec();
+        repaint.extend_from_slice(format!("\x1b[{}G [X]", vis + 1).as_bytes());
+        repaint.extend_from_slice(b"\r\x1b[2B");
+
+        let clear = flag_clear();
+        let clear_at = terminal
+            .output
+            .windows(clear.len())
+            .position(|w| w == clear.as_slice())
+            .expect("the flag overprint clear is emitted");
+        let after_clear = &terminal.output[clear_at + clear.len()..];
+        assert!(
+            after_clear.starts_with(&repaint),
+            "the over-long trailing-slot repaint follows the clear: {:?}",
+            String::from_utf8_lossy(&after_clear[..repaint.len().min(after_clear.len())]),
+        );
+        assert!(
+            after_clear[repaint.len()..].starts_with(super::wire::MORE_PROMPT),
+            "More? redraws after the trailing-slot repaint",
         );
     }
 
