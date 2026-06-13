@@ -260,6 +260,16 @@ pub(crate) async fn read_telnet_key(
 /// # Errors
 /// Returns the underlying [`io::Error`] on transport failure (not
 /// `WouldBlock`, which is treated as "nothing buffered").
+///
+/// Mutation note: `cargo mutants` leaves the `n > 0`/`>=` count guards
+/// and the `WouldBlock` error-kind guards here alive. The count-guard
+/// survivors are equivalent — the `byte[0] == b'['` and
+/// `(0x40..=0x7E)` sub-checks absorb the `n == 0` (EOF) case, so the
+/// outcome is unchanged. The `WouldBlock` survivors are deferred: they
+/// need an injected transport error / mid-stream EOF, which is not
+/// deterministic against a real `TcpStream`. The swallow *contract*
+/// (a buffered `ESC[…` collapses to one event; a non-`[` byte is
+/// pushed back) is pinned by the `read_key_*` content tests below.
 fn swallow_buffered_csi(stream: &mut TcpStream, pushback: &mut Option<u8>) -> io::Result<()> {
     // If pushback holds a byte it came from a previous look-ahead, not a
     // buffered CSI continuation — leave it for the next read.
