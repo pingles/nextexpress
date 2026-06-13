@@ -21,14 +21,6 @@ pub(crate) enum TerminalEcho {
     Visible,
     /// Hide the original characters and render masking characters.
     Masked,
-    /// Echo nothing — the caller emits any user-visible echo bytes
-    /// itself. The `NextScan` pager (its only consumer) went hot-key
-    /// in slice D2b, so no lib code constructs this any more; the
-    /// variant and its adapter plumbing are deleted in task D2b-2.5.
-    // #[allow] rather than #[expect]: --all-targets compiles test
-    // binaries that still construct Silent (the adapter echo pins).
-    #[allow(dead_code)]
-    Silent,
 }
 
 /// Result of a bounded line read from a terminal.

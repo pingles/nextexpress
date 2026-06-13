@@ -212,7 +212,6 @@ impl From<TerminalEcho> for EchoMode {
         match value {
             TerminalEcho::Visible => Self::Visible,
             TerminalEcho::Masked => Self::Masked,
-            TerminalEcho::Silent => Self::Silent,
         }
     }
 }
