@@ -714,14 +714,22 @@ silent Enter-abort and `Error in input!`; `F 99` →
 `The highest directory number is N!`; junk args → the help banner +
 `Argument error! Type 'f ?' for help.`; the `F ?` help screen; the
 per-path exit-tail asymmetry (two resets for listing exits, one for
-aborts/argument errors).
+aborts/argument errors). **Interaction (slice D2b):** the
+`More?`/ns-confirm/flag reads act on single keypresses — true hotkeys
+via `Terminal::read_key`, no Enter — so NextScan matches the door's
+*interaction* as well as its bytes. Two corners are probe-pinned:
+held-`n` + Enter quits with the bare CR echoed as `\r\n` + the exit
+tail, no `Quit` word, no `BS SP BS` (probe P1,
+`comparison/transcripts/ae_tierd_probes.txt:100-138`); a bare LF at
+`More?` is swallowed and reaches no verb (probe P2, `:140-175`). Verb
+case-insensitivity (`Q`/`Y` upper, `n`/`ns` lower captured; mixed case
+folded both ways) is **INFERENCE** — only those cases were captured.
 
 **COSMETIC (deliberate, documented).**
 
 | Divergence | Detail |
 |---|---|
 | NextScan branding | Three swaps, frame widths held by stretched dash runs: banner centre `NextScan ` (40/34 dashes), `Copyright © 2026 NextScan `, `- Configure NextScan` (`designs/NEXTSCAN.md` §7) |
-| ~~Enter-required pager keys~~ | ~~`More?`/confirm/flag reads are Silent line reads until slice D2b lands `Terminal::read_key`~~ **Resolved by slice D2b**: the `More?`, ns-confirm and flag prompts are now true single-key hotkeys (`Terminal::read_key`, no Enter) — full interactive parity, no longer a divergence. Two corners are probe-pinned: held-`n` + Enter quits with the bare CR-echoed-as-`\r\n` + exit tail, no `Quit` word, no `BS SP BS` (probe P1, `comparison/transcripts/ae_tierd_probes.txt:100-138`); a bare LF at `More?` is swallowed and reaches no verb (probe P2, `:140-175`). Verb case-insensitivity (`Q`/`Y` upper, `n`/`ns` lower captured; mixed case folded both ways) is **INFERENCE** — only those cases were captured. |
 | Page positions ≥ page 3 | NextScan pages at a flat 29 lines (matches captured pages 1–2 exactly); the door's own counter drifts from page 3 |
 | `?` redraw window | NextScan redraws exactly the current page's lines; the door redraws a drifted window of its internal page memory |
 | Flag entries | Read and discarded (silently, as captured) until D5 wires `FlaggedFile` |
