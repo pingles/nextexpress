@@ -397,8 +397,6 @@ impl Session {
         self.shared.quiet_mode = quiet;
     }
 
-    /// The session's flagged files (slice D2f; D5 persists). The F/R
-    /// pager verbs mutate it.
     /// The session's flagged-file set (slice D2f; D5 persists). The
     /// `F`/`R` pager verbs flag listed files into it, and the lister
     /// reborrows it immutably to mark flagged rows.

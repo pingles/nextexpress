@@ -332,7 +332,6 @@ impl MenuSession {
         new_value
     }
 
-    /// The session's flagged-file set — the F/R pager verbs mutate it.
     /// The session's flagged-file set — the lister reborrows it
     /// immutably to mark flagged rows, and the `F`/`R` pager verbs
     /// flag listed files into it (slice D2f).
