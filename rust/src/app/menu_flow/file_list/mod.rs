@@ -401,7 +401,7 @@ where
     /// no CRLF before the 79-space overprint,
     /// `ae_tierd_aquascan3.txt` S4). The entry caps at
     /// `MAX_TERMINAL_LINE_BYTES`; further printables are dropped
-    /// unechoed (a NextExpress bound, not captured). `None` = carrier
+    /// unechoed (a `NextExpress` bound, not captured). `None` = carrier
     /// loss / idle timeout.
     async fn read_flag_entry(&mut self) -> Result<Option<String>, T::Error> {
         let mut entry: Vec<u8> = Vec::new();
