@@ -247,6 +247,101 @@ async fn utf8_gate_every_session_byte_decodes() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn hotkey_n_echoes_on_keypress_and_enter_quits() {
+    // Char-mode proof: at More?, a lone `n` echoes on its own
+    // keypress — before any Enter — and a following bare CR runs the
+    // probe-P1 quit (held-n + Enter, ae_tierd_probes.txt:100-138). The
+    // CR echoes \r\n then the two-reset exit tail; the Quit *word*
+    // never appears (held n leaves the pager via Enter, not via Q).
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"F 1").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+
+    write_key(&mut stream, b"n").await;
+    let echoed = read_idle(&mut stream, Duration::from_millis(300)).await;
+    assert_eq!(
+        echoed,
+        b"n",
+        "n must echo on the keypress itself, before any Enter, got {:?}",
+        String::from_utf8_lossy(&echoed),
+    );
+
+    write_key(&mut stream, b"\r").await;
+    let after = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after, b"\r\n\x1b[0m\r\n\x1b[0m\r\n"),
+        "CR must echo \\r\\n then the exit tail, got {:?}",
+        String::from_utf8_lossy(&after),
+    );
+    assert!(
+        !contains(&after, b"Quit"),
+        "held-n + Enter must NOT echo the Quit word, got {:?}",
+        String::from_utf8_lossy(&after),
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn hotkey_q_acts_on_a_single_keypress_without_enter() {
+    // Char-mode proof: `Q` quits the pager on one bare keypress, no
+    // terminator (ae_tierd_aquascan3.txt:321). The pre-D2b line-read
+    // pager would have waited for Enter and never seen this.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"F 1").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+
+    write_key(&mut stream, b"Q").await;
+    let after = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after, b"Quit\r\n"),
+        "Q must quit with no terminator, got {:?}",
+        String::from_utf8_lossy(&after),
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn hotkey_flag_entry_echoes_each_typed_byte() {
+    // Char-mode proof: `F` opens the flag-by-name prompt, and each
+    // typed byte of the entry echoes as it arrives (probe P3). The
+    // entry is discarded in D2b; Enter overprints and More? redraws.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"F 1").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+
+    write_key(&mut stream, b"F").await;
+    drain_until(&mut stream, b"to flag:\x1b[0m ").await;
+
+    for &byte in b"TERMV48.LHA" {
+        write_key(&mut stream, &[byte]).await;
+        let echoed = read_idle(&mut stream, Duration::from_millis(300)).await;
+        assert_eq!(
+            echoed,
+            vec![byte],
+            "each flag byte must echo as typed; byte {:?} got {:?}",
+            byte as char,
+            String::from_utf8_lossy(&echoed),
+        );
+    }
+
+    write_key(&mut stream, b"\r").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+
+    write_key(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    end_session(&mut stream).await;
+}
+
 /// Boots an in-process listener whose file catalogue is the seeded
 /// demo corpus (landing conference 1: areas 1-2; conference 2: one
 /// empty area) — the same wiring `bootstrap::run` performs.
@@ -336,6 +431,21 @@ async fn write_line(stream: &mut TcpStream, body: &[u8]) {
 async fn write_key(stream: &mut TcpStream, key: &[u8]) {
     stream.write_all(key).await.expect("write key");
     stream.flush().await.expect("flush");
+}
+
+/// Reads whatever arrives within `window` of idle — the keystroke-
+/// granular observation primitive (slice D2b: prove a key echoes on
+/// its own keypress, before any terminator is sent).
+async fn read_idle(stream: &mut TcpStream, window: std::time::Duration) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 256];
+    while let Ok(Ok(n)) = tokio::time::timeout(window, stream.read(&mut chunk)).await {
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&chunk[..n]);
+    }
+    out
 }
 
 async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
