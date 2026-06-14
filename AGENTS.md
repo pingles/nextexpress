@@ -90,6 +90,15 @@ enforces this. Rust consts carrying re-encoded glyphs are `&str`.
 3. Run doctests with `cargo test --doc`
 4. Check for insufficient tests with `cargo mutants`
 5. Update the SYSTEM.md document to reflect current design. Ensure the diagram reflects the current system.
+6. For any slice that changes user-facing interaction: boot the server
+   (`cargo run -- nextexpress.toml`, or the built binary with the config path
+   as its first argument), connect with a plain UTF-8 terminal client
+   (`telnet 127.0.0.1 2323`), and exercise the new surface **by typing** —
+   checking per-keystroke echo, line terminators, and on-screen rendering.
+   Scripted byte-equality tests cannot observe these (see the 2026-06-11
+   root-cause analysis; `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`
+   §6.3). Capture replay is faithful to the capture's blind spots, so a human
+   has to look at the real terminal once per user-facing slice.
 
 Formatting (`cargo fmt`) and clippy (`cargo clippy -- -D warnings`) run
 automatically via Claude Code hooks defined in `.claude/settings.json` — fmt
