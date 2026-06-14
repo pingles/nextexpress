@@ -102,6 +102,18 @@ and junk arguments take the captured help-banner
 `Argument error! Type 'f ?' for help.` path. Mutation-tested to zero
 missed across the unit's modules.
 
+> **Superseded in part by slices D2u/D2b/D2f (2026-06-12..14).** The
+> `TerminalEcho::Silent` adapter read and the read-and-discarded flag
+> entries described above were interim D2 choices. D2u re-encoded the
+> wire to UTF-8 (`&str` art/© constants; AGENTS.md "Wire encoding").
+> D2b replaced the Silent line reads with true single-key hotkeys
+> (`Terminal::read_key`) — echo on keypress, no extra Enter — and
+> retired `TerminalEcho::Silent`. D2f makes `F`/`R` flag listed files
+> into a session-scoped `FlaggedFiles` set, rendered as an on-row
+> `[X]` marker and repainted in place; persistence and the door's
+> downstream flag surfaces remain slice D5 (below). See
+> `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`.
+
 - **In Scope**
   - Parser: `MenuCommand::FileList(…)` mirroring **AquaScan's token
     grammar** (from its captured `F ?` help): `F [R] dir [Q] [NS]`
@@ -190,16 +202,26 @@ missed across the unit's modules.
 
 ## Slice D5 — `FlagFile` / `UnflagFile` rules
 
+- **Already landed (slice D2f):** the per-session flagged set
+  (`FlaggedFiles`/`FlaggedKey`), `F`/`R` flagging from the `More?`
+  pager (erase prompt, line-read `File name(s) to flag: `, silent
+  return — `ae_tierd_aquascan3.txt` S4), the on-row `[X]` marker, and
+  the in-place repaint. D5 builds the rule layer and the downstream
+  surfaces on top.
 - **In Scope**
   - `files.allium:FlagFile`, `UnflagFile`, with the per-session
     flagged list bounded by `max_flagged_files()` (legacy
     `MAX_FLAGGED_FILES = 1000`).
   - `FlaggedFilesAreDownloadable` invariant.
-  - Flag is set from the listing pager, exactly as captured: `F` (or
-    `R`) at the `More?` prompt erases the prompt line and opens the
-    line-read `File name(s) to flag: `; after the filename it returns
-    **silently** to `More?` — no confirmation text
-    (`ae_tierd_aquascan3.txt` S4). `C` clears.
+  - The downstream flag surfaces the captures/E source show: the
+    logon `** Flagged File(s) Exist **` + BEL banner
+    (`amiexpress/express.e:2791-2794`, captured at transcripts line
+    77), the clean-logoff `checkFlagged` "You have flagged files
+    still not downloaded." warning (`express.e:12667-12673`), and the
+    `** AutoSaving File Flags **` logoff banner (`express.e:2803`).
+  - A fresh capture session for AquaScan's own un-exercised in-door
+    flag verbs (`A` alter-flags, `D` quit-and-download) before
+    porting them (D6a/D6b own `A`).
 - **Out of Scope**
   - Persisting the flagged list across sessions (open question in
     `files.allium`).

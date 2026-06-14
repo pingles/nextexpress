@@ -11,7 +11,9 @@ top-level modules under `rust/src/`:
 - **`domain/`** — pure behaviour and entities distilled from the Allium specs in
   `specs/`. Aggregates (`Session`, `User`, `Conference`, `ConferenceVisit`,
   `Mail`, `Node`, `File`, `FileArea`), value objects (`ReadPointers`,
-  `MessageBaseRef`, `Bytes`),
+  `MessageBaseRef`, `Bytes`, `FlaggedFiles`/`FlaggedKey` — the
+  session-scoped flagged-file set the `F`/`R` pager verbs build, slice
+  D2f; D5 persists it),
   port traits (`UserRepository`, `ConferenceRepository`, `MailStore`,
   `PasswordHasher`, `CallerLogAppender`, `FileRepository`), phase-typed session wrappers, the
   `messaging.allium` rule family (`read_mail`, `scan_mail`, `post_mail`,
@@ -242,7 +244,7 @@ module under `app::menu_flow/`):
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
 | `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail`; per base with matched mail, offers `Would you like to read it now` and (on Yes) attaches that base as a transient read visit and drops into `read_subprompt`, restoring the home conference after |
 | `CF` | `ConferenceFlags` | `conf_flags` — the M/A/F/Z scan-flag editor (legacy `internalCommandCF`); redraws the listing, reads a mask key then a conference expression (`+`/`-`/`*`/list) and applies it to the caller's own `ConferenceMembership` flags via `domain::conference_flags`. Gated on `Right::EditConferenceFlags`. |
-| `F` / `F <dir>` / `F A`/`U`/`H` / `… NS` / `F ?` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`) over true single-key hotkey reads (`Terminal::read_key`, slice D2b; held-`n`/Enter and bare-LF corners probe-pinned). Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
+| `F` / `F <dir>` / `F A`/`U`/`H` / `… NS` / `F ?` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`) over true single-key hotkey reads (`Terminal::read_key`, slice D2b; held-`n`/Enter and bare-LF corners probe-pinned). `F`/`R` flag listed files into the session's `FlaggedFiles` set (slice D2f), rendered as an on-row `[X]` marker and repainted in place when ANSI is on; `ScanState` carries the scan-wide `listed` registry the flag verbs match against. Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 `read_subprompt` is the legacy `readMSG` sub-prompt loop (Tier B). `R <n>`

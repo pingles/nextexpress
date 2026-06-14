@@ -732,13 +732,13 @@ folded both ways) is **INFERENCE** — only those cases were captured.
 | NextScan branding | Three swaps, frame widths held by stretched dash runs: banner centre `NextScan ` (40/34 dashes), `Copyright © 2026 NextScan `, `- Configure NextScan` (`designs/NEXTSCAN.md` §7) |
 | Page positions ≥ page 3 | NextScan pages at a flat 29 lines (matches captured pages 1–2 exactly); the door's own counter drifts from page 3 |
 | `?` redraw window | NextScan redraws exactly the current page's lines; the door redraws a drifted window of its internal page memory |
-| Flag entries | Read and discarded (silently, as captured) until D5 wires `FlaggedFile` |
 
 **BEHAVIOURAL (deliberate, documented).**
 
 | Divergence | Detail |
 |---|---|
 | Art/© byte encoding | NextScan emits UTF-8 multi-byte sequences for high-bit glyphs (art `\xb8\xf8\xa4…` → `\u{b8}\u{f8}\u{a4}…`, © `\xa9` → `\u{a9}`); the AquaScan door emitted raw Latin-1 single bytes. Deliberate policy — see AGENTS.md "Wire encoding"; design rationale in `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. |
+| On-row flag marker (slice D2f) | `F`/`R` flag listed files into a session set; an aligned row gains a 4-column `[X] ` marker slot between the name and the check byte, an over-long row a trailing ` [X]` — a deliberate NextExpress aid the AquaScan door has not (its rows stay byte-identical to the captures). The captured F/R prompt exchange is unchanged (flagging is silent there); flagging a row still on the current page additionally repaints its marker in place (cursor up, `\x1b[14G[X]`, cursor back), suppressed when ANSI is off. Design §5; `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. The persisted set + the door's downstream flag surfaces (logon `** Flagged File(s) Exist **`, logoff `checkFlagged` warning, `** AutoSaving File Flags **`, the `A` alter-flags verb) are owed to slice D5. |
 
 **UNVERIFIED (provisional, tagged in test names).** `F 0` →
 highest-dir error; unknown `More?` keys continue; the counter reset
