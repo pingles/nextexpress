@@ -1167,9 +1167,16 @@ mod tests {
 
         let advertised: std::collections::BTreeSet<String> = menu
             .lines()
-            .filter(|line| line.starts_with(' '))
+            // Command rows are indented exactly four spaces; section
+            // headers sit at two and the banner art at six, so the
+            // four-space indent reads back *every* advertised command
+            // token — including a stale one that no longer parses. The
+            // previous `parse_menu_command != Unknown` filter silently
+            // dropped unparseable tokens, which is exactly how the
+            // retired `RP`/`FW`/`K`/`MV`/`EH` rows lingered in the menu
+            // long after Tier B B8 removed them from the dispatcher.
+            .filter(|line| line.bytes().take_while(|&b| b == b' ').count() == 4)
             .filter_map(|line| line.split_whitespace().next())
-            .filter(|token| parse_menu_command(token) != MenuCommand::Unknown)
             .map(str::to_string)
             .collect();
 

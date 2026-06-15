@@ -10,13 +10,6 @@
     MS       Scan all visible messages
     E [to]   Enter a message
     C        Comment to sysop
-    RP <n>   Reply to message number <n>
-    FW <n>   Forward message number <n>
-
-  MAIL ADMIN
-    K <n>    Kill/delete message number <n>
-    MV <n>   Move message number <n>
-    EH <n>   Edit message header for number <n>
 
   CONFERENCES
     J <n>    Join conference number <n>

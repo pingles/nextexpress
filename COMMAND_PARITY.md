@@ -620,13 +620,15 @@ Both sides reject all five at the top level — but for different reasons and wi
 - AE never had them as top-level commands; `R>eply`, `F>orward`, `D>elete`, `M>ove`, and `EH` live inside the `R`/`readMSG` sub-prompt. AE's menu does not list them, so AE's menu and dispatcher agree.
 - Rust retired them from the dispatcher in Tier B B8, so `RP 1`/`FW 1`/`K 1`/`MV 1`/`EH 1` all hit `MenuCommand::Unknown` → `Unknown command. Type G to log off.`
 
-**BEHAVIOURAL (Rust internal inconsistency).** The Rust main menu **still advertises** all five as top-level commands — the transcript shows `RP <n>   Reply to message number <n>`, `FW <n>   Forward message number <n>` in MESSAGES and `K <n>   Kill/delete message number <n>`, `MV <n>   Move message number <n>`, `EH <n>   Edit message header for number <n>` in MAIL ADMIN — yet every one is rejected as unknown. The menu text was not updated when the commands were retired. AE has no equivalent menu/dispatcher mismatch.
+**BEHAVIOURAL (Rust internal inconsistency).** The Rust main menu *used to* advertise all five as top-level commands — the transcript showed `RP <n>   Reply to message number <n>`, `FW <n>   Forward message number <n>` in MESSAGES and `K <n>   Kill/delete message number <n>`, `MV <n>   Move message number <n>`, `EH <n>   Edit message header for number <n>` in MAIL ADMIN — yet every one was rejected as unknown. The menu text was not updated when the commands were retired. AE has no equivalent menu/dispatcher mismatch.
+
+**Resolved 2026-06-15.** `Conf02/Menu5.txt` no longer lists `RP`/`FW`/`K`/`MV`/`EH`; the two MESSAGES rows were dropped and the now-empty MAIL ADMIN section removed entirely. The guard test `main_menu_advertises_exactly_the_implemented_commands` was the reason this lingered — it filtered the menu's tokens down to the ones that still parse *before* diffing, so the retired tokens were invisible to it. It now reads back every four-space-indented command row verbatim, so any future advertise-then-reject entry fails the test.
 
 ### Net
 
 - Unknown-command handling: **COSMETIC** (both notify; AE's `No such command!!  Use '?' for command list.` vs Rust's `Unknown command. Type G to log off.`). The "AE is silent" claim in the brief/parity doc is wrong per live data.
 - `N`: **BEHAVIOURAL** (real new-files scan in AE; Unknown in Rust, deferred to Tier D).
-- `RP/FW/K/MV/EH`: both reject, but Rust **advertises-then-rejects** — a **BEHAVIOURAL** internal inconsistency absent in AE.
+- `RP/FW/K/MV/EH`: both reject. Rust formerly **advertised-then-rejected** — a **BEHAVIOURAL** internal inconsistency absent in AE, **resolved 2026-06-15** by dropping the stale menu rows so the menu and dispatcher agree.
 
 ---
 
