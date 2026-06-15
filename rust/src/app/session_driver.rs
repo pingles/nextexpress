@@ -35,6 +35,7 @@ use crate::domain::session::typed::{
     MenuSession, OnboardedSession,
 };
 use crate::domain::session::LogonChannel;
+use crate::domain::user_repository::UserRepositoryError;
 
 /// App-layer session workflow over a terminal port.
 ///
@@ -162,7 +163,16 @@ where
                         // scan can reuse the `MenuSession` read-it-now flow —
                         // the legacy runs `confScan` with the user already
                         // fully logged on, before the join announcement.
-                        let mut menu = self.enter_menu(session);
+                        let mut menu = match self.enter_menu(session) {
+                            Ok(menu) => menu,
+                            Err(error) => {
+                                // Persistence failed entering the menu; the
+                                // caller's logon state is unsaved, so close
+                                // the connection rather than admit them.
+                                eprintln!("login: failed to persist user on menu entry: {error}");
+                                return Ok(());
+                            }
+                        };
                         MenuFlow::new(&mut self.terminal, &self.services)
                             .run_logon_conference_scan(&mut menu)
                             .await?;
@@ -259,24 +269,54 @@ where
         self.terminal.flush().await
     }
 
-    fn enter_menu(&mut self, onboarded: OnboardedSession) -> MenuSession {
-        session_flow::enter_menu(
+    /// Enters the menu, persisting the logon bump.
+    ///
+    /// Returns `Err` only when persistence fails — the driver then
+    /// closes the connection rather than admitting the caller with
+    /// unsaved state. The `force_password_reset` path (the `Session`
+    /// arm) is not wired yet (it lands with the password-reset slice)
+    /// and still asserts.
+    fn enter_menu(
+        &mut self,
+        onboarded: OnboardedSession,
+    ) -> Result<MenuSession, UserRepositoryError> {
+        match session_flow::enter_menu(
             onboarded,
             self.services.user_repo.as_ref(),
             self.services.caller_log.as_ref(),
             SystemTime::now(),
-        )
-        .expect("OnboardedSession with no force_password_reset enters menu cleanly")
+        ) {
+            Ok(menu) => Ok(menu),
+            Err(session_flow::EnterMenuFlowError::Save(error)) => Err(error),
+            Err(session_flow::EnterMenuFlowError::Session(error)) => {
+                panic!(
+                    "OnboardedSession with no force_password_reset enters menu cleanly: {error:?}"
+                )
+            }
+        }
     }
 
-    fn finalise(&mut self, logging_off: LoggingOffSession) -> EndedSession {
-        session_flow::finalise_logoff(
+    /// Finalises the logoff, persisting the user's final state.
+    ///
+    /// A persistence failure here is logged but cannot change the
+    /// outcome — the session is already closing — so it does not
+    /// propagate. The `Session` arm is unreachable: the
+    /// `LoggingOffSession` wrapper guarantees the transition.
+    fn finalise(&mut self, logging_off: LoggingOffSession) {
+        match session_flow::finalise_logoff(
             logging_off,
             self.services.user_repo.as_ref(),
             self.services.caller_log.as_ref(),
             SystemTime::now(),
-        )
-        .expect("LoggingOffSession finalises cleanly when persistence succeeds")
+        ) {
+            Ok(_ended) => {}
+            Err(session_flow::FinaliseLogoffFlowError::Save(error)) => {
+                eprintln!("logoff: failed to persist user on finalise: {error}");
+            }
+            Err(session_flow::FinaliseLogoffFlowError::Session(error)) => {
+                unreachable!("LoggingOffSession finalises cleanly: {error:?}");
+            }
+        }
     }
 }
 
@@ -293,7 +333,7 @@ mod tests {
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
     use crate::app::mail_stores::MailStores;
     use crate::app::screens::{ScreenFuture, ScreenRepository};
-    use crate::app::services::{AppServices, SharedMailStores};
+    use crate::app::services::{AppServices, SharedMailStores, SharedUserRepo};
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::{LogonChannel, SessionPolicy};
@@ -443,12 +483,28 @@ mod tests {
         .expect("valid user")
     }
 
-    /// A [`UserRepository`] whose `save` always fails; reads delegate to
-    /// an inner [`InMemoryUserRepository`]. Used to prove the login flow
-    /// survives a persistence failure that lands *after* a correct
-    /// password (the point the legacy `.expect()` panicked).
+    /// A [`UserRepository`] whose `save` starts failing once it has been
+    /// called `fail_from` times (0 = every save fails); reads delegate to
+    /// an inner [`InMemoryUserRepository`]. Used to prove the sign-in
+    /// flow survives a persistence failure at each point that used to
+    /// `.expect()` the save: after the password match (`verify_password`,
+    /// call 0), on menu entry (`enter_menu`, call 1 for a granted user),
+    /// and on logoff (`finalise_logoff`, call 1 for an ungranted user
+    /// that reaches `NoConferenceAccess`).
     struct SaveFailingRepo {
         inner: InMemoryUserRepository,
+        fail_from: usize,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SaveFailingRepo {
+        fn new(inner: InMemoryUserRepository, fail_from: usize) -> Self {
+            Self {
+                inner,
+                fail_from,
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
     }
 
     impl UserRepository for SaveFailingRepo {
@@ -458,10 +514,16 @@ mod tests {
         fn find_sysop(&self) -> NameLookupResult {
             self.inner.find_sysop()
         }
-        fn save(&self, _user: User) -> Result<(), UserRepositoryError> {
-            Err(UserRepositoryError::UserNotFound {
-                handle: "save failed".to_string(),
-            })
+        fn save(&self, user: User) -> Result<(), UserRepositoryError> {
+            use std::sync::atomic::Ordering;
+            let nth = self.calls.fetch_add(1, Ordering::SeqCst);
+            if nth >= self.fail_from {
+                Err(UserRepositoryError::UserNotFound {
+                    handle: "save failed".to_string(),
+                })
+            } else {
+                self.inner.save(user)
+            }
         }
         fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
             self.inner.create_user(draft)
@@ -483,9 +545,10 @@ mod tests {
         .expect("valid")];
         let mut alice = alice_with_password("secret");
         crate::app::seed::grant_all_memberships(&mut alice, &conferences);
-        let repo = Arc::new(SaveFailingRepo {
-            inner: InMemoryUserRepository::new(vec![alice]),
-        });
+        let repo = Arc::new(SaveFailingRepo::new(
+            InMemoryUserRepository::new(vec![alice]),
+            0,
+        ));
         let hasher = Arc::new(Pbkdf2PasswordHasher::new());
         let caller_log = Arc::new(InMemoryCallerLog::new());
         let screens = Arc::new(StaticScreens);
@@ -547,6 +610,124 @@ mod tests {
         assert!(
             !output.windows(b"MENU".len()).any(|w| w == b"MENU"),
             "a save failure must not reach the menu"
+        );
+    }
+
+    /// Builds the standard test services around a caller-supplied user
+    /// repository and conference set — shared by the save-failure
+    /// regression tests, which differ only in the repo and the user's
+    /// conference grants.
+    fn save_failure_services(
+        user_repo: SharedUserRepo,
+        conferences: Vec<crate::domain::conference::Conference>,
+    ) -> AppServices {
+        AppServices {
+            user_repo,
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(StaticScreens),
+            conferences: Arc::new(conferences),
+            mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
+                mode: RatioMode::ByFiles,
+                value: 3,
+            },
+            new_user_gate: Arc::new(NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            }),
+            bbs_name: Arc::from("TestBBS"),
+        }
+    }
+
+    #[tokio::test]
+    async fn driver_aborts_cleanly_when_user_save_fails_on_menu_entry() {
+        // Same bug class, one step later: `session_flow::enter_menu`
+        // persists the logon bump and the driver used to `.expect()` it.
+        // A save failure on menu entry must close the connection cleanly,
+        // not panic.
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        // verify_password's save (call 0) succeeds; enter_menu's (1) fails.
+        let repo = Arc::new(SaveFailingRepo::new(
+            InMemoryUserRepository::new(vec![alice]),
+            1,
+        ));
+        let services = save_failure_services(repo, conferences);
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver
+            .run()
+            .await
+            .expect("driver completes without panicking on a menu-entry save failure");
+
+        let output = driver.into_terminal().output().to_vec();
+        assert!(
+            !output.windows(b"MENU".len()).any(|w| w == b"MENU"),
+            "a save failure on menu entry must not reach the menu"
+        );
+    }
+
+    #[tokio::test]
+    async fn driver_does_not_panic_when_finalise_save_fails() {
+        // `session_flow::finalise_logoff` persists the user on logoff and
+        // the driver used to `.expect()` it. An ungranted user reaches
+        // NoConferenceAccess -> finalise; the final save failing must be
+        // logged, not panic the task.
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        // No grant_all_memberships: alice cannot rejoin -> NoConferenceAccess.
+        let alice = alice_with_password("secret");
+        // verify_password's save (call 0) succeeds; finalise's (1) fails.
+        let repo = Arc::new(SaveFailingRepo::new(
+            InMemoryUserRepository::new(vec![alice]),
+            1,
+        ));
+        let services = save_failure_services(repo, conferences);
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver
+            .run()
+            .await
+            .expect("driver completes without panicking on a finalise save failure");
+
+        let output = driver.into_terminal().output().to_vec();
+        // The no-access notice precedes the failing finalise, confirming we
+        // reached the finalise step rather than aborting earlier.
+        let no_access = crate::app::wire_text::NO_CONFERENCE_ACCESS_LINE;
+        assert!(
+            output.windows(no_access.len()).any(|w| w == no_access),
+            "the no-conference-access path should have been taken"
         );
     }
 

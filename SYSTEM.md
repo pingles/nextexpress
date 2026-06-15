@@ -973,17 +973,24 @@ commit each, with the full suite plus a focused `cargo mutants
      idle timeout silently keeps the field instead of aborting the edit
      (refactoring 10). The reader merge naturally encodes the fix.
      **Open.**
-   - **Fixed (June 2026):** `LoginFlow::authenticate` `.expect()`-ed
-     `verify_password`, whose `Save(UserRepositoryError)` arm is a real
-     persistence failure (a DB write error after a *correct* password
-     panicked the connection task). It now logs and returns the new
-     `LoginOutcome::Aborted`, which the driver turns into a clean
-     connection close; only the typestate `Session(_)` arm stays
-     `unreachable!`. **The same save → `.expect()` pattern still
-     survives in `SessionDriver::enter_menu` (`session_driver.rs:269`)
-     and `SessionDriver::finalise` (`:279`)** — a persistence failure
-     while entering the menu or finalising logoff still panics. Same
-     treatment recommended (each its own slice, failing test first).
+   - **Fixed (June 2026):** the save → `.expect()` panic on persistence
+     failure, across all three sign-in/​logoff save points:
+     - `LoginFlow::authenticate` (`verify_password`) — the
+       `Save(UserRepositoryError)` arm now logs and returns the new
+       `LoginOutcome::Aborted`, which the driver turns into a clean
+       connection close.
+     - `SessionDriver::enter_menu` (`enter_menu`) — the `Save` arm
+       returns `Err`, and the driver logs + closes the connection
+       rather than admitting the caller with unsaved logon state.
+     - `SessionDriver::finalise` (`finalise_logoff`) — the `Save` arm is
+       logged and swallowed (the session is already closing).
+
+     In each case only the genuinely-impossible typestate arm panics:
+     `verify_password`/`finalise` use `unreachable!` (the wrappers
+     guarantee the state); `enter_menu`'s `Session` arm is the
+     not-yet-wired `force_password_reset` path and keeps a descriptive
+     `panic!` until the password-reset slice handles it. Each landed as
+     its own slice with a failing test first.
 1. Apply the placement policies (9, 10) opportunistically whenever a
    command is touched; the declarative command listing (11) when next
    in `menu_command.rs`.
