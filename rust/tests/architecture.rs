@@ -208,17 +208,34 @@ fn strip_cfg_test_modules(content: &str) -> String {
     out
 }
 
+/// A sibling test module (`#[cfg(test)] mod tests;` -> `tests.rs`, or a
+/// `tests/` submodule directory) is test-only code, exactly like an
+/// inline `#[cfg(test)] mod tests { ... }`. The walker strips inline test
+/// modules via [`strip_cfg_test_modules`]; sibling test files have no
+/// in-file `#[cfg(test)]` marker (the attribute is on the parent's `mod`
+/// declaration), so they are excluded here by path. This mirrors how
+/// `rust-lang/rust`'s own `tidy` tool classifies test code — by the
+/// `tests.rs` / `tests` name, not by attribute.
+fn is_sibling_test_module(path: &Path) -> bool {
+    path.file_name().and_then(OsStr::to_str) == Some("tests.rs")
+        || path.components().any(|c| c.as_os_str() == "tests")
+}
+
 #[test]
 fn app_does_not_depend_on_adapters_in_production_code() {
     // The hexagonal boundary lets `app/` depend only on `domain/` and
     // its own ports. Adapter construction is the bootstrap layer's job.
     // Test code legitimately needs adapter test doubles; the guard
-    // therefore strips `#[cfg(test)] mod …` blocks before scanning.
+    // therefore strips `#[cfg(test)] mod …` blocks and skips sibling
+    // `tests.rs` test modules before scanning.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let app_dir = Path::new(manifest_dir).join("src").join("app");
 
     let mut violations: Vec<String> = Vec::new();
     for path in rust_sources(&app_dir) {
+        if is_sibling_test_module(&path) {
+            continue;
+        }
         let raw = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
         let content = strip_cfg_test_modules(&raw);
@@ -256,6 +273,20 @@ fn use_violates_ignores_unrelated_mentions() {
     assert!(!use_violates("    let adapters = 3;", "adapters"));
     assert!(!use_violates("use std::collections::HashMap;", "adapters"));
     assert!(!use_violates("use crate::adapter_helpers;", "adapters"));
+}
+
+#[test]
+fn is_sibling_test_module_classifies_test_files() {
+    assert!(is_sibling_test_module(Path::new(
+        "src/app/menu_flow/file_list/tests.rs"
+    )));
+    assert!(is_sibling_test_module(Path::new(
+        "src/app/foo/tests/mod.rs"
+    )));
+    assert!(!is_sibling_test_module(Path::new(
+        "src/app/menu_flow/file_list/mod.rs"
+    )));
+    assert!(!is_sibling_test_module(Path::new("src/app/login_flow.rs")));
 }
 
 #[test]
