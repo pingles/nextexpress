@@ -890,22 +890,35 @@ than the work above:
     password_reset.rs   -- complete_password_reset + CompletePasswordResetFlowError
   ```
 
-- **Move giant inline test modules into sibling files.** This is a
-  pure code move (net-zero LOC — frame it as navigability, not
-  reduction) that keeps production modules readable; the sibling
-  `mod tests;` stays a descendant of the same parent, so all the test
-  code's `super::`/`super::super::` paths resolve unchanged
-  (`domain/session/tests.rs` is the existing precedent). The highest-
-  value targets are now the two biggest files in the tree, each ~72%
-  inline tests: **`app/menu_flow/file_list/mod.rs`** (2241 → ~624
-  production; it is already a directory module, so `mod tests;` drops
-  straight in) and **`app/menu_flow/join.rs`** (2186 → ~603 production;
-  needs a `join/` directory or a `#[path]` attribute). The adapter
-  targets still hold — `adapters/telnet_listener/tests.rs` (1793 →
-  ~218 production; simplest, uses `use super::*`),
-  `adapters/sqlite_user_repository/tests.rs`, and
-  `adapters/file_screen_repository/tests.rs`. Do these one-per-commit
-  when the file is otherwise quiet (the move noises up `git blame`).
+- **Sibling test files for large modules (convention adopted June
+  2026).** When a module's inline `#[cfg(test)] mod tests { … }` grows
+  to dominate the file (rule of thumb: test block ≳1000 lines /
+  test-dominated), extract it to a sibling `#[cfg(test)] mod tests;` →
+  `tests.rs`. This is the form `rust-lang/rust` enforces (via `tidy`)
+  and that `domain/session/tests.rs` already used — **not** `foo_test.rs`
+  / `#[path]` (which no surveyed large Rust codebase uses). Inline stays
+  the default for the ~60 small modules; do not convert them. It is a
+  pure code move (net-zero LOC — navigability, not reduction): the
+  sibling `mod tests` is still a child of the same parent, so every
+  `super::`/`super::super::` path resolves unchanged.
+
+  Mechanics: a module already shaped as a directory (`foo/mod.rs`) takes
+  `mod tests;` → `foo/tests.rs` directly; a flat `foo.rs` must first be
+  **promoted** to `foo/mod.rs`. The architecture guard
+  (`app_does_not_depend_on_adapters_in_production_code`) strips only
+  *inline* test modules, so it now also skips files named `tests.rs` or
+  under a `tests/` directory (`is_sibling_test_module`, matching `tidy`'s
+  name-based rule) — otherwise a sibling test file's adapter-double
+  imports would trip it.
+
+  **Landed (one commit each):** `app/menu_flow/file_list/` (2241 → 626),
+  `app/menu_flow/join/` (2186 → 605, promoted to a directory),
+  `adapters/telnet_listener/` (1793 → 214, promoted; its `#[cfg(test)]`
+  `wire_text` import moved into the test file). **Remaining adapter
+  candidates:** `adapters/sqlite_user_repository.rs` (1127) and
+  `adapters/file_screen_repository.rs` (1019) — same flat-file promote.
+  Do these one-per-commit when the file is otherwise quiet (the move
+  noises up `git blame`).
 
 ## Refactorings to skip for now
 
