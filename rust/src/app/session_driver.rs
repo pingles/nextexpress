@@ -114,6 +114,9 @@ where
             LoginOutcome::Onboarded(onboarded) => SignInResult::Onboarded(onboarded),
             LoginOutcome::LoggingOff(logging_off) => SignInResult::LoggingOff(logging_off),
             LoginOutcome::Ended(ended) => SignInResult::Ended(ended),
+            // An unrecoverable persistence failure during sign-in: the
+            // session is gone and already logged, so just close.
+            LoginOutcome::Aborted => return Ok(()),
             LoginOutcome::NeedsRegistration {
                 session,
                 password_required,
@@ -294,7 +297,10 @@ mod tests {
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::{LogonChannel, SessionPolicy};
-    use crate::domain::user::{RatioMode, User};
+    use crate::domain::user::{NewUserDraft, RatioMode, User};
+    use crate::domain::user_repository::{
+        NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
+    };
 
     fn test_mail_stores() -> SharedMailStores {
         Arc::new(InMemoryMailStores::new()) as Arc<dyn MailStores + Send + Sync>
@@ -435,6 +441,113 @@ mod tests {
             100,
         )
         .expect("valid user")
+    }
+
+    /// A [`UserRepository`] whose `save` always fails; reads delegate to
+    /// an inner [`InMemoryUserRepository`]. Used to prove the login flow
+    /// survives a persistence failure that lands *after* a correct
+    /// password (the point the legacy `.expect()` panicked).
+    struct SaveFailingRepo {
+        inner: InMemoryUserRepository,
+    }
+
+    impl UserRepository for SaveFailingRepo {
+        fn find_by_handle(&self, typed: &str) -> NameLookupResult {
+            self.inner.find_by_handle(typed)
+        }
+        fn find_sysop(&self) -> NameLookupResult {
+            self.inner.find_sysop()
+        }
+        fn save(&self, _user: User) -> Result<(), UserRepositoryError> {
+            Err(UserRepositoryError::UserNotFound {
+                handle: "save failed".to_string(),
+            })
+        }
+        fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
+            self.inner.create_user(draft)
+        }
+    }
+
+    #[tokio::test]
+    async fn driver_aborts_cleanly_when_user_save_fails_after_password_match() {
+        // Regression: a `UserRepository::save` failure after a correct
+        // password used to be `.expect()`-ed in `LoginFlow::authenticate`,
+        // panicking the connection task. It must instead end the session
+        // without panicking and without admitting the caller to the menu.
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        let repo = Arc::new(SaveFailingRepo {
+            inner: InMemoryUserRepository::new(vec![alice]),
+        });
+        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+        let caller_log = Arc::new(InMemoryCallerLog::new());
+        let screens = Arc::new(StaticScreens);
+        let gate = NewUserGateConfig {
+            allow_new_users: true,
+            new_user_password: None,
+            max_new_user_password_attempts: 3,
+        };
+        let ratio = DefaultRatio {
+            mode: RatioMode::ByFiles,
+            value: 3,
+        };
+        let services = AppServices {
+            user_repo: repo,
+            hasher,
+            caller_log,
+            screens,
+            conferences: Arc::new(conferences),
+            mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
+            session_policy: SessionPolicy::default(),
+            default_ratio: ratio,
+            new_user_gate: Arc::new(gate),
+            bbs_name: Arc::from("TestBBS"),
+        };
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        // The bug made this panic; the fix returns cleanly.
+        driver
+            .run()
+            .await
+            .expect("driver completes without panicking on a save failure");
+
+        let output = driver.into_terminal().output().to_vec();
+        // We reached the password prompt (so the save genuinely fired) ...
+        assert!(
+            output
+                .windows(b"PassWord: ".len())
+                .any(|w| w == b"PassWord: "),
+            "should have reached the password prompt"
+        );
+        // ... but the caller was NOT admitted: no auth confirmation, no menu.
+        assert!(
+            !output
+                .windows(b"Authenticated".len())
+                .any(|w| w == b"Authenticated"),
+            "a save failure must not admit the caller"
+        );
+        assert!(
+            !output.windows(b"MENU".len()).any(|w| w == b"MENU"),
+            "a save failure must not reach the menu"
+        );
     }
 
     #[tokio::test]

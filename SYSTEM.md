@@ -954,18 +954,23 @@ Refactorings 3, 4, 5, 6, 7 and 8 have **landed** (June 2026), one
 commit each, with the full suite plus a focused `cargo mutants
 --in-diff` run per commit. What remains:
 
-0. **Fix two latent bugs first** (failing test first, each its own
-   slice) — these are correctness, not cleanup:
+0. **Latent correctness bugs surfaced by the review:**
    - The `EH` edit-header abort bug: `read_optional_unchanged_line`
      conflates "blank = keep current" with "EOF/idle = abort", so an
      idle timeout silently keeps the field instead of aborting the edit
      (refactoring 10). The reader merge naturally encodes the fix.
-   - `login_flow.rs:207` `.expect()` discharges
-     `VerifyPasswordFlowError`, whose `Save(UserRepositoryError)` arm is
-     a genuine persistence failure, not a typestate invariant — a DB
-     write error after password verify panics with a misleading
-     message. Handle the `Save` arm (log + clean logoff) instead of
-     `.expect()`-ing it.
+     **Open.**
+   - **Fixed (June 2026):** `LoginFlow::authenticate` `.expect()`-ed
+     `verify_password`, whose `Save(UserRepositoryError)` arm is a real
+     persistence failure (a DB write error after a *correct* password
+     panicked the connection task). It now logs and returns the new
+     `LoginOutcome::Aborted`, which the driver turns into a clean
+     connection close; only the typestate `Session(_)` arm stays
+     `unreachable!`. **The same save → `.expect()` pattern still
+     survives in `SessionDriver::enter_menu` (`session_driver.rs:269`)
+     and `SessionDriver::finalise` (`:279`)** — a persistence failure
+     while entering the menu or finalising logoff still panics. Same
+     treatment recommended (each its own slice, failing test first).
 1. Apply the placement policies (9, 10) opportunistically whenever a
    command is touched; the declarative command listing (11) when next
    in `menu_command.rs`.

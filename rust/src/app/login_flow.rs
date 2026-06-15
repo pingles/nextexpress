@@ -9,7 +9,7 @@
 use std::time::SystemTime;
 
 use crate::app::services::AppServices;
-use crate::app::session_flow;
+use crate::app::session_flow::{self, VerifyPasswordFlowError};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     ACCOUNT_LOCKED_LINE, ANSI_PROMPT, AUTHENTICATED_LINE, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE,
@@ -35,6 +35,12 @@ pub(crate) enum LoginOutcome {
     /// Handle retry budget exhausted; the session moved straight to
     /// `Ended`.
     Ended(EndedSession),
+    /// An unrecoverable persistence failure during sign-in (e.g. the
+    /// user record could not be saved after a correct password). The
+    /// session state is indeterminate, so there is nothing to finalise;
+    /// the driver closes the connection. Logged operationally, not a
+    /// normal logoff.
+    Aborted,
     /// The user typed the `NEW` literal. The driver hands off to
     /// [`crate::app::registration_flow::RegistrationFlow`] with the
     /// session it produced.
@@ -195,7 +201,7 @@ where
                     return Ok(LoginOutcome::LoggingOff(logoff));
                 }
             };
-            let transition = session_flow::verify_password(
+            let transition = match session_flow::verify_password(
                 session,
                 password.trim(),
                 self.services.user_repo.as_ref(),
@@ -203,8 +209,26 @@ where
                 self.services.caller_log.as_ref(),
                 self.services.session_policy,
                 SystemTime::now(),
-            )
-            .expect("AuthenticatingSession guarantees Authenticating + bound user");
+            ) {
+                Ok(transition) => transition,
+                Err(VerifyPasswordFlowError::Save(error)) => {
+                    // Persistence failed *after* the password check. The
+                    // session was consumed by the rule and its persisted
+                    // state is now indeterminate, so we cannot safely
+                    // admit the caller. Log operationally and close the
+                    // connection rather than panicking the task.
+                    eprintln!("login: failed to persist user after password verification: {error}");
+                    return Ok(LoginOutcome::Aborted);
+                }
+                Err(VerifyPasswordFlowError::Session(error)) => {
+                    // The `AuthenticatingSession` wrapper makes the
+                    // wrong-state / user-missing modes unrepresentable,
+                    // so this arm is genuinely unreachable.
+                    unreachable!(
+                        "AuthenticatingSession guarantees Authenticating + bound user: {error:?}"
+                    );
+                }
+            };
             match transition {
                 VerifyPasswordTransition::Onboarded(onboarded) => {
                     self.write_and_flush(AUTHENTICATED_LINE).await?;
