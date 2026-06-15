@@ -19,9 +19,17 @@ pub type ConferenceRepositorySourceError = Box<dyn Error + Send + Sync + 'static
 /// implementations.
 #[derive(Debug, thiserror::Error)]
 pub enum ConferenceRepositoryError {
-    /// I/O failure while enumerating or reading the on-disk layout.
-    #[error("conference repository I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    /// A storage backend operation (enumerating or reading the on-disk
+    /// layout) failed. The concrete cause is type-erased so the port
+    /// stays free of any adapter-specific I/O type; the adapter
+    /// translates its native error into the boxed
+    /// [`ConferenceRepositorySourceError`].
+    #[error("conference repository backend error: {source}")]
+    Backend {
+        /// Underlying adapter error.
+        #[source]
+        source: ConferenceRepositorySourceError,
+    },
     /// A conference TOML payload could not be parsed.
     #[error("malformed conference file at {path}: {source}")]
     MalformedConference {

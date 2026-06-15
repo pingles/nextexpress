@@ -66,7 +66,7 @@ top-level modules under `rust/src/`:
    `crate::app`, or a bare `adapters::` / `app::` sibling.
 2. Any non-comment line under `src/domain/` that mentions an
    infrastructure crate or module (`tokio::`, `serde_json::`, `toml::`,
-   `std::fs::`, `std::net::`).
+   `std::fs::`, `std::io::`, `std::net::`).
 3. Any production-code `use` path under `src/app/` that names
    `crate::adapters` (or the bare sibling). Test modules
    (`#[cfg(test)] mod …`) are excluded since unit tests legitimately
@@ -79,15 +79,20 @@ check — a domain error like `source: serde_json::Error` would fail it
 even without an import, so the domain stays free of those infrastructure
 types in signatures as well as bodies.
 
-**Known gap:** the forbidden list is `tokio::`, `serde_json::`, `toml::`,
-`std::fs::`, `std::net::` — it does **not** include `std::io::`. Two
-domain port errors today embed `std::io::Error`
-(`MailStoreError::Io`, `ConferenceRepositoryError::Io`) and carry
-`Box<dyn Error + Send + Sync>` `#[source]` fields
-(`StoreSourceError`, `ConferenceRepositorySourceError`), and both sail
-through the guard. Closing this is the doc-hygiene half of refactoring 2
-(rebalance port error boundaries); the `std::io::` ratchet can only be
-added to the list after those leaks are removed.
+`std::io::` is on the list as of the June 2026 error-boundary pass: the
+domain port errors no longer name any concrete I/O type. `MailStoreError`
+and `ConferenceRepositoryError` previously embedded `std::io::Error`
+directly (`MailStoreError::Io`); they now carry an
+infrastructure-agnostic `Backend { source }` variant whose `source` is
+the type-erased `Box<dyn Error + Send + Sync>` (`StoreSourceError` /
+`ConferenceRepositorySourceError`). Each file adapter owns a
+`From<std::io::Error>` impl that boxes its native error at the port
+boundary — the single place `std::io::Error` meets the port. `Box<dyn
+Error>` is retained deliberately as the opaque source: it is the
+standard type-erasing idiom, not an infrastructure-specific leak, so the
+guard does not forbid it. (Refactoring 2's larger moves — relocating
+`ConferenceRepository` out of the domain and collapsing
+`MailStoreError`'s rich variants — remain open.)
 
 ### Sync domain, async edges
 
@@ -483,11 +488,13 @@ What is already idiomatic:
   constructors, the other four are plain field bundles.
 - **`thiserror` enums everywhere**, with `#[from]` only where the
   conversion is unambiguous. `Box<dyn Error + Send + Sync>` is used at
-  the binary entry point. It *does* also appear as a `#[source]` field
-  on two domain port errors (`StoreSourceError` on `MailStoreError`,
-  `ConferenceRepositorySourceError` on `ConferenceRepositoryError`) —
-  a storage-shaped leak the architecture guard does not catch, tracked
-  by refactoring 2.
+  the binary entry point and as the type-erased `#[source]` on two
+  domain port errors (`StoreSourceError` on `MailStoreError`,
+  `ConferenceRepositorySourceError` on `ConferenceRepositoryError`).
+  That is the intentional opaque-source idiom, not an infrastructure
+  leak: no concrete I/O type appears in the domain (`std::io::Error` was
+  removed from both in the June 2026 error-boundary pass and is now
+  guarded against).
 - **Effect-free parsers** (`menu_command`) decoupled from the dispatch
   loop. `parse_menu_command` is pure; reasonable to fuzz.
 - **`#![forbid(unsafe_code)]` plus clippy pedantic at warn level.**
@@ -593,11 +600,19 @@ multiple concurrent logons for the same account.
 
 ### 2. Rebalance port error boundaries
 
-Some domain-side ports carry storage-shaped errors. `MailStoreError`
-contains `std::io::Error`, path strings, and serialization details;
-`ConferenceRepositoryError` models TOML/path failures and lives in
-`domain` even though conference loading is a startup/configuration
-concern.
+**Partially landed (June 2026): `std::io::Error` removed from both domain
+port errors.** `MailStoreError::Io(std::io::Error)` and
+`ConferenceRepositoryError::Io(std::io::Error)` became
+`Backend { source: Box<dyn Error + Send + Sync> }`; each file adapter now
+owns the `From<std::io::Error>` translation, and `std::io::` joined the
+architecture guard's forbidden list to keep it out. The `NotFound` →
+`Ok(None)` check moved into the adapter's read helper (at the I/O
+boundary, before the error is type-erased).
+
+What remains: `MailStoreError` still carries path strings and the rich
+`Malformed`/`Serialise`/`*Mismatch` variants; `ConferenceRepositoryError`
+still models TOML/path failures and lives in `domain` even though
+conference loading is a startup/configuration concern.
 
 Prefer semantic domain/application errors at port boundaries and keep
 adapter-native details in adapter-specific error types or log context.
@@ -625,12 +640,13 @@ Verified June 2026 (both are real but LOC-modest, not LOC-wins):
   it (`eprintln!` + a fixed `MAIL_STORE_ERROR_LINE`). The rich
   variants are constructed and matched exclusively inside
   `file_mail_store.rs`, so they can collapse to one opaque port error
-  with the file-specific enum moved adapter-private. This removes the
-  second of the two `std::io::Error` couplings from `domain/`; expect
-  the rich enum to *reappear* adapter-side, so it is hygiene, not
-  reduction. Best done as one error-boundary pass alongside the
-  `ConferenceRepository` move, and closed off by adding `std::io::` to
-  the architecture guard's forbidden list (see "Known gap" above).
+  with the file-specific enum moved adapter-private. The `std::io::Error`
+  coupling itself is already gone (June 2026, see the refactoring 2
+  intro); what this optional further step buys is collapsing the
+  remaining path strings and `Malformed`/`Serialise`/`*Mismatch` detail
+  out of the domain enum. Expect the rich enum to *reappear*
+  adapter-side, so it is hygiene, not reduction. Best done as one
+  error-boundary pass alongside the `ConferenceRepository` move.
 
 ### 3. One module per menu command: fold `app/menu/*` into `app/menu_flow/*`
 
@@ -959,7 +975,8 @@ commit each, with the full suite plus a focused `cargo mutants
    `join.rs`, then the adapter trio — one-per-commit when each file is
    quiet.
 3. Add optimistic or command-style user writes (1) before
-   cross-session sysop/background mutations; do the port-error-boundary
-   pass (2) as one slice — move `ConferenceRepository` out to
-   bootstrap, reshape `MailStoreError`, then add `std::io::` to the
-   architecture guard's forbidden list to ratchet it shut.
+   cross-session sysop/background mutations; finish the
+   port-error-boundary pass (2) — the `std::io::Error` removal +
+   `std::io::` guard ratchet landed June 2026; what's left is moving
+   `ConferenceRepository` out to bootstrap and collapsing
+   `MailStoreError`'s remaining rich variants.

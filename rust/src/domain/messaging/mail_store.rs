@@ -21,9 +21,16 @@ pub type StoreSourceError = Box<dyn Error + Send + Sync + 'static>;
 /// Errors returned by [`MailStore`] implementations.
 #[derive(Debug, thiserror::Error)]
 pub enum MailStoreError {
-    /// I/O failure while reading or writing on-disk state.
-    #[error("mail store I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    /// A storage backend operation (reading, writing, or enumerating
+    /// on-disk state) failed. The concrete cause is type-erased so the
+    /// port stays free of any adapter-specific I/O type; the adapter
+    /// translates its native error into the boxed [`StoreSourceError`].
+    #[error("mail store backend error: {source}")]
+    Backend {
+        /// Underlying adapter error.
+        #[source]
+        source: StoreSourceError,
+    },
     /// A persisted message could not be parsed.
     #[error("malformed mail at {path}: {source}")]
     Malformed {
@@ -98,7 +105,7 @@ pub trait MailStore {
     /// resulting [`Mail`] and returns it.
     ///
     /// # Errors
-    /// Returns [`MailStoreError::Io`] when the underlying storage
+    /// Returns [`MailStoreError::Backend`] when the underlying storage
     /// rejects the write.
     fn insert(&mut self, draft: MailDraft) -> Result<Mail, MailStoreError>;
 
@@ -106,7 +113,7 @@ pub trait MailStore {
     /// such message exists.
     ///
     /// # Errors
-    /// Returns [`MailStoreError::Io`] for read failures and
+    /// Returns [`MailStoreError::Backend`] for read failures and
     /// [`MailStoreError::Malformed`] / [`MailStoreError::NumberMismatch`]
     /// / [`MailStoreError::MsgbaseMismatch`] for corrupted data.
     fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError>;

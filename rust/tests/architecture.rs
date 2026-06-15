@@ -18,6 +18,7 @@ const FORBIDDEN_INFRASTRUCTURE_REFERENCES: &[&str] = &[
     "serde_json::",
     "toml::",
     "std::fs::",
+    "std::io::",
     "std::net::",
 ];
 

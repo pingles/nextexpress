@@ -76,12 +76,25 @@ impl FileConferenceRepository {
     }
 }
 
+/// Translates an adapter-native I/O failure into the port's
+/// type-erased [`ConferenceRepositoryError::Backend`]. This is the one
+/// place the file backend maps `std::io::Error` onto the domain port
+/// error, keeping `std::io::Error` out of the domain signature while
+/// preserving the source chain for diagnostics.
+impl From<std::io::Error> for ConferenceRepositoryError {
+    fn from(source: std::io::Error) -> Self {
+        ConferenceRepositoryError::Backend {
+            source: Box::new(source),
+        }
+    }
+}
+
 impl ConferenceRepository for FileConferenceRepository {
     fn load_all(&self) -> Result<Vec<Conference>, ConferenceRepositoryError> {
         let entries = match fs::read_dir(&self.bbs_path) {
             Ok(it) => it,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(ConferenceRepositoryError::Io(e)),
+            Err(e) => return Err(e.into()),
         };
 
         let mut directories: Vec<(u32, PathBuf)> = Vec::new();
@@ -320,7 +333,7 @@ mod tests {
         fs::write(&file, b"oops").unwrap();
         let repo = FileConferenceRepository::new(file);
         let err = repo.load_all().expect_err("file path should error");
-        assert!(matches!(err, ConferenceRepositoryError::Io(_)));
+        assert!(matches!(err, ConferenceRepositoryError::Backend { .. }));
     }
 
     #[test]
@@ -517,7 +530,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("Conf01")).unwrap();
         let repo = FileConferenceRepository::new(dir.path().to_path_buf());
         let err = repo.load_all().expect_err("missing conference.toml");
-        assert!(matches!(err, ConferenceRepositoryError::Io(_)));
+        assert!(matches!(err, ConferenceRepositoryError::Backend { .. }));
     }
 
     #[test]

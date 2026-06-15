@@ -53,6 +53,19 @@ pub struct FileMailStore {
 /// predicate (`PostMail` precondition).
 pub struct MsgbaseLock(#[allow(dead_code)] OwnedMutexGuard<()>);
 
+/// Translates an adapter-native I/O failure into the port's
+/// type-erased [`MailStoreError::Backend`]. This is the one place the
+/// file backend maps `std::io::Error` onto the domain port error, which
+/// keeps `std::io::Error` out of the domain signature while preserving
+/// the source chain for diagnostics.
+impl From<std::io::Error> for MailStoreError {
+    fn from(source: std::io::Error) -> Self {
+        MailStoreError::Backend {
+            source: Box::new(source),
+        }
+    }
+}
+
 impl FileMailStore {
     /// Opens (or creates, if missing) a [`FileMailStore`] rooted at
     /// `dir` for the supplied [`MessageBaseRef`].
@@ -62,7 +75,7 @@ impl FileMailStore {
     /// can see why startup is taking time on a large base.
     ///
     /// # Errors
-    /// Returns [`MailStoreError::Io`] when the directory cannot be
+    /// Returns [`MailStoreError::Backend`] when the directory cannot be
     /// created or read, [`MailStoreError::Malformed`] when an entry
     /// is unreadable JSON, and [`MailStoreError::NumberMismatch`] /
     /// [`MailStoreError::MsgbaseMismatch`] when a file's payload
@@ -111,7 +124,7 @@ impl FileMailStore {
                 number: mail.number(),
                 source: Box::new(source),
             })?;
-        fs::write(path, json).map_err(MailStoreError::Io)
+        fs::write(path, json).map_err(MailStoreError::from)
     }
 }
 
@@ -134,12 +147,8 @@ impl MailStore for FileMailStore {
 
     fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError> {
         let path = self.path_for(number);
-        let text = match read_mail_payload_text(&path) {
-            Ok(text) => text,
-            Err(MailStoreError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(None);
-            }
-            Err(e) => return Err(e),
+        let Some(text) = read_mail_payload_text(&path)? else {
+            return Ok(None);
         };
         let payload: MailPayload =
             serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
@@ -184,7 +193,10 @@ fn scan_dir_for_highest(dir: &Path, msgbase: MessageBaseRef) -> Result<u32, Mail
         // against a directory that has accidentally received an
         // unrelated message file.
         let path = entry.path();
-        let text = read_mail_payload_text(&path)?;
+        let Some(text) = read_mail_payload_text(&path)? else {
+            // File vanished between `read_dir` and this read; skip it.
+            continue;
+        };
         let payload: MailPayload =
             serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
                 path: path.display().to_string(),
@@ -197,15 +209,29 @@ fn scan_dir_for_highest(dir: &Path, msgbase: MessageBaseRef) -> Result<u32, Mail
     Ok(highest)
 }
 
-fn read_mail_payload_text(path: &Path) -> Result<String, MailStoreError> {
-    let len = fs::metadata(path)?.len();
+/// Reads a message file's text, or `None` when no file exists at
+/// `path`. A missing file is the normal "no such message" signal, so it
+/// is mapped to `None` here — at the I/O boundary, where the
+/// `NotFound` kind is still available — rather than surfacing as a
+/// backend error. Every other I/O failure is surfaced as
+/// [`MailStoreError::Backend`].
+fn read_mail_payload_text(path: &Path) -> Result<Option<String>, MailStoreError> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let len = metadata.len();
     if len > MAX_PERSISTED_MAIL_BYTES {
         return Err(malformed_payload(
             path,
             format!("mail file is {len} bytes, limit is {MAX_PERSISTED_MAIL_BYTES}"),
         ));
     }
-    fs::read_to_string(path).map_err(MailStoreError::Io)
+    // `metadata` above already mapped the missing-file case to `None`,
+    // so any failure here is a genuine backend error (including the
+    // rare race where the file is removed between the two calls).
+    Ok(Some(fs::read_to_string(path)?))
 }
 
 fn malformed_payload(path: &Path, message: String) -> MailStoreError {
@@ -737,7 +763,9 @@ mod tests {
         let exact_len = usize::try_from(MAX_PERSISTED_MAIL_BYTES).expect("test limit fits usize");
         std::fs::write(&path, vec![b'x'; exact_len]).unwrap();
 
-        let text = super::read_mail_payload_text(&path).expect("exact limit should read");
+        let text = super::read_mail_payload_text(&path)
+            .expect("exact limit should read")
+            .expect("a file at the limit exists");
 
         assert_eq!(text.len(), exact_len);
     }
@@ -753,6 +781,24 @@ mod tests {
         let err = super::read_mail_payload_text(&path).expect_err("oversized file must fail");
 
         assert!(matches!(err, MailStoreError::Malformed { .. }));
+    }
+
+    #[test]
+    fn read_mail_payload_text_surfaces_metadata_errors_other_than_not_found() {
+        // A missing file maps to `Ok(None)`, but a *different* metadata
+        // failure must NOT be swallowed as "no message". We provoke a
+        // non-`NotFound` error by routing the path through a regular
+        // file (`ENOTDIR`), which proves the `NotFound` match guard is
+        // load-bearing rather than matching every metadata error.
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_dir = dir.path().join("occupied");
+        std::fs::write(&not_a_dir, b"x").unwrap();
+        let through_a_file = not_a_dir.join("0000001.json");
+
+        let err = super::read_mail_payload_text(&through_a_file)
+            .expect_err("a path through a file must surface as a backend error");
+
+        assert!(matches!(err, MailStoreError::Backend { .. }));
     }
 
     #[test]
@@ -871,7 +917,7 @@ mod tests {
         std::fs::create_dir(dir.path().join("0000005.json")).unwrap();
         let store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
         let err = store.load(5).expect_err("reading a directory must fail");
-        assert!(matches!(err, MailStoreError::Io(_)));
+        assert!(matches!(err, MailStoreError::Backend { .. }));
     }
 
     #[test]
