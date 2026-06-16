@@ -41,9 +41,11 @@ top-level modules under `rust/src/`:
   (`Terminal`, `ScreenRepository`, `MailStores`), configuration types,
   the runtime value (`Runtime` + `AppServices`), the per-connection
   orchestrator (`SessionDriver`), three sub-flows (`LoginFlow`,
-  `RegistrationFlow`, `MenuFlow`), one command module per menu command
-  under `app/menu_flow/*` (terminal-free core fn + terminal-aware
-  handler in the same file), and the `ColourTerminal` decorator
+  `RegistrationFlow`, `MenuFlow`), a command module under
+  `app/menu_flow/*` for each non-trivial menu command (terminal-free
+  core fn + terminal-aware handler in the same file; simple
+  toggles/queries dispatch inline in `MenuFlow::dispatch`), and the
+  `ColourTerminal` decorator
   (`app/colour_terminal`) that strips ANSI SGR escapes from output
   while the `M`-toggled colour mode is off. Production code under `app/` is forbidden from
   importing `crate::adapters`; the boundary is enforced by
@@ -185,7 +187,7 @@ flowchart LR
     MenuFlowHandlers --> FileList["file_list\n(NextScan lister: dir_row + wire\n+ 29-line ScanState pager)"]
     FileList --> FilePort["FileRepository (port)"]
     FileCatalogue -.implements.-> FilePort
-    MenuFlowHandlers --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment)"]
+    MenuFlowHandlers --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment / attach_file)"]
     ReadSub --> Rules
 
     Rules --> Mail["domain::Mail"]
@@ -335,7 +337,9 @@ thin orchestrator:
    `n`/`N` turns the terminal's live colour mode off so screens render
    with ANSI stripped), then prompt for name, dispatch to register,
    verify password, return
-   `Onboarded | LoggingOff | Ended | NeedsRegistration`.
+   `Onboarded | LoggingOff | Ended | Aborted | NeedsRegistration`
+   (`Aborted` is the post-password save-failure outcome added by the
+   June-2026 don't-panic fix; the driver turns it into a clean close).
 3. `RegistrationFlow::run` — only on `NeedsRegistration`. Owns the
    new-user gate, profile collection, hash + persist, returns
    `Onboarded | LoggingOff`.
@@ -441,26 +445,32 @@ covers two-boot persistence with a `tempdir`.
 
 ### Concentration-of-responsibility hotspots
 
-The current top files by line count (figures verified June 2026; the
-two largest are command modules whose bulk is inline tests):
+The current top files by line count (figures re-measured June 2026,
+after the slice-13 directory-module promotions). The largest files are
+now **test** modules: the inline test blocks of `file_list`, `join` and
+`telnet_listener` were carved out to sibling `tests.rs` files
+(refactoring 13), so each command/adapter's production `mod.rs` is small
+(`file_list/mod.rs` 626, `join/mod.rs` 605, `telnet_listener/mod.rs`
+214) while its co-located test sibling rises to the top:
 
 | File | Lines | Notes |
 |---|---|---|
-| `app/menu_flow/file_list/mod.rs` | 2241 | NextScan lister: `ScanState` pager + `F`/`R` flagging. **~624 production / ~1617 inline tests** (`#[cfg(test)]` at line 625). Already split `wire.rs`/`dir_row.rs` out; the test block is the carve-up candidate (refactoring 13). |
-| `app/menu_flow/join.rs` | 2186 | `J` / `JM` / `<` / `>` / `<<` / `>>` family + the inlined `scan_mail_on_join`. **~603 production / ~1583 inline tests** (`#[cfg(test)]` at line 604). |
 | `domain/session/tests.rs` | 2062 | Cross-capability session tests in 14 nested mods, internally grouped but monolithic. |
-| `adapters/telnet_listener.rs` | 1793 | **~218 lines of production `TelnetListener` + `TelnetTerminal`; ~1575 lines of in-process integration tests** (`#[cfg(test)]` at line 219). |
 | `app/wire_text.rs` | 1746 | Wire-format constants and rendering helpers. Growing ~100–200 lines per command (`CF` added 132, `MS` 207); see refactoring 9. |
+| `app/menu_flow/file_list/tests.rs` | 1610 | NextScan lister tests, carved out as a sibling of `file_list/mod.rs` (626 production lines) by refactoring 13. |
+| `adapters/telnet_listener/tests.rs` | 1572 | In-process integration tests (44 fns) for `TelnetListener`/`TelnetTerminal`, sibling of `telnet_listener/mod.rs` (214 production lines); refactoring 13. |
+| `app/menu_flow/join/tests.rs` | 1567 | `J`/`JM`/`<`/`>`/`<<`/`>>` family tests, sibling of `join/mod.rs` (605 production lines + the inlined `scan_mail_on_join`); refactoring 13. |
 | `domain/user/mod.rs` | 1527 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
 | `app/session_flow.rs` | 1423 | Login-path use cases over the phase wrappers + `(UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade (refactoring 5 deleted the twin layer). |
-| `app/menu_command.rs` | 1256 | `parse_menu_command` if-chain + the 23-variant `MenuCommand` enum + the parse/reject test battery + the `advertised_token` safety net. |
-| `adapters/file_mail_store.rs` | 1196 | Per-msgbase JSON store + lock + tests. |
-| `adapters/sqlite_user_repository.rs` | 1127 | Schema init + row codec + queries + ~30 tests. |
-| `adapters/file_screen_repository.rs` | 1019 | File-backed screen assets with caching + tests. |
+| `app/menu_command.rs` | 1263 | `parse_menu_command` if-chain + the 23-variant `MenuCommand` enum + the parse/reject test battery + the `advertised_token` safety net. |
+| `adapters/file_mail_store.rs` | 1242 | Per-msgbase JSON store + lock + tests. |
+| `app/session_driver.rs` | 1145 | Per-connection orchestrator + logon-order tests. |
+| `adapters/sqlite_user_repository.rs` | 1127 | Schema init + row codec + queries + ~30 tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
+| `adapters/file_screen_repository.rs` | 1019 | File-backed screen assets with caching + tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
 | `domain/messaging/scan_mail.rs` | 941 | Scan rule + extensive test fixtures. |
 | `domain/conference.rs` | 896 | `Conference`, `MessageBase`, `ConferenceMembership` (incl. the M/A/F/Z `ScanFlag` accessors), `NameType`, `AllowedAddressing`, `AllScanScope`. The `CF` edit semantics live in the focused `domain/conference_flags.rs`. |
 | `domain/messaging/post_mail.rs` | 886 | Post rule + helpers + tests. |
-| `app/session_driver.rs` | 851 | Per-connection orchestrator + logon-order tests. |
+| `app/menu_flow/file_list/wire.rs` | 818 | Capture-pinned `F`-family wire constants + the date-group frame assembler (refactoring 9 colocation). |
 | `app/menu_flow/post_mail.rs` | 671 | The `E`/`C` editor command module (core fns + editor handlers + tests). |
 | `domain/session/typed.rs` | 644 | Phase-typed wrappers and their constructors. |
 
@@ -558,9 +568,10 @@ gone, and `lock_pair` centralises lock ordering and detects
 same-store requests before acquiring a second lock), and the
 session-typed narrowing (`domain::session::typed` no longer imports
 any messaging rules; the per-command `read_mail`/`post_mail`/etc.
-methods on `MenuSession` are gone. `MenuSession` now exposes only the
-phase concerns it needs as inherent `pub(crate)` methods —
-`current_msgbase` (`typed.rs:287`) and `user_mut` (`typed.rs:264`) —
+methods on `MenuSession` are gone. `MenuSession` now exposes only
+state-machine and phase concerns as inherent `pub(crate)` methods (e.g.
+`current_msgbase` (`typed.rs:287`), `user_mut` (`typed.rs:264`)) — none
+of them per-command messaging operations —
 and the menu use cases under `app/menu_flow/*` call the
 `domain::messaging::*` rules directly with `session.user_mut()`).
 
@@ -758,7 +769,7 @@ keeps genuinely shared text (`UNKNOWN_COMMAND_LINE`, `GOODBYE_LINE`,
 single-consumer). The policy is **already adopted for new commands**:
 the `F`-family bytes live in `app/menu_flow/file_list/wire.rs` (818
 lines), not `wire_text.rs`. What remains is migrating the existing
-`CF` block (`wire_text.rs:1071-1148`) and `MS` block
+`CF` block (`wire_text.rs:1071-1142`) and `MS` block
 (`wire_text.rs:659-770`) opportunistically when next touched; two
 shared private helpers (`left_field`, `scan_row_status`) still need
 `pub(crate)` widening. This is
