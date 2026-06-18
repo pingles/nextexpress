@@ -192,12 +192,15 @@ the gaps where the captures are silent.
     emitted newest-first (the area's rows reversed).
   - Grammar: `FR` is the concatenated reverse token
     (`express.e:28310` dispatches the whole code). `FR <n>`/`A`/`U`/`H`
-    /`NS` mirror `F`. Bare `FR` skips the `Directories:` prompt and
-    reverse-scans the **upload/highest dir only** (maps to
-    `FileSpan::Upload`, `ae_tierd_aquascan3.txt` S11) — a deliberate
-    asymmetry with bare `F` (which prompts). The "descending" walk
-    applies to multi-dir spans (`FR A` walks highest→lowest,
-    `express.e:27654` reverse loop), not to bare `FR`.
+    /`NS` mirror `F`. Bare `FR`, like bare `F`, opens the
+    `Directories:` prompt (under the reverse `'fr ?'` banner) and then
+    reverse-walks whichever span the caller picks — following
+    `express.e:27645-27648` (`getDirSpan('')`) over the AquaScan
+    capture (S11), which skips the prompt for `FR`. (Amended 2026-06-18,
+    reversing the initial "bare `FR` skips the prompt" decision, per the
+    "use the original code" rule.) The "descending" walk applies to
+    multi-dir spans (`FR A` walks highest→lowest, `express.e:27654`
+    reverse loop).
   - `F R` with a space is **not** an original reverse form (the
     original dispatch matches the whole `FR` token); it stays the
     `F`-with-junk `Argument error!` path.

@@ -44,7 +44,7 @@ where
                 non_stop,
                 reverse,
             } => self.file_list_span(session, span, non_stop, reverse).await,
-            FileListArg::Prompt => self.file_list_prompt(session).await,
+            FileListArg::Prompt { reverse } => self.file_list_prompt(session, reverse).await,
             FileListArg::Help => {
                 // `F ?` (`ae_tierd_aquascan3.txt` S1).
                 self.terminal.write(wire::HELP_SCREEN.as_bytes()).await?;
@@ -53,13 +53,20 @@ where
         }
     }
 
-    /// Bare `F`: the door's own
+    /// Bare `F` / bare `FR`: the door's own
     /// `Directories: (1-N), (A)ll, (U)pload, (H)old, (Enter)=None ? `
     /// line prompt (`ae_tierd_aquascan3.txt:163`; Visible read — the
     /// answer echo is the adapter's). Enter aborts silently; junk
     /// answers `Error in input!`; valid answers run the same spans as
-    /// arguments with no banner re-emit (S2/S3, A2, U5–U7).
-    async fn file_list_prompt(&mut self, session: &mut MenuSession) -> Result<(), T::Error> {
+    /// arguments. `reverse` (bare `FR`) flexes the banner to `'fr ?'`
+    /// and reverse-walks the chosen span — following `express.e`'s
+    /// `getDirSpan('')` over the `AquaScan` capture, which skips the
+    /// prompt for `FR` (S2/S3, A2, U5–U7).
+    async fn file_list_prompt(
+        &mut self,
+        session: &mut MenuSession,
+        reverse: bool,
+    ) -> Result<(), T::Error> {
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
@@ -70,7 +77,7 @@ where
         let flagged = session.flagged_files_mut();
         let mut state = ScanState::new(false);
 
-        for line in [&b"\x1b[0m"[..], wire::LISTING_BANNER, b""] {
+        for line in [&b"\x1b[0m"[..], wire::listing_banner(reverse), b""] {
             if self
                 .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()), flagged)
                 .await?
@@ -107,9 +114,10 @@ where
             return self.terminal.flush().await;
         };
         self.terminal.write(b"\r\n").await?;
-        // The bare-`F` directories prompt is a forward scan (bare `FR`
-        // never reaches here — it parses straight to a reverse span).
-        self.run_span(&mut state, conference, span, &areas, flagged, false)
+        // The chosen span runs forward for bare `F`, reverse for bare
+        // `FR` (`express.e` `displayFileList` passes the `reverse` flag
+        // straight through the prompt path).
+        self.run_span(&mut state, conference, span, &areas, flagged, reverse)
             .await
     }
 

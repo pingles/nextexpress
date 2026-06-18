@@ -745,20 +745,26 @@ stock path (diff record only); the wire is AquaScan's.
 `'fr ?' for options` with the dash run flexed 40→39 to hold the 77-col
 frame; `Reverse-scanning dir N... Ok! / Nothing found!` header (no
 "from top"); per-dir rows emitted newest-first (the area's rows
-reversed); bare `FR` skips the `Directories:` prompt and reverse-scans
-the upload/highest dir (`ae_tierd_aquascan3.txt` S10 `FR 1`, S11 bare
-`FR`). All frame/colour/pager/footer/exit-tail behaviour is the D2 `F`
-code path unchanged.
+reversed) — `ae_tierd_aquascan3.txt` S10 `FR 1`. All
+frame/colour/pager/footer/exit-tail behaviour is the D2 `F` code path
+unchanged.
 
-**BEHAVIOURAL (source-derived where AquaScan is silent).** `FR A`
-descends the multi-dir span highest→lowest — `displayFileList`'s reverse
-loop walks `dirScan→startDir` (`fLLoop--`, `express.e:27654`) — and each
-dir's rows reverse; the captures only exercise `FR 1` and bare `FR`
-(single dir), so the multi-dir order is `express.e`-derived, not
-captured. Bare `FR`'s prompt-skip is an AquaScan-only divergence from the
-original (the internal bare `FR` would prompt via `getDirSpan('')`); the
-board-as-shipped door is the Tier-D authority, so bare `F` (prompts) and
-bare `FR` (no prompt) are deliberately asymmetric.
+**BEHAVIOURAL (source-derived; departs from the AquaScan capture).**
+Two places follow `express.e` over the captures:
+- **Bare `FR` opens the `Directories:` prompt** (under the reverse
+  banner), like bare `F`, then reverse-walks the chosen span —
+  `displayFileList` branches only on params-present vs. bare, and bare
+  → `getDirSpan('')` shows the prompt regardless of `reverse`
+  (`express.e:27643-27648`). The AquaScan **capture** (S11) instead
+  shows bare `FR` *skipping* the prompt and scanning the highest dir;
+  we override that with the original behaviour per the "use the original
+  code" rule (amended 2026-06-18, reversing the initial decision). The
+  bare-`FR`-prompt bytes are therefore extrapolated, not captured. Bare
+  `F` and bare `FR` are now **symmetric** (both prompt).
+- **`FR A` descends the multi-dir span highest→lowest** —
+  `displayFileList`'s reverse loop walks `dirScan→startDir` (`fLLoop--`,
+  `express.e:27654`), each dir's rows reversed. The captures only
+  exercise single-dir `FR`, so the multi-dir order is `express.e`-derived.
 
 **UNVERIFIED.** `FR ?` (reuses the `F ?` help — no distinct `'fr ?'`
 help screen captured); `FR H` reverse hold (uncaptured; the hold header

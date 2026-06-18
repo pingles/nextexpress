@@ -111,8 +111,10 @@ pub(crate) enum MenuCommand {
 /// `F [R] dir [Q] [NS]` with dir = `U` | `A` | number | `H`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileListArg {
-    /// Bare `F`: open the door's own `Directories: …` prompt.
-    Prompt,
+    /// Bare `F` / bare `FR`: open the door's own `Directories: …`
+    /// prompt (`express.e:27645-27648` → `getDirSpan('')`). `reverse`
+    /// (set by `FR`) reverse-walks whichever span the caller picks.
+    Prompt { reverse: bool },
     /// `F ?`: show the `NextScan` help screen.
     Help,
     /// `F <dir> [NS]` / `FR <dir> [NS]`: scan immediately, optionally
@@ -354,18 +356,12 @@ fn parse_file_list_command(line: &str) -> Option<FileListArg> {
         return None;
     };
     let Some(first) = tokens.next() else {
-        // Bare `F` opens the `Directories:` prompt; bare `FR` skips it
-        // and reverse-scans the upload/highest dir (AquaScan S11,
-        // `ae_tierd_aquascan3.txt`).
-        return Some(if reverse {
-            FileListArg::Span {
-                span: FileSpan::Upload,
-                non_stop: false,
-                reverse: true,
-            }
-        } else {
-            FileListArg::Prompt
-        });
+        // Bare `F` and bare `FR` both open the `Directories:` prompt
+        // (`express.e:27645-27648` → `getDirSpan('')`); `FR` then
+        // reverse-walks whichever span the caller picks. We follow the
+        // original here over the AquaScan capture, which skips the
+        // prompt for `FR`.
+        return Some(FileListArg::Prompt { reverse });
     };
     if first == "?" {
         return Some(if tokens.next().is_none() {
@@ -1090,7 +1086,7 @@ mod tests {
         // un-R/Q forms; bare F prompts and `F ?` shows the help.
         assert_eq!(
             parse_menu_command("F"),
-            MenuCommand::FileList(FileListArg::Prompt)
+            MenuCommand::FileList(FileListArg::Prompt { reverse: false })
         );
         assert_eq!(
             parse_menu_command("F ?"),
@@ -1176,16 +1172,13 @@ mod tests {
     fn fr_command_parses_the_reverse_grammar() {
         // `FR` is the concatenated reverse token (`express.e:28310`
         // dispatches the whole code `FR`). It mirrors `F`'s span
-        // grammar with `reverse: true`, except bare `FR` skips the
-        // `Directories:` prompt and scans the upload/highest dir —
-        // AquaScan board-as-shipped (`ae_tierd_aquascan3.txt` S11).
+        // grammar with `reverse: true`. Bare `FR`, like bare `F`,
+        // opens the `Directories:` prompt (`express.e:27645-27648` →
+        // `getDirSpan('')`) — we follow the original here over the
+        // AquaScan capture, which skips the prompt for `FR`.
         assert_eq!(
             parse_menu_command("FR"),
-            MenuCommand::FileList(FileListArg::Span {
-                span: FileSpan::Upload,
-                non_stop: false,
-                reverse: true,
-            })
+            MenuCommand::FileList(FileListArg::Prompt { reverse: true })
         );
         assert_eq!(
             parse_menu_command("fr 1"),
@@ -1365,7 +1358,7 @@ mod tests {
             MenuCommand::NextConference,
             MenuCommand::PrevMsgBase,
             MenuCommand::NextMsgBase,
-            MenuCommand::FileList(FileListArg::Prompt),
+            MenuCommand::FileList(FileListArg::Prompt { reverse: false }),
             MenuCommand::Unknown,
         ]
     }

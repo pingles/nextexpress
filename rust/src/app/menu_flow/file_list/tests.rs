@@ -1488,7 +1488,12 @@ async fn bare_f_prompts_and_enter_aborts_with_a_single_reset() {
     // menu (the per-path tail asymmetry).
     let services = services_with_demo_catalogue();
     let mut terminal = CaptureTerminal::new(vec![TerminalRead::Line(String::new())]);
-    run_file_list(&services, &mut terminal, FileListArg::Prompt).await;
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Prompt { reverse: false },
+    )
+    .await;
     let mut expected = listing_preamble();
     expected.extend_from_slice(&super::wire::directories_prompt(2));
     expected.extend_from_slice(b"\r\n\x1b[0m\r\n");
@@ -1505,7 +1510,12 @@ async fn bare_f_junk_answer_errors_in_input() {
     // reset, menu.
     let services = services_with_demo_catalogue();
     let mut terminal = CaptureTerminal::new(vec![TerminalRead::Line("XYZ".to_string())]);
-    run_file_list(&services, &mut terminal, FileListArg::Prompt).await;
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Prompt { reverse: false },
+    )
+    .await;
     let mut expected = listing_preamble();
     expected.extend_from_slice(&super::wire::directories_prompt(2));
     expected.extend_from_slice(b"\r\nError in input!\r\n\r\n\x1b[0m\r\n");
@@ -1524,7 +1534,12 @@ async fn bare_f_numeric_answer_scans_that_dir() {
     let services = services_with_demo_catalogue();
     let mut terminal =
         CaptureTerminal::with_keys(vec![TerminalRead::Line("2".to_string())], vec![key(b'Q')]);
-    run_file_list(&services, &mut terminal, FileListArg::Prompt).await;
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Prompt { reverse: false },
+    )
+    .await;
     let mut expected = listing_preamble();
     expected.extend_from_slice(&super::wire::directories_prompt(2));
     expected.extend_from_slice(b"\r\n");
@@ -1543,6 +1558,46 @@ async fn bare_f_numeric_answer_scans_that_dir() {
 }
 
 #[tokio::test]
+async fn bare_fr_prompt_uses_the_reverse_banner_then_reverse_scans_the_answer() {
+    // Bare `FR` (`Prompt { reverse: true }`) opens the same Directories
+    // prompt as bare `F` but under the reverse banner; answering `2`
+    // reverse-scans dir 2 (newest-first) with the reverse header.
+    let services = services_with_demo_catalogue();
+    let mut terminal =
+        CaptureTerminal::with_keys(vec![TerminalRead::Line("2".to_string())], vec![key(b'Q')]);
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Prompt { reverse: true },
+    )
+    .await;
+    let mut dir2 = services.file_repo.find_in_area(1, 2);
+    dir2.reverse();
+    let reversed: Vec<Vec<u8>> =
+        super::wire::assemble_dir_lines(&dir2, 1, 2, &FlaggedFiles::default())
+            .into_iter()
+            .map(|line| line.bytes)
+            .collect();
+    let mut expected = b"\x1b[0m\r\n".to_vec();
+    expected.extend_from_slice(super::wire::listing_banner(true));
+    expected.extend_from_slice(b"\r\n\r\n");
+    expected.extend_from_slice(&super::wire::directories_prompt(2));
+    expected.extend_from_slice(b"\r\n");
+    expected.extend_from_slice(&joined(&[
+        b"Reverse-scanning dir 2... Ok!".to_vec(),
+        Vec::new(),
+    ]));
+    expected.extend_from_slice(&joined(&reversed));
+    expected.extend_from_slice(super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"Quit\r\n");
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&terminal.output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
 async fn bare_f_u_answer_scans_the_upload_dir() {
     // ae_tierd_aquascan4.txt U6: `U` at the prompt (a Visible
     // LINE read, unchanged by D2b) resolves to the
@@ -1551,7 +1606,12 @@ async fn bare_f_u_answer_scans_the_upload_dir() {
     let services = services_with_two_small_areas();
     let mut terminal =
         CaptureTerminal::with_keys(vec![TerminalRead::Line("U".to_string())], vec![key(b'Y')]);
-    run_file_list(&services, &mut terminal, FileListArg::Prompt).await;
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Prompt { reverse: false },
+    )
+    .await;
     let mut expected = listing_preamble();
     expected.extend_from_slice(&super::wire::directories_prompt(2));
     expected.extend_from_slice(b"\r\n");

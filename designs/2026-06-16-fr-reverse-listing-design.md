@@ -21,12 +21,12 @@ See memory `tierd-aquascan-parity-target` / `use-original-amiexpress-code`.
 `FR` is a distinct top-level token (the original dispatch matches the
 whole code `FR`, `express.e:28310`; `F R` with a space is **not** an
 original reverse form and stays the D2 `Invalid`/argument-error path).
-The `FR` argument grammar mirrors `F`'s captured grammar, with one
-asymmetry at the bare form:
+The `FR` argument grammar mirrors `F`'s grammar — including the bare
+form (see the amendment below):
 
 | Input | Resolves to | Source |
 |---|---|---|
-| `FR` (bare) | reverse scan of the **upload/highest dir**, no `Directories:` prompt | AquaScan S11 (`ae_tierd_aquascan3.txt`) |
+| `FR` (bare) | opens the `Directories:` prompt under the reverse banner, then reverse-walks the chosen span | `express.e:27645-27648` → `getDirSpan('')` |
 | `FR <n>` | reverse listing of dir `n` | AquaScan S10 |
 | `FR A` | reverse scan of all dirs, **highest→lowest** | `express.e` `displayFileList` reverse walk (AquaScan silent) |
 | `FR U` | reverse scan of the upload/highest dir | `getDirSpan` `U` |
@@ -35,19 +35,29 @@ asymmetry at the bare form:
 | `FR ?` | the `F ?` help screen | grammar symmetry (`'fr ?'` banner label advertises it; uncaptured — flagged) |
 | other | `Argument error!` | D2 `Invalid` |
 
-**Asymmetry, deliberate:** bare `F` opens the `Directories:` prompt;
-bare `FR` skips it and scans the highest dir. This matches the AquaScan
-capture and is recorded as intentional (the original `displayFileList`
-would prompt bare `FR` too — overridden because AquaScan is the Tier-D
-authority).
+**Symmetry (amended 2026-06-18):** bare `F` and bare `FR` **both** open
+the `Directories: (1-N), (A)ll, (U)pload, (H)old, (Enter)=None?` prompt;
+`FR` then reverse-walks whatever span the caller picks. The original
+`displayFileList` (used by both `F` and `FR`) branches only on
+params-present vs. bare — the `reverse` flag never affects the prompt
+(`express.e:27643-27648`). This **reverses the initial design's "bare
+`FR` skips the prompt" decision**: that matched the AquaScan capture
+(S11), but the AquaScan door's prompt-skip is a divergence from the
+original, and the standing rule is to follow `express.e` (memory
+`use-original-amiexpress-code`). So here `express.e` overrides the
+capture; the bare-`FR`-prompt bytes (reverse banner + the same
+`Directories:` prompt) are extrapolated, the one spot in the slice not
+pinned to a capture.
 
 ## The seam — one `reverse: bool`
 
 Threaded parser → handler → wire, no new subsystem:
 
-- **`menu_command.rs`** — `FileListArg::Span { span, non_stop, reverse }`
-  gains the field. New parse: a leading `FR` token →
-  - `FR` bare → `Span { span: FileSpan::Upload, non_stop: false, reverse: true }`
+- **`menu_command.rs`** — both `FileListArg::Span { span, non_stop,
+  reverse }` and `FileListArg::Prompt { reverse }` gain a `reverse`
+  field. New parse: a leading `FR` token →
+  - `FR` bare → `Prompt { reverse: true }` (amended — was
+    `Span { Upload, reverse: true }` in the initial design)
   - `FR <span> [NS]` → `Span { span, non_stop, reverse: true }`
   - `FR ?` → `FileListArg::Help`
   The `R`-is-`Invalid` doc note (`menu_command.rs:127-130`) is unwound.

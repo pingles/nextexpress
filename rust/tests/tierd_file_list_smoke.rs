@@ -198,28 +198,40 @@ async fn fr_1_opens_the_reverse_banner_and_header() {
 }
 
 #[tokio::test]
-async fn bare_fr_skips_the_prompt_and_reverse_scans_the_highest_dir() {
-    // ae_tierd_aquascan3.txt S11: bare `FR` does NOT open the
-    // Directories prompt — it goes straight to a reverse scan of the
-    // upload/highest dir (dir 2 of the seeded corpus). Deliberate
-    // asymmetry with bare `F` (board-as-shipped AquaScan).
+async fn bare_fr_opens_the_directories_prompt_with_the_reverse_banner() {
+    // express.e:27645-27648 (`getDirSpan('')`): bare `FR`, like bare
+    // `F`, opens the Directories prompt — but with the reverse banner
+    // (`'fr ?'`). We follow the original here over the AquaScan capture
+    // (S11), which skips the prompt for `FR`. Answering `2` then
+    // reverse-scans dir 2.
     let addr = spawn_listener_with_demo_files().await;
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"FR").await;
-    let page = drain_until(&mut stream, MORE_PROMPT).await;
+    let prompt = drain_until(&mut stream, b"=None ?\x1b[0m ").await;
     let mut expected_head = b"FR\r\n\x1b[0m\r\n".to_vec();
     expected_head.extend_from_slice(LISTING_BANNER_REVERSE);
-    expected_head.extend_from_slice(b"\r\nReverse-scanning dir 2... Ok!\r\n\r\n");
+    expected_head.extend_from_slice(b"\r\n");
     assert!(
-        page.starts_with(&expected_head),
-        "bare FR must reverse-scan the highest dir with no prompt, got {:?}",
-        String::from_utf8_lossy(&page[..expected_head.len().min(page.len())]),
+        prompt.starts_with(&expected_head),
+        "bare FR must open with the reverse banner, got {:?}",
+        String::from_utf8_lossy(&prompt[..expected_head.len().min(prompt.len())]),
     );
     assert!(
-        !contains(&page, b"Directories:"),
-        "bare FR must NOT open the Directories prompt: {:?}",
-        String::from_utf8_lossy(&page),
+        contains(
+            &prompt,
+            b"\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, ",
+        ),
+        "bare FR must open the Directories (1-2) prompt: {:?}",
+        String::from_utf8_lossy(&prompt),
+    );
+
+    write_line(&mut stream, b"2").await;
+    let listing = drain_until(&mut stream, MORE_PROMPT).await;
+    assert!(
+        contains(&listing, b"Reverse-scanning dir 2... Ok!\r\n"),
+        "answering 2 must reverse-scan dir 2: {:?}",
+        String::from_utf8_lossy(&listing),
     );
 
     write_key(&mut stream, b"Q").await;
