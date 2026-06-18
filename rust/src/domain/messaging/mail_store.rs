@@ -148,18 +148,76 @@ pub trait MailStore {
     /// # Errors
     /// Propagates any [`MailStoreError`] raised by the underlying
     /// scan.
-    fn lowest_undeleted_message(&self) -> u32 {
+    fn lowest_undeleted_message(&self) -> Result<u32, MailStoreError> {
         use crate::domain::messaging::mail::MailVisibility;
         let highest = self.highest_message();
         for number in 1..=highest {
             match self.load(number) {
                 Ok(Some(mail)) if !matches!(mail.visibility(), MailVisibility::Deleted) => {
-                    return number;
+                    return Ok(number);
                 }
-                _ => {}
+                Ok(_) => {}
+                Err(error) => return Err(error),
             }
         }
-        highest.saturating_add(1)
+        Ok(highest.saturating_add(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+
+    struct LoadFailingStore;
+
+    impl LoadFailingStore {
+        fn backend_error() -> MailStoreError {
+            MailStoreError::Backend {
+                source: Box::new(io::Error::new(io::ErrorKind::Other, "load failed")),
+            }
+        }
+    }
+
+    impl MailStore for LoadFailingStore {
+        fn highest_message(&self) -> u32 {
+            2
+        }
+
+        fn msgbase(&self) -> MessageBaseRef {
+            MessageBaseRef::new(1, 1)
+        }
+
+        fn insert(&mut self, _draft: MailDraft) -> Result<Mail, MailStoreError> {
+            Err(Self::backend_error())
+        }
+
+        fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError> {
+            if number == 2 {
+                Err(Self::backend_error())
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn save(&mut self, _mail: &Mail) -> Result<(), MailStoreError> {
+            Err(Self::backend_error())
+        }
+    }
+
+    #[test]
+    fn lowest_undeleted_message_propagates_load_errors() {
+        let store = LoadFailingStore;
+
+        let err = store
+            .lowest_undeleted_message()
+            .expect_err("scan load errors must propagate");
+
+        assert!(
+            err.to_string().contains("load failed"),
+            "unexpected error: {err}"
+        );
     }
 }
 

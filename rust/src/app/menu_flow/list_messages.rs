@@ -14,8 +14,9 @@ use std::time::SystemTime;
 
 use crate::app::mail_stores::MailStores;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{render_list_header, render_list_row};
+use crate::app::wire_text::{render_list_header, render_list_row, MAIL_STORE_ERROR_LINE};
 use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
+use crate::domain::messaging::mail_store::MailStoreError;
 use crate::domain::messaging::scan_mail::MailScanRow;
 use crate::domain::session::typed::MenuSession;
 
@@ -32,19 +33,24 @@ struct ListMail {
 }
 
 /// Collects the reader's listable mail from the current base. Returns
-/// `None` when the session has no current base or no store is registered
-/// for it.
-async fn list_mail<M>(session: &MenuSession, mail_stores: &M) -> Option<ListMail>
+/// `Ok(None)` when the session has no current base or no store is
+/// registered for it.
+async fn list_mail<M>(
+    session: &MenuSession,
+    mail_stores: &M,
+) -> Result<Option<ListMail>, MailStoreError>
 where
     M: MailStores + ?Sized,
 {
-    let (msgbase, guard) = super::lock_current_base(session, mail_stores).await?;
+    let Some((msgbase, guard)) = super::lock_current_base(session, mail_stores).await else {
+        return Ok(None);
+    };
     let highest = guard.highest_message();
-    let lowest = guard.lowest_undeleted_message();
+    let lowest = guard.lowest_undeleted_message()?;
     let reader_slot = session.user().slot_number();
     let mut rows = Vec::new();
     for number in 1..=highest {
-        if let Ok(Some(mail)) = guard.load(number) {
+        if let Some(mail) = guard.load(number)? {
             if addressed_to_reader(reader_slot, &mail) {
                 rows.push(MailScanRow {
                     msgbase,
@@ -59,7 +65,7 @@ where
         }
     }
     drop(guard);
-    Some(ListMail { lowest, rows })
+    Ok(Some(ListMail { lowest, rows }))
 }
 
 /// True when a `mail` is one the reader should see in `L`: not deleted,
@@ -86,8 +92,14 @@ where
         &mut self,
         session: &mut MenuSession,
     ) -> Result<(), T::Error> {
-        let Some(listing) = list_mail(session, self.services.mail_stores.as_ref()).await else {
-            return Ok(());
+        let listing = match list_mail(session, self.services.mail_stores.as_ref()).await {
+            Ok(Some(listing)) => listing,
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                eprintln!("L command: failed to list mail: {error}");
+                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
+                return Ok(());
+            }
         };
         let Some(start) = self.read_list_start(session, listing.lowest).await? else {
             // A non-numeric start aborts the listing (legacy `Val` -> 0,

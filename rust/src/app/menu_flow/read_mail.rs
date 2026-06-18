@@ -175,7 +175,13 @@ where
         // except when the true lowest key is a soft-deleted message below
         // it.
         let lowest = match self.services.mail_stores.as_ref().lock(base).await {
-            Some(guard) => guard.lowest_undeleted_message(),
+            Some(guard) => match guard.lowest_undeleted_message() {
+                Ok(lowest) => lowest,
+                Err(error) => {
+                    eprintln!("R command: failed to determine lowest readable mail: {error}");
+                    return self.write_and_flush(MAIL_STORE_ERROR_LINE).await;
+                }
+            },
             None => return self.write_and_flush(NO_MAIL_BASE_LINE).await,
         };
         let start = last_read.saturating_add(1).max(lowest);

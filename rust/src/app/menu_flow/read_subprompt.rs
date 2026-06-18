@@ -17,9 +17,12 @@
 use std::time::SystemTime;
 
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{render_read_subprompt, render_read_subprompt_help};
+use crate::app::wire_text::{
+    render_read_subprompt, render_read_subprompt_help, MAIL_STORE_ERROR_LINE,
+};
 use crate::domain::messaging::delete_mail::can_delete;
 use crate::domain::messaging::edit_mail_header::can_edit_header;
+use crate::domain::messaging::mail_store::MailStoreError;
 use crate::domain::messaging::move_mail::can_move;
 use crate::domain::session::typed::MenuSession;
 
@@ -52,7 +55,14 @@ where
             // messages while the reader holds the loop, so a value
             // captured on entry would go stale (the legacy reads the live
             // `mailStat` each pass).
-            let Some((lowest, highest)) = self.current_base_bounds(session).await else {
+            let Some((lowest, highest)) = (match self.current_base_bounds(session).await {
+                Ok(bounds) => bounds,
+                Err(error) => {
+                    eprintln!("R sub-prompt: failed to determine message bounds: {error}");
+                    self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
+                    return Ok(());
+                }
+            }) else {
                 return Ok(());
             };
             // Range string (legacy `:12010-12012`): the lower bound is the
@@ -235,7 +245,14 @@ where
         next: &mut u32,
         last_displayed: &mut Option<u32>,
     ) -> Result<bool, T::Error> {
-        let Some((lowest, highest)) = self.current_base_bounds(session).await else {
+        let Some((lowest, highest)) = (match self.current_base_bounds(session).await {
+            Ok(bounds) => bounds,
+            Err(error) => {
+                eprintln!("R sub-prompt: failed to determine message bounds: {error}");
+                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
+                return Ok(false);
+            }
+        }) else {
             return Ok(false);
         };
         if *next > highest || *next < lowest {
@@ -250,12 +267,20 @@ where
     /// Returns the `(lowest, highest)` existing message bounds in the
     /// session's current message base — the legacy `mailStat.lowestKey`
     /// (approximated by the lowest undeleted message) and
-    /// `mailStat.highMsgNum - 1` (`express.e:12010-12012`). `None` when
-    /// the session has no current base or no store is registered for it.
-    async fn current_base_bounds(&self, session: &MenuSession) -> Option<(u32, u32)> {
-        let (_, guard) =
-            super::lock_current_base(session, self.services.mail_stores.as_ref()).await?;
-        Some((guard.lowest_undeleted_message(), guard.highest_message()))
+    /// `mailStat.highMsgNum - 1` (`express.e:12010-12012`).
+    /// `Ok(None)` when the session has no current base or no store is
+    /// registered for it.
+    async fn current_base_bounds(
+        &self,
+        session: &MenuSession,
+    ) -> Result<Option<(u32, u32)>, MailStoreError> {
+        let Some((_, guard)) =
+            super::lock_current_base(session, self.services.mail_stores.as_ref()).await
+        else {
+            return Ok(None);
+        };
+        let lowest = guard.lowest_undeleted_message()?;
+        Ok(Some((lowest, guard.highest_message())))
     }
 
     /// True when the session's user may delete the current message

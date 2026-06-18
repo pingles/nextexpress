@@ -306,11 +306,11 @@ mod tests {
         let m1 = insert_sample(&mut store, author.slot_number(), 3);
         let _m2 = insert_sample(&mut store, author.slot_number(), 3);
         let _m3 = insert_sample(&mut store, author.slot_number(), 3);
-        assert_eq!(store.lowest_undeleted_message(), 1);
+        assert_eq!(store.lowest_undeleted_message().expect("lowest"), 1);
 
         delete_mail(&author, &mut store, m1.number()).expect("happy path");
 
-        assert_eq!(store.lowest_undeleted_message(), 2);
+        assert_eq!(store.lowest_undeleted_message().expect("lowest"), 2);
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod tests {
         delete_mail(&author, &mut store, m1.number()).unwrap();
         delete_mail(&author, &mut store, m2.number()).unwrap();
 
-        assert_eq!(store.lowest_undeleted_message(), 3);
+        assert_eq!(store.lowest_undeleted_message().expect("lowest"), 3);
     }
 
     #[test]
@@ -340,6 +340,6 @@ mod tests {
 
         delete_mail(&author, &mut store, m2.number()).unwrap();
 
-        assert_eq!(store.lowest_undeleted_message(), 1);
+        assert_eq!(store.lowest_undeleted_message().expect("lowest"), 1);
     }
 }
