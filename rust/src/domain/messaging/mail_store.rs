@@ -88,6 +88,19 @@ pub enum MailStoreError {
         /// Msgbase number the store was opened against.
         store_msgbase: u32,
     },
+    /// A caller attempted to update a message number that is not
+    /// currently present in the store. `save` only overwrites existing
+    /// messages; new mail must be allocated through [`MailStore::insert`]
+    /// so the high-water mark stays authoritative.
+    #[error("message {number} is not present in msgbase ({store_conference},{store_msgbase})")]
+    MessageMissing {
+        /// Message number that was requested.
+        number: u32,
+        /// Conference number the store was opened against.
+        store_conference: u32,
+        /// Msgbase number the store was opened against.
+        store_msgbase: u32,
+    },
 }
 
 /// Persistence port for a single [`MessageBaseRef`]'s mail.
@@ -130,8 +143,9 @@ pub trait MailStore {
     /// # Errors
     /// Returns [`MailStoreError::MsgbaseMismatch`] when
     /// `mail.msgbase()` disagrees with the store's binding, and
-    /// [`MailStoreError::Io`] when the underlying storage rejects the
-    /// write.
+    /// [`MailStoreError::MessageMissing`] when `mail.number()` is not
+    /// already present. Returns [`MailStoreError::Backend`] when the
+    /// underlying storage rejects the write.
     fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError>;
 
     /// Returns the lowest message number that is *not*

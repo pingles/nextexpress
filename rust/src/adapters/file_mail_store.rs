@@ -170,6 +170,20 @@ impl MailStore for FileMailStore {
                 store_msgbase: self.msgbase.msgbase_number(),
             });
         }
+        if mail.number() == 0 || mail.number() > self.highest_message {
+            return Err(MailStoreError::MessageMissing {
+                number: mail.number(),
+                store_conference: self.msgbase.conference_number(),
+                store_msgbase: self.msgbase.msgbase_number(),
+            });
+        }
+        if self.load(mail.number())?.is_none() {
+            return Err(MailStoreError::MessageMissing {
+                number: mail.number(),
+                store_conference: self.msgbase.conference_number(),
+                store_msgbase: self.msgbase.msgbase_number(),
+            });
+        }
         self.write(mail)
     }
 }
@@ -1193,6 +1207,100 @@ mod tests {
         });
         let err = store.save(&foreign).expect_err("msgbase mismatch");
         assert!(matches!(err, MailStoreError::MsgbaseMismatch { .. }));
+    }
+
+    #[test]
+    fn save_rejects_missing_mail_without_creating_a_new_number() {
+        // `save` is an update path, not an allocation path. Creating a
+        // new numbered file here would make the in-memory high-water
+        // mark disagree with the directory until the next reopen.
+        use crate::domain::messaging::mail::{Mail, NewMail};
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        store.insert(sample_draft()).expect("insert");
+
+        let missing = Mail::new(NewMail {
+            msgbase,
+            number: 2,
+            visibility: MailVisibility::Public,
+            from_name: "x".to_string(),
+            to_name: "y".to_string(),
+            broadcast_to: BroadcastTo::None,
+            subject: "x".to_string(),
+            posted_at: t(0),
+            author_slot: 1,
+            addressee_slot: Some(2),
+            body: String::new(),
+        });
+        let err = store.save(&missing).expect_err("missing mail");
+
+        assert!(matches!(
+            err,
+            MailStoreError::MessageMissing {
+                number: 2,
+                store_conference: 2,
+                store_msgbase: 1
+            }
+        ));
+        assert_eq!(store.highest_message(), 1);
+        assert!(store.load(2).unwrap().is_none());
+        let reopened = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        assert_eq!(reopened.highest_message(), 1);
+    }
+
+    #[test]
+    fn save_rejects_message_zero_even_if_a_zero_file_exists() {
+        // Message zero is the empty-base sentinel, not a valid update
+        // target. A hand-created 0000000.json must not make `save`
+        // treat it as an existing message.
+        use crate::domain::messaging::mail::{Mail, NewMail};
+        let dir = tempfile::tempdir().unwrap();
+        let msgbase = MessageBaseRef::new(2, 1);
+        let mut store = FileMailStore::open(dir.path().to_path_buf(), msgbase).unwrap();
+        std::fs::write(
+            dir.path().join("0000000.json"),
+            r#"{
+                "conference_number": 2,
+                "msgbase_number": 1,
+                "number": 0,
+                "visibility": "public",
+                "from_name": "x",
+                "to_name": "y",
+                "broadcast_to": "none",
+                "subject": "x",
+                "posted_at": "1970-01-01T00:00:01Z",
+                "received_at": null,
+                "author_slot": 1,
+                "addressee_slot": 2,
+                "body": ""
+            }"#,
+        )
+        .unwrap();
+
+        let zero = Mail::new(NewMail {
+            msgbase,
+            number: 0,
+            visibility: MailVisibility::Public,
+            from_name: "edited".to_string(),
+            to_name: "y".to_string(),
+            broadcast_to: BroadcastTo::None,
+            subject: "edited".to_string(),
+            posted_at: t(0),
+            author_slot: 1,
+            addressee_slot: Some(2),
+            body: String::new(),
+        });
+        let err = store.save(&zero).expect_err("message zero");
+
+        assert!(matches!(
+            err,
+            MailStoreError::MessageMissing {
+                number: 0,
+                store_conference: 2,
+                store_msgbase: 1
+            }
+        ));
     }
 
     #[test]
