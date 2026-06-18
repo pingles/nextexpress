@@ -473,27 +473,21 @@ impl SqliteUserRepository {
 }
 
 impl UserRepository for SqliteUserRepository {
-    fn find_by_handle(&self, typed: &str) -> NameLookupResult {
+    fn find_by_handle(&self, typed: &str) -> Result<NameLookupResult, UserRepositoryError> {
         let conn = self.conn.lock().expect("user db mutex");
         match Self::find_by_handle_inner(&conn, typed) {
-            Ok(Some(user)) => NameLookupResult::Found(Box::new(user)),
-            Ok(None) => NameLookupResult::NotFound,
-            Err(error) => {
-                eprintln!("sqlite user lookup failed for {typed:?}: {error}");
-                NameLookupResult::NotFound
-            }
+            Ok(Some(user)) => Ok(NameLookupResult::Found(Box::new(user))),
+            Ok(None) => Ok(NameLookupResult::NotFound),
+            Err(error) => Err(UserRepositoryError::storage("lookup", error)),
         }
     }
 
-    fn find_sysop(&self) -> NameLookupResult {
+    fn find_sysop(&self) -> Result<NameLookupResult, UserRepositoryError> {
         let conn = self.conn.lock().expect("user db mutex");
         match Self::load_user(&conn, 1) {
-            Ok(Some(user)) => NameLookupResult::Found(Box::new(user)),
-            Ok(None) => NameLookupResult::NotFound,
-            Err(error) => {
-                eprintln!("sqlite sysop lookup failed: {error}");
-                NameLookupResult::NotFound
-            }
+            Ok(Some(user)) => Ok(NameLookupResult::Found(Box::new(user))),
+            Ok(None) => Ok(NameLookupResult::NotFound),
+            Err(error) => Err(UserRepositoryError::storage("lookup sysop", error)),
         }
     }
 
@@ -506,31 +500,21 @@ impl UserRepository for SqliteUserRepository {
                 |_| Ok(true),
             )
             .optional()
-            .map_err(|error| {
-                eprintln!("sqlite save lookup failed: {error}");
-                UserRepositoryError::UserNotFound {
-                    handle: user.handle().to_string(),
-                }
-            })?
+            .map_err(|error| UserRepositoryError::storage("save lookup", error))?
             .unwrap_or(false);
         if !exists {
             return Err(UserRepositoryError::UserNotFound {
                 handle: user.handle().to_string(),
             });
         }
-        Self::upsert_user(&conn, &user).map_err(|error| {
-            eprintln!("sqlite save failed: {error}");
-            UserRepositoryError::UserNotFound {
-                handle: user.handle().to_string(),
-            }
-        })
+        Self::upsert_user(&conn, &user).map_err(|error| UserRepositoryError::storage("save", error))
     }
 
     fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
         let mut conn = self.conn.lock().expect("user db mutex");
         let tx = conn
             .transaction()
-            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
+            .map_err(|error| UserCreationError::storage("begin transaction", error))?;
         let folded_handle = draft.handle.to_ascii_lowercase();
         let dup_handle: bool = tx
             .query_row(
@@ -539,7 +523,7 @@ impl UserRepository for SqliteUserRepository {
                 |_| Ok(true),
             )
             .optional()
-            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?
+            .map_err(|error| UserCreationError::storage("duplicate check", error))?
             .unwrap_or(false);
         if dup_handle {
             return Err(UserCreationError::DuplicateUser {
@@ -552,12 +536,12 @@ impl UserRepository for SqliteUserRepository {
                 [],
                 |row| row.get(0),
             )
-            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
+            .map_err(|error| UserCreationError::storage("allocate slot", error))?;
         let user = User::register_new(next_slot, draft)?;
         Self::upsert_user(&tx, &user)
-            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
+            .map_err(|error| UserCreationError::storage("insert user", error))?;
         tx.commit()
-            .map_err(|e| UserCreationError::Build(UserError::from_sqlite_for_creation(&e)))?;
+            .map_err(|error| UserCreationError::storage("commit user", error))?;
         Ok(user)
     }
 }
@@ -793,15 +777,6 @@ impl std::fmt::Display for PointerBuildError {
 }
 impl std::error::Error for PointerBuildError {}
 
-// Helper so the `create_user` path can lift rusqlite errors
-// into the existing UserCreationError vocabulary without growing it.
-impl UserError {
-    fn from_sqlite_for_creation(e: &rusqlite::Error) -> Self {
-        eprintln!("sqlite create failed: {e}");
-        UserError::SaltRequired
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -836,7 +811,7 @@ mod tests {
         assert_eq!(user.slot_number(), 1);
         assert!(matches!(
             repo.find_by_handle("alice"),
-            NameLookupResult::Found(_)
+            Ok(NameLookupResult::Found(_))
         ));
     }
 
@@ -846,11 +821,11 @@ mod tests {
         repo.create_user(draft_with("Alice")).expect("create");
         assert!(matches!(
             repo.find_by_handle("alice"),
-            NameLookupResult::Found(_)
+            Ok(NameLookupResult::Found(_))
         ));
         assert!(matches!(
             repo.find_by_handle("ALICE"),
-            NameLookupResult::Found(_)
+            Ok(NameLookupResult::Found(_))
         ));
     }
 
@@ -875,7 +850,7 @@ mod tests {
         );
         repo.save(alice.clone()).expect("save");
 
-        match repo.find_by_handle("alice") {
+        match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
                 assert_eq!(loaded.handle(), alice.handle());
                 assert_eq!(loaded.slot_number(), alice.slot_number());
@@ -928,7 +903,7 @@ mod tests {
         alice.upsert_membership(membership);
         repo.save(alice.clone()).expect("save");
 
-        match repo.find_by_handle("alice") {
+        match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
                 let m = loaded
                     .memberships()
@@ -989,7 +964,7 @@ mod tests {
     fn find_sysop_returns_slot_one() {
         let repo = SqliteUserRepository::in_memory().expect("open");
         repo.create_user(draft_with("sysop")).expect("sysop");
-        match repo.find_sysop() {
+        match repo.find_sysop().expect("lookup sysop") {
             NameLookupResult::Found(user) => assert!(user.is_sysop()),
             NameLookupResult::NotFound => panic!("sysop should have been created"),
         }
@@ -998,7 +973,110 @@ mod tests {
     #[test]
     fn find_sysop_returns_not_found_when_empty() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        assert!(matches!(repo.find_sysop(), NameLookupResult::NotFound));
+        assert!(matches!(repo.find_sysop(), Ok(NameLookupResult::NotFound)));
+    }
+
+    #[test]
+    fn find_by_handle_returns_storage_error_when_row_cannot_decode() {
+        let repo = SqliteUserRepository::in_memory().expect("open");
+        repo.create_user(draft_with("alice")).expect("create");
+        {
+            let conn = repo.conn.lock().expect("db mutex");
+            conn.execute(
+                "UPDATE users SET password_hash_kind = 'unknown' WHERE handle_folded = 'alice'",
+                [],
+            )
+            .expect("corrupt row");
+        }
+
+        let err = repo
+            .find_by_handle("alice")
+            .expect_err("decode failure must not become not-found");
+        assert!(
+            matches!(
+                err,
+                UserRepositoryError::Storage {
+                    context: "lookup",
+                    ref message
+                } if message.contains("unknown password_hash_kind")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn find_sysop_returns_storage_error_when_row_cannot_decode() {
+        let repo = SqliteUserRepository::in_memory().expect("open");
+        repo.create_user(draft_with("sysop")).expect("create");
+        {
+            let conn = repo.conn.lock().expect("db mutex");
+            conn.execute(
+                "UPDATE users SET password_hash_kind = 'unknown' WHERE slot_number = 1",
+                [],
+            )
+            .expect("corrupt row");
+        }
+
+        let err = repo
+            .find_sysop()
+            .expect_err("decode failure must not become no sysop");
+        assert!(
+            matches!(
+                err,
+                UserRepositoryError::Storage {
+                    context: "lookup sysop",
+                    ref message
+                } if message.contains("unknown password_hash_kind")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn save_returns_storage_error_when_lookup_query_fails() {
+        let repo = SqliteUserRepository::in_memory().expect("open");
+        let alice = repo.create_user(draft_with("alice")).expect("create");
+        {
+            let conn = repo.conn.lock().expect("db mutex");
+            conn.execute_batch("DROP TABLE users").expect("drop users");
+        }
+
+        let err = repo
+            .save(alice)
+            .expect_err("storage failure must not become user-not-found");
+        assert!(
+            matches!(
+                err,
+                UserRepositoryError::Storage {
+                    context: "save lookup",
+                    ref message
+                } if message.contains("no such table")
+            ),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn create_user_returns_storage_error_when_repository_query_fails() {
+        let repo = SqliteUserRepository::in_memory().expect("open");
+        {
+            let conn = repo.conn.lock().expect("db mutex");
+            conn.execute_batch("DROP TABLE users").expect("drop users");
+        }
+
+        let err = repo
+            .create_user(draft_with("alice"))
+            .expect_err("storage failure must not become a build error");
+        assert!(
+            matches!(
+                err,
+                UserCreationError::Storage {
+                    context: "duplicate check",
+                    ref message
+                } if message.contains("no such table")
+            ),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -1043,7 +1121,7 @@ mod tests {
         alice.record_last_call(SystemTime::UNIX_EPOCH + Duration::from_secs(123_456));
         repo.save(alice.clone()).expect("save");
 
-        match repo.find_by_handle("alice") {
+        match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
                 assert!(loaded.is_account_locked());
                 assert_eq!(
@@ -1079,7 +1157,7 @@ mod tests {
         alice.record_join(&conf, &conf.msgbases()[0]);
         repo.save(alice).expect("save");
 
-        match repo.find_by_handle("alice") {
+        match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
                 let joined = loaded.last_joined().expect("last_joined preserved");
                 assert_eq!(joined.conference_number(), 7);
@@ -1121,7 +1199,7 @@ mod tests {
         let repo2 = SqliteUserRepository::open(&db_path).expect("re-open");
         assert!(matches!(
             repo2.find_by_handle("alice"),
-            NameLookupResult::Found(_)
+            Ok(NameLookupResult::Found(_))
         ));
     }
 }

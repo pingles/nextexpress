@@ -136,13 +136,19 @@ where
                 }
             };
             let trimmed = line.trim();
-            let transition = session_flow::name_typed(
+            let transition = match session_flow::name_typed(
                 session,
                 trimmed,
                 self.services.user_repo.as_ref(),
                 self.services.new_user_gate.as_ref(),
                 SystemTime::now(),
-            );
+            ) {
+                Ok(transition) => transition,
+                Err(error) => {
+                    eprintln!("login: failed to resolve typed user name: {error}");
+                    return Ok(LoginOutcome::Aborted);
+                }
+            };
             match transition {
                 NameTypedTransition::Authenticated(authenticating) => {
                     return self.authenticate(authenticating).await;

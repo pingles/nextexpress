@@ -25,7 +25,7 @@ use crate::domain::messaging::edit_mail_header::{
 use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::move_mail::{move_mail as move_mail_rule, MoveMailError};
 use crate::domain::session::typed::MenuSession;
-use crate::domain::user_repository::{NameLookupResult, UserRepository};
+use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
 
 /// Outcome of a `K <num>` command.
 enum DeleteOutcome {
@@ -76,6 +76,8 @@ enum EditHeaderOutcome {
     NoMailBase,
     /// The supplied new addressee could not be resolved.
     UnknownAddressee,
+    /// A repository lookup failed while resolving the new addressee.
+    LookupFailed(UserRepositoryError),
     /// The edit was applied.
     Done,
     /// The domain rule rejected the request.
@@ -156,10 +158,11 @@ where
             None
         } else {
             match user_repo.find_by_handle(trimmed) {
-                NameLookupResult::Found(user) => {
+                Ok(NameLookupResult::Found(user)) => {
                     Some((user.handle().to_string(), Some(user.slot_number())))
                 }
-                NameLookupResult::NotFound => return EditHeaderOutcome::UnknownAddressee,
+                Ok(NameLookupResult::NotFound) => return EditHeaderOutcome::UnknownAddressee,
+                Err(error) => return EditHeaderOutcome::LookupFailed(error),
             }
         }
     } else {
@@ -314,6 +317,10 @@ where
             }
             EditHeaderOutcome::UnknownAddressee => {
                 self.write_and_flush(FORWARD_UNKNOWN_USER_LINE).await?;
+            }
+            EditHeaderOutcome::LookupFailed(error) => {
+                eprintln!("EH command: failed to resolve user: {error}");
+                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
             }
             EditHeaderOutcome::Done => {
                 self.write_and_flush(EDIT_HEADER_DONE_LINE).await?;

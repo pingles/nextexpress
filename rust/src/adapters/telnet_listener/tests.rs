@@ -1270,7 +1270,7 @@ async fn full_new_user_registration_persists_account_and_lands_in_menu() {
     );
 
     // Account persisted with spec defaults.
-    match repo.find_by_handle("newbie") {
+    match repo.find_by_handle("newbie").expect("lookup") {
         NameLookupResult::Found(user) => {
             assert!(user.is_new_user());
             assert_eq!(user.location(), Some("Townsville"));
@@ -1563,7 +1563,7 @@ async fn new_user_password_gate_blocks_registration_until_passed() {
         "expected gated-registration to complete: {buf:?}"
     );
 
-    match repo.find_by_handle("newbie") {
+    match repo.find_by_handle("newbie").expect("lookup") {
         NameLookupResult::Found(user) => {
             assert!(user.is_new_user());
         }

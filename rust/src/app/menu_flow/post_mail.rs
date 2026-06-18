@@ -35,7 +35,7 @@ use crate::domain::messaging::post_mail::{
     post_mail as post_mail_rule, PostMailDraft, PostMailError,
 };
 use crate::domain::session::typed::MenuSession;
-use crate::domain::user_repository::{NameLookupResult, UserRepository};
+use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
 
 /// Already-collected fields for an `E` command.
 struct PostMailInput {
@@ -72,6 +72,8 @@ enum PostMailOutcome {
     RecipientNoAccess,
     /// No sysop user exists for `C`.
     NoSysop,
+    /// A repository lookup failed while resolving an addressee.
+    LookupFailed(UserRepositoryError),
     /// The message was persisted.
     Posted(Mail),
     /// The domain rule rejected the draft, or the store failed.
@@ -99,8 +101,9 @@ where
         Recipient::Broadcast(kind, label) => (kind, label, None),
         Recipient::Individual(typed) => {
             let resolved = match user_repo.find_by_handle(&typed) {
-                NameLookupResult::Found(user) => *user,
-                NameLookupResult::NotFound => return PostMailOutcome::UnknownUser,
+                Ok(NameLookupResult::Found(user)) => *user,
+                Ok(NameLookupResult::NotFound) => return PostMailOutcome::UnknownUser,
+                Err(error) => return PostMailOutcome::LookupFailed(error),
             };
             let Some(conference) = conferences
                 .iter()
@@ -166,8 +169,9 @@ where
     };
 
     let sysop = match user_repo.find_sysop() {
-        NameLookupResult::Found(user) => *user,
-        NameLookupResult::NotFound => return PostMailOutcome::NoSysop,
+        Ok(NameLookupResult::Found(user)) => *user,
+        Ok(NameLookupResult::NotFound) => return PostMailOutcome::NoSysop,
+        Err(error) => return PostMailOutcome::LookupFailed(error),
     };
 
     let Some(allowed_addressing) = super::allowed_addressing_for(conferences, visit_msgbase) else {
@@ -357,6 +361,10 @@ where
             }
             PostMailOutcome::NoSysop => {
                 self.write_and_flush(NO_SYSOP_LINE).await?;
+            }
+            PostMailOutcome::LookupFailed(error) => {
+                eprintln!("{command_label} command: failed to resolve user: {error}");
+                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
             }
             PostMailOutcome::Posted(mail) => {
                 let line = render_post_success(mail.number());

@@ -31,7 +31,7 @@ use crate::domain::messaging::reply_to_mail::{
     reply_to_mail as reply_to_mail_rule, ReplyToMailDraft, ReplyToMailError,
 };
 use crate::domain::session::typed::MenuSession;
-use crate::domain::user_repository::{NameLookupResult, UserRepository};
+use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
 
 /// Caller-collected fields for an `RP <num>` command.
 struct ReplyInput {
@@ -70,6 +70,8 @@ enum ReplyForwardOutcome {
     SourceNotFound,
     /// The addressee on a forward could not be resolved.
     UnknownAddressee,
+    /// A repository lookup failed while resolving the forward addressee.
+    LookupFailed(UserRepositoryError),
     /// The mail was persisted.
     Posted(Mail),
     /// The reply rule rejected the draft.
@@ -148,8 +150,9 @@ where
 
     let trimmed = input.typed_to.trim();
     let resolved = match user_repo.find_by_handle(trimmed) {
-        NameLookupResult::Found(user) => *user,
-        NameLookupResult::NotFound => return ReplyForwardOutcome::UnknownAddressee,
+        Ok(NameLookupResult::Found(user)) => *user,
+        Ok(NameLookupResult::NotFound) => return ReplyForwardOutcome::UnknownAddressee,
+        Err(error) => return ReplyForwardOutcome::LookupFailed(error),
     };
 
     let from_name = session.user().handle().to_string();
@@ -264,6 +267,10 @@ where
             }
             ReplyForwardOutcome::UnknownAddressee => {
                 self.write_and_flush(FORWARD_UNKNOWN_USER_LINE).await?;
+            }
+            ReplyForwardOutcome::LookupFailed(error) => {
+                eprintln!("{command_label} command: failed to resolve user: {error}");
+                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
             }
             ReplyForwardOutcome::Posted(mail) => {
                 let line = render_post_success(mail.number());

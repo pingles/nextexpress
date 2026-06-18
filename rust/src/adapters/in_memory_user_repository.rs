@@ -28,21 +28,21 @@ impl InMemoryUserRepository {
 }
 
 impl UserRepository for InMemoryUserRepository {
-    fn find_by_handle(&self, typed: &str) -> NameLookupResult {
+    fn find_by_handle(&self, typed: &str) -> Result<NameLookupResult, UserRepositoryError> {
         let users = self.users.lock().expect("user repository mutex");
         if let Some(user) = users.iter().find(|u| u.handle() == typed) {
-            NameLookupResult::Found(Box::new(user.clone()))
+            Ok(NameLookupResult::Found(Box::new(user.clone())))
         } else {
-            NameLookupResult::NotFound
+            Ok(NameLookupResult::NotFound)
         }
     }
 
-    fn find_sysop(&self) -> NameLookupResult {
+    fn find_sysop(&self) -> Result<NameLookupResult, UserRepositoryError> {
         let users = self.users.lock().expect("user repository mutex");
         if let Some(user) = users.iter().find(|u| u.is_sysop()) {
-            NameLookupResult::Found(Box::new(user.clone()))
+            Ok(NameLookupResult::Found(Box::new(user.clone())))
         } else {
-            NameLookupResult::NotFound
+            Ok(NameLookupResult::NotFound)
         }
     }
 
@@ -114,7 +114,7 @@ mod tests {
     #[test]
     fn existing_handle_returns_found() {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        match repo.find_by_handle("alice") {
+        match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(user) => assert_eq!(user.handle(), "alice"),
             NameLookupResult::NotFound => panic!("expected found, got not-found"),
         }
@@ -125,8 +125,20 @@ mod tests {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
         assert!(matches!(
             repo.find_by_handle("bob"),
-            NameLookupResult::NotFound
+            Ok(NameLookupResult::NotFound)
         ));
+    }
+
+    #[test]
+    fn sysop_lookup_returns_found_for_slot_one() {
+        let repo = InMemoryUserRepository::new(vec![user_with_handle(1, "sysop")]);
+        assert!(matches!(repo.find_sysop(), Ok(NameLookupResult::Found(_))));
+    }
+
+    #[test]
+    fn sysop_lookup_returns_not_found_when_absent() {
+        let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
+        assert!(matches!(repo.find_sysop(), Ok(NameLookupResult::NotFound)));
     }
 
     #[test]
@@ -137,7 +149,7 @@ mod tests {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
         assert!(matches!(
             repo.find_by_handle("NEW"),
-            NameLookupResult::NotFound
+            Ok(NameLookupResult::NotFound)
         ));
     }
 
@@ -146,7 +158,7 @@ mod tests {
         let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
         assert!(matches!(
             repo.find_by_handle("a*"),
-            NameLookupResult::NotFound
+            Ok(NameLookupResult::NotFound)
         ));
     }
 
@@ -157,7 +169,7 @@ mod tests {
         user.bump_times_called();
         repo.save(user).expect("save");
 
-        match repo.find_by_handle("alice") {
+        match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(user) => assert_eq!(user.times_called(), 1),
             NameLookupResult::NotFound => panic!("expected found, got not-found"),
         }
@@ -206,7 +218,7 @@ mod tests {
             .expect("create");
         assert!(matches!(
             repo.find_by_handle("alice"),
-            NameLookupResult::Found(_)
+            Ok(NameLookupResult::Found(_))
         ));
     }
 
@@ -237,7 +249,7 @@ mod tests {
         // No user should have been persisted.
         assert!(matches!(
             repo.find_by_handle("alice"),
-            NameLookupResult::NotFound
+            Ok(NameLookupResult::NotFound)
         ));
     }
 }

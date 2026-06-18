@@ -508,10 +508,10 @@ mod tests {
     }
 
     impl UserRepository for SaveFailingRepo {
-        fn find_by_handle(&self, typed: &str) -> NameLookupResult {
+        fn find_by_handle(&self, typed: &str) -> Result<NameLookupResult, UserRepositoryError> {
             self.inner.find_by_handle(typed)
         }
-        fn find_sysop(&self) -> NameLookupResult {
+        fn find_sysop(&self) -> Result<NameLookupResult, UserRepositoryError> {
             self.inner.find_sysop()
         }
         fn save(&self, user: User) -> Result<(), UserRepositoryError> {

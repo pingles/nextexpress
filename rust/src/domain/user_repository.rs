@@ -35,6 +35,33 @@ pub enum UserRepositoryError {
         /// Handle on the user record that could not be saved.
         handle: String,
     },
+    /// The backing store failed while running a repository operation.
+    #[error("user repository storage error during {context}: {message}")]
+    Storage {
+        /// Short operation label for logs and tests.
+        context: &'static str,
+        /// Backend error message stripped of backend-specific types.
+        message: String,
+    },
+}
+
+impl UserRepositoryError {
+    /// Builds a storage error from an adapter-specific error value.
+    ///
+    /// # Parameters
+    /// - `context`: short operation label such as `"lookup"` or `"save"`.
+    /// - `error`: backend error being translated at the adapter boundary.
+    ///
+    /// # Returns
+    /// A repository error that preserves the failure as an operational
+    /// storage fault rather than a normal domain outcome.
+    #[must_use]
+    pub fn storage(context: &'static str, error: impl std::fmt::Display) -> Self {
+        Self::Storage {
+            context,
+            message: error.to_string(),
+        }
+    }
 }
 
 /// Errors returned by [`UserRepository::create_user`].
@@ -55,6 +82,35 @@ pub enum UserCreationError {
         /// Handle that collided with an existing record.
         handle: String,
     },
+    /// The backing store failed while allocating or persisting the user.
+    #[error("user creation storage error during {context}: {message}")]
+    Storage {
+        /// Short operation label for logs and tests.
+        context: &'static str,
+        /// Backend error message stripped of backend-specific types.
+        message: String,
+    },
+}
+
+impl UserCreationError {
+    /// Builds a creation storage error from an adapter-specific error
+    /// value.
+    ///
+    /// # Parameters
+    /// - `context`: short operation label such as `"allocate slot"` or
+    ///   `"insert user"`.
+    /// - `error`: backend error being translated at the adapter boundary.
+    ///
+    /// # Returns
+    /// A creation error that preserves the failure as an operational
+    /// storage fault rather than a domain-constructor failure.
+    #[must_use]
+    pub fn storage(context: &'static str, error: impl std::fmt::Display) -> Self {
+        Self::Storage {
+            context,
+            message: error.to_string(),
+        }
+    }
 }
 
 /// Port over the user database.
@@ -67,7 +123,11 @@ pub trait UserRepository {
     ///
     /// # Parameters
     /// - `typed`: handle exactly as the user typed it.
-    fn find_by_handle(&self, typed: &str) -> NameLookupResult;
+    ///
+    /// # Errors
+    /// Returns [`UserRepositoryError`] when the backing store cannot be
+    /// queried or the stored row cannot be decoded into a [`User`].
+    fn find_by_handle(&self, typed: &str) -> Result<NameLookupResult, UserRepositoryError>;
 
     /// Returns the sysop record (slot 1; spec invariant
     /// `User.is_sysop: slot_number = 1`), or
@@ -77,7 +137,10 @@ pub trait UserRepository {
     /// Used by Slice 44's `C` (comment to sysop) command to resolve
     /// the addressee without leaning on the sysop's freely-renamable
     /// handle.
-    fn find_sysop(&self) -> NameLookupResult;
+    /// # Errors
+    /// Returns [`UserRepositoryError`] when the backing store cannot be
+    /// queried or the stored row cannot be decoded into a [`User`].
+    fn find_sysop(&self) -> Result<NameLookupResult, UserRepositoryError>;
 
     /// Persists a changed [`User`] record.
     ///
@@ -101,5 +164,7 @@ pub trait UserRepository {
     ///   rejects `draft` (the repository has not modified its state).
     /// - [`UserCreationError::DuplicateUser`] when the draft's handle
     ///   is already taken.
+    /// - [`UserCreationError::Storage`] when the backing store cannot
+    ///   allocate or persist the row.
     fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError>;
 }

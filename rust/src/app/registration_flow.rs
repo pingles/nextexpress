@@ -199,8 +199,17 @@ where
                 }
                 other => return self.handle_interrupt(session, other).await,
             };
-            if is_handle_available_for_registration(self.services.user_repo.as_ref(), &typed) {
-                return Ok(ReadField::Got(session, typed.trim().to_string()));
+            match is_handle_available_for_registration(self.services.user_repo.as_ref(), &typed) {
+                Ok(true) => return Ok(ReadField::Got(session, typed.trim().to_string())),
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("registration: failed to check handle availability: {error}");
+                    self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
+                        .await?;
+                    return Ok(ReadField::LoggingOff(
+                        session.into_active().apply_carrier_loss(),
+                    ));
+                }
             }
             self.terminal.write(HANDLE_TAKEN_LINE).await?;
             attempts += 1;

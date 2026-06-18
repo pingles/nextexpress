@@ -84,14 +84,25 @@ pub const NEW_USER_REGISTRATION_LITERAL: &str = "NEW";
 /// inline: the empty / reserved gates are format rules and the
 /// repository lookup is a uniqueness query — composing them here
 /// keeps the driver flow free of domain logic.
-pub fn is_handle_available_for_registration<R>(repo: &R, typed: &str) -> bool
+///
+/// # Errors
+/// Returns [`UserRepositoryError`] when the repository cannot check
+/// whether the trimmed handle already exists.
+pub fn is_handle_available_for_registration<R>(
+    repo: &R,
+    typed: &str,
+) -> Result<bool, UserRepositoryError>
 where
     R: UserRepository + ?Sized,
 {
     let trimmed = typed.trim();
-    !trimmed.is_empty()
-        && trimmed != NEW_USER_REGISTRATION_LITERAL
-        && matches!(repo.find_by_handle(trimmed), NameLookupResult::NotFound)
+    if trimmed.is_empty() || trimmed == NEW_USER_REGISTRATION_LITERAL {
+        return Ok(false);
+    }
+    Ok(matches!(
+        repo.find_by_handle(trimmed)?,
+        NameLookupResult::NotFound
+    ))
 }
 
 /// Handles `session.allium:NameTyped`.
@@ -108,13 +119,17 @@ where
 /// The [`IdentifyingSession`] wrapper guarantees the underlying
 /// session state, so the rule's wrong-state failure mode is
 /// unrepresentable here.
+///
+/// # Errors
+/// Returns [`UserRepositoryError`] when the repository cannot resolve
+/// a non-registration handle.
 pub(crate) fn name_typed<R>(
     session: IdentifyingSession,
     typed: &str,
     repo: &R,
     gate: &NewUserGateConfig,
     now: SystemTime,
-) -> NameTypedTransition
+) -> Result<NameTypedTransition, UserRepositoryError>
 where
     R: UserRepository + ?Sized,
 {
@@ -130,13 +145,13 @@ where
             NewUserRequestOutcome::Rejected => NameTypedOutcome::NewUserRegistrationDisallowed,
         }
     } else {
-        match repo.find_by_handle(typed) {
+        match repo.find_by_handle(typed)? {
             NameLookupResult::Found(user) => inner.record_identified_user(typed, *user),
             NameLookupResult::NotFound => inner.record_unknown_name(now),
         }
         .expect("IdentifyingSession guarantees Identifying state")
     };
-    match outcome {
+    let transition = match outcome {
         NameTypedOutcome::Authenticated => {
             NameTypedTransition::Authenticated(AuthenticatingSession::from_session(inner))
         }
@@ -155,7 +170,8 @@ where
         NameTypedOutcome::SessionEnded => {
             NameTypedTransition::Ended(EndedSession::from_session(inner))
         }
-    }
+    };
+    Ok(transition)
 }
 
 /// Configuration for the new-user registration gate, threaded through
@@ -717,21 +733,21 @@ mod tests {
     }
 
     impl UserRepository for TestRepo {
-        fn find_by_handle(&self, typed: &str) -> NameLookupResult {
+        fn find_by_handle(&self, typed: &str) -> Result<NameLookupResult, UserRepositoryError> {
             let users = self.users.lock().unwrap();
             if let Some(user) = users.iter().find(|u| u.handle() == typed) {
-                NameLookupResult::Found(Box::new(user.clone()))
+                Ok(NameLookupResult::Found(Box::new(user.clone())))
             } else {
-                NameLookupResult::NotFound
+                Ok(NameLookupResult::NotFound)
             }
         }
 
-        fn find_sysop(&self) -> NameLookupResult {
+        fn find_sysop(&self) -> Result<NameLookupResult, UserRepositoryError> {
             let users = self.users.lock().unwrap();
             if let Some(user) = users.iter().find(|u| u.is_sysop()) {
-                NameLookupResult::Found(Box::new(user.clone()))
+                Ok(NameLookupResult::Found(Box::new(user.clone())))
             } else {
-                NameLookupResult::NotFound
+                Ok(NameLookupResult::NotFound)
             }
         }
 
@@ -864,7 +880,8 @@ mod tests {
             &repo,
             &open_gate(),
             SystemTime::UNIX_EPOCH,
-        );
+        )
+        .expect("name lookup");
 
         let NameTypedTransition::Authenticated(auth) = transition else {
             panic!("expected Authenticated transition");
@@ -886,7 +903,8 @@ mod tests {
             &repo,
             &open_gate(),
             SystemTime::UNIX_EPOCH,
-        );
+        )
+        .expect("name typed");
         let NameTypedTransition::NewUserRegistering {
             session,
             password_required,
@@ -907,7 +925,8 @@ mod tests {
             &repo,
             &locked_gate(),
             SystemTime::UNIX_EPOCH,
-        );
+        )
+        .expect("name typed");
         let NameTypedTransition::Disallowed(logging_off) = transition else {
             panic!("expected Disallowed transition");
         };
@@ -923,7 +942,8 @@ mod tests {
             &repo,
             &password_gate("letmein"),
             SystemTime::UNIX_EPOCH,
-        );
+        )
+        .expect("name typed");
         let NameTypedTransition::NewUserRegistering {
             session,
             password_required,
@@ -1340,7 +1360,7 @@ mod tests {
         assert_eq!(session.time_remaining(), Duration::from_mins(30));
 
         // Repository carries the new account.
-        match repo.find_by_handle("newbie") {
+        match repo.find_by_handle("newbie").expect("lookup") {
             NameLookupResult::Found(user) => {
                 assert!(user.is_new_user());
                 assert_eq!(user.location(), Some("Townsville"));
