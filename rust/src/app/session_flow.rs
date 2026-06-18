@@ -57,6 +57,16 @@ pub enum EnterMenuFlowError {
     Save(#[from] UserRepositoryError),
 }
 
+/// Outcome returned by [`enter_menu`].
+pub(crate) enum EnterMenuFlowOutcome {
+    /// The session entered the menu and the logon bump was persisted.
+    Menu(MenuSession),
+    /// The user must complete a forced password reset before entering
+    /// the menu. The session remains onboarded so the reset flow can
+    /// run and retry menu entry afterwards.
+    PasswordResetRequired(OnboardedSession),
+}
+
 /// Errors returned by [`finalise_logoff`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FinaliseLogoffFlowError {
@@ -336,26 +346,36 @@ where
 /// Handles `session.allium:EnterMenu`.
 ///
 /// Applies the domain transition and appends the resulting logon caller
-/// log entry.
+/// log entry. When the domain reports a pending forced password reset,
+/// returns the still-onboarded session for the reset sub-flow instead
+/// of treating that branch as an error.
 ///
 /// # Errors
-/// Returns [`EnterMenuFlowError`] when the bound user has
-/// `force_password_reset` set or persistence fails.
+/// Returns [`EnterMenuFlowError`] when persistence fails or an
+/// unexpected session guard fails.
 pub(crate) fn enter_menu<R, L>(
     session: OnboardedSession,
     user_repo: &R,
     caller_log: &L,
     now: SystemTime,
-) -> Result<MenuSession, EnterMenuFlowError>
+) -> Result<EnterMenuFlowOutcome, EnterMenuFlowError>
 where
     R: UserRepository + ?Sized,
     L: CallerLogAppender + ?Sized,
 {
     let mut inner = session.into_inner();
-    let entry = inner.enter_menu(now)?;
+    let entry = match inner.enter_menu(now) {
+        Ok(entry) => entry,
+        Err(EnterMenuError::PasswordResetPending) => {
+            return Ok(EnterMenuFlowOutcome::PasswordResetRequired(
+                OnboardedSession::from_session(inner),
+            ));
+        }
+        Err(error) => return Err(EnterMenuFlowError::Session(error)),
+    };
     save_bound_user(&inner, user_repo)?;
     caller_log.append(entry);
-    Ok(MenuSession::from_session(inner))
+    Ok(EnterMenuFlowOutcome::Menu(MenuSession::from_session(inner)))
 }
 
 /// Handles `session.allium:FinaliseLogoff`.
@@ -1061,11 +1081,39 @@ mod tests {
             panic!("expected Onboarded transition");
         };
 
-        let menu = enter_menu(onboarded, &repo, &log, SystemTime::UNIX_EPOCH).unwrap();
+        let menu = match enter_menu(onboarded, &repo, &log, SystemTime::UNIX_EPOCH).unwrap() {
+            EnterMenuFlowOutcome::Menu(menu) => menu,
+            EnterMenuFlowOutcome::PasswordResetRequired(_) => {
+                panic!("reset should not be required")
+            }
+        };
 
         assert_eq!(menu.into_inner().state(), SessionState::Menu);
         assert!(log.entries().iter().any(|e| e.text.contains("Logon:")));
         assert_eq!(repo.find_saved("alice").times_called(), 1);
+    }
+
+    #[test]
+    fn enter_menu_returns_reset_required_without_consuming_session() {
+        let repo = TestRepo::new(vec![alice_with_reset_pending()]);
+        let log = TestLog::default();
+        let onboarded = OnboardedSession::from_session(session_at_onboarded_with_reset_pending());
+
+        let outcome =
+            enter_menu(onboarded, &repo, &log, SystemTime::UNIX_EPOCH).expect("enter menu flow");
+
+        let EnterMenuFlowOutcome::PasswordResetRequired(onboarded) = outcome else {
+            panic!("expected reset-required outcome");
+        };
+        let session = onboarded.into_inner();
+        assert_eq!(session.state(), SessionState::Onboarded);
+        assert!(session.user().unwrap().force_password_reset());
+        assert_eq!(
+            repo.find_saved("alice").times_called(),
+            0,
+            "logon bump waits until password reset succeeds"
+        );
+        assert!(log.entries().is_empty());
     }
 
     #[test]
@@ -1428,7 +1476,12 @@ mod tests {
         .unwrap() else {
             panic!("expected Onboarded transition");
         };
-        let menu = enter_menu(onboarded, &repo, &log, SystemTime::UNIX_EPOCH).unwrap();
+        let menu = match enter_menu(onboarded, &repo, &log, SystemTime::UNIX_EPOCH).unwrap() {
+            EnterMenuFlowOutcome::Menu(menu) => menu,
+            EnterMenuFlowOutcome::PasswordResetRequired(_) => {
+                panic!("reset should not be required")
+            }
+        };
         let logging_off = menu.user_requests_logoff();
 
         let ended = finalise_logoff(logging_off, &repo, &log, SystemTime::UNIX_EPOCH).unwrap();

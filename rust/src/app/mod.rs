@@ -24,6 +24,7 @@ pub mod mail_stores;
 pub mod menu_command;
 pub mod menu_flow;
 pub mod node_pool;
+pub mod password_reset_flow;
 pub mod registration_flow;
 pub mod runtime;
 pub mod screens;

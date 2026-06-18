@@ -23,6 +23,7 @@ use std::time::SystemTime;
 
 use crate::app::login_flow::{LoginFlow, LoginOutcome};
 use crate::app::menu_flow::MenuFlow;
+use crate::app::password_reset_flow::{PasswordResetFlow, PasswordResetOutcome};
 use crate::app::registration_flow::{RegistrationFlow, RegistrationOutcome};
 use crate::app::services::AppServices;
 use crate::app::session_flow;
@@ -77,6 +78,12 @@ struct AutoRejoinAnnouncement {
     conference_number: u32,
     msgbase_number: u32,
     name_type_promoted_to: Option<NameType>,
+}
+
+enum EnterMenuDriverOutcome {
+    Menu(MenuSession),
+    LoggingOff(LoggingOffSession),
+    Aborted,
 }
 
 impl<T> SessionDriver<T>
@@ -163,27 +170,24 @@ where
                         // scan can reuse the `MenuSession` read-it-now flow —
                         // the legacy runs `confScan` with the user already
                         // fully logged on, before the join announcement.
-                        let mut menu = match self.enter_menu(session) {
-                            Ok(menu) => menu,
-                            Err(error) => {
-                                // Persistence failed entering the menu; the
-                                // caller's logon state is unsaved, so close
-                                // the connection rather than admit them.
-                                eprintln!("login: failed to persist user on menu entry: {error}");
-                                return Ok(());
+                        match self.enter_menu_after_password_reset(session).await? {
+                            EnterMenuDriverOutcome::Menu(mut menu) => {
+                                MenuFlow::new(&mut self.terminal, &self.services)
+                                    .run_logon_conference_scan(&mut menu)
+                                    .await?;
+                                // Replay the deferred auto-rejoin
+                                // announcement, then the login stats (read
+                                // after the `enter_menu` bump, matching the
+                                // legacy `statPrintUser` order).
+                                self.announce_auto_rejoin(&announcement).await?;
+                                self.render_login_stats(&menu).await?;
+                                MenuFlow::new(&mut self.terminal, &self.services)
+                                    .run(menu)
+                                    .await?
                             }
-                        };
-                        MenuFlow::new(&mut self.terminal, &self.services)
-                            .run_logon_conference_scan(&mut menu)
-                            .await?;
-                        // Replay the deferred auto-rejoin announcement, then
-                        // the login stats (read after the `enter_menu` bump,
-                        // matching the legacy `statPrintUser` order).
-                        self.announce_auto_rejoin(&announcement).await?;
-                        self.render_login_stats(&menu).await?;
-                        MenuFlow::new(&mut self.terminal, &self.services)
-                            .run(menu)
-                            .await?
+                            EnterMenuDriverOutcome::LoggingOff(logging_off) => logging_off,
+                            EnterMenuDriverOutcome::Aborted => return Ok(()),
+                        }
                     }
                     // The no-access line tells the user why their session
                     // is closing — the caller-log finalise entry already
@@ -269,29 +273,57 @@ where
         self.terminal.flush().await
     }
 
+    async fn enter_menu_after_password_reset(
+        &mut self,
+        mut onboarded: OnboardedSession,
+    ) -> Result<EnterMenuDriverOutcome, T::Error> {
+        loop {
+            match self.enter_menu(onboarded) {
+                Ok(session_flow::EnterMenuFlowOutcome::Menu(menu)) => {
+                    return Ok(EnterMenuDriverOutcome::Menu(menu));
+                }
+                Ok(session_flow::EnterMenuFlowOutcome::PasswordResetRequired(reset_session)) => {
+                    match PasswordResetFlow::new(&mut self.terminal, &self.services)
+                        .run(reset_session)
+                        .await?
+                    {
+                        PasswordResetOutcome::Onboarded(session) => {
+                            onboarded = session;
+                        }
+                        PasswordResetOutcome::LoggingOff(logging_off) => {
+                            return Ok(EnterMenuDriverOutcome::LoggingOff(logging_off));
+                        }
+                        PasswordResetOutcome::Aborted => {
+                            return Ok(EnterMenuDriverOutcome::Aborted)
+                        }
+                    }
+                }
+                Err(error) => {
+                    // Persistence failed entering the menu; the caller's
+                    // logon state is unsaved, so close the connection
+                    // rather than admit them.
+                    eprintln!("login: failed to persist user on menu entry: {error}");
+                    return Ok(EnterMenuDriverOutcome::Aborted);
+                }
+            }
+        }
+    }
+
     /// Enters the menu, persisting the logon bump.
-    ///
-    /// Returns `Err` only when persistence fails — the driver then
-    /// closes the connection rather than admitting the caller with
-    /// unsaved state. The `force_password_reset` path (the `Session`
-    /// arm) is not wired yet (it lands with the password-reset slice)
-    /// and still asserts.
     fn enter_menu(
         &mut self,
         onboarded: OnboardedSession,
-    ) -> Result<MenuSession, UserRepositoryError> {
+    ) -> Result<session_flow::EnterMenuFlowOutcome, UserRepositoryError> {
         match session_flow::enter_menu(
             onboarded,
             self.services.user_repo.as_ref(),
             self.services.caller_log.as_ref(),
             SystemTime::now(),
         ) {
-            Ok(menu) => Ok(menu),
+            Ok(outcome) => Ok(outcome),
             Err(session_flow::EnterMenuFlowError::Save(error)) => Err(error),
             Err(session_flow::EnterMenuFlowError::Session(error)) => {
-                panic!(
-                    "OnboardedSession with no force_password_reset enters menu cleanly: {error:?}"
-                )
+                unreachable!("OnboardedSession enter_menu guard failed unexpectedly: {error:?}");
             }
         }
     }
@@ -728,6 +760,168 @@ mod tests {
         assert!(
             output.windows(no_access.len()).any(|w| w == no_access),
             "the no-conference-access path should have been taken"
+        );
+    }
+
+    #[tokio::test]
+    async fn driver_runs_forced_password_reset_before_menu_entry() {
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        alice.set_force_password_reset(true);
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
+        let caller_log = Arc::new(InMemoryCallerLog::new());
+        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
+        let services = AppServices {
+            user_repo: repo.clone(),
+            hasher: hasher.clone(),
+            caller_log: caller_log.clone(),
+            screens: Arc::new(StaticScreens),
+            conferences: Arc::new(conferences),
+            mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
+                mode: RatioMode::ByFiles,
+                value: 3,
+            },
+            new_user_gate: Arc::new(NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            }),
+            bbs_name: Arc::from("TestBBS"),
+        };
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("Newpass123".to_string()),
+            TerminalRead::Line("Newpass123".to_string()),
+            TerminalRead::Line("G".to_string()),
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver.run().await.expect("driver completes");
+
+        let terminal = driver.into_terminal();
+        let output = terminal.output();
+        assert!(
+            output
+                .windows(crate::app::wire_text::PASSWORD_RESET_REQUIRED_LINE.len())
+                .any(|w| w == crate::app::wire_text::PASSWORD_RESET_REQUIRED_LINE),
+            "forced reset notice should be shown"
+        );
+        assert!(
+            output.windows(b"MENU".len()).any(|w| w == b"MENU"),
+            "successful reset should allow menu entry"
+        );
+        assert_eq!(
+            terminal.echo_modes,
+            vec![
+                TerminalEcho::Visible,
+                TerminalEcho::Visible,
+                TerminalEcho::Masked,
+                TerminalEcho::Masked,
+                TerminalEcho::Masked,
+                TerminalEcho::Visible,
+            ]
+        );
+        let loaded = match repo.find_by_handle("alice").expect("lookup") {
+            NameLookupResult::Found(user) => *user,
+            NameLookupResult::NotFound => panic!("alice should still exist"),
+        };
+        assert!(!loaded.force_password_reset());
+        assert!(
+            hasher
+                .verify_password(&loaded, "Newpass123")
+                .expect("verify"),
+            "new password should authenticate after reset"
+        );
+        assert!(caller_log
+            .entries()
+            .iter()
+            .any(|entry| entry.text.contains("Logon:")));
+        assert!(caller_log
+            .entries()
+            .iter()
+            .any(|entry| entry.text.contains("Logoff:")));
+    }
+
+    #[tokio::test]
+    async fn driver_disconnects_when_forced_password_reset_is_not_completed() {
+        use crate::domain::conference::{Conference, MessageBase};
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        alice.set_force_password_reset(true);
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
+        let services = AppServices {
+            user_repo: repo,
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(StaticScreens),
+            conferences: Arc::new(conferences),
+            mail_stores: test_mail_stores(),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
+                mode: RatioMode::ByFiles,
+                value: 3,
+            },
+            new_user_gate: Arc::new(NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            }),
+            bbs_name: Arc::from("TestBBS"),
+        };
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("secret".to_string()),
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver.run().await.expect("driver completes");
+
+        let output = driver.into_terminal().output().to_vec();
+        assert!(
+            output
+                .windows(crate::app::wire_text::PASSWORD_RESET_EXHAUSTED_LINE.len())
+                .any(|w| w == crate::app::wire_text::PASSWORD_RESET_EXHAUSTED_LINE),
+            "reset exhaustion notice should be shown"
+        );
+        assert!(
+            !output.windows(b"MENU".len()).any(|w| w == b"MENU"),
+            "failed reset should not admit the caller"
         );
     }
 

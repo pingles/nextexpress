@@ -184,10 +184,9 @@ impl_constructor!(NewUserRegisteringSession, NewUserRegistering);
 impl_record_input!(NewUserRegisteringSession);
 
 /// Wraps a [`Session`] in [`SessionState::Onboarded`]. Authentication
-/// has succeeded; the on-logon screens haven't run yet. There's no
-/// reading step in this phase (the driver moves through it directly
-/// into `Menu`), so it doesn't appear in [`ActivePhase`] and doesn't
-/// expose `record_input`.
+/// has succeeded; the on-logon screens haven't run yet. The normal
+/// path moves through it directly into `Menu`, but forced password
+/// reset reads a new password while still onboarded.
 pub(crate) struct OnboardedSession {
     session: Session,
 }
@@ -237,9 +236,16 @@ impl OnboardedSession {
             .user()
             .expect("Onboarded phase always has a bound user")
     }
+
+    /// Wraps `self` in the [`ActivePhase`] enum.
+    #[must_use]
+    pub(crate) fn into_active(self) -> ActivePhase {
+        ActivePhase::Onboarded(self)
+    }
 }
 
 impl_constructor!(OnboardedSession, Onboarded);
+impl_record_input!(OnboardedSession);
 
 /// Wraps a [`Session`] in [`SessionState::Menu`]. The user is at the
 /// conference command prompt.
@@ -443,9 +449,6 @@ impl_constructor!(EndedSession, Ended);
 /// currently owns and get back a [`LoggingOffSession`] without
 /// `match`ing inline at every read site.
 ///
-/// `Onboarded` is excluded because the driver passes through it
-/// without reading; on-logon screen scripting will revisit this when
-/// it lands.
 pub(crate) enum ActivePhase {
     /// Wrapped [`IdentifyingSession`].
     Identifying(IdentifyingSession),
@@ -453,6 +456,8 @@ pub(crate) enum ActivePhase {
     Authenticating(AuthenticatingSession),
     /// Wrapped [`NewUserRegisteringSession`].
     NewUserRegistering(NewUserRegisteringSession),
+    /// Wrapped [`OnboardedSession`].
+    Onboarded(OnboardedSession),
     /// Wrapped [`MenuSession`].
     Menu(MenuSession),
 }
@@ -485,6 +490,7 @@ impl ActivePhase {
             Self::Identifying(s) => s.session,
             Self::Authenticating(s) => s.session,
             Self::NewUserRegistering(s) => s.session,
+            Self::Onboarded(s) => s.session,
             Self::Menu(s) => s.session,
         }
     }
