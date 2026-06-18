@@ -735,6 +735,36 @@ folded both ways) is **INFERENCE** — only those cases were captured.
 | Page positions ≥ page 3 | NextScan pages at a flat 29 lines (matches captured pages 1–2 exactly); the door's own counter drifts from page 3 |
 | `?` redraw window | NextScan redraws exactly the current page's lines; the door redraws a drifted window of its internal page memory |
 
+### FR — reverse listing (slice D3)
+
+**Parity target.** Same AquaScan door, reverse mode. `internalCommandFR`
+(`express.e:24883`) → `displayFileList(params, TRUE)` is the shadowed
+stock path (diff record only); the wire is AquaScan's.
+
+**MATCH (byte-for-byte against the captures).** Banner right label
+`'fr ?' for options` with the dash run flexed 40→39 to hold the 77-col
+frame; `Reverse-scanning dir N... Ok! / Nothing found!` header (no
+"from top"); per-dir rows emitted newest-first (the area's rows
+reversed); bare `FR` skips the `Directories:` prompt and reverse-scans
+the upload/highest dir (`ae_tierd_aquascan3.txt` S10 `FR 1`, S11 bare
+`FR`). All frame/colour/pager/footer/exit-tail behaviour is the D2 `F`
+code path unchanged.
+
+**BEHAVIOURAL (source-derived where AquaScan is silent).** `FR A`
+descends the multi-dir span highest→lowest — `displayFileList`'s reverse
+loop walks `dirScan→startDir` (`fLLoop--`, `express.e:27654`) — and each
+dir's rows reverse; the captures only exercise `FR 1` and bare `FR`
+(single dir), so the multi-dir order is `express.e`-derived, not
+captured. Bare `FR`'s prompt-skip is an AquaScan-only divergence from the
+original (the internal bare `FR` would prompt via `getDirSpan('')`); the
+board-as-shipped door is the Tier-D authority, so bare `F` (prompts) and
+bare `FR` (no prompt) are deliberately asymmetric.
+
+**UNVERIFIED.** `FR ?` (reuses the `F ?` help — no distinct `'fr ?'`
+help screen captured); `FR H` reverse hold (uncaptured; the hold header
+stays the forward `Scanning HOLD dir from top...`, matching
+`displayFileList :27688` which emits it unconditionally).
+
 **BEHAVIOURAL (deliberate, documented).**
 
 | Divergence | Detail |
@@ -746,8 +776,10 @@ folded both ways) is **INFERENCE** — only those cases were captured.
 highest-dir error; unknown `More?` keys continue; the counter reset
 at dir transitions; zero-area conferences; the `H` prompt option for
 non-hold users; framed rendering of real held files (unit-pinned
-only); whether the door accepts `F R 1`/`Q`-token/`F W` rather than
-Argument-erroring (capture before D3 flips `F R`). The
+only); whether the door accepts the `Q`-token/`F W` forms rather than
+Argument-erroring (`F R` with a space is now settled — D3 ships the
+concatenated `FR` reverse token and keeps `F R` on the Argument-error
+path, `express.e:28310`). The
 help-advertised navigation verbs (`3`/`9`/arrows/`7`/`5`/`K`/`L`)
 and cross-tier verbs (`D`/`X`/`V`/`O`/`Z`/`A`) are
 advertised-but-inert — unknown keys continue, the door's own

@@ -39,9 +39,11 @@ where
     ) -> Result<(), T::Error> {
         match arg {
             FileListArg::Invalid => self.file_list_argument_error().await,
-            FileListArg::Span { span, non_stop } => {
-                self.file_list_span(session, span, non_stop).await
-            }
+            FileListArg::Span {
+                span,
+                non_stop,
+                reverse,
+            } => self.file_list_span(session, span, non_stop, reverse).await,
             FileListArg::Prompt => self.file_list_prompt(session).await,
             FileListArg::Help => {
                 // `F ?` (`ae_tierd_aquascan3.txt` S1).
@@ -105,7 +107,9 @@ where
             return self.terminal.flush().await;
         };
         self.terminal.write(b"\r\n").await?;
-        self.run_span(&mut state, conference, span, max, &areas, flagged)
+        // The bare-`F` directories prompt is a forward scan (bare `FR`
+        // never reaches here — it parses straight to a reverse span).
+        self.run_span(&mut state, conference, span, &areas, flagged, false)
             .await
     }
 
@@ -121,18 +125,19 @@ where
         self.terminal.flush().await
     }
 
-    /// Runs an immediate scan over `span`'s directories.
+    /// Runs an immediate scan over `span`'s directories, forward (`F`)
+    /// or reverse (`FR`).
     async fn file_list_span(
         &mut self,
         session: &mut MenuSession,
         span: FileSpan,
         non_stop: bool,
+        reverse: bool,
     ) -> Result<(), T::Error> {
         // Per-task session isolation: the menu loop guarantees a
         // joined conference before any command dispatches.
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.services.file_repo.areas_in_conference(conference);
-        let max = areas.last().map_or(0, FileArea::number);
         // Mutable flag set for the whole span: the renderer reborrows
         // it immutably at the assemble call, the `F`/`R` verbs mutate
         // it. `session` is otherwise untouched from here on.
@@ -141,7 +146,7 @@ where
 
         // Entry preamble — every argument form (§1.1). Counted: the
         // captured page-1 More? boundary includes these lines.
-        for line in [&b"\x1b[0m"[..], wire::LISTING_BANNER, b""] {
+        for line in [&b"\x1b[0m"[..], wire::listing_banner(reverse), b""] {
             if self
                 .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()), flagged)
                 .await?
@@ -150,7 +155,7 @@ where
                 return self.finish_listing().await;
             }
         }
-        self.run_span(&mut state, conference, span, max, &areas, flagged)
+        self.run_span(&mut state, conference, span, &areas, flagged, reverse)
             .await
     }
 
@@ -162,11 +167,12 @@ where
         state: &mut ScanState,
         conference: u32,
         span: FileSpan,
-        max: u32,
         areas: &[FileArea],
         flagged: &mut crate::domain::files::flagged::FlaggedFiles,
+        reverse: bool,
     ) -> Result<(), T::Error> {
-        let dirs: Vec<u32> = match span {
+        let max = areas.last().map_or(0, FileArea::number);
+        let mut dirs: Vec<u32> = match span {
             FileSpan::Dir(n) => {
                 if n < 1 || n > i64::from(max) {
                     self.terminal.write(&wire::highest_dir_error(max)).await?;
@@ -201,10 +207,22 @@ where
                 return self.finish_listing().await;
             }
         };
+        if reverse {
+            // `FR` walks a multi-dir span highest→lowest
+            // (`express.e:27654`). Single-dir spans are a no-op.
+            dirs.reverse();
+        }
 
         for (index, dir) in dirs.iter().enumerate() {
-            let files = self.services.file_repo.find_in_area(conference, *dir);
-            let header = wire::scanning_dir_header(*dir, !files.is_empty());
+            let mut files = self.services.file_repo.find_in_area(conference, *dir);
+            // `FR` lists newest-first — the upload-writer appends rows
+            // chronologically, so reversing the area's rows is the
+            // reverse-chronological order (`express.e` `fileListReverse`
+            // vs `displayIt`).
+            if reverse {
+                files.reverse();
+            }
+            let header = wire::scanning_dir_header(*dir, !files.is_empty(), reverse);
             if self
                 .emit_scan_line(state, wire::ScanLine::raw(header), flagged)
                 .await?

@@ -175,18 +175,37 @@ missed across the unit's modules.
   Scheduled immediately behind the D1+D2 unit (user decision
   2026-06-10): the AquaScan feel is hotkey-driven.
 
-## Slice D3 — `FR` (reverse listing)
+## Slice D3 — `FR` (reverse listing) — **Done**
 
-- **In Scope**
+Landed 2026-06-16. The `FR` token reuses the D2 lister with one
+`reverse: bool` threaded parser → handler → wire. Parity authority and
+the bare-`FR` reconciliation are settled in
+[`designs/2026-06-16-fr-reverse-listing-design.md`](../designs/2026-06-16-fr-reverse-listing-design.md):
+AquaScan board-as-shipped owns the wire bytes and bare-`FR` control
+flow; `express.e` (`displayFileList :27626`, `getDirSpan :26857`) fills
+the gaps where the captures are silent.
+
+- **In Scope (shipped)**
   - Same code path as D2 with `reverse = true`: banner label
-    `'fr ?' for options` (dash run flexes), header
-    `Reverse-scanning dir N... Ok!`, files emitted newest-first.
-  - Captured quirk to honour: bare `FR` skips the directories
-    prompt and starts at the highest dir, descending.
-    (The internal split at `amiexpress/express.e:24887` is the
-    shadowed stock path — diff record only.)
+    `'fr ?' for options` (dash run flexed 40→39 to hold 77 cols),
+    header `Reverse-scanning dir N... Ok!` (no "from top"), files
+    emitted newest-first (the area's rows reversed).
+  - Grammar: `FR` is the concatenated reverse token
+    (`express.e:28310` dispatches the whole code). `FR <n>`/`A`/`U`/`H`
+    /`NS` mirror `F`. Bare `FR` skips the `Directories:` prompt and
+    reverse-scans the **upload/highest dir only** (maps to
+    `FileSpan::Upload`, `ae_tierd_aquascan3.txt` S11) — a deliberate
+    asymmetry with bare `F` (which prompts). The "descending" walk
+    applies to multi-dir spans (`FR A` walks highest→lowest,
+    `express.e:27654` reverse loop), not to bare `FR`.
+  - `F R` with a space is **not** an original reverse form (the
+    original dispatch matches the whole `FR` token); it stays the
+    `F`-with-junk `Argument error!` path.
 - **Out of Scope**
   - Sorting on fields other than upload-date.
+  - `F R` (space) modifier — an AquaScan-help-only grammar, uncaptured
+    being exercised; deferred.
+  - `FR ?` distinct help bytes (reuses the `F ?` help for now).
 
 ## Slice D4 — `Z` (zippy text search, single-area first)
 

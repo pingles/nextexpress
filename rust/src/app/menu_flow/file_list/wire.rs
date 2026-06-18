@@ -59,6 +59,21 @@ const MARKER_TRAILING: &[u8] = b" [X]";
 pub(super) const LISTING_BANNER: &[u8] =
     b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m";
 
+/// The `FR` (reverse) listing banner — the right label is `'fr ?'`, one
+/// visible column wider than `'f ?'`, so the dash run flexes 40→39 to
+/// hold the same 77-col frame (`ae_tierd_aquascan3.txt` S10/S11).
+const LISTING_BANNER_REVERSE: &[u8] =
+    b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]---------------------------------------[ \x1b[36m'fr ?' for options \x1b[34m]--\x1b[0m";
+
+/// Selects the listing banner for a forward (`F`) or reverse (`FR`) scan.
+pub(super) fn listing_banner(reverse: bool) -> &'static [u8] {
+    if reverse {
+        LISTING_BANNER_REVERSE
+    } else {
+        LISTING_BANNER
+    }
+}
+
 /// Help banner — carries the rebranded copyright; dash run stretched
 /// 9→34, 79 visible columns (`ae_tierd_aquascan3.txt:105`). `\u{a9}`
 /// is the copyright sign © re-encoded as UTF-8.
@@ -366,11 +381,18 @@ pub(super) fn visible_columns(bytes: &[u8]) -> usize {
     width
 }
 
+/// Scan header for dir `n`. Forward (`F`):
 /// `Scanning dir N from top... Ok! / Nothing found!`
-/// (`ae_tierd_aquascan3.txt:140`, `ae_tierd_aquascan.txt:522`).
-pub(super) fn scanning_dir_header(n: u32, found: bool) -> Vec<u8> {
+/// (`ae_tierd_aquascan3.txt:140`, `ae_tierd_aquascan.txt:522`). Reverse
+/// (`FR`): `Reverse-scanning dir N... Ok! / Nothing found!` — no
+/// "from top" (`ae_tierd_aquascan3.txt:696`).
+pub(super) fn scanning_dir_header(n: u32, found: bool, reverse: bool) -> Vec<u8> {
     let outcome = if found { "Ok!" } else { "Nothing found!" };
-    format!("Scanning dir {n} from top... {outcome}").into_bytes()
+    if reverse {
+        format!("Reverse-scanning dir {n}... {outcome}").into_bytes()
+    } else {
+        format!("Scanning dir {n} from top... {outcome}").into_bytes()
+    }
 }
 
 /// The hold-directory variant (`ae_tierd_aquascan3.txt:675-687`).
@@ -421,6 +443,39 @@ mod tests {
         assert_eq!(
             visible_width(LISTING_BANNER),
             visible_width(AQUASCAN_LISTING_BANNER),
+        );
+    }
+
+    #[test]
+    fn reverse_listing_banner_swaps_the_label_and_holds_the_frame_width() {
+        // `FR`: the right label grows `'f ?'`→`'fr ?'` (one col wider),
+        // so the dash run flexes 40→39 to keep the 77-col frame
+        // (`ae_tierd_aquascan3.txt` S10/S11).
+        assert_eq!(
+            listing_banner(true),
+            &b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]---------------------------------------[ \x1b[36m'fr ?' for options \x1b[34m]--\x1b[0m"[..],
+        );
+        assert_eq!(visible_width(listing_banner(true)), 77);
+        // Forward selection is byte-identical to the const.
+        assert_eq!(listing_banner(false), LISTING_BANNER);
+    }
+
+    #[test]
+    fn reverse_scan_header_drops_from_top() {
+        // `Reverse-scanning dir N... Ok! / Nothing found!`
+        // (`ae_tierd_aquascan3.txt:696`) — no "from top".
+        assert_eq!(
+            scanning_dir_header(1, true, true),
+            b"Reverse-scanning dir 1... Ok!".to_vec(),
+        );
+        assert_eq!(
+            scanning_dir_header(2, false, true),
+            b"Reverse-scanning dir 2... Nothing found!".to_vec(),
+        );
+        // Forward (reverse=false) keeps the captured "from top" text.
+        assert_eq!(
+            scanning_dir_header(1, true, false),
+            b"Scanning dir 1 from top... Ok!".to_vec(),
         );
     }
 
@@ -538,11 +593,11 @@ mod tests {
     #[test]
     fn scan_headers_match_the_captures() {
         assert_eq!(
-            scanning_dir_header(1, true),
+            scanning_dir_header(1, true, false),
             b"Scanning dir 1 from top... Ok!".to_vec()
         );
         assert_eq!(
-            scanning_dir_header(2, false),
+            scanning_dir_header(2, false, false),
             b"Scanning dir 2 from top... Nothing found!".to_vec(),
         );
         assert_eq!(

@@ -115,19 +115,26 @@ pub(crate) enum FileListArg {
     Prompt,
     /// `F ?`: show the `NextScan` help screen.
     Help,
-    /// `F <dir> [NS]`: scan immediately, optionally without pausing.
+    /// `F <dir> [NS]` / `FR <dir> [NS]`: scan immediately, optionally
+    /// without pausing, optionally in reverse chronological order.
     Span {
         /// Which directories to scan.
         span: FileSpan,
         /// `NS` token present — non-stop scrolling, no pager.
         non_stop: bool,
+        /// `FR` (the reverse token) — list newest-first and, for
+        /// multi-dir spans, walk the directories highest→lowest
+        /// (`amiexpress/express.e:27654`).
+        reverse: bool,
     },
     /// Any other argument form — the captured
     /// `Argument error! Type 'f ?' for help.` path
     /// (`ae_tierd_aquascan4.txt` U4). Includes the unported tokens:
-    /// `R` (reverse — flipped by slice D3), `Q` (quick scan — capture
-    /// first), `W` (door self-configuration — `NextExpress` config is
-    /// TOML, a permanent departure).
+    /// `Q` (quick scan — capture first) and `W` (door
+    /// self-configuration — `NextExpress` config is TOML, a permanent
+    /// departure). `F R` with a space also lands here — the original
+    /// dispatch matches the whole `FR` token (`express.e:28310`), so a
+    /// space-separated `R` is not a reverse form.
     Invalid,
 }
 
@@ -325,20 +332,40 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     MenuCommand::Unknown
 }
 
-/// Parses the `F` command line into a [`FileListArg`] following the
-/// captured `AquaScan` grammar (dir = `U` | `A` | number | `H`,
-/// optional trailing `NS`). Tokens the D2 slice does not port (`R`,
-/// `Q`, `W`) and any other unrecognised shape map to
+/// Parses the `F` / `FR` command line into a [`FileListArg`] following
+/// the captured `AquaScan` grammar (dir = `U` | `A` | number | `H`,
+/// optional trailing `NS`). `FR` is the concatenated reverse token
+/// (`express.e:28310` dispatches the whole code); it mirrors `F`'s
+/// grammar with `reverse: true`, except bare `FR` skips the
+/// `Directories:` prompt and reverse-scans the upload/highest dir.
+/// Tokens the slice does not port (`Q`, `W`) and any other unrecognised
+/// shape — including `F R` with a space — map to
 /// [`FileListArg::Invalid`] — the `Argument error!` path. Numeric
 /// directory tokens carry their [`val_prefix`] result raw; range
 /// checks happen at dispatch.
 fn parse_file_list_command(line: &str) -> Option<FileListArg> {
     let mut tokens = line.split_ascii_whitespace();
-    if !tokens.next()?.eq_ignore_ascii_case("F") {
+    let command = tokens.next()?;
+    let reverse = if command.eq_ignore_ascii_case("F") {
+        false
+    } else if command.eq_ignore_ascii_case("FR") {
+        true
+    } else {
         return None;
-    }
+    };
     let Some(first) = tokens.next() else {
-        return Some(FileListArg::Prompt);
+        // Bare `F` opens the `Directories:` prompt; bare `FR` skips it
+        // and reverse-scans the upload/highest dir (AquaScan S11,
+        // `ae_tierd_aquascan3.txt`).
+        return Some(if reverse {
+            FileListArg::Span {
+                span: FileSpan::Upload,
+                non_stop: false,
+                reverse: true,
+            }
+        } else {
+            FileListArg::Prompt
+        });
     };
     if first == "?" {
         return Some(if tokens.next().is_none() {
@@ -365,7 +392,11 @@ fn parse_file_list_command(line: &str) -> Option<FileListArg> {
         Some(token) if token.eq_ignore_ascii_case("NS") && tokens.next().is_none() => true,
         Some(_) => return Some(FileListArg::Invalid),
     };
-    Some(FileListArg::Span { span, non_stop })
+    Some(FileListArg::Span {
+        span,
+        non_stop,
+        reverse,
+    })
 }
 
 /// Parses the `J` command line into a [`JoinArg`]. Mirrors the legacy
@@ -1070,6 +1101,7 @@ mod tests {
             MenuCommand::FileList(FileListArg::Span {
                 span: FileSpan::Dir(1),
                 non_stop: false,
+                reverse: false,
             })
         );
         assert_eq!(
@@ -1077,6 +1109,7 @@ mod tests {
             MenuCommand::FileList(FileListArg::Span {
                 span: FileSpan::All,
                 non_stop: false,
+                reverse: false,
             })
         );
         assert_eq!(
@@ -1084,6 +1117,7 @@ mod tests {
             MenuCommand::FileList(FileListArg::Span {
                 span: FileSpan::Upload,
                 non_stop: false,
+                reverse: false,
             })
         );
         assert_eq!(
@@ -1091,6 +1125,7 @@ mod tests {
             MenuCommand::FileList(FileListArg::Span {
                 span: FileSpan::Hold,
                 non_stop: false,
+                reverse: false,
             })
         );
         assert_eq!(
@@ -1098,6 +1133,7 @@ mod tests {
             MenuCommand::FileList(FileListArg::Span {
                 span: FileSpan::Dir(1),
                 non_stop: true,
+                reverse: false,
             })
         );
         assert_eq!(
@@ -1105,6 +1141,7 @@ mod tests {
             MenuCommand::FileList(FileListArg::Span {
                 span: FileSpan::All,
                 non_stop: true,
+                reverse: false,
             })
         );
         // Raw Val carry: range checks happen at dispatch, where 0 (and
@@ -1114,6 +1151,7 @@ mod tests {
             MenuCommand::FileList(FileListArg::Span {
                 span: FileSpan::Dir(0),
                 non_stop: false,
+                reverse: false,
             })
         );
     }
@@ -1121,9 +1159,10 @@ mod tests {
     #[test]
     fn f_command_rejects_unsupported_argument_forms() {
         // Each takes the captured `Argument error! Type 'f ?' for
-        // help.` path (aquascan4.txt U4). `F R` is a temporary
-        // divergence D3 flips; `F W` is permanent (config is TOML);
-        // `Q` waits for a quick-scan capture.
+        // help.` path (aquascan4.txt U4). `F R` (with a space) stays
+        // here — `FR` is the reverse token (slice D3); the original
+        // dispatch matches the whole code (`express.e:28310`). `F W` is
+        // permanent (config is TOML); `Q` waits for a quick-scan capture.
         for line in ["F R 1", "F W", "F XYZ", "F ? extra", "F 1 XYZ", "F 1 NS x"] {
             assert_eq!(
                 parse_menu_command(line),
@@ -1134,9 +1173,79 @@ mod tests {
     }
 
     #[test]
-    fn fr_stays_unknown_until_d3() {
-        assert_eq!(parse_menu_command("FR"), MenuCommand::Unknown);
-        assert_eq!(parse_menu_command("FR 1"), MenuCommand::Unknown);
+    fn fr_command_parses_the_reverse_grammar() {
+        // `FR` is the concatenated reverse token (`express.e:28310`
+        // dispatches the whole code `FR`). It mirrors `F`'s span
+        // grammar with `reverse: true`, except bare `FR` skips the
+        // `Directories:` prompt and scans the upload/highest dir —
+        // AquaScan board-as-shipped (`ae_tierd_aquascan3.txt` S11).
+        assert_eq!(
+            parse_menu_command("FR"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Upload,
+                non_stop: false,
+                reverse: true,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("fr 1"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+                reverse: true,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("FR A"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::All,
+                non_stop: false,
+                reverse: true,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("FR u"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Upload,
+                non_stop: false,
+                reverse: true,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("FR H"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Hold,
+                non_stop: false,
+                reverse: true,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("FR 1 NS"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: true,
+                reverse: true,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("FR ?"),
+            MenuCommand::FileList(FileListArg::Help)
+        );
+    }
+
+    #[test]
+    fn fr_command_rejects_unsupported_argument_forms() {
+        // Same `Argument error!` path as `F`. `FR W` (config is TOML)
+        // and junk tokens are unsupported; `F R` (with a space) is
+        // *not* an original reverse form (`express.e` matches the whole
+        // `FR` token), so it stays the `F`-with-junk Invalid path.
+        for line in ["FR W", "FR XYZ", "FR ? extra", "FR 1 XYZ"] {
+            assert_eq!(
+                parse_menu_command(line),
+                MenuCommand::FileList(FileListArg::Invalid),
+                "line {line:?} must parse as Invalid",
+            );
+        }
     }
 
     /// expected set is derived from [`advertised_token`] applied to

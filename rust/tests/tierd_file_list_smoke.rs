@@ -40,6 +40,11 @@ const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
 const LISTING_BANNER: &[u8] =
     b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n";
 
+/// The `FR` (reverse) listing banner — `'fr ?'` label, dash run flexed
+/// 40→39 to hold the 77-col frame (`ae_tierd_aquascan3.txt` S10/S11).
+const LISTING_BANNER_REVERSE: &[u8] =
+    b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]---------------------------------------[ \x1b[36m'fr ?' for options \x1b[34m]--\x1b[0m\r\n";
+
 /// The `More?` pager prompt (`ae_tierd_aquascan3.txt:158`).
 const MORE_PROMPT: &[u8] =
     b"\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m ";
@@ -165,6 +170,60 @@ async fn bare_f_opens_the_directories_prompt_and_enter_aborts() {
     write_line(&mut stream, b"").await;
     drain_until(&mut stream, b"mins. left): ").await;
 
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn fr_1_opens_the_reverse_banner_and_header() {
+    // ae_tierd_aquascan3.txt S10: `FR 1` opens with the reverse banner
+    // (`'fr ?'`, dash run flexed 40→39) and the `Reverse-scanning dir
+    // 1... Ok!` header (no "from top"), then pages the dir-1 rows.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"FR 1").await;
+    let page = drain_until(&mut stream, MORE_PROMPT).await;
+    let mut expected_head = b"FR 1\r\n\x1b[0m\r\n".to_vec();
+    expected_head.extend_from_slice(LISTING_BANNER_REVERSE);
+    expected_head.extend_from_slice(b"\r\nReverse-scanning dir 1... Ok!\r\n\r\n");
+    assert!(
+        page.starts_with(&expected_head),
+        "FR 1 must open with the reverse NextScan preamble, got {:?}",
+        String::from_utf8_lossy(&page[..expected_head.len().min(page.len())]),
+    );
+
+    write_key(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn bare_fr_skips_the_prompt_and_reverse_scans_the_highest_dir() {
+    // ae_tierd_aquascan3.txt S11: bare `FR` does NOT open the
+    // Directories prompt — it goes straight to a reverse scan of the
+    // upload/highest dir (dir 2 of the seeded corpus). Deliberate
+    // asymmetry with bare `F` (board-as-shipped AquaScan).
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"FR").await;
+    let page = drain_until(&mut stream, MORE_PROMPT).await;
+    let mut expected_head = b"FR\r\n\x1b[0m\r\n".to_vec();
+    expected_head.extend_from_slice(LISTING_BANNER_REVERSE);
+    expected_head.extend_from_slice(b"\r\nReverse-scanning dir 2... Ok!\r\n\r\n");
+    assert!(
+        page.starts_with(&expected_head),
+        "bare FR must reverse-scan the highest dir with no prompt, got {:?}",
+        String::from_utf8_lossy(&page[..expected_head.len().min(page.len())]),
+    );
+    assert!(
+        !contains(&page, b"Directories:"),
+        "bare FR must NOT open the Directories prompt: {:?}",
+        String::from_utf8_lossy(&page),
+    );
+
+    write_key(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
     end_session(&mut stream).await;
 }
 

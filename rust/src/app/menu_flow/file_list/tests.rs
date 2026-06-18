@@ -215,6 +215,7 @@ async fn f_99_emits_the_highest_dir_error() {
         FileListArg::Span {
             span: FileSpan::Dir(99),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -236,6 +237,7 @@ async fn f_0_takes_the_highest_dir_error_unverified() {
         FileListArg::Span {
             span: FileSpan::Dir(0),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -276,6 +278,7 @@ async fn f_2_ns_streams_the_trio_without_pausing() {
         FileListArg::Span {
             span: FileSpan::Dir(2),
             non_stop: true,
+            reverse: false,
         },
     )
     .await;
@@ -296,6 +299,76 @@ async fn f_2_ns_streams_the_trio_without_pausing() {
     assert_eq!(
         String::from_utf8_lossy(&terminal.output),
         String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
+async fn fr_2_ns_streams_the_trio_newest_first() {
+    // `FR 2 NS`: the reverse banner (`'fr ?'`) + `Reverse-scanning dir
+    // 2... Ok!` header, the captured Dir2 trio emitted newest-first
+    // (the forward order reversed), two-reset tail, and no More?.
+    let services = services_with_demo_catalogue();
+    let mut terminal = CaptureTerminal::new(Vec::new());
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Span {
+            span: FileSpan::Dir(2),
+            non_stop: true,
+            reverse: true,
+        },
+    )
+    .await;
+    let conferences = vec![conference(1)];
+    let (_, placements) = seed::demo_file_catalogue(&conferences);
+    let mut trio: Vec<crate::domain::files::file::File> = placements
+        .into_iter()
+        .filter(|(_, area, _)| *area == 2)
+        .map(|(_, _, f)| f)
+        .collect();
+    trio.reverse();
+    let mut expected = b"\x1b[0m\r\n".to_vec();
+    expected.extend_from_slice(super::wire::listing_banner(true));
+    expected.extend_from_slice(b"\r\n\r\n");
+    expected.extend_from_slice(b"Reverse-scanning dir 2... Ok!\r\n\r\n");
+    for line in super::wire::assemble_dir_lines(&trio, 1, 2, &FlaggedFiles::default()) {
+        expected.extend_from_slice(&line.bytes);
+        expected.extend_from_slice(b"\r\n");
+    }
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&terminal.output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
+async fn fr_a_ns_descends_dirs_highest_first() {
+    // `FR A` walks the span highest→lowest (`express.e:27654` reverse
+    // walk: `fLLoop:=dirScan; fLLoop--`), so dir 2's header precedes
+    // dir 1's. The forward `F A` is the opposite order.
+    let services = services_with_demo_catalogue();
+    let mut terminal = CaptureTerminal::new(Vec::new());
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Span {
+            span: FileSpan::All,
+            non_stop: true,
+            reverse: true,
+        },
+    )
+    .await;
+    let out = String::from_utf8_lossy(&terminal.output);
+    let dir2 = out
+        .find("Reverse-scanning dir 2")
+        .expect("dir 2 reverse header present");
+    let dir1 = out
+        .find("Reverse-scanning dir 1")
+        .expect("dir 1 reverse header present");
+    assert!(
+        dir2 < dir1,
+        "FR A must scan the highest dir first (dir 2 before dir 1)",
     );
 }
 
@@ -358,6 +431,7 @@ async fn q_at_more_quits_on_a_single_keypress() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -385,6 +459,7 @@ async fn y_at_more_clears_the_prompt_and_streams_a_fresh_page() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -415,6 +490,7 @@ async fn c_at_more_form_feeds_and_resumes_without_reprompt() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -450,6 +526,7 @@ async fn n_then_s_opens_the_nonstop_confirm_and_y_goes_nonstop() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -481,6 +558,7 @@ async fn declining_the_ns_confirm_redraws_more_and_stays_paged() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -514,6 +592,7 @@ async fn held_n_then_other_key_erases_and_runs_the_verb() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -544,6 +623,7 @@ async fn lone_n_echoes_holds_then_enter_quits() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -572,6 +652,7 @@ async fn f_2_more_output(keys: Vec<KeyRead>) -> (Vec<u8>, Vec<u8>) {
         FileListArg::Span {
             span: FileSpan::Dir(2),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -651,6 +732,7 @@ async fn f_at_more_flag_prompt_emits_no_confirmation_bytes() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -694,6 +776,7 @@ async fn flag_entry_backspace_erases_with_bs_sp_bs_and_skips_an_empty_entry() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -731,6 +814,7 @@ async fn flag_entry_stops_echoing_at_the_terminal_line_byte_limit() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -773,6 +857,7 @@ async fn r_at_more_opens_the_distinct_flag_by_number_prompt() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -855,6 +940,7 @@ async fn flagging_a_file_makes_it_render_with_the_marker_on_re_list() {
             FileListArg::Span {
                 span: FileSpan::Dir(1),
                 non_stop: false,
+                reverse: false,
             },
         )
         .await
@@ -881,6 +967,7 @@ async fn flagging_a_file_makes_it_render_with_the_marker_on_re_list() {
             FileListArg::Span {
                 span: FileSpan::Dir(1),
                 non_stop: false,
+                reverse: false,
             },
         )
         .await
@@ -936,6 +1023,7 @@ async fn flagging_a_visible_aligned_row_repaints_the_marker_in_place() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -990,6 +1078,7 @@ async fn flagging_by_number_repaints_the_row() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1031,6 +1120,7 @@ async fn flagging_an_unlisted_name_emits_no_repaint() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1081,6 +1171,7 @@ async fn repaint_is_suppressed_when_ansi_is_off() {
             FileListArg::Span {
                 span: FileSpan::Dir(1),
                 non_stop: false,
+                reverse: false,
             },
         )
         .await
@@ -1141,6 +1232,7 @@ async fn flagging_a_visible_overlong_row_repaints_a_trailing_slot() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1194,6 +1286,7 @@ async fn question_mark_at_more_shows_the_pause_help_and_redraws_the_page() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1263,6 +1356,7 @@ async fn paged_listing_shows_the_post_end_more_and_held_n_then_q_exits() {
         FileListArg::Span {
             span: FileSpan::Dir(2),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1300,6 +1394,7 @@ async fn f_a_transitions_between_dirs_through_the_post_end_more() {
         FileListArg::Span {
             span: FileSpan::All,
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1364,6 +1459,7 @@ async fn f_a_with_an_empty_first_dir_runs_its_headers_back_to_back() {
         FileListArg::Span {
             span: FileSpan::All,
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1514,6 +1610,7 @@ async fn paged_hold_listing_quits_cleanly_at_the_mid_list_more() {
         FileListArg::Span {
             span: FileSpan::Hold,
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1580,6 +1677,7 @@ async fn empty_dir_reports_nothing_found_with_no_footer() {
         FileListArg::Span {
             span: FileSpan::Dir(1),
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
@@ -1600,6 +1698,7 @@ async fn hold_span_reports_nothing_found_when_no_files_are_held() {
         FileListArg::Span {
             span: FileSpan::Hold,
             non_stop: false,
+            reverse: false,
         },
     )
     .await;
