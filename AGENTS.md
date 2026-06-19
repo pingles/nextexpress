@@ -99,6 +99,26 @@ enforces this. Rust consts carrying re-encoded glyphs are `&str`.
    root-cause analysis; `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`
    §6.3). Capture replay is faithful to the capture's blind spots, so a human
    has to look at the real terminal once per user-facing slice.
+7. **Verify every new piece of user-facing experience against the live
+   FS-UAE reference — not just against `express.e` source reading.** For
+   any slice that adds or changes a user-visible surface, boot the
+   genuine AmiExpress board in the `docker/amiexpress-fsuae` harness,
+   drive it over telnet to *capture the real wire bytes* of the
+   behaviour, save the transcript under `comparison/transcripts/`, and
+   pin the new NextExpress wire to that capture (restate the literals in
+   the smoke test so they guard against drift). Reading the E source
+   alone is not enough: it omits emergent behaviour (which prompt is
+   shown, exact spacing/echo, run-time data) and the captured plan can be
+   wrong — e.g. slice D4 (`Z`) was planned as "search the current area",
+   but the live reference showed `Z` *always* opens the internal
+   `getDirSpan` directory prompt. Mind the door-shadow caveat: the stock
+   deployment installs `AquaScan` icons over `CS`/`F`/`FR`/`N`/`NSU`/
+   `SCAN`/`SENT`, so those tokens capture the door, while every other
+   token (`Z` included) captures the genuine internal command (see the
+   harness notes in the auto-memory and `COMMAND_PARITY.md`). Do this
+   *while building* the slice, so the wire is grounded before it is
+   pinned, and end every reference session with a clean `G Y` logoff
+   (the FS-UAE node-spin hazard).
 
 Formatting (`cargo fmt`) and clippy (`cargo clippy -- -D warnings`) run
 automatically via Claude Code hooks defined in `.claude/settings.json` — fmt
