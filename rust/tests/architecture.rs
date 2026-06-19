@@ -62,14 +62,85 @@ fn use_violates(line: &str, forbidden: &str) -> bool {
         || target.trim_end_matches([';', ' ']) == forbidden
 }
 
+fn source_before_line_comment(line: &str) -> &str {
+    line.split_once("//").map_or(line, |(code, _comment)| code)
+}
+
+fn is_path_boundary_before(ch: char) -> bool {
+    !ch.is_ascii_alphanumeric() && ch != '_' && ch != ':'
+}
+
+fn is_path_boundary_after(ch: char) -> bool {
+    !ch.is_ascii_alphanumeric() && ch != '_'
+}
+
+fn contains_path_prefix(code: &str, prefix: &str) -> bool {
+    code.match_indices(prefix).any(|(idx, _)| {
+        let before_ok = code[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(is_path_boundary_before);
+        let after = idx + prefix.len();
+        let after_ok = prefix.ends_with("::")
+            || code[after..]
+                .chars()
+                .next()
+                .is_none_or(is_path_boundary_after);
+        before_ok && after_ok
+    })
+}
+
+fn grouped_use_contains(target: &str, root: &str, forbidden: &str) -> bool {
+    let Some(rest) = target.strip_prefix(root) else {
+        return false;
+    };
+    let Some(group) = rest.trim_start().strip_prefix('{') else {
+        return false;
+    };
+    let group = group.split('}').next().unwrap_or(group);
+    group.split(',').any(|item| {
+        let item = item.trim_start();
+        item == forbidden
+            || item.starts_with(&format!("{forbidden}::"))
+            || item.starts_with(&format!("{forbidden} as "))
+    })
+}
+
+/// Returns true when a non-comment source line names a forbidden
+/// sibling module. Unlike [`use_violates`], this also catches
+/// fully-qualified references such as `crate::adapters::Foo::new()`,
+/// which couple production code to another layer without an import.
+fn references_forbidden_module(line: &str, forbidden: &str) -> bool {
+    let code = source_before_line_comment(line);
+    if code.trim().is_empty() {
+        return false;
+    }
+    if contains_path_prefix(code, &format!("crate::{forbidden}"))
+        || contains_path_prefix(code, &format!("super::{forbidden}"))
+        || contains_path_prefix(code, &format!("{forbidden}::"))
+    {
+        return true;
+    }
+
+    let trimmed = code.trim_start();
+    let after_pub = trimmed
+        .strip_prefix("pub ")
+        .map_or(trimmed, str::trim_start);
+    let Some(rest) = after_pub.strip_prefix("use ") else {
+        return false;
+    };
+    let target = rest.trim_start();
+    grouped_use_contains(target, "crate::", forbidden)
+        || grouped_use_contains(target, "super::", forbidden)
+}
+
 /// Returns true when a non-comment source line names an
 /// infrastructure-only crate or module. This intentionally checks
 /// fully-qualified references as well as `use` lines, because a domain
 /// error such as `source: serde_json::Error` couples the domain to an
 /// adapter detail without needing an import.
 fn references_infrastructure(line: &str, forbidden: &str) -> bool {
-    let trimmed = line.trim_start();
-    !trimmed.starts_with("//") && line.contains(forbidden)
+    source_before_line_comment(line).contains(forbidden)
 }
 
 #[test]
@@ -83,9 +154,9 @@ fn domain_does_not_depend_on_adapters_or_app() {
             .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
         for (idx, line) in content.lines().enumerate() {
             for forbidden in FORBIDDEN_ROOTS {
-                if use_violates(line, forbidden) {
+                if references_forbidden_module(line, forbidden) {
                     violations.push(format!(
-                        "{}:{} imports `{}` ({})",
+                        "{}:{} references `{}` ({})",
                         path.display(),
                         idx + 1,
                         forbidden,
@@ -240,9 +311,9 @@ fn app_does_not_depend_on_adapters_in_production_code() {
             .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
         let content = strip_cfg_test_modules(&raw);
         for (idx, line) in content.lines().enumerate() {
-            if use_violates(line, "adapters") {
+            if references_forbidden_module(line, "adapters") {
                 violations.push(format!(
-                    "{}:{} imports `adapters` ({})",
+                    "{}:{} references `adapters` ({})",
                     path.display(),
                     idx + 1,
                     line.trim()
@@ -273,6 +344,58 @@ fn use_violates_ignores_unrelated_mentions() {
     assert!(!use_violates("    let adapters = 3;", "adapters"));
     assert!(!use_violates("use std::collections::HashMap;", "adapters"));
     assert!(!use_violates("use crate::adapter_helpers;", "adapters"));
+}
+
+#[test]
+fn forbidden_module_reference_detects_fully_qualified_code() {
+    assert!(references_forbidden_module(
+        "let repo = crate::adapters::SqliteUserRepository::open(path);",
+        "adapters"
+    ));
+    assert!(references_forbidden_module(
+        "type Flow = crate::app::session_flow::NameTypedTransition;",
+        "app"
+    ));
+    assert!(references_forbidden_module(
+        "let _ = adapters::InMemoryUserRepository::default();",
+        "adapters"
+    ));
+}
+
+#[test]
+fn forbidden_module_reference_detects_grouped_imports() {
+    assert!(references_forbidden_module(
+        "use crate::{adapters::Foo, domain::Bar};",
+        "adapters"
+    ));
+    assert!(references_forbidden_module(
+        "use crate::{adapters, domain};",
+        "adapters"
+    ));
+    assert!(references_forbidden_module(
+        "pub use super::{app as app_layer, domain};",
+        "app"
+    ));
+}
+
+#[test]
+fn forbidden_module_reference_ignores_comments_and_identifiers() {
+    assert!(!references_forbidden_module(
+        "//! see crate::adapters::SqliteUserRepository",
+        "adapters"
+    ));
+    assert!(!references_forbidden_module(
+        "let adapters = 3; // crate::adapters::Foo",
+        "adapters"
+    ));
+    assert!(!references_forbidden_module(
+        "let helper = crate::adapter_helpers::Fixture;",
+        "adapters"
+    ));
+    assert!(!references_forbidden_module(
+        "let helper = mycrate::adapters::Fixture;",
+        "adapters"
+    ));
 }
 
 #[test]
