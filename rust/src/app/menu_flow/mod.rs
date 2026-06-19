@@ -321,6 +321,9 @@ where
                 // (`comparison/evidence-tierD/live-observations.md`).
                 self.handle_file_list(&mut session, arg).await?;
             }
+            // Slice D4 (`Z`): the internal zippy text search — see
+            // `file_list::handle_zippy_search` for the parity record.
+            MenuCommand::ZippySearch(arg) => self.handle_zippy_search(&mut session, arg).await?,
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))

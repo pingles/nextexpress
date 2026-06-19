@@ -547,3 +547,112 @@ async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
+
+#[tokio::test]
+async fn zippy_inline_search_dumps_the_matching_block_over_telnet() {
+    // Slice D4 (`Z`): the internal zippy search, reachable from the
+    // compiled listener. `Z <token>` opens the internal getDirSpan
+    // Directories prompt (lowercase `=none?`, no trailing space — the
+    // genuine-internal form, distinct from AquaScan's `=None ?`), and a
+    // dir answer dumps the matching file's raw DIR block.
+    // (comparison/transcripts/ae_tierd_zippy.txt Z1/Z2.)
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"Z STARVIEW").await;
+    let prompt = drain_until(&mut stream, b"=none? \x1b[0m").await;
+    assert!(
+        contains(
+            &prompt,
+            b"\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, ",
+        ),
+        "Z must open the internal Directories (1-2) prompt: {:?}",
+        String::from_utf8_lossy(&prompt),
+    );
+
+    write_line(&mut stream, b"1").await;
+    let out = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&out, b"Scanning directory 1\r\n"),
+        "the chosen dir's scan header must appear: {:?}",
+        String::from_utf8_lossy(&out),
+    );
+    assert!(
+        contains(
+            &out,
+            b"STARVIEW.LHA P 198765  05-28-26  StarView 2.4 - astronomy program\r\n",
+        ),
+        "the matching row must be dumped raw (no NextScan frames): {:?}",
+        String::from_utf8_lossy(&out),
+    );
+    assert!(
+        contains(
+            &out,
+            b"                                 Plots 9000 stars, needs FPU.\r\n",
+        ),
+        "the whole block (continuation line) must be dumped: {:?}",
+        String::from_utf8_lossy(&out),
+    );
+    assert!(
+        std::str::from_utf8(&out).is_ok(),
+        "the zippy wire must be valid UTF-8: {:?}",
+        String::from_utf8_lossy(&out),
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn bare_zippy_prompts_for_the_search_string_over_telnet() {
+    // Slice D4: bare `Z` first prompts `Enter string to search for: `
+    // (ae_tierd_zippy.txt Z1), then runs the getDirSpan prompt and the
+    // scan. PROTRACKER matches PTREPLAY's description in dir 1.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"Z").await;
+    drain_until(&mut stream, b"Enter string to search for: ").await;
+    write_line(&mut stream, b"PROTRACKER").await;
+    drain_until(&mut stream, b"=none? \x1b[0m").await;
+    write_line(&mut stream, b"1").await;
+    let out = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&out, b"Protracker replay routine, asm source\r\n"),
+        "PROTRACKER must match PTREPLAY's description: {:?}",
+        String::from_utf8_lossy(&out),
+    );
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn zippy_inline_directory_scans_immediately_without_a_prompt_over_telnet() {
+    // Slice D7: `Z <term> <dir>` resolves the directory inline and scans
+    // immediately — NO `Directories:` prompt (the bug a user hit when
+    // D4 ignored the inline dir). Pinned to ae_tierd_zippy3.txt.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    write_line(&mut stream, b"Z ART 1").await;
+    let out = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&out, b"Scanning directory 1\r\n"),
+        "Z ART 1 must scan dir 1 immediately: {:?}",
+        String::from_utf8_lossy(&out),
+    );
+    assert!(
+        contains(
+            &out,
+            b"ANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\r\n",
+        ),
+        "the inline scan must dump the matching row: {:?}",
+        String::from_utf8_lossy(&out),
+    );
+    assert!(
+        !contains(&out, b"=none?"),
+        "the inline dir form must NOT show the Directories prompt: {:?}",
+        String::from_utf8_lossy(&out),
+    );
+
+    end_session(&mut stream).await;
+}

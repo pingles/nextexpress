@@ -416,6 +416,53 @@ pub(super) fn directories_prompt(max: u32) -> Vec<u8> {
     .into_bytes()
 }
 
+// --- Slice D4: the internal `Z` (zippy text search) wire ---------------
+//
+// `Z` runs `internalCommandZ` (`amiexpress/express.e:26123`), *not* the
+// AquaScan door, so its wire is the genuine internal command's — plain
+// text rows (no NextScan frames), a distinct directory prompt, and the
+// internal `getDirSpan` error. Pinned to
+// `comparison/transcripts/ae_tierd_zippy.txt` /
+// `ae_tierd_zippy2.txt`. Kept here beside the `F` constants because both
+// browse the same file areas and share [`super::dir_row::dir_row_lines`].
+
+/// The search-string prompt (`amiexpress/express.e:26150`,
+/// `ae_tierd_zippy.txt` Z1) — plain text, trailing space, no ANSI, no
+/// terminator. Shown only for bare `Z`; `Z <token>` reads the string
+/// from the argument.
+pub(super) const ZIPPY_SEARCH_PROMPT: &[u8] = b"Enter string to search for: ";
+
+/// The internal `getDirSpan('')` directory prompt
+/// (`amiexpress/express.e:26864`, `ae_tierd_zippy.txt` Z1). Distinct
+/// from the `AquaScan` [`directories_prompt`]: lowercase `=none?`, the
+/// `?` followed by a space, and a closing reset with **no** trailing
+/// space.
+pub(super) fn zippy_directories_prompt(max: u32) -> Vec<u8> {
+    format!(
+        "\x1b[36mDirectories: \x1b[32m(\x1b[33m1-{max}\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mA\x1b[32m)\x1b[36mll, \x1b[32m(\x1b[33mU\x1b[32m)\x1b[36mpload, \x1b[32m(\x1b[33mH\x1b[32m)\x1b[36mold, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none? \x1b[0m"
+    )
+    .into_bytes()
+}
+
+/// The per-directory scan header for the internal zippy
+/// (`amiexpress/express.e:26191`, `ae_tierd_zippy.txt` Z1) — plain text,
+/// no terminator. The upload (`U`) answer renders the highest dir's
+/// number here, not the word "UPLOAD" (`:26181-26186`,
+/// `ae_tierd_zippy2.txt` ZU).
+pub(super) fn zippy_scanning_dir_header(n: u32) -> Vec<u8> {
+    format!("Scanning directory {n}").into_bytes()
+}
+
+/// The hold-directory scan header (`amiexpress/express.e:26198`,
+/// `ae_tierd_zippy2.txt` ZH) — no terminator.
+pub(super) const ZIPPY_SCANNING_HOLD: &[u8] = b"Scanning directory HOLD";
+
+/// The internal `getDirSpan` out-of-range error
+/// (`amiexpress/express.e:26905`, `ae_tierd_zippy2.txt` ZOOR) — no
+/// terminator. Distinct from `AquaScan`'s [`highest_dir_error`]. The
+/// handler frames it with the legacy leading and trailing blanks.
+pub(super) const ZIPPY_NO_SUCH_DIRECTORY: &[u8] = b"No such directory.";
+
 #[cfg(test)]
 mod tests {
     use super::*;

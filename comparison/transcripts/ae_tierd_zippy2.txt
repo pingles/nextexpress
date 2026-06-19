@@ -1,0 +1,165 @@
+@@@@@ CONNECT @@@@@
+(landed on node, attempt 0)
+\r\n
+/X Native Telnet:  Searching for free node...\r\n
+/X Native Telnet:  Successful connection to node 0\r\n
+\r\n
+CONNECT 19200\r\n
+**EMSI_IRQ8E08\r\n
+\r\n
+⟨ESC[0m⟩Welcome to NextExpress Reference, located in Docker\r\n
+\r\n
+Running AmiExpress 5.6.0 Copyright ⟨a9⟩2018-2023 Darren Coles\r\n
+Registration NONE. You are connected to Node 0 at 19200 baud\r\n
+Connection occured at Fri 19-Jun-2026 19:54:27.\r\n
+\r\n
+ANSI, RIP or No graphics (A/r/n)? 
+
+@@@@@ graphics -> A @@@@@ [MATCHED]
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+Enter your Name: 
+----- REPR -----
+b'A\r\n\r\nEnter your Name: '
+
+@@@@@ name -> sysop @@@@@ [MATCHED]
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+Password: 
+----- REPR -----
+b'sysop\r\nPassword: '
+
+@@@@@ password -> POST-LOGIN @@@@@ [MENU]
+>>> SENT b'sysop\r'
+----- RENDER -----
+*****\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩New Users - No mail today!\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Amiga - No mail today!\r\n
+\r\n
+⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩Space To Resume⟨ESC[33m⟩: ⟨ESC[0m⟩<<<harness sends SPACE>>>\r\n
+\r\n
+\r\n
+\r\n
+⟨ESC[32m⟩Area Name  ⟨ESC[33m⟩:⟨ESC[0m⟩ Sysop\r\n
+⟨ESC[32m⟩Caller Num.⟨ESC[33m⟩:⟨ESC[0m⟩ 41\r\n
+⟨ESC[32m⟩Lst Date On⟨ESC[33m⟩:⟨ESC[0m⟩ Fri 19-Jun-2026 19:40:14\r\n
+⟨ESC[32m⟩Security Lv⟨ESC[33m⟩:⟨ESC[0m⟩ 255\r\n
+⟨ESC[32m⟩# Times On ⟨ESC[33m⟩:⟨ESC[0m⟩ 25\r\n
+⟨ESC[32m⟩Times Today⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩Msgs Posted⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+⟨ESC[32m⟩Online Baud⟨ESC[33m⟩:⟨ESC[0m⟩ 19200\r\n
+⟨ESC[32m⟩Rate CPS UP⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Rate CPS DN⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Screen  Clr⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+⟨ESC[32m⟩Protocol   ⟨ESC[33m⟩:⟨ESC[0m⟩ /X ZMODEM\r\n
+⟨ESC[32m⟩Sysop  Here⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+\r\n
+⟨ESC[32m⟩              Uploads                 Downloads\r\n
+\r\n
+⟨ESC[32m⟩    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n
+⟨ESC[0m⟩    ----  -------  -------------- -------  -------------- -----------  -----\r\n
+⟨ESC[33m⟩       2⟨ESC[0m⟩> ⟨ESC[33m⟩      0               0       0               0    Infinite  ⟨ESC[31m⟩DSBLD\r\n
+⟨ESC[0m⟩\r\n
+\r\n
+Conference 2: Amiga Auto-ReJoined\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+** Flagged File(s) Exist **\r\n
+⟨BEL⟩\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'*****\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mNew Users - No mail today!\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mAmiga - No mail today!\r\n\r\n\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32mSpace To Resume\x1b[33m: \x1b[0m<<<harness sends SPACE>>>\r\n\r\n\r\n\r\n\x1b[32mArea Name  \x1b[33m:\x1b[0m Sysop\r\n\x1b[32mCaller Num.\x1b[33m:\x1b[0m 41\r\n\x1b[32mLst Date On\x1b[33m:\x1b[0m Fri 19-Jun-2026 19:40:14\r\n\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\x1b[32m# Times On \x1b[33m:\x1b[0m 25\r\n\x1b[32mTimes Today\x1b[33m:\x1b[0m 1\r\n\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 2\r\n\x1b[32mOnline Baud\x1b[33m:\x1b[0m 19200\r\n\x1b[32mRate CPS UP\x1b[33m:\x1b[0m 0\r\n\x1b[32mRate CPS DN\x1b[33m:\x1b[0m 0\r\n\x1b[32mScreen  Clr\x1b[33m:\x1b[0m NO\r\n\x1b[32mProtocol   \x1b[33m:\x1b[0m /X ZMODEM\r\n\x1b[32mSysop  Here\x1b[33m:\x1b[0m NO\r\n\r\n\x1b[32m              Uploads                 Downloads\r\n\r\n\x1b[32m    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n\x1b[0m    ----  -------  -------------- -------  -------------- -----------  -----\r\n\x1b[33m       2\x1b[0m> \x1b[33m      0               0       0               0    Infinite  \x1b[31mDSBLD\r\n\x1b[0m\r\n\r\nConference 2: Amiga Auto-ReJoined\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n** Flagged File(s) Exist **\r\n\x07\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ ensure conf 2 (Tier D fixture) @@@@@ [MENU]
+>>> SENT b'J 2\r'
+----- RENDER -----
+J 2\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Amiga\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Amiga\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ ZU: Z DEMO (inline) -> U (upload/highest dir) @@@@@ [MENU]
+>>> SENT b'Z DEMO\r'
+----- RENDER -----
+Z DEMO\r\n
+\r\n
+⟨ESC[36m⟩Directories: ⟨ESC[32m⟩(⟨ESC[33m⟩1-2⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩A⟨ESC[32m⟩)⟨ESC[36m⟩ll, ⟨ESC[32m⟩(⟨ESC[33m⟩U⟨ESC[32m⟩)⟨ESC[36m⟩pload, ⟨ESC[32m⟩(⟨ESC[33m⟩H⟨ESC[32m⟩)⟨ESC[36m⟩old, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none? ⟨ESC[0m⟩<<<harness dir>>>U\rU\r\n
+\r\n
+Scanning directory 2\r\n
+MYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\r\n
+                                 Greets to everyone on node 1.\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'Z DEMO\r\n\r\n\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mA\x1b[32m)\x1b[36mll, \x1b[32m(\x1b[33mU\x1b[32m)\x1b[36mpload, \x1b[32m(\x1b[33mH\x1b[32m)\x1b[36mold, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none? \x1b[0m<<<harness dir>>>U\rU\r\n\r\nScanning directory 2\r\nMYDEMO.DMS   P 567890  06-10-26  My first demo - feedback welcome!\r\n                                 Greets to everyone on node 1.\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ ZH: Z DEMO (inline) -> H (hold dir) @@@@@ [MENU]
+>>> SENT b'Z DEMO\r'
+----- RENDER -----
+Z DEMO\r\n
+\r\n
+⟨ESC[36m⟩Directories: ⟨ESC[32m⟩(⟨ESC[33m⟩1-2⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩A⟨ESC[32m⟩)⟨ESC[36m⟩ll, ⟨ESC[32m⟩(⟨ESC[33m⟩U⟨ESC[32m⟩)⟨ESC[36m⟩pload, ⟨ESC[32m⟩(⟨ESC[33m⟩H⟨ESC[32m⟩)⟨ESC[36m⟩old, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none? ⟨ESC[0m⟩<<<harness dir>>>H\rH\r\n
+\r\n
+Scanning directory HOLD\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'Z DEMO\r\n\r\n\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mA\x1b[32m)\x1b[36mll, \x1b[32m(\x1b[33mU\x1b[32m)\x1b[36mpload, \x1b[32m(\x1b[33mH\x1b[32m)\x1b[36mold, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none? \x1b[0m<<<harness dir>>>H\rH\r\n\r\nScanning directory HOLD\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ ZOOR: Z DEMO (inline) -> 5 (out of range) @@@@@ [MENU]
+>>> SENT b'Z DEMO\r'
+----- RENDER -----
+Z DEMO\r\n
+\r\n
+⟨ESC[36m⟩Directories: ⟨ESC[32m⟩(⟨ESC[33m⟩1-2⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩A⟨ESC[32m⟩)⟨ESC[36m⟩ll, ⟨ESC[32m⟩(⟨ESC[33m⟩U⟨ESC[32m⟩)⟨ESC[36m⟩pload, ⟨ESC[32m⟩(⟨ESC[33m⟩H⟨ESC[32m⟩)⟨ESC[36m⟩old, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none? ⟨ESC[0m⟩<<<harness dir>>>5\r5\r\n
+\r\n
+No such directory.\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'Z DEMO\r\n\r\n\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mA\x1b[32m)\x1b[36mll, \x1b[32m(\x1b[33mU\x1b[32m)\x1b[36mpload, \x1b[32m(\x1b[33mH\x1b[32m)\x1b[36mold, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none? \x1b[0m<<<harness dir>>>5\r5\r\n\r\nNo such directory.\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ ZZERO: Z DEMO (inline) -> 0 (out of range) @@@@@ [MENU]
+>>> SENT b'Z DEMO\r'
+----- RENDER -----
+Z DEMO\r\n
+\r\n
+⟨ESC[36m⟩Directories: ⟨ESC[32m⟩(⟨ESC[33m⟩1-2⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩A⟨ESC[32m⟩)⟨ESC[36m⟩ll, ⟨ESC[32m⟩(⟨ESC[33m⟩U⟨ESC[32m⟩)⟨ESC[36m⟩pload, ⟨ESC[32m⟩(⟨ESC[33m⟩H⟨ESC[32m⟩)⟨ESC[36m⟩old, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none? ⟨ESC[0m⟩<<<harness dir>>>0\r0\r\n
+\r\n
+No such directory.\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'Z DEMO\r\n\r\n\x1b[36mDirectories: \x1b[32m(\x1b[33m1-2\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mA\x1b[32m)\x1b[36mll, \x1b[32m(\x1b[33mU\x1b[32m)\x1b[36mpload, \x1b[32m(\x1b[33mH\x1b[32m)\x1b[36mold, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none? \x1b[0m<<<harness dir>>>0\r0\r\n\r\nNo such directory.\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ LOGOFF round @@@@@
+G Y\r\n
+\r\n
+** AutoSaving File Flags **\r\n
+⟨BEL⟩\r\n
+Click...⟨ESC[0m⟩
+
+@@@@@ LOGOFF round @@@@@

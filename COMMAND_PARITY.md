@@ -793,6 +793,41 @@ default — each owed to its owning slice.
 
 ---
 
+## Z — Zippy Text Search (genuine internal command, slice D4)
+
+**Parity target.** Unlike `F`/`FR`/`N`, `Z` is **not** in the AquaScan
+door icon set (`CS, F, FR, N, NSU, SCAN, SENT`), so typing `Z` on the
+stock board runs the genuine `internalCommandZ` (`express.e:26123`), not
+a door. The parity target is therefore the internal command, captured
+live in [`comparison/transcripts/ae_tierd_zippy.txt`](comparison/transcripts/ae_tierd_zippy.txt)
+(Z1–Z7, search-string/dir prompts, single-dir / `A` / no-match / blank
+aborts, case-insensitive) and [`ae_tierd_zippy2.txt`](comparison/transcripts/ae_tierd_zippy2.txt)
+(ZU upload, ZH hold, ZOOR out-of-range). NextExpress reproduces the
+internal wire: **plain** raw-DIR-row dump (no NextScan frames or
+colour — deliberately unlike the `F` door), the `Enter string to search
+for: ` prompt, the internal `getDirSpan('')` `Directories: …=none? `
+prompt, `Scanning directory N` headers, and the `No such directory.`
+error.
+
+| Aspect | NextExpress (Rust) | AmiExpress (internal `Z`) | Tag |
+|---|---|---|---|
+| Command resolution | Exact-token `Z`; `ZOOM` stays separate | `StrCmp(cmdcode,'Z')` (`:28388`) | MATCH |
+| Search string | `item(0)` (first token); bare `Z` → `Enter string to search for: ` prompt; empty answer returns | `:26146` / `:26150-26156` | MATCH |
+| Directory prompt | Internal `getDirSpan('')` `Directories: (1-N), (A)ll, (U)pload, (H)old, (Enter)=none? ` — lowercase `none`, space after `?`, reset with **no** trailing space | `:26864` | MATCH (distinct from the AquaScan `F` `=None ?` prompt) |
+| Dir answers | number → single dir; `U` → highest dir (by number); `A` → all areas; `H` → hold (`Scanning directory HOLD`); blank → none-abort; out-of-range → `No such directory.` | `getDirSpan` `:26881-26908`, `:26905` | MATCH |
+| Match rule | `UpperStr`+`InStr` over each rendered DIR row (filename row included); any matching line dumps the whole block, continuations included; case-insensitive | `zippy()` `:27529-27620`, `:27595-27598` | MATCH |
+| Row rendering | Raw `dir_row` (name/check/size/date/desc), **no** frames/colour | `aePuts(current)` raw DIR lines | MATCH |
+| Inline area-spec `Z <q> <span>` | `item(1)` resolved inline via the same `getDirSpan` logic — `Z ART 1`/`A`/`U`/`H` scan **immediately, no prompt**; out-of-range/junk → `No such directory.` (slice D7) | `getDirSpan(item(1))` `:26162-26163` | MATCH (captured `ae_tierd_zippy3.txt`) |
+| Large-match pagination | Emits without pausing | `flagPause` per line (`:27582`/`:27613`) | BEHAVIOURAL (uncaptured; deferred) |
+
+The pre-prompt trailing differs only by NextExpress's own menu
+convention (the handler owns internalCommandZ's bytes; the menu loop
+re-renders the menu screen rather than the legacy single lead-in blank) —
+a slice-independent, pre-existing presentation difference shared by every
+command, not specific to `Z`.
+
+---
+
 ## Notable findings
 
 The most important behavioural gaps, in rough order of user impact:

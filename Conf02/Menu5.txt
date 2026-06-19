@@ -22,6 +22,7 @@
 
   FILES
     F [n]    List files (<n>=dir, A=all, U=upload, ?=help)
+    Z <str>  Zippy search file descriptions for <str>
 
   SESSION
     S        User stats

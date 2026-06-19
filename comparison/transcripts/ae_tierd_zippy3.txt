@@ -1,0 +1,43 @@
+Tier D — `Z` inline area-spec (item(1)) reference capture
+=========================================================
+
+Driven live against the FS-UAE AmiExpress reference (genuine internal
+`internalCommandZ`, not AquaScan — `Z` is unshadowed). Conf02 (Tier D
+fixture: dir1 = 27 entries, dir2 = 3, max dir = 2). Search token `ART`
+(matches ANSIPACK via "Mirage art crew" and ASMTUT05 via "...part 5...";
+dir2 has no ART match). Confirms: when the directory span is supplied
+INLINE as `item(1)` (`Z <term> <span>`), `internalCommandZ` calls
+`getDirSpan(item(1))` (express.e:26162-26163) which takes the ELSE branch
+(`:26875-26877`) and resolves the span WITHOUT showing the `Directories:`
+prompt — the scan runs immediately. Two blanks precede the first header
+(26137 + 26172); the `Directories:` prompt is absent.
+
+This is the behaviour D4 deferred and slice D7 restores.
+
+----- Z ART 1  (inline term + inline dir; immediate, NO prompt) -----
+b'Z ART 1\r\n\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\r\n                                 Mirage art crew, January release.\r\n                                 Includes viewer.\r\nASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\r\n                                 lists and display interrupts.\r\n\r\n\r\n<MENU PROMPT>'
+
+----- Z ART A  (inline term + all dirs; immediate) -----
+b'Z ART A\r\n\r\n\r\nScanning directory 1\r\nANSIPACK.LHA P 234567  01-15-26  Collection of 40 ANSI screens from the\r\n                                 Mirage art crew, January release.\r\n                                 Includes viewer.\r\nASMTUT05.TXT P  23456  04-02-26  68k assembler tutorial part 5: copper\r\n                                 lists and display interrupts.\r\nScanning directory 2\r\n\r\n\r\n<MENU PROMPT>'
+
+----- Z ART U  (inline term + upload = highest dir 2; immediate) -----
+b'Z ART U\r\n\r\n\r\nScanning directory 2\r\n\r\n\r\n<MENU PROMPT>'
+
+----- Z ART H  (inline term + hold dir; immediate) -----
+b'Z ART H\r\n\r\n\r\nScanning directory HOLD\r\n\r\n\r\n<MENU PROMPT>'
+
+----- Z ART 9  (inline term + out-of-range dir) -----
+b'Z ART 9\r\n\r\n\r\nNo such directory.\r\n\r\n\r\n<MENU PROMPT>'
+
+----- Z ART xyz  (inline term + junk dir; Val=0 -> out of range) -----
+b'Z ART xyz\r\n\r\n\r\nNo such directory.\r\n\r\n\r\n<MENU PROMPT>'
+
+Notes (server bytes, with the adapter's input echo removed):
+- 26137 `\b\n` + 26172 `\b\n` => the two CRLF blanks before the first
+  `Scanning directory N` header on the immediate path (no prompt between).
+- Out-of-range: `getDirSpan` prints `\b\nNo such directory.\b\n\b\n`
+  (express.e:26905); with the 26137 blank that is two leading CRLFs, the
+  text, then two trailing CRLFs (a third before the prompt is the menu).
+- The trailing `<MENU PROMPT>` is the FS-UAE menu loop's expert-mode
+  prompt; NextExpress re-renders the menu screen instead (slice-
+  independent, see COMMAND_PARITY.md).

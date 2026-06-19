@@ -102,8 +102,46 @@ pub(crate) enum MenuCommand {
     /// the shadowed internal is `internalCommandF`
     /// (`amiexpress/express.e:24877`), kept for the stock diff record.
     FileList(FileListArg),
+    /// `Z` / `Z <token>`: zippy text search of file descriptions (slice
+    /// D4). Mirrors `internalCommandZ` at `amiexpress/express.e:26123`.
+    /// Unlike `F`/`FR`/`N`, `Z` is *not* shadowed by the `AquaScan`
+    /// door (it is absent from the door's icon set), so the parity
+    /// target is the genuine internal command — captured live in
+    /// `comparison/transcripts/ae_tierd_zippy.txt`.
+    ZippySearch(ZippyArg),
     /// Any command not recognised by this slice.
     Unknown,
+}
+
+/// Parsed argument shape of the `Z` command. Legacy `parseParams` reads
+/// the search string from `item(0)` — a single whitespace token
+/// (`amiexpress/express.e:26146`); the directory span in `item(1)` is
+/// deferred to slice D7, so D4 carries only the query (or the prompt
+/// marker for bare `Z`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ZippyArg {
+    /// `Z <token>`: the `item(0)` search string, kept verbatim — the
+    /// handler upper-cases it for matching
+    /// (`amiexpress/express.e:26160`). No `item(1)`, so the handler
+    /// opens the `getDirSpan('')` directory prompt.
+    Query(String),
+    /// `Z <token> <span>`: the `item(0)` query plus the `item(1)`
+    /// directory span, supplied inline. The handler resolves the span
+    /// directly — `getDirSpan(item(1))` (`amiexpress/express.e:26162-26163`,
+    /// `:26875-26877`) — and scans **without** the directory prompt
+    /// (slice D7, captured in `comparison/transcripts/ae_tierd_zippy3.txt`).
+    QueryInDir {
+        /// The `item(0)` search string, kept verbatim.
+        query: String,
+        /// The raw `item(1)` directory-span token (`number` / `A` / `U`
+        /// / `H`), resolved by the handler with the same `getDirSpan`
+        /// logic the prompt answer uses.
+        span: String,
+    },
+    /// Bare `Z`: the prompt form — the handler emits `Enter string to
+    /// search for:` and line-reads the query
+    /// (`amiexpress/express.e:26150`).
+    Prompt,
 }
 
 /// Parsed argument shape of the `F` command, mirroring the captured
@@ -331,7 +369,36 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if let Some(arg) = parse_file_list_command(trimmed) {
         return MenuCommand::FileList(arg);
     }
+    if let Some(arg) = parse_zippy_command(trimmed) {
+        return MenuCommand::ZippySearch(arg);
+    }
     MenuCommand::Unknown
+}
+
+/// Parses the `Z` command line into a [`ZippyArg`]. Exact-token dispatch
+/// (`StrCmp(cmdcode,'Z')`, `amiexpress/express.e:28388`): the command
+/// binds only when the first whitespace token is exactly `Z`, so `ZOOM`
+/// (`internalCommandZOOM`, `:26215`) stays a separate token reserved for
+/// a later slice. The search string is the first parameter token
+/// (`item(0)`, `:26146`); a bare `Z` is the prompt form (`:26150`).
+/// Extra tokens — the `item(1)` directory span — are dropped: D4 is
+/// single-area, honouring the span is slice D7.
+fn parse_zippy_command(line: &str) -> Option<ZippyArg> {
+    let mut tokens = line.split_ascii_whitespace();
+    let head = tokens.next()?;
+    if !head.eq_ignore_ascii_case("Z") {
+        return None;
+    }
+    let Some(query) = tokens.next() else {
+        return Some(ZippyArg::Prompt);
+    };
+    Some(match tokens.next() {
+        Some(span) => ZippyArg::QueryInDir {
+            query: query.to_string(),
+            span: span.to_string(),
+        },
+        None => ZippyArg::Query(query.to_string()),
+    })
 }
 
 /// Parses the `F` / `FR` command line into a [`FileListArg`] following
@@ -1227,6 +1294,73 @@ mod tests {
     }
 
     #[test]
+    fn parses_zippy_search_command() {
+        // Slice D4: `Z` is the zippy text search (`internalCommandZ`,
+        // `amiexpress/express.e:26123`). Legacy `parseParams` reads the
+        // search string from `item(0)` — a single whitespace token
+        // (`:26146`) — so `Z <token>` carries that one token as the
+        // query, and bare `Z` is the prompt form (`:26150`, the
+        // `Enter string to search for:` line input).
+        assert_eq!(
+            parse_menu_command("Z STARVIEW"),
+            MenuCommand::ZippySearch(ZippyArg::Query("STARVIEW".to_string()))
+        );
+        assert_eq!(
+            parse_menu_command("z starview"),
+            MenuCommand::ZippySearch(ZippyArg::Query("starview".to_string()))
+        );
+        assert_eq!(
+            parse_menu_command("Z"),
+            MenuCommand::ZippySearch(ZippyArg::Prompt)
+        );
+        assert_eq!(
+            parse_menu_command("z"),
+            MenuCommand::ZippySearch(ZippyArg::Prompt)
+        );
+    }
+
+    #[test]
+    fn zippy_search_query_then_optional_inline_directory_span() {
+        // `parseParams` puts the search string in `item(0)` and the
+        // directory span in `item(1)` (`amiexpress/express.e:26146`,
+        // `:26162-26163`). A bare `Z <token>` carries the query and
+        // leaves the directory to the prompt; a second token is the
+        // inline area-spec, which the handler resolves without prompting
+        // (slice D7, `getDirSpan(item(1))`). Tokens past `item(1)` are
+        // dropped (`parseParams` reads only items 0 and 1 here).
+        assert_eq!(
+            parse_menu_command("Z STARVIEW 1"),
+            MenuCommand::ZippySearch(ZippyArg::QueryInDir {
+                query: "STARVIEW".to_string(),
+                span: "1".to_string(),
+            })
+        );
+        assert_eq!(
+            parse_menu_command("Z foo A NS"),
+            MenuCommand::ZippySearch(ZippyArg::QueryInDir {
+                query: "foo".to_string(),
+                span: "A".to_string(),
+            })
+        );
+        // `Z <token>` with no second token stays the prompt-for-dir form.
+        assert_eq!(
+            parse_menu_command("Z foo"),
+            MenuCommand::ZippySearch(ZippyArg::Query("foo".to_string()))
+        );
+    }
+
+    #[test]
+    fn zippy_search_does_not_swallow_the_zoom_command() {
+        // Exact-token dispatch (`StrCmp(cmdcode,'Z')`,
+        // `amiexpress/express.e:28388`): `Z` binds only when the command
+        // token is exactly `Z`. `ZOOM` (`internalCommandZOOM`,
+        // `:26215`) is a distinct token reserved for a later slice, so
+        // it must stay Unknown rather than parse as a zippy search.
+        assert_eq!(parse_menu_command("ZOOM"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("zoom"), MenuCommand::Unknown);
+    }
+
+    #[test]
     fn fr_command_rejects_unsupported_argument_forms() {
         // Same `Argument error!` path as `F`. `FR W` (config is TOML)
         // and junk tokens are unsupported; `F R` (with a space) is
@@ -1328,6 +1462,7 @@ mod tests {
             MenuCommand::PrevMsgBase => Some("<<"),
             MenuCommand::NextMsgBase => Some(">>"),
             MenuCommand::FileList(_) => Some("F"),
+            MenuCommand::ZippySearch(_) => Some("Z"),
             MenuCommand::Unknown => None,
         }
     }
@@ -1359,6 +1494,7 @@ mod tests {
             MenuCommand::PrevMsgBase,
             MenuCommand::NextMsgBase,
             MenuCommand::FileList(FileListArg::Prompt { reverse: false }),
+            MenuCommand::ZippySearch(ZippyArg::Prompt),
             MenuCommand::Unknown,
         ]
     }

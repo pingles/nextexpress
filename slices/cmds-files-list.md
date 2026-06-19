@@ -210,16 +210,55 @@ the gaps where the captures are silent.
     being exercised; deferred.
   - `FR ?` distinct help bytes (reuses the `F ?` help for now).
 
-## Slice D4 — `Z` (zippy text search, single-area first)
+## Slice D4 — `Z` (zippy text search) — **Done**
 
-- **In Scope**
-  - Parser: `MenuCommand::ZippySearch(query, area_spec)`.
-  - Substring search of description text, **scoped to the current
-    conference's current area only** in this slice.
-  - Interactive prompt when query is missing
-    (`amiexpress/express.e:26150-26156`).
-- **Out of Scope**
-  - Multi-area scans (the `A` / `1-3` area-spec — that's slice D7).
+Landed 2026-06-19. `Z` is the genuine internal command (`internalCommandZ`,
+`amiexpress/express.e:26123`) — **not** AquaScan-shadowed (it is absent
+from the door icon set), so unlike `F`/`FR`/`N` its parity target is the
+internal command, captured live in
+[`comparison/transcripts/ae_tierd_zippy.txt`](../comparison/transcripts/ae_tierd_zippy.txt)
+(Z1–Z7) and [`ae_tierd_zippy2.txt`](../comparison/transcripts/ae_tierd_zippy2.txt)
+(ZU/ZH/ZOOR). The wire is plain text — raw DIR rows via
+`file_list::dir_row::dir_row_lines`, **no** NextScan frames or colour —
+deliberately distinct from the colourful `F` door.
+
+- **In Scope (shipped)**
+  - Parser `MenuCommand::ZippySearch(ZippyArg)`: exact-token dispatch
+    (`StrCmp(cmdcode,'Z')`, `:28388`), so `ZOOM` stays separate; the
+    search string is the first parameter token (`item(0)`, `:26146`),
+    bare `Z` is the prompt form (`:26150`).
+  - Bare `Z` → the `Enter string to search for: ` prompt (plain, no ANSI);
+    an empty answer returns (`:26155-26156`).
+  - The internal `getDirSpan('')` `Directories: …=none? ` prompt
+    (`:26864`) — **distinct** from AquaScan's `directories_prompt`
+    (lowercase `=none?`, space after `?`, closing reset with no trailing
+    space). Honoured answers: a directory **number** (single dir), `U`
+    (upload = highest dir, rendered by number), `A` (all areas), `H`
+    (hold), blank = `(Enter)=none` abort, and the out-of-range
+    `No such directory.` error (`:26905`, distinct from AquaScan's
+    highest-dir error).
+  - Substring search via the legacy `UpperStr` + `InStr` over each
+    rendered DIR row (filename row included, `:27595-27598`): any line of
+    a file's block that contains the upper-cased query dumps the whole
+    block (continuations included). Case-insensitive.
+  - 11 handler unit tests (exact wire) + 2 binary-reachable telnet smokes
+    (`tierd_file_list_smoke.rs`).
+- **Scope note — what the live capture corrected.** The original plan
+  ("search the current area only; the `A`/`1-3` area-spec is D7") was
+  written before the reference was driven. The capture showed `Z`
+  **always** opens the interactive `getDirSpan('')` directory prompt —
+  there is no session "current area". D4 therefore ports the full
+  interactive prompt (number/`U`/`A`/`H`/none/out-of-range). The *inline*
+  `item(1)` area-spec **argument** (`Z <q> <span>`, the
+  `getDirSpan(item(1))` path that skips the prompt) shipped right after,
+  in **D7 below** — surfaced by user feedback that `Z ART 1` should scan
+  immediately like the reference rather than re-prompt.
+- **Out of Scope (deferred)**
+  - Pagination of a large match set (legacy `flagPause`,
+    `:27582`/`:27613`) — uncaptured (no search filled a screen); the
+    seeded corpus never paginates. Capture before porting.
+  - The `L` (reload) `getDirSpan` answer (`:26891-26894`) — an uncaptured
+    edge; currently falls into `No such directory.`.
   - Wildcard / regex syntax.
 
 ## Slice D5 — `FlagFile` / `UnflagFile` rules
@@ -268,12 +307,33 @@ the gaps where the captures are silent.
   - "Flag from outside the current conference" — the legacy permits
     cross-conference flagging in some configurations; deferred.
 
-## Slice D7 — `Z` multi-area scan
+## Slice D7 — `Z` inline area-spec — **Done**
 
-- **In Scope**
-  - Extends D4 to honour the area-spec parameter (`Z <q> A` for all
-    accessible areas, `Z <q> 1-3` for a range).
-  - `getDirSpan` parity (`amiexpress/express.e:26162`).
+Landed 2026-06-19, immediately after D4, triggered by user feedback: on
+the reference, `Z <term> <dir>` scans **immediately** (no `Directories:`
+prompt), but D4 ignored the inline directory token and re-prompted — a
+visible divergence. Captured live in
+[`comparison/transcripts/ae_tierd_zippy3.txt`](../comparison/transcripts/ae_tierd_zippy3.txt)
+(`Z ART 1`/`A`/`U`/`H`/`9`/`xyz`).
+
+- **In Scope (shipped)**
+  - Parser `ZippyArg::QueryInDir { query, span }`: `Z <token> <span>`
+    captures the `item(1)` directory span; tokens past `item(1)` are
+    dropped (`parseParams` reads only items 0 and 1).
+  - The handler resolves the inline span with the **same** `getDirSpan`
+    logic the interactive prompt answer uses (`resolve_zippy_span`:
+    number / `A` / `U` / `H` / out-of-range), but **without** the
+    `Directories:` prompt (`getDirSpan(item(1))` ELSE branch,
+    `amiexpress/express.e:26162-26163`, `:26875-26877`). Two blanks
+    (26137 + 26172) precede the first header; an out-of-range/junk span
+    takes `No such directory.` immediately.
+  - 6 handler unit tests + 1 binary-reachable telnet smoke; verified by
+    hand against both the live server and the FS-UAE reference.
+- **Out of Scope**
+  - Numeric **ranges** (`Z <q> 1-3`) — the legacy `getDirSpan` takes a
+    single `Val`, not a range; the captured forms are number/`A`/`U`/`H`.
+  - The first-char-only `A`/`U`/`H` match (a token like `Apple` → all
+    dirs on the legacy) — D7 matches the whole token, an uncaptured edge.
 
 ## Slice D8 — `FS` (file status / free space)
 
