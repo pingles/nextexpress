@@ -8,6 +8,7 @@
 
 use std::time::SystemTime;
 
+use crate::app::services::AppServices;
 use crate::app::session_flow::{self, CompletePasswordResetFlowError};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
@@ -15,7 +16,10 @@ use crate::app::wire_text::{
     PASSWORD_RESET_MISMATCH_LINE, PASSWORD_RESET_PROMPT, PASSWORD_RESET_REQUIRED_LINE,
     PASSWORD_RESET_SAME_AS_CURRENT_LINE, PASSWORD_RESET_WEAK_LINE,
 };
+use crate::domain::password::PasswordHasher;
 use crate::domain::session::typed::{LoggingOffSession, OnboardedSession};
+use crate::domain::session::SessionPolicy;
+use crate::domain::user_repository::UserRepository;
 
 const MAX_PASSWORD_RESET_ATTEMPTS: u32 = 3;
 
@@ -30,13 +34,45 @@ pub(crate) enum PasswordResetOutcome {
     Aborted,
 }
 
+/// Driven ports and policy needed by [`PasswordResetFlow`].
+pub(crate) struct PasswordResetServices<'a> {
+    user_repo: &'a (dyn UserRepository + Send + Sync),
+    hasher: &'a (dyn PasswordHasher + Send + Sync),
+    session_policy: SessionPolicy,
+}
+
+impl<'a> PasswordResetServices<'a> {
+    /// Constructs the narrow dependency set for the reset flow.
+    pub(crate) fn new(
+        user_repo: &'a (dyn UserRepository + Send + Sync),
+        hasher: &'a (dyn PasswordHasher + Send + Sync),
+        session_policy: SessionPolicy,
+    ) -> Self {
+        Self {
+            user_repo,
+            hasher,
+            session_policy,
+        }
+    }
+}
+
+impl<'a> From<&'a AppServices> for PasswordResetServices<'a> {
+    fn from(services: &'a AppServices) -> Self {
+        Self::new(
+            services.user_repo.as_ref(),
+            services.hasher.as_ref(),
+            services.session_policy,
+        )
+    }
+}
+
 /// Terminal-driven forced-password-reset flow.
 pub(crate) struct PasswordResetFlow<'a, T>
 where
     T: Terminal,
 {
     terminal: &'a mut T,
-    services: &'a crate::app::services::AppServices,
+    services: PasswordResetServices<'a>,
 }
 
 impl<'a, T> PasswordResetFlow<'a, T>
@@ -45,10 +81,7 @@ where
 {
     /// Constructs a flow that drives `terminal` against the supplied
     /// driven adapters.
-    pub(crate) fn new(
-        terminal: &'a mut T,
-        services: &'a crate::app::services::AppServices,
-    ) -> Self {
+    pub(crate) fn new(terminal: &'a mut T, services: PasswordResetServices<'a>) -> Self {
         Self { terminal, services }
     }
 
@@ -91,8 +124,8 @@ where
             match session_flow::complete_password_reset(
                 &mut inner,
                 &candidate,
-                self.services.user_repo.as_ref(),
-                self.services.hasher.as_ref(),
+                self.services.user_repo,
+                self.services.hasher,
                 self.services.session_policy,
                 SystemTime::now(),
             ) {
@@ -184,22 +217,15 @@ enum PasswordRead {
 mod tests {
     use std::collections::VecDeque;
     use std::convert::Infallible;
-    use std::sync::Arc;
     use std::time::{Duration, SystemTime};
 
-    use crate::adapters::file_screen_repository::FileScreenRepository;
-    use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
-    use crate::adapters::in_memory_file_repository::InMemoryFileRepository;
-    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
-    use crate::app::services::AppServices;
-    use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
     use crate::app::terminal::{TerminalFuture, TerminalRead};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::typed::OnboardedSession;
     use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
-    use crate::domain::user::{RatioMode, User};
+    use crate::domain::user::User;
 
     use super::*;
 
@@ -251,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn mismatched_confirmations_exhaust_the_reset_attempt_budget() {
-        let (services, session) = reset_services_and_session(SessionPolicy::default());
+        let (fixture, session) = reset_fixture_and_session(SessionPolicy::default());
         let mut terminal = FakeTerminal::new([
             line("Newpass123"),
             line("Otherpass123"),
@@ -261,7 +287,7 @@ mod tests {
             line("Mismatch123"),
         ]);
 
-        let outcome = PasswordResetFlow::new(&mut terminal, &services)
+        let outcome = PasswordResetFlow::new(&mut terminal, fixture.services())
             .run(session)
             .await
             .expect("flow completes");
@@ -278,7 +304,7 @@ mod tests {
     #[tokio::test]
     async fn weak_passwords_exhaust_the_reset_attempt_budget() {
         let policy = SessionPolicy::default().with_min_password_length(10);
-        let (services, session) = reset_services_and_session(policy);
+        let (fixture, session) = reset_fixture_and_session(policy);
         let mut terminal = FakeTerminal::new([
             line("short"),
             line("short"),
@@ -288,7 +314,7 @@ mod tests {
             line("small"),
         ]);
 
-        let outcome = PasswordResetFlow::new(&mut terminal, &services)
+        let outcome = PasswordResetFlow::new(&mut terminal, fixture.services())
             .run(session)
             .await
             .expect("flow completes");
@@ -302,27 +328,24 @@ mod tests {
         assert_eq!(terminal.echo_modes, vec![TerminalEcho::Masked; 6]);
     }
 
-    fn reset_services_and_session(policy: SessionPolicy) -> (AppServices, OnboardedSession) {
+    struct ResetFixture {
+        user_repo: InMemoryUserRepository,
+        hasher: Pbkdf2PasswordHasher,
+        policy: SessionPolicy,
+    }
+
+    impl ResetFixture {
+        fn services(&self) -> PasswordResetServices<'_> {
+            PasswordResetServices::new(&self.user_repo, &self.hasher, self.policy)
+        }
+    }
+
+    fn reset_fixture_and_session(policy: SessionPolicy) -> (ResetFixture, OnboardedSession) {
         let user = alice_with_reset_pending();
-        let services = AppServices {
-            user_repo: Arc::new(InMemoryUserRepository::new(vec![user.clone()])),
-            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
-            caller_log: Arc::new(InMemoryCallerLog::new()),
-            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            conferences: Arc::new(Vec::new()),
-            mail_stores: Arc::new(InMemoryMailStores::new()),
-            file_repo: Arc::new(InMemoryFileRepository::new(Vec::new(), Vec::new())),
-            session_policy: policy,
-            default_ratio: DefaultRatio {
-                mode: RatioMode::Disabled,
-                value: 0,
-            },
-            new_user_gate: Arc::new(NewUserGateConfig {
-                allow_new_users: true,
-                new_user_password: None,
-                max_new_user_password_attempts: 3,
-            }),
-            bbs_name: Arc::from("TestBBS"),
+        let fixture = ResetFixture {
+            user_repo: InMemoryUserRepository::new(vec![user.clone()]),
+            hasher: Pbkdf2PasswordHasher::new(),
+            policy,
         };
         let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
         session.prompt_for_name().expect("prompt");
@@ -335,7 +358,7 @@ mod tests {
             SystemTime::UNIX_EPOCH,
         )
         .expect("matched");
-        (services, OnboardedSession::from_session(session))
+        (fixture, OnboardedSession::from_session(session))
     }
 
     fn alice_with_reset_pending() -> User {

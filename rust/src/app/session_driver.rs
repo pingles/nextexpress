@@ -23,7 +23,9 @@ use std::time::SystemTime;
 
 use crate::app::login_flow::{LoginFlow, LoginOutcome};
 use crate::app::menu_flow::MenuFlow;
-use crate::app::password_reset_flow::{PasswordResetFlow, PasswordResetOutcome};
+use crate::app::password_reset_flow::{
+    PasswordResetFlow, PasswordResetOutcome, PasswordResetServices,
+};
 use crate::app::registration_flow::{RegistrationFlow, RegistrationOutcome};
 use crate::app::services::AppServices;
 use crate::app::session_flow;
@@ -283,9 +285,12 @@ where
                     return Ok(EnterMenuDriverOutcome::Menu(menu));
                 }
                 Ok(session_flow::EnterMenuFlowOutcome::PasswordResetRequired(reset_session)) => {
-                    match PasswordResetFlow::new(&mut self.terminal, &self.services)
-                        .run(reset_session)
-                        .await?
+                    match PasswordResetFlow::new(
+                        &mut self.terminal,
+                        PasswordResetServices::from(&self.services),
+                    )
+                    .run(reset_session)
+                    .await?
                     {
                         PasswordResetOutcome::Onboarded(session) => {
                             onboarded = session;
