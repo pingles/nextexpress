@@ -189,7 +189,7 @@ mod tests {
     impl LoadFailingStore {
         fn backend_error() -> MailStoreError {
             MailStoreError::Backend {
-                source: Box::new(io::Error::new(io::ErrorKind::Other, "load failed")),
+                source: Box::new(io::Error::other("load failed")),
             }
         }
     }
