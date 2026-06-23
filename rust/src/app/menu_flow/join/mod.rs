@@ -27,11 +27,12 @@
 use std::time::SystemTime;
 
 use crate::app::menu_command::{val_prefix, JoinArg, MsgBaseArg};
+use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::session_presenter::{format_explicit_join_line, render_name_type_promotion};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_conference_number_prompt, render_msgbase_number_prompt, render_scan_summary,
-    MAIL_STORE_ERROR_LINE, NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE, SINGLE_MSGBASE_CONFERENCE_LINE,
+    NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE, SINGLE_MSGBASE_CONFERENCE_LINE,
 };
 use crate::domain::conference::{find_msgbase_in, Conference, MessageBase};
 use crate::domain::conference_visit::{

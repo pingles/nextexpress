@@ -13,13 +13,13 @@ use std::time::SystemTime;
 
 use crate::app::input_limits::append_line_with_newline;
 use crate::app::mail_stores::MailStores;
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{
-    render_post_success, FORWARD_NOTE_PROMPT, FORWARD_TO_PROMPT, FORWARD_UNKNOWN_USER_LINE,
-    MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, POST_ABORTED_LINE, POST_ACCESS_DENIED_LINE,
-    POST_ADDRESSING_NOT_ALLOWED_LINE, POST_RECIPIENT_NO_ACCESS_LINE, SOURCE_DELETED_LINE,
-    SOURCE_NOT_FOUND_LINE,
+use crate::app::menu_flow::mail_text::{
+    render_post_success, FORWARD_UNKNOWN_USER_LINE, MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE,
+    POST_ABORTED_LINE, POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE,
+    POST_RECIPIENT_NO_ACCESS_LINE, SOURCE_NOT_FOUND_LINE,
 };
+use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::wire_text::{FORWARD_NOTE_PROMPT, FORWARD_TO_PROMPT, SOURCE_DELETED_LINE};
 use crate::domain::conference::Conference;
 use crate::domain::messaging::forward_mail::{
     forward_mail as forward_mail_rule, ForwardMailError, ForwardMailRequest,
@@ -370,10 +370,10 @@ mod tests {
     use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::menu_flow::mail_text::POST_ABORTED_LINE;
     use crate::app::services::AppServices;
     use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
     use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
-    use crate::app::wire_text::POST_ABORTED_LINE;
     use crate::domain::messaging::post_mail::PostMailError;
     use crate::domain::session::SessionPolicy;
     use crate::domain::user::RatioMode;

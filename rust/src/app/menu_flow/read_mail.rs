@@ -7,10 +7,11 @@
 use std::time::SystemTime;
 
 use crate::app::mail_stores::MailStores;
+use crate::app::menu_flow::mail_text::{MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE};
 use crate::app::terminal::Terminal;
 use crate::app::wire_text::{
-    render_mail_body, render_mail_header, DELETED_MESSAGE_LINE, MAIL_STORE_ERROR_LINE,
-    MESSAGE_NOT_FOUND_LINE, NO_MAIL_BASE_LINE, READ_DENIED_LINE,
+    render_mail_body, render_mail_header, DELETED_MESSAGE_LINE, MESSAGE_NOT_FOUND_LINE,
+    READ_DENIED_LINE,
 };
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::messaging::mail::Mail;

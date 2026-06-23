@@ -16,6 +16,7 @@ mod conf_flags;
 mod file_list;
 mod join;
 mod list_messages;
+pub(crate) mod mail_text;
 mod pager;
 mod post_mail;
 mod read_mail;
@@ -23,6 +24,7 @@ mod read_subprompt;
 mod reply_forward;
 mod scan_all_mail;
 mod sysop_admin;
+pub(crate) mod table;
 #[cfg(test)]
 mod tests;
 

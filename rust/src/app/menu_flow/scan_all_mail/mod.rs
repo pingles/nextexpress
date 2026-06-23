@@ -16,11 +16,11 @@ pub(super) use self::core::ScanFilter;
 use std::time::SystemTime;
 
 use self::core::{scan_all_mail, BaseScanOutcome};
+use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_scan_conference_banner, render_scan_listing_table, render_scan_msgbase_banner,
     MAIL_SCAN_ALL_HEADER, MAIL_SCAN_NO_MAIL_TODAY, MAIL_SCAN_READ_IT_NOW_PROMPT,
-    MAIL_STORE_ERROR_LINE,
 };
 use crate::domain::messaging::scan_mail::MailScanRow;
 use crate::domain::session::typed::MenuSession;

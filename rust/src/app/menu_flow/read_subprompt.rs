@@ -16,10 +16,9 @@
 
 use std::time::SystemTime;
 
+use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{
-    render_read_subprompt, render_read_subprompt_help, MAIL_STORE_ERROR_LINE,
-};
+use crate::app::wire_text::{render_read_subprompt, render_read_subprompt_help};
 use crate::domain::messaging::delete_mail::can_delete;
 use crate::domain::messaging::edit_mail_header::can_edit_header;
 use crate::domain::messaging::mail_store::MailStoreError;

@@ -14,16 +14,15 @@ use std::time::SystemTime;
 use crate::app::input_limits::append_line_with_newline;
 use crate::app::mail_stores::MailStores;
 use crate::app::menu_command::PostArg;
+use crate::app::menu_flow::mail_text::{
+    render_post_success, MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, POST_ABORTED_LINE,
+    POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE, POST_RECIPIENT_NO_ACCESS_LINE,
+};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_editor_line_prompt, render_editor_listing, render_post_success,
-};
-use crate::app::wire_text::{
-    EDITOR_ABORT_CONFIRM_PROMPT, EDITOR_INTRO, EDITOR_MSG_OPTIONS_HELP, EDITOR_MSG_OPTIONS_PROMPT,
-    MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, NO_SYSOP_LINE, POST_ABORTED_LINE,
-    POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE, POST_BODY_PROMPT,
-    POST_PRIVATE_PROMPT, POST_RECIPIENT_NO_ACCESS_LINE, POST_SUBJECT_PROMPT, POST_TO_PROMPT,
-    POST_UNKNOWN_USER_LINE,
+    render_editor_line_prompt, render_editor_listing, EDITOR_ABORT_CONFIRM_PROMPT, EDITOR_INTRO,
+    EDITOR_MSG_OPTIONS_HELP, EDITOR_MSG_OPTIONS_PROMPT, NO_SYSOP_LINE, POST_BODY_PROMPT,
+    POST_PRIVATE_PROMPT, POST_SUBJECT_PROMPT, POST_TO_PROMPT, POST_UNKNOWN_USER_LINE,
 };
 use crate::domain::conference::Conference;
 use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
