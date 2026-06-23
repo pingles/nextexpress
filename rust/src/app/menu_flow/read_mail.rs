@@ -9,16 +9,125 @@ use std::time::SystemTime;
 use crate::app::mail_stores::MailStores;
 use crate::app::menu_flow::mail_text::{MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE};
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::{
-    render_mail_body, render_mail_header, DELETED_MESSAGE_LINE, MESSAGE_NOT_FOUND_LINE,
-    READ_DENIED_LINE,
-};
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::mail_store::MailStoreError;
 use crate::domain::messaging::read_mail::{read_mail as read_mail_rule, ReadMailError};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::session::typed::MenuSession;
+
+/// Sent when the requested message number is unknown in this
+/// message base. Mirrors the legacy `Msg #X not found.` notice
+/// (`amiexpress/express.e:25460`).
+const MESSAGE_NOT_FOUND_LINE: &[u8] = b"\r\nMessage not found.\r\n";
+
+/// Sent when the user tries to read a soft-deleted message. Mirrors
+/// the legacy `That message has been deleted.` line
+/// (`amiexpress/express.e:8890`).
+const DELETED_MESSAGE_LINE: &[u8] = b"\r\nThat message has been deleted.\r\n\r\n";
+
+/// Sent when the user has no membership grant for the current
+/// conference, or the message's visibility blocks them from reading
+/// it.
+const READ_DENIED_LINE: &[u8] = b"\r\nYou are not permitted to read this message.\r\n";
+
+/// Renders a [`Mail`]'s header block for the menu's `R` command.
+///
+/// Mirrors the legacy `displayMessage` output at
+/// `amiexpress/express.e:8900-8938`:
+///
+/// ```text
+///   Date   : <date>                Number: <n>
+///   To     : <to>                  Recv'd: <date | No | N/A>
+///   From   : <from>                Status: Public Message | Private Message
+///   Subject: <subject>
+/// ```
+///
+/// ANSI colour escapes match the legacy output: `[32m` green for
+/// the labels' left half, `[33m` yellow for the separating colon,
+/// `[0m` reset for the value, all on a single colour budget that
+/// the existing telnet adapter passes through verbatim.
+///
+/// Timestamps are rendered as RFC 3339 UTC for now; the legacy's
+/// human-friendly `formatLongDateTime` format lands with the
+/// locale-aware formatter slice in Phase 13.
+///
+/// [`Mail`]: crate::domain::messaging::mail::Mail
+fn render_mail_header(
+    mail: &crate::domain::messaging::mail::Mail,
+    conference_name: &str,
+) -> Vec<u8> {
+    use crate::domain::messaging::mail::{BroadcastTo, MailVisibility};
+    use time::OffsetDateTime;
+    let mut out = Vec::with_capacity(256);
+    let posted = OffsetDateTime::from(mail.posted_at());
+    let posted_str = posted
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "unknown".to_string());
+    out.extend_from_slice(b"\r\n\x1b[32mDate   \x1b[33m:\x1b[0m ");
+    out.extend_from_slice(posted_str.as_bytes());
+    out.extend_from_slice(b"  \x1b[32mNumber\x1b[33m:\x1b[0m ");
+    out.extend_from_slice(mail.number().to_string().as_bytes());
+    out.extend_from_slice(b"\r\n\x1b[32mTo     \x1b[33m:\x1b[0m ");
+    out.extend_from_slice(mail.to_name().as_bytes());
+    out.extend_from_slice(b"  \x1b[32mRecv'd\x1b[33m:\x1b[0m ");
+    match (mail.received_at(), mail.broadcast_to()) {
+        (Some(t), _) => {
+            let recvd = OffsetDateTime::from(t)
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_else(|_| "unknown".to_string());
+            out.extend_from_slice(recvd.as_bytes());
+        }
+        (None, BroadcastTo::All | BroadcastTo::Eall) => out.extend_from_slice(b"N/A"),
+        (None, BroadcastTo::None) => out.extend_from_slice(b"No"),
+    }
+    out.extend_from_slice(b"\r\n\x1b[32mFrom   \x1b[33m:\x1b[0m ");
+    out.extend_from_slice(mail.from_name().as_bytes());
+    out.extend_from_slice(b"  \x1b[32mStatus\x1b[33m:\x1b[0m ");
+    let status = match mail.visibility() {
+        MailVisibility::Public => "Public Message",
+        MailVisibility::Private => "Private Message",
+        // PrivateToSysop and Deleted are filtered upstream — the `R`
+        // dispatch rejects deleted mail and the read-permission gate
+        // blocks PrivateToSysop for non-author/non-sysop readers. We
+        // render them defensively for the sysop-reads-anything case
+        // (PrivateToSysop) and the never-reachable Deleted branch.
+        MailVisibility::PrivateToSysop => "Private to Sysop",
+        MailVisibility::Deleted => "Deleted",
+    };
+    out.extend_from_slice(status.as_bytes());
+    out.extend_from_slice(b"\r\n\x1b[32mSubject\x1b[33m:\x1b[0m ");
+    out.extend_from_slice(mail.subject().as_bytes());
+    out.extend_from_slice(b"\r\n\x1b[32mConf   \x1b[33m:\x1b[0m [");
+    out.extend_from_slice(mail.msgbase().conference_number().to_string().as_bytes());
+    out.extend_from_slice(b"] ");
+    out.extend_from_slice(conference_name.as_bytes());
+    out.extend_from_slice(b"\r\n\r\n");
+    out
+}
+
+/// Translates a mail body's LF line endings to telnet CRLF, ensuring
+/// the trailing line ends with `\r\n`. The on-disk body uses Unix
+/// line endings; rendering for telnet has to normalise them or the
+/// receiving terminal stair-steps. Mirrors the legacy `displayFile`'s
+/// per-line `aePuts` behaviour.
+fn render_mail_body(body: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len() + 16);
+    let mut last_was_cr = false;
+    for ch in body.chars() {
+        if ch == '\n' && !last_was_cr {
+            out.extend_from_slice(b"\r\n");
+        } else {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        }
+        last_was_cr = ch == '\r';
+    }
+    if !body.ends_with('\n') {
+        out.extend_from_slice(b"\r\n");
+    }
+    out
+}
 
 /// Outcome of the terminal-free read-mail command.
 enum ReadMailOutcome {
@@ -277,7 +386,7 @@ mod tests {
     use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
     use crate::domain::user::User;
 
-    use super::{read_mail, ReadMailOutcome};
+    use super::{read_mail, render_mail_body, render_mail_header, ReadMailOutcome};
 
     fn alice() -> User {
         User::new(
@@ -407,5 +516,147 @@ mod tests {
             } => assert_eq!(conference_name, "Other"),
             _ => panic!("expected ReadMailOutcome::Read"),
         }
+    }
+
+    #[test]
+    fn render_mail_body_translates_lone_lf_into_crlf() {
+        // Bodies arrive from disk with Unix `\n` line endings;
+        // emitting them as-is would stair-step the receiving
+        // terminal. Telnet requires `\r\n`.
+        let body = "First line.\nSecond line.\n";
+        assert_eq!(render_mail_body(body), b"First line.\r\nSecond line.\r\n");
+    }
+
+    #[test]
+    fn render_mail_body_preserves_existing_crlf_pairs() {
+        // A body that already carries `\r\n` (e.g. authored on
+        // Windows or by a migration tool) must not turn each pair
+        // into `\r\r\n`.
+        let body = "Line 1.\r\nLine 2.\r\n";
+        assert_eq!(render_mail_body(body), b"Line 1.\r\nLine 2.\r\n");
+    }
+
+    #[test]
+    fn render_mail_body_appends_terminator_when_body_has_no_trailing_newline() {
+        // A body without a trailing LF must still end with `\r\n`
+        // so the menu prompt that follows starts on a fresh line.
+        let body = "No trailing newline";
+        assert_eq!(render_mail_body(body), b"No trailing newline\r\n");
+    }
+
+    #[test]
+    fn render_mail_body_handles_empty_input() {
+        let body = "";
+        // Empty body still emits the terminator so the menu prompt
+        // is not jammed against the header block.
+        assert_eq!(render_mail_body(body), b"\r\n");
+    }
+
+    #[test]
+    fn render_mail_header_emits_legacy_label_block() {
+        // Pin the legacy label block. The escape sequences and the
+        // ordering of labels must match `amiexpress/express.e:8900-8938`.
+        use crate::domain::conference::MessageBaseRef;
+        use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
+        let mail = Mail::new(NewMail {
+            msgbase: MessageBaseRef::new(2, 1),
+            number: 7,
+            visibility: MailVisibility::Public,
+            from_name: "Sysop".to_string(),
+            to_name: "alice".to_string(),
+            broadcast_to: BroadcastTo::None,
+            subject: "Welcome".to_string(),
+            posted_at: std::time::SystemTime::UNIX_EPOCH,
+            author_slot: 1,
+            addressee_slot: Some(2),
+            body: "Hello".to_string(),
+        });
+        let rendered = render_mail_header(&mail, "Programming");
+        let text = std::str::from_utf8(&rendered).expect("utf8");
+        // Each label and its value appears once.
+        assert!(text.contains("Date   "), "missing Date label: {text:?}");
+        assert!(text.contains("Number"), "missing Number label: {text:?}");
+        assert!(text.contains("Number\x1b[33m:\x1b[0m 7"), "wrong number");
+        assert!(
+            text.contains("To     \x1b[33m:\x1b[0m alice"),
+            "wrong To: {text:?}",
+        );
+        assert!(
+            text.contains("From   \x1b[33m:\x1b[0m Sysop"),
+            "wrong From: {text:?}",
+        );
+        assert!(
+            text.contains("Status\x1b[33m:\x1b[0m Public Message"),
+            "wrong Status: {text:?}",
+        );
+        assert!(
+            text.contains("Subject\x1b[33m:\x1b[0m Welcome"),
+            "wrong Subject: {text:?}",
+        );
+        assert!(
+            text.contains("Conf   \x1b[33m:\x1b[0m [2] Programming"),
+            "wrong Conf: {text:?}",
+        );
+        // An unread mail addressed to a named user renders Recv'd: No.
+        assert!(
+            text.contains("Recv'd\x1b[33m:\x1b[0m No"),
+            "expected Recv'd: No for unread, got: {text:?}",
+        );
+    }
+
+    #[test]
+    fn render_mail_header_marks_broadcast_recipients_as_not_applicable() {
+        // `amiexpress/express.e:8923` — broadcast mail has
+        // `Recv'd: N/A` because no single addressee owns it.
+        use crate::domain::conference::MessageBaseRef;
+        use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
+        let mail = Mail::new(NewMail {
+            msgbase: MessageBaseRef::new(2, 1),
+            number: 1,
+            visibility: MailVisibility::Public,
+            from_name: "Sysop".to_string(),
+            to_name: "ALL".to_string(),
+            broadcast_to: BroadcastTo::All,
+            subject: "Notice".to_string(),
+            posted_at: std::time::SystemTime::UNIX_EPOCH,
+            author_slot: 1,
+            addressee_slot: None,
+            body: "Notice body".to_string(),
+        });
+        let rendered = render_mail_header(&mail, "Conf");
+        let text = std::str::from_utf8(&rendered).expect("utf8");
+        assert!(
+            text.contains("Recv'd\x1b[33m:\x1b[0m N/A"),
+            "broadcast mail must render N/A, got: {text:?}",
+        );
+    }
+
+    #[test]
+    fn render_mail_header_renders_received_at_when_set() {
+        // A read mail (with `received_at = Some`) shows the timestamp
+        // rather than the literal "No".
+        use crate::domain::conference::MessageBaseRef;
+        use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility, NewMail};
+        use std::time::{Duration, SystemTime};
+        let mut mail = Mail::new(NewMail {
+            msgbase: MessageBaseRef::new(2, 1),
+            number: 1,
+            visibility: MailVisibility::Public,
+            from_name: "Sysop".to_string(),
+            to_name: "alice".to_string(),
+            broadcast_to: BroadcastTo::None,
+            subject: "Hi".to_string(),
+            posted_at: SystemTime::UNIX_EPOCH,
+            author_slot: 1,
+            addressee_slot: Some(2),
+            body: String::new(),
+        });
+        mail.mark_received(SystemTime::UNIX_EPOCH + Duration::from_secs(100))
+            .unwrap();
+        let text = String::from_utf8(render_mail_header(&mail, "Conf")).unwrap();
+        assert!(
+            text.contains("Recv'd\x1b[33m:\x1b[0m 1970-01-01T00:01:40Z"),
+            "expected RFC 3339 received_at, got: {text:?}",
+        );
     }
 }

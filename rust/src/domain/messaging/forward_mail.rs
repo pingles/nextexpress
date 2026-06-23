@@ -78,7 +78,7 @@ pub enum ForwardMailError {
 /// Spec black box `forward_header_for(mail)` — the
 /// "From: … Date: … Subject: …" block prepended to the body of a
 /// forwarded mail. The date is rendered in RFC3339 form (matching
-/// `app::wire_text::render_mail_header`); the block ends with a
+/// `app::menu_flow::read_mail::render_mail_header`); the block ends with a
 /// trailing newline so the spec's `header + "\n" + body` join
 /// produces the expected two-newline boundary.
 #[must_use]
