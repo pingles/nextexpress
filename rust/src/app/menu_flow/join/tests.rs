@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+use super::NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE;
 use crate::adapters::file_screen_repository::FileScreenRepository;
 use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
 use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
@@ -13,7 +14,6 @@ use crate::app::menu_command::{parse_menu_command, JoinArg, MenuCommand};
 use crate::app::services::AppServices;
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
-use crate::app::wire_text::NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE;
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, MessageBaseRef};
 use crate::domain::messaging::mail::{BroadcastTo, MailDraft, MailVisibility};
 use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
@@ -1563,5 +1563,53 @@ async fn next_conference_walks_the_catalogue_not_number_arithmetic() {
         b"\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Five\r\n".to_vec(),
         "got {:?}",
         String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[test]
+fn conference_number_prompt_matches_the_legacy_capture() {
+    // Live capture (AmiExpress 5.6.0, two conferences):
+    // `b'Conference Number (1-2): '` — trailing space, no CRLF on
+    // either side (`amiexpress/express.e:25144`).
+    assert_eq!(
+        super::render_conference_number_prompt(2),
+        b"Conference Number (1-2): "
+    );
+}
+
+#[test]
+fn render_scan_summary_emits_no_new_mail_for_zero() {
+    // Legacy `\tNo New Mail!\b\n` (`amiexpress/express.e:26499`).
+    assert_eq!(super::render_scan_summary(0, None), b"\r\nNo new mail.\r\n");
+    // first_unread_number is ignored when count is zero.
+    assert_eq!(
+        super::render_scan_summary(0, Some(5)),
+        b"\r\nNo new mail.\r\n"
+    );
+}
+
+#[test]
+fn render_scan_summary_pluralises_message_for_more_than_one() {
+    assert_eq!(
+        super::render_scan_summary(3, Some(5)),
+        b"\r\nYou have 3 new messages. First: 5.\r\n",
+    );
+}
+
+#[test]
+fn render_scan_summary_uses_singular_for_one_message() {
+    assert_eq!(
+        super::render_scan_summary(1, Some(7)),
+        b"\r\nYou have 1 new message. First: 7.\r\n",
+    );
+}
+
+#[test]
+fn render_scan_summary_handles_missing_first_unread_number() {
+    // Defensive: a non-zero count without a number would be a
+    // bug, but the renderer must not panic on it.
+    assert_eq!(
+        super::render_scan_summary(2, None),
+        b"\r\nYou have 2 new messages.\r\n",
     );
 }

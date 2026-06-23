@@ -285,82 +285,8 @@ pub(crate) const LOGON_REJECTED_LINE: &[u8] = b"Logon rejected. Goodbye.\r\n";
 /// session terminates with `LogoffReason::NoConferenceAccess`.
 pub(crate) const NO_CONFERENCE_ACCESS_LINE: &[u8] = b"\r\nNo accessible conferences. Goodbye.\r\n";
 
-/// Sent when the user requested a conference they don't have access
-/// to (or — defensively — one missing from the catalogue). The legacy
-/// `'\b\nYou do not have access to the requested conference\b\n\b\n'`
-/// (`amiexpress/express.e:25157`, Amiga `\b\n` becomes telnet
-/// `\r\n`); the session stays in its current conference
-/// (`amiexpress/express.e:25158` returns to the menu).
-pub(crate) const NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE: &[u8] =
-    b"\r\nYou do not have access to the requested conference\r\n\r\n";
-
-/// Prompt of the `J` command's interactive join-conference flow
-/// (`amiexpress/express.e:25144`):
-/// `'Conference Number (1-\d): '` with `\d` = the highest conference
-/// number (legacy `cmds.numConf`). Written immediately after the
-/// echoed command line — no leading CRLF — and ends with the prompt's
-/// trailing space, no trailing CRLF.
-pub(crate) fn render_conference_number_prompt(highest_conference_number: u32) -> Vec<u8> {
-    format!("Conference Number (1-{highest_conference_number}): ").into_bytes()
-}
-
-/// Prompt of the interactive join-message-base flow
-/// (`amiexpress/express.e:25224`, identical literal at `:25173` in
-/// `internalCommandJ`'s message-base prompt):
-/// `'Message Base Number (1-\d): '` with `\d` = the current/target
-/// conference's message-base count (legacy `getConfMsgBaseCount`).
-/// Written immediately after the echoed command line (or the
-/// `JoinMsgBase` screen when installed) — no leading CRLF — and ends
-/// with the prompt's trailing space, no trailing CRLF.
-pub(crate) fn render_msgbase_number_prompt(msgbase_count: u32) -> Vec<u8> {
-    format!("Message Base Number (1-{msgbase_count}): ").into_bytes()
-}
-
-/// Sent when `JM` (any non-dotted form, argument or not) is used in a
-/// conference holding a single message base. The legacy probes the
-/// `NMSGBASES` tooltype and fails before any range logic when it is
-/// absent — the normal single-base configuration
-/// (`amiexpress/express.e:25211-25215`); the literal is
-/// `'\b\nThis conference does not contain multiple message bases\b\n\b\n'`
-/// (`amiexpress/express.e:25213`, Amiga `\b\n` becomes telnet `\r\n`).
-/// `NextExpress` equates "tooltype absent" with the conference holding
-/// exactly one base; the legacy nuance of an explicitly-set
-/// `NMSGBASES=1` (which prompts `(1-1)` instead) is deliberately not
-/// modelled — recorded in `slices/cmds-conf-nav.md`.
-pub(crate) const SINGLE_MSGBASE_CONFERENCE_LINE: &[u8] =
-    b"\r\nThis conference does not contain multiple message bases\r\n\r\n";
-
 /// Sent when `R <something>` cannot be parsed as a message number.
 pub(crate) const INVALID_MESSAGE_NUMBER_LINE: &[u8] = b"\r\nInvalid message number.\r\n";
-
-/// Formats the mail-scan summary line (Slice 40 / 41). Mirrors the
-/// legacy `searchNewMail` output's "New Mail" notice and the
-/// "No New Mail" fallback at `amiexpress/express.e:26499`.
-///
-/// ```text
-///   No new mail.                                  (unread_count == 0)
-///   You have <N> new message(s). First: <num>.    (unread_count > 0)
-/// ```
-pub(crate) fn render_scan_summary(unread_count: u32, first_unread_number: Option<u32>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(64);
-    if unread_count == 0 {
-        out.extend_from_slice(b"\r\nNo new mail.\r\n");
-        return out;
-    }
-    out.extend_from_slice(b"\r\nYou have ");
-    out.extend_from_slice(unread_count.to_string().as_bytes());
-    out.extend_from_slice(if unread_count == 1 {
-        b" new message"
-    } else {
-        b" new messages"
-    });
-    if let Some(first) = first_unread_number {
-        out.extend_from_slice(b". First: ");
-        out.extend_from_slice(first.to_string().as_bytes());
-    }
-    out.extend_from_slice(b".\r\n");
-    out
-}
 
 /// `time::macros::format_description!` builds a const `FormatItem`
 /// slice describing the legacy `FORMAT_USA` date-time layout —
@@ -566,17 +492,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn conference_number_prompt_matches_the_legacy_capture() {
-        // Live capture (AmiExpress 5.6.0, two conferences):
-        // `b'Conference Number (1-2): '` — trailing space, no CRLF on
-        // either side (`amiexpress/express.e:25144`).
-        assert_eq!(
-            render_conference_number_prompt(2),
-            b"Conference Number (1-2): "
-        );
-    }
-
-    #[test]
     fn copyright_lines_wrap_build_git_sha_in_parens() {
         // The banner shown on connect must reflect the source commit
         // the binary was built from. `build.rs` captures
@@ -697,40 +612,6 @@ mod tests {
         assert_eq!(
             render_menu_prompt("NextExpress", None, 0),
             &b"\x1b[0m\x1b[35mNextExpress \x1b[0mMenu (\x1b[33m0\x1b[0m mins. left): "[..],
-        );
-    }
-
-    #[test]
-    fn render_scan_summary_emits_no_new_mail_for_zero() {
-        // Legacy `\tNo New Mail!\b\n` (`amiexpress/express.e:26499`).
-        assert_eq!(render_scan_summary(0, None), b"\r\nNo new mail.\r\n");
-        // first_unread_number is ignored when count is zero.
-        assert_eq!(render_scan_summary(0, Some(5)), b"\r\nNo new mail.\r\n");
-    }
-
-    #[test]
-    fn render_scan_summary_pluralises_message_for_more_than_one() {
-        assert_eq!(
-            render_scan_summary(3, Some(5)),
-            b"\r\nYou have 3 new messages. First: 5.\r\n",
-        );
-    }
-
-    #[test]
-    fn render_scan_summary_uses_singular_for_one_message() {
-        assert_eq!(
-            render_scan_summary(1, Some(7)),
-            b"\r\nYou have 1 new message. First: 7.\r\n",
-        );
-    }
-
-    #[test]
-    fn render_scan_summary_handles_missing_first_unread_number() {
-        // Defensive: a non-zero count without a number would be a
-        // bug, but the renderer must not panic on it.
-        assert_eq!(
-            render_scan_summary(2, None),
-            b"\r\nYou have 2 new messages.\r\n",
         );
     }
 
