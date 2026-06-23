@@ -18,7 +18,6 @@ use std::time::SystemTime;
 
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{render_read_subprompt, render_read_subprompt_help};
 use crate::domain::messaging::delete_mail::can_delete;
 use crate::domain::messaging::edit_mail_header::can_edit_header;
 use crate::domain::messaging::mail_store::MailStoreError;
@@ -301,6 +300,94 @@ where
         drop(guard);
         permitted
     }
+}
+
+/// Renders the legacy `readMSG` read sub-prompt, assembled piecewise at
+/// `amiexpress/express.e:12016-12021`. `show_delete` inserts the `D`
+/// (delete) option after `A` (legacy `ACS_DELETE_MESSAGE`, `:12017`) and
+/// `show_move` inserts `M` (move) after it (legacy `ACS_SYSOP_READ`,
+/// `:12018`); the caller passes the gate results for the current message
+/// and user.
+///
+/// The `( <range> )` slot carries the precomputed runtime range string,
+/// either `<next>+<highest>` (`:12010`, where `next` is the next message
+/// to read and `highest` the highest existing number,
+/// `mailStat.highMsgNum - 1`) or the literal `QUIT` when `next` is out of
+/// range (`:12012`). The caller computes the collapse. When neither `D`
+/// nor `M` is shown the two `\x1b[36m` colour codes around the skipped
+/// slot collapse into the doubled-`\x1b[36m` seam the legacy leaves in
+/// that case.
+fn render_read_subprompt(range: &[u8], show_delete: bool, show_move: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(112);
+    out.extend_from_slice(b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m");
+    if show_delete {
+        out.extend_from_slice(b",\x1b[33mD");
+    }
+    if show_move {
+        out.extend_from_slice(b",\x1b[33mM");
+    }
+    out.extend_from_slice(
+        b"\x1b[36m,\x1b[33mF\x1b[36m,\x1b[33mR\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mQ\x1b[36m,\x1b[33m?\x1b[36m,\x1b[33m??\x1b[36m,\x1b[32m<\x1b[33mCR\x1b[32m> \x1b[32m(\x1b[0m ",
+    );
+    out.extend_from_slice(range);
+    out.extend_from_slice(b" \x1b[32m )\x1b[0m>: ");
+    out
+}
+
+/// Renders the `readMSG` sub-prompt help list shown when the caller
+/// types `?` (short, `long = false`, `express.e:12023-12032`) or `??`
+/// (long, `long = true`, `:12034-12060`). The list is gated like the
+/// skeleton: `D`elete / `M`ove appear per `show_delete` / `show_move`,
+/// and the long list adds `EH` (edit header) per `show_edit`. The long
+/// list spells `Move`/`List` out more fully (`Move Message` /
+/// `List all messages`). It ends with the legacy
+/// `<CR>=Next ( <range> )? ` tail (`:12031` / `:12058`).
+///
+/// `NextExpress` deliberately omits the legacy `NS` / translate / `Keep`
+/// / `E` / `EM` / account-edit entries (see slice B5 Out of Scope), so
+/// the long list is a faithful subset rather than the full legacy menu.
+// The four flags map one-to-one to the legacy `helplist` / `checkSecurity`
+// switches; grouping them into a struct would obscure that correspondence
+// for no real call-site benefit (there is a single caller).
+#[allow(clippy::fn_params_excessive_bools)]
+fn render_read_subprompt_help(
+    long: bool,
+    range: &[u8],
+    show_delete: bool,
+    show_move: bool,
+    show_edit: bool,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(256);
+    // `A`gain has no leading newline — the caller's echoed `?` / `??`
+    // CRLF already put the cursor on a fresh line (legacy `:12024`).
+    out.extend_from_slice(b"\x1b[33mA\x1b[32m>\x1b[36mgain\x1b[0m");
+    if show_delete {
+        out.extend_from_slice(b"\r\n\x1b[33mD\x1b[32m>\x1b[36melete Message\x1b[0m");
+    }
+    if show_move {
+        out.extend_from_slice(if long {
+            b"\r\n\x1b[33mM\x1b[32m>\x1b[36move Message\x1b[0m".as_slice()
+        } else {
+            b"\r\n\x1b[33mM\x1b[32m>\x1b[36move\x1b[0m".as_slice()
+        });
+    }
+    out.extend_from_slice(b"\r\n\x1b[33mF\x1b[32m>\x1b[36morward\x1b[0m");
+    out.extend_from_slice(b"\r\n\x1b[33mR\x1b[32m>\x1b[36meply\x1b[0m");
+    if long {
+        out.extend_from_slice(b"\r\n\x1b[33mL\x1b[32m>\x1b[36mist all messages\x1b[0m");
+        if show_edit {
+            out.extend_from_slice(b"\r\n\x1b[33mEH\x1b[32m>\x1b[36m Edit Message Header\x1b[0m");
+        }
+    } else {
+        out.extend_from_slice(b"\r\n\x1b[33mL\x1b[32m>\x1b[36mist\x1b[0m");
+    }
+    out.extend_from_slice(b"\r\n\x1b[33mQ\x1b[32m>\x1b[36muit\x1b[0m");
+    out.extend_from_slice(
+        b"\r\n\x1b[32m<\x1b[33mCR\x1b[32m>\x1b[0m=\x1b[33mNext \x1b[32m(\x1b[0m ",
+    );
+    out.extend_from_slice(range);
+    out.extend_from_slice(b" \x1b[32m )\x1b[0m? ");
+    out
 }
 
 #[cfg(test)]
