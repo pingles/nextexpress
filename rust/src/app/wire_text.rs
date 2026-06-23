@@ -330,10 +330,6 @@ pub(crate) fn render_msgbase_number_prompt(msgbase_count: u32) -> Vec<u8> {
 pub(crate) const SINGLE_MSGBASE_CONFERENCE_LINE: &[u8] =
     b"\r\nThis conference does not contain multiple message bases\r\n\r\n";
 
-/// Sent when the `MV` sub-command's target cannot be parsed as a
-/// conference number.
-pub(crate) const INVALID_CONFERENCE_NUMBER_LINE: &[u8] = b"\r\nInvalid conference number.\r\n";
-
 /// Sent when `R <something>` cannot be parsed as a message number.
 pub(crate) const INVALID_MESSAGE_NUMBER_LINE: &[u8] = b"\r\nInvalid message number.\r\n";
 
@@ -430,11 +426,6 @@ pub(crate) const NO_SYSOP_LINE: &[u8] = b"\r\nNo sysop is configured on this BBS
 pub(crate) const SOURCE_DELETED_LINE: &[u8] =
     b"\r\nThat message has been deleted; cannot reply.\r\n";
 
-/// Prompt asking the user to confirm a destructive operation
-/// (Slice 49b's `K` delete). Defaults to `N` so an idle CR is safe.
-#[allow(dead_code, reason = "Wired up in Slice 49b")]
-pub(crate) const CONFIRM_DELETE_PROMPT: &[u8] = b"Delete message (y/N)? ";
-
 /// Prompt for the `FW` command's new-addressee handle (Slice 49a).
 pub(crate) const FORWARD_TO_PROMPT: &[u8] = b"\r\nForward to: ";
 
@@ -442,41 +433,6 @@ pub(crate) const FORWARD_TO_PROMPT: &[u8] = b"\r\nForward to: ";
 /// to a forwarded mail (Slice 49a). Empty input means "no note".
 pub(crate) const FORWARD_NOTE_PROMPT: &[u8] =
     b"Optional note. End with a single '.' on a line by itself; blank line skips.\r\n";
-
-/// Sent when a sysop-only command (Slice 49b) is invoked by a user
-/// without the required access level / right.
-pub(crate) const SYSOP_ONLY_LINE: &[u8] =
-    b"\r\nYou do not have permission to perform that operation.\r\n";
-
-/// Prompt for the target conference number of an `MV <num>` move
-/// (Slice 49b).
-pub(crate) const MOVE_TARGET_CONFERENCE_PROMPT: &[u8] = b"\r\nTarget conference number: ";
-
-/// Prompt for the target msgbase number of an `MV <num>` move
-/// (Slice 49b).
-pub(crate) const MOVE_TARGET_MSGBASE_PROMPT: &[u8] = b"Target msgbase number: ";
-
-/// Sent when an `MV <num>` references a target msgbase that's not
-/// registered with the running BBS.
-pub(crate) const MOVE_UNKNOWN_TARGET_LINE: &[u8] = b"\r\nNo such target message base.\r\n";
-
-/// Confirmation line printed after a successful `K <num>` delete.
-pub(crate) const DELETE_DONE_LINE: &[u8] = b"\r\nMessage deleted.\r\n";
-
-/// Confirmation line printed after a successful `MV <num>` move.
-/// Includes the new number so the user can navigate to it.
-pub(crate) const MOVE_DONE_PREFIX: &[u8] = b"\r\nMessage moved. New number ";
-
-/// Confirmation line printed after a successful `EH <num>` edit.
-pub(crate) const EDIT_HEADER_DONE_LINE: &[u8] = b"\r\nHeader updated.\r\n";
-
-/// Prompt for the new subject during an `EH <num>` header edit.
-/// Empty input keeps the current subject.
-pub(crate) const EDIT_HEADER_SUBJECT_PROMPT: &[u8] = b"New subject (blank = unchanged): ";
-
-/// Prompt for the new addressee during an `EH <num>` header edit.
-/// Empty input keeps the current addressee.
-pub(crate) const EDIT_HEADER_TO_PROMPT: &[u8] = b"New To (blank = unchanged): ";
 
 /// Formats the mail-scan summary line (Slice 40 / 41). Mirrors the
 /// legacy `searchNewMail` output's "New Mail" notice and the

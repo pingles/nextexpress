@@ -14,12 +14,7 @@ use crate::app::menu_flow::mail_text::{
     SOURCE_NOT_FOUND_LINE,
 };
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::{
-    CONFIRM_DELETE_PROMPT, DELETE_DONE_LINE, EDIT_HEADER_DONE_LINE, EDIT_HEADER_SUBJECT_PROMPT,
-    EDIT_HEADER_TO_PROMPT, INVALID_CONFERENCE_NUMBER_LINE, INVALID_MESSAGE_NUMBER_LINE,
-    MOVE_DONE_PREFIX, MOVE_TARGET_CONFERENCE_PROMPT, MOVE_TARGET_MSGBASE_PROMPT,
-    MOVE_UNKNOWN_TARGET_LINE, SYSOP_ONLY_LINE,
-};
+use crate::app::wire_text::INVALID_MESSAGE_NUMBER_LINE;
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::messaging::delete_mail::{delete_mail as delete_mail_rule, DeleteMailError};
 use crate::domain::messaging::edit_mail_header::{
@@ -29,6 +24,49 @@ use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::move_mail::{move_mail as move_mail_rule, MoveMailError};
 use crate::domain::session::typed::MenuSession;
 use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
+
+/// Sent when the `MV` sub-command's target cannot be parsed as a
+/// conference number.
+const INVALID_CONFERENCE_NUMBER_LINE: &[u8] = b"\r\nInvalid conference number.\r\n";
+
+/// Prompt asking the user to confirm a destructive operation
+/// (Slice 49b's `K` delete). Defaults to `N` so an idle CR is safe.
+#[allow(dead_code, reason = "Wired up in Slice 49b")]
+const CONFIRM_DELETE_PROMPT: &[u8] = b"Delete message (y/N)? ";
+
+/// Sent when a sysop-only command (Slice 49b) is invoked by a user
+/// without the required access level / right.
+const SYSOP_ONLY_LINE: &[u8] = b"\r\nYou do not have permission to perform that operation.\r\n";
+
+/// Prompt for the target conference number of an `MV <num>` move
+/// (Slice 49b).
+const MOVE_TARGET_CONFERENCE_PROMPT: &[u8] = b"\r\nTarget conference number: ";
+
+/// Prompt for the target msgbase number of an `MV <num>` move
+/// (Slice 49b).
+const MOVE_TARGET_MSGBASE_PROMPT: &[u8] = b"Target msgbase number: ";
+
+/// Sent when an `MV <num>` references a target msgbase that's not
+/// registered with the running BBS.
+const MOVE_UNKNOWN_TARGET_LINE: &[u8] = b"\r\nNo such target message base.\r\n";
+
+/// Confirmation line printed after a successful `K <num>` delete.
+const DELETE_DONE_LINE: &[u8] = b"\r\nMessage deleted.\r\n";
+
+/// Confirmation line printed after a successful `MV <num>` move.
+/// Includes the new number so the user can navigate to it.
+const MOVE_DONE_PREFIX: &[u8] = b"\r\nMessage moved. New number ";
+
+/// Confirmation line printed after a successful `EH <num>` edit.
+const EDIT_HEADER_DONE_LINE: &[u8] = b"\r\nHeader updated.\r\n";
+
+/// Prompt for the new subject during an `EH <num>` header edit.
+/// Empty input keeps the current subject.
+const EDIT_HEADER_SUBJECT_PROMPT: &[u8] = b"New subject (blank = unchanged): ";
+
+/// Prompt for the new addressee during an `EH <num>` header edit.
+/// Empty input keeps the current addressee.
+const EDIT_HEADER_TO_PROMPT: &[u8] = b"New To (blank = unchanged): ";
 
 /// Outcome of a `K <num>` command.
 enum DeleteOutcome {
