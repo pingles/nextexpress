@@ -11,16 +11,40 @@ use std::time::SystemTime;
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, VerifyPasswordFlowError};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{
-    ACCOUNT_LOCKED_LINE, ANSI_PROMPT, AUTHENTICATED_LINE, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE,
-    NAME_PROMPT, PASSWORD_PROMPT, TOO_MANY_PASSWORD_FAILURES_LINE, TOO_MANY_RETRIES_LINE,
-    UNKNOWN_USER_LINE, WRONG_PASSWORD_LINE,
-};
+use crate::app::wire_text::{ANSI_PROMPT, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE};
 use crate::domain::session::typed::{
     AuthenticatingSession, EndedSession, IdentifyingSession, LoggingOffSession,
     NameTypedTransition, NewUserRegisteringSession, OnboardedSession,
     VerifyPasswordRejectionReason, VerifyPasswordTransition,
 };
+
+/// Prompt sent before reading the user's handle. Mirrors the original
+/// `AmiExpress` wire format: a CRLF prefix and trailing space around the
+/// default `NAME_PROMPT` of `Enter your Name:` (see
+/// `amiexpress/express.e:29571` and `:31774`).
+const NAME_PROMPT: &[u8] = b"\r\nEnter your Name: ";
+
+/// Prompt for the user's password.
+pub(crate) const PASSWORD_PROMPT: &[u8] = b"PassWord: ";
+
+/// Sent after a not-found name lookup to invite a retry.
+const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
+
+/// Sent when the user has burned through all five name retries.
+const TOO_MANY_RETRIES_LINE: &[u8] = b"Too many failed login attempts. Goodbye.\r\n";
+
+/// Sent after a successful authentication.
+const AUTHENTICATED_LINE: &[u8] = b"Authenticated.\r\n";
+
+/// Sent when the password didn't match.
+const WRONG_PASSWORD_LINE: &[u8] = b"Incorrect password.\r\n";
+
+/// Sent when the post-auth cluster locks the account.
+const ACCOUNT_LOCKED_LINE: &[u8] = b"Account locked. Goodbye.\r\n";
+
+/// Sent when the per-session retry budget is exhausted at the password
+/// prompt.
+const TOO_MANY_PASSWORD_FAILURES_LINE: &[u8] = b"Too many password failures. Goodbye.\r\n";
 
 /// Outcome reported by [`LoginFlow::identify`]. The new-user branch is
 /// surfaced as a discrete variant so the driver dispatches into the

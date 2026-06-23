@@ -15,18 +15,11 @@
 /// for composing it into larger byte sequences.
 pub(crate) const CRLF: &[u8] = b"\r\n";
 
-/// Prompt sent before reading the user's handle. Mirrors the original
-/// `AmiExpress` wire format: a CRLF prefix and trailing space around the
-/// default `NAME_PROMPT` of `Enter your Name:` (see
-/// `amiexpress/express.e:29571` and `:31774`).
-pub(crate) const NAME_PROMPT: &[u8] = b"\r\nEnter your Name: ";
-
-/// Prompt for the user's password.
-pub(crate) const PASSWORD_PROMPT: &[u8] = b"PassWord: ";
-
 /// Prompt asking a registering user for the handle they want.
 /// Mirrors the wire format of [`NAME_PROMPT`] (CRLF prefix, trailing
 /// space) — `amiexpress/express.e:30141`.
+///
+/// [`NAME_PROMPT`]: crate::app::login_flow::NAME_PROMPT
 pub(crate) const REGISTRATION_HANDLE_PROMPT: &[u8] = b"\r\nEnter your Name: ";
 
 /// Prompt for the user's location during registration. Verbatim from
@@ -175,9 +168,6 @@ pub(crate) const ANSI_COLOR_ON_LINE: &[u8] = b"\r\nAnsi Color On\r\n";
 /// `\b\nAnsi Color Off\b\n`.
 pub(crate) const ANSI_COLOR_OFF_LINE: &[u8] = b"\r\nAnsi Color Off\r\n";
 
-/// Sent after a not-found name lookup to invite a retry.
-pub(crate) const UNKNOWN_USER_LINE: &[u8] = b"Unknown user.\r\n";
-
 /// Sent when the typed handle is `NEW` (reserved) or already taken
 /// during registration. Followed by a fresh handle prompt.
 pub(crate) const HANDLE_TAKEN_LINE: &[u8] = b"That name is taken. Try another.\r\n";
@@ -234,15 +224,6 @@ pub(crate) const NEW_USER_EXCESSIVE_FAILURES_LINE: &[u8] =
 /// `amiexpress/express.e:30046`.
 pub(crate) const NEW_USER_PASSWORD_OK_LINE: &[u8] = b"Correct\r\n";
 
-/// Sent when the user has burned through all five name retries.
-pub(crate) const TOO_MANY_RETRIES_LINE: &[u8] = b"Too many failed login attempts. Goodbye.\r\n";
-
-/// Sent after a successful authentication.
-pub(crate) const AUTHENTICATED_LINE: &[u8] = b"Authenticated.\r\n";
-
-/// Sent when the password didn't match.
-pub(crate) const WRONG_PASSWORD_LINE: &[u8] = b"Incorrect password.\r\n";
-
 /// Sent for unrecognised menu commands.
 pub(crate) const UNKNOWN_COMMAND_LINE: &[u8] = b"Unknown command. Type G to log off.\r\n";
 
@@ -267,14 +248,6 @@ pub(crate) const YESNO_NO_ECHO: &[u8] = b"No\r\n";
 
 /// Sent immediately before the connection closes on idle timeout.
 pub(crate) const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
-
-/// Sent when the post-auth cluster locks the account.
-pub(crate) const ACCOUNT_LOCKED_LINE: &[u8] = b"Account locked. Goodbye.\r\n";
-
-/// Sent when the per-session retry budget is exhausted at the password
-/// prompt.
-pub(crate) const TOO_MANY_PASSWORD_FAILURES_LINE: &[u8] =
-    b"Too many password failures. Goodbye.\r\n";
 
 /// Sent when the post-auth cluster rejects the logon for insufficient
 /// access.
