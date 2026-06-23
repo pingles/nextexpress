@@ -14,19 +14,81 @@ use crate::app::session_flow::{
     self, is_handle_available_for_registration, NewUserProfile, NewUserRegistrationFlow,
 };
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{
-    ANSI_PROMPT, EMAIL_PROMPT, HANDLE_TAKEN_LINE, IDLE_TIMEOUT_LINE, INVALID_LINE_LENGTH_LINE,
-    LINE_LENGTH_PROMPT, LOCATION_PROMPT, LOGON_REJECTED_LINE, NEW_USER_EXCESSIVE_FAILURES_LINE,
-    NEW_USER_INVALID_PASSWORD_LINE, NEW_USER_PASSWORD_OK_LINE, NEW_USER_PASSWORD_PROMPT,
-    PASSWORDS_DO_NOT_MATCH_LINE, PHONE_PROMPT, REGISTRATION_COMPLETE_LINE,
-    REGISTRATION_HANDLE_PROMPT, REGISTRATION_PASSWORD_CONFIRM_PROMPT, REGISTRATION_PASSWORD_PROMPT,
-    REGISTRATION_RETRIES_EXHAUSTED_LINE,
-};
+use crate::app::wire_text::{ANSI_PROMPT, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE};
 use crate::domain::session::typed::{
     LoggingOffSession, NewUserPasswordTransition, NewUserRegisteringSession,
     NewUserRegistrationResult, OnboardedSession,
 };
 use crate::domain::user::MAX_LINE_LENGTH;
+
+/// Prompt asking a registering user for the handle they want.
+/// Mirrors the wire format of [`NAME_PROMPT`] (CRLF prefix, trailing
+/// space) — `amiexpress/express.e:30141`.
+///
+/// [`NAME_PROMPT`]: crate::app::login_flow::NAME_PROMPT
+pub(crate) const REGISTRATION_HANDLE_PROMPT: &[u8] = b"\r\nEnter your Name: ";
+
+/// Prompt for the user's location during registration. Verbatim from
+/// `amiexpress/express.e:30194`.
+pub(crate) const LOCATION_PROMPT: &[u8] = b"City, State: ";
+
+/// Prompt for the user's phone number during registration. Verbatim
+/// from `amiexpress/express.e:30204`.
+pub(crate) const PHONE_PROMPT: &[u8] = b"Phone Number: ";
+
+/// Prompt for the user's email address during registration. Verbatim
+/// from `amiexpress/express.e:30215`.
+pub(crate) const EMAIL_PROMPT: &[u8] = b"E-Mail Address: ";
+
+/// First password prompt during registration. Verbatim from
+/// `amiexpress/express.e:30227`.
+pub(crate) const REGISTRATION_PASSWORD_PROMPT: &[u8] = b"Enter a PassWord: ";
+
+/// Confirmation password prompt during registration. Verbatim from
+/// `amiexpress/express.e:30233`.
+pub(crate) const REGISTRATION_PASSWORD_CONFIRM_PROMPT: &[u8] = b"Reenter the PassWord: ";
+
+/// Prompt asking the user for their preferred line length. Simplified
+/// from `amiexpress/express.e:11307` (which streams a 70..2 ladder
+/// before asking).
+pub(crate) const LINE_LENGTH_PROMPT: &[u8] = b"Enter line length (or 0 for Auto): ";
+
+/// Prompt for the sysop-set new-user password gate. Verbatim from
+/// `amiexpress/express.e:30018`.
+pub(crate) const NEW_USER_PASSWORD_PROMPT: &[u8] = b"Enter New User Password: ";
+
+/// Sent when the typed handle is `NEW` (reserved) or already taken
+/// during registration. Followed by a fresh handle prompt.
+const HANDLE_TAKEN_LINE: &[u8] = b"That name is taken. Try another.\r\n";
+
+/// Sent when the user has burned through five handle retries during
+/// registration.
+const REGISTRATION_RETRIES_EXHAUSTED_LINE: &[u8] =
+    b"Too many failed registration attempts. Goodbye.\r\n";
+
+/// Sent when the two registration passwords don't match. Verbatim from
+/// `amiexpress/express.e:30237`.
+const PASSWORDS_DO_NOT_MATCH_LINE: &[u8] = b"\r\nPasswords do not match, try again..\r\n";
+
+/// Sent when the line-length input doesn't parse as a number in
+/// `0..=255`.
+const INVALID_LINE_LENGTH_LINE: &[u8] = b"Invalid line length.\r\n";
+
+/// Sent after the registration succeeds; immediately followed by the
+/// menu sequence inherited by every authenticated session.
+const REGISTRATION_COMPLETE_LINE: &[u8] = b"\r\nWelcome aboard!\r\n";
+
+/// Sent after each failed new-user password attempt. Verbatim from
+/// `amiexpress/express.e:30036`.
+const NEW_USER_INVALID_PASSWORD_LINE: &[u8] = b"Invalid PassWord\r\n";
+
+/// Sent when the gate's retry budget is exhausted. Verbatim from
+/// `amiexpress/express.e:30039`. Followed by a goodbye line.
+const NEW_USER_EXCESSIVE_FAILURES_LINE: &[u8] = b"\r\nExcessive Password Failure\r\nGoodbye.\r\n";
+
+/// Sent on a successful gate match. Verbatim from
+/// `amiexpress/express.e:30046`.
+const NEW_USER_PASSWORD_OK_LINE: &[u8] = b"Correct\r\n";
 
 /// Outcome reported by [`RegistrationFlow::run`]. Mirrors the two
 /// terminal branches of `session.allium:CompleteNewUserRegistration`
