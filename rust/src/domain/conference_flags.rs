@@ -117,7 +117,7 @@ pub fn apply_scan_flag_edit(
 
 /// One render-ready row of the `CF` listing: a conference the caller can
 /// access, with its four scan-flag values. Built by [`conf_flag_rows`]
-/// and rendered by `wire_text::render_conf_flags_listing`.
+/// and rendered by `menu_flow::conf_flags::render_conf_flags_listing`.
 // The four glyph cells are independent M/A/F/Z flags, not a state enum.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
