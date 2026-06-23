@@ -243,6 +243,22 @@ pub(crate) const UNKNOWN_COMMAND_LINE: &[u8] = b"Unknown command. Type G to log 
 /// Sent immediately before the connection closes on a normal logoff.
 pub(crate) const GOODBYE_LINE: &[u8] = b"Goodbye!\r\n";
 
+/// The `checkFlagged()` leave-confirm prompt
+/// (`amiexpress/express.e:12670`) followed by `yesNo(2)`'s own ANSI
+/// `(y/N)? ` suffix (`:2134`). Server bytes, live-captured
+/// (`comparison/transcripts/ae_tierd_g_confirm.txt:146`); the legacy
+/// `\b\n` line breaks are re-encoded to telnet `\r\n` (AGENTS.md wire
+/// policy).
+pub(crate) const LEAVE_FLAGGED_CONFIRM: &[u8] =
+    b"\r\nYou have flagged files still not downloaded.\r\nDo you leave without them? \x1b[32m(\x1b[33my\x1b[32m/\x1b[33mN\x1b[32m)\x1b[32m?\x1b[0m ";
+
+/// `yesNo`'s single-key echo on a `Y` answer (`amiexpress/express.e:2148`).
+pub(crate) const YESNO_YES_ECHO: &[u8] = b"Yes\r\n";
+
+/// `yesNo`'s single-key echo on an `N` / default answer
+/// (`amiexpress/express.e:2152`).
+pub(crate) const YESNO_NO_ECHO: &[u8] = b"No\r\n";
+
 /// Sent immediately before the connection closes on idle timeout.
 pub(crate) const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
 

@@ -49,6 +49,12 @@ const LISTING_BANNER_REVERSE: &[u8] =
 const MORE_PROMPT: &[u8] =
     b"\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m ";
 
+/// The genuine internal `checkFlagged()` + `yesNo(2)` leave confirm
+/// (`amiexpress/express.e:12670`, `:2134`). Server bytes, live-captured
+/// (`comparison/transcripts/ae_tierd_g_confirm.txt:146`).
+const LEAVE_FLAGGED_CONFIRM: &[u8] =
+    b"\r\nYou have flagged files still not downloaded.\r\nDo you leave without them? \x1b[32m(\x1b[33my\x1b[32m/\x1b[33mN\x1b[32m)\x1b[32m?\x1b[0m ";
+
 #[tokio::test]
 async fn f_1_pages_the_seeded_corpus_and_q_quits() {
     // ae_tierd_aquascan3.txt S4: banner, scan header, framed rows;
@@ -413,6 +419,59 @@ async fn hotkey_flag_entry_echoes_each_typed_byte() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn plain_g_with_a_flagged_file_confirms_then_n_stays_and_y_leaves() {
+    // End-to-end (slice D5/Ga). Reference:
+    // `comparison/transcripts/ae_tierd_g_confirm.txt`. Flag a file via
+    // the D2f `F` verb, then plain `G` runs the genuine internal
+    // checkFlagged() confirm over the real telnet single-key adapter:
+    // `N` keeps the caller in the menu; a second `G` + `Y` leaves.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Flag ANSIPACK.LHA (dir-1 #1, page 1) through the More? `F` verb.
+    write_line(&mut stream, b"F 1").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+    write_key(&mut stream, b"F").await;
+    drain_until(&mut stream, b"to flag:\x1b[0m ").await;
+    for &byte in b"ANSIPACK.LHA" {
+        write_key(&mut stream, &[byte]).await;
+    }
+    write_key(&mut stream, b"\r").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+    write_key(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    // Plain `G` must print the confirm and NOT log off.
+    write_line(&mut stream, b"G").await;
+    let confirm = drain_until(&mut stream, LEAVE_FLAGGED_CONFIRM).await;
+    assert!(
+        contains(&confirm, LEAVE_FLAGGED_CONFIRM),
+        "plain G with a flagged file must print the leave confirm, got {:?}",
+        String::from_utf8_lossy(&confirm),
+    );
+
+    // `N` echoes `No` and returns to the menu prompt (stay).
+    write_key(&mut stream, b"N").await;
+    let after_n = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&after_n, b"No\r\n"),
+        "N must echo No and return to the menu, got {:?}",
+        String::from_utf8_lossy(&after_n),
+    );
+
+    // A second `G` + `Y` echoes `Yes` and logs off.
+    write_line(&mut stream, b"G").await;
+    drain_until(&mut stream, LEAVE_FLAGGED_CONFIRM).await;
+    write_key(&mut stream, b"Y").await;
+    let after_y = drain_until(&mut stream, b"Goodbye").await;
+    assert!(
+        contains(&after_y, b"Yes\r\n"),
+        "Y must echo Yes before logging off, got {:?}",
+        String::from_utf8_lossy(&after_y),
+    );
+}
+
 /// Boots an in-process listener whose file catalogue is the seeded
 /// demo corpus (landing conference 1: areas 1-2; conference 2: one
 /// empty area) — the same wiring `bootstrap::run` performs.
@@ -484,8 +543,12 @@ async fn sign_in_seeded_sysop(addr: &std::net::SocketAddr) -> TcpStream {
     stream
 }
 
+/// Forces a logoff with `G Y` (slice D5/Ga): a plain `G` now opens the
+/// flagged-file confirm when a test left a file flagged, so teardown
+/// uses the force form — mirroring the FS-UAE reference discipline of
+/// always ending a session with `G Y`.
 async fn end_session(stream: &mut TcpStream) {
-    write_line(stream, b"G").await;
+    write_line(stream, b"G Y").await;
     drain_until(stream, b"Goodbye").await;
 }
 

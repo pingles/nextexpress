@@ -23,6 +23,8 @@ mod read_subprompt;
 mod reply_forward;
 mod scan_all_mail;
 mod sysop_admin;
+#[cfg(test)]
+mod tests;
 
 use std::time::SystemTime;
 
@@ -31,12 +33,12 @@ use crate::app::mail_stores::{MailStoreGuard, MailStores};
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::format_menu_prompt;
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
     render_stats_screen, render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE,
     EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE, GOODBYE_LINE, HELP_UNAVAILABLE_LINE,
-    IDLE_TIMEOUT_LINE, INVALID_MESSAGE_NUMBER_LINE, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE,
-    UNKNOWN_COMMAND_LINE, VERSION_BANNER,
+    IDLE_TIMEOUT_LINE, INVALID_MESSAGE_NUMBER_LINE, LEAVE_FLAGGED_CONFIRM, QUIET_MODE_OFF_LINE,
+    QUIET_MODE_ON_LINE, UNKNOWN_COMMAND_LINE, VERSION_BANNER, YESNO_NO_ECHO, YESNO_YES_ECHO,
 };
 use crate::domain::conference::{
     find_msgbase_in, AllowedAddressing, Conference, MessageBase, MessageBaseRef,
@@ -51,6 +53,19 @@ use crate::domain::user::Right;
 enum DispatchOutcome {
     Continue(MenuSession),
     LogoffComplete(LoggingOffSession),
+}
+
+/// Outcome of the plain-`G` flagged-file leave confirm
+/// (`amiexpress/express.e:12667` `checkFlagged` + `:2129` `yesNo`).
+enum LeaveFlagged {
+    /// `N` / default — keep the caller in the menu.
+    Stay,
+    /// `Y` — proceed to logoff.
+    Leave,
+    /// The peer dropped mid-confirm (carrier loss).
+    Disconnected,
+    /// No key arrived before the input timeout.
+    TimedOut,
 }
 
 /// Menu sub-flow.
@@ -157,6 +172,55 @@ where
         self.write_and_flush(&screen).await
     }
 
+    /// `G` / `G Y`: logoff with the legacy flagged-file confirm.
+    ///
+    /// Plain `G` with a non-empty session flag set runs `checkFlagged()`
+    /// (`amiexpress/express.e:25053`, `:12667`): `N`/default keeps the
+    /// caller in the menu; `Y`, the `G Y` force form (`auto`), or an
+    /// empty flag set fall straight through to logoff. Persisting the
+    /// flags (`saveFlagged`/`saveHistory`) is slice D5.
+    async fn handle_logoff(
+        &mut self,
+        mut session: MenuSession,
+        auto: bool,
+    ) -> Result<DispatchOutcome, T::Error> {
+        if !auto && !session.flagged_files_mut().is_empty() {
+            match self.confirm_leave_flagged().await? {
+                LeaveFlagged::Stay => {
+                    // mystat=0 path: one CRLF, back to the menu
+                    // (`amiexpress/express.e:25060`).
+                    self.write_and_flush(b"\r\n").await?;
+                    return Ok(DispatchOutcome::Continue(session));
+                }
+                LeaveFlagged::Leave => {}
+                LeaveFlagged::Disconnected => {
+                    return Ok(DispatchOutcome::LogoffComplete(
+                        session.into_active().apply_carrier_loss(),
+                    ));
+                }
+                LeaveFlagged::TimedOut => {
+                    let logoff = session
+                        .into_active()
+                        .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
+                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    return Ok(DispatchOutcome::LogoffComplete(logoff));
+                }
+            }
+        }
+        let logging_off = session.user_requests_logoff();
+        // SCREEN_LOGOFF (amiexpress/express.e:6554, displayed at :8187):
+        // sysop-supplied pre-goodbye splash. The adapter returns empty
+        // bytes when the asset is absent, so this is a no-op on a fresh
+        // install. Idle-timeout / account-lock / carrier exits use their
+        // dedicated goodbye lines and never reach this branch.
+        let logoff_screen = self.services.screens.as_ref().logoff_screen().await;
+        if !logoff_screen.is_empty() {
+            self.terminal.write(&logoff_screen).await?;
+        }
+        self.write_and_flush(GOODBYE_LINE).await?;
+        Ok(DispatchOutcome::LogoffComplete(logging_off))
+    }
+
     /// Routes one parsed command to the matching handler. Returns
     /// either the live [`MenuSession`] (loop continues) or the
     /// [`LoggingOffSession`] terminal value (loop exits).
@@ -166,22 +230,7 @@ where
         command: MenuCommand,
     ) -> Result<DispatchOutcome, T::Error> {
         match command {
-            MenuCommand::Logoff => {
-                let logging_off = session.user_requests_logoff();
-                // SCREEN_LOGOFF (amiexpress/express.e:6554, displayed
-                // at :8187): sysop-supplied pre-goodbye splash. The
-                // adapter returns empty bytes when the asset is
-                // absent, so this is a no-op on a fresh install.
-                // Idle-timeout / account-lock / carrier exits use
-                // their dedicated goodbye lines and never reach this
-                // branch — matching the legacy.
-                let logoff_screen = self.services.screens.as_ref().logoff_screen().await;
-                if !logoff_screen.is_empty() {
-                    self.terminal.write(&logoff_screen).await?;
-                }
-                self.write_and_flush(GOODBYE_LINE).await?;
-                return Ok(DispatchOutcome::LogoffComplete(logging_off));
-            }
+            MenuCommand::Logoff { auto } => return self.handle_logoff(session, auto).await,
             MenuCommand::Join(arg) => {
                 // Tier C C2: a direct in-range argument joins
                 // immediately; everything else opens the legacy
@@ -347,6 +396,31 @@ where
         self.terminal.read_key(timeout).await
     }
 
+    /// The flagged-file leave confirm: `checkFlagged()`'s prompt
+    /// (`amiexpress/express.e:12670`) plus `yesNo(2)`'s single-key read
+    /// (`:2129`). The hot-key adapter echoes nothing, so this owns the
+    /// `Yes`/`No` echo; CR defaults to `No`, and unrecognised keys loop
+    /// (the legacy `LOOP`/`readChar` at `:2140`).
+    async fn confirm_leave_flagged(&mut self) -> Result<LeaveFlagged, T::Error> {
+        self.write_and_flush(LEAVE_FLAGGED_CONFIRM).await?;
+        loop {
+            match self.read_key().await? {
+                KeyRead::Key(KeyEvent::Char(b'y' | b'Y')) => {
+                    self.write_and_flush(YESNO_YES_ECHO).await?;
+                    return Ok(LeaveFlagged::Leave);
+                }
+                KeyRead::Key(KeyEvent::Char(b'n' | b'N') | KeyEvent::Enter) => {
+                    self.write_and_flush(YESNO_NO_ECHO).await?;
+                    return Ok(LeaveFlagged::Stay);
+                }
+                KeyRead::Eof => return Ok(LeaveFlagged::Disconnected),
+                KeyRead::IdleTimedOut => return Ok(LeaveFlagged::TimedOut),
+                // Any other key is ignored, like yesNo's `LOOP`.
+                KeyRead::Key(_) => {}
+            }
+        }
+    }
+
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
         crate::app::terminal::write_and_flush(self.terminal, bytes).await
     }
@@ -423,134 +497,4 @@ fn allowed_addressing_for(
     base: MessageBaseRef,
 ) -> Option<AllowedAddressing> {
     find_msgbase_in(conferences, base).map(MessageBase::allowed_addressing)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::convert::Infallible;
-    use std::sync::Arc;
-    use std::time::{Duration, SystemTime};
-
-    use crate::adapters::file_screen_repository::FileScreenRepository;
-    use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
-    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
-    use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
-    use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
-    use crate::app::services::AppServices;
-    use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
-    use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
-    use crate::domain::password::PasswordHashKind;
-    use crate::domain::session::typed::MenuSession;
-    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
-    use crate::domain::user::{RatioMode, User};
-
-    #[derive(Default)]
-    struct CaptureTerminal {
-        output: Vec<u8>,
-    }
-
-    impl Terminal for CaptureTerminal {
-        type Error = Infallible;
-
-        fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
-            Box::pin(async move {
-                self.output.extend_from_slice(bytes);
-                Ok(())
-            })
-        }
-
-        fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn read_line(
-            &mut self,
-            _echo: TerminalEcho,
-            _timeout: Duration,
-        ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
-            Box::pin(async { Ok(TerminalRead::Eof) })
-        }
-    }
-
-    fn test_services() -> AppServices {
-        AppServices {
-            user_repo: Arc::new(InMemoryUserRepository::default()),
-            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
-            caller_log: Arc::new(InMemoryCallerLog::new()),
-            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            conferences: Arc::new(Vec::new()),
-            mail_stores: Arc::new(InMemoryMailStores::new()),
-            file_repo: Arc::new(
-                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            ),
-            session_policy: SessionPolicy::default(),
-            default_ratio: DefaultRatio {
-                mode: RatioMode::Disabled,
-                value: 0,
-            },
-            new_user_gate: Arc::new(NewUserGateConfig {
-                allow_new_users: true,
-                new_user_password: None,
-                max_new_user_password_attempts: 3,
-            }),
-            bbs_name: Arc::from("Test BBS"),
-        }
-    }
-
-    /// Builds a menu-phase session with the `quick_logon` flag set.
-    fn quick_logon_menu_session() -> MenuSession {
-        let user = User::new(
-            2,
-            "alice".to_string(),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            100,
-        )
-        .expect("valid user");
-        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
-        session.prompt_for_name().expect("prompt");
-        session
-            .record_identified_user("alice", user)
-            .expect("identify");
-        apply_password_match(
-            &mut session,
-            SessionPolicy::default(),
-            SystemTime::UNIX_EPOCH,
-        )
-        .expect("password match");
-        session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
-        session.set_quick_logon(true);
-        MenuSession::from_session(session)
-    }
-
-    #[tokio::test]
-    async fn quick_logon_skips_the_logon_conference_scan() {
-        // Spec `messaging.allium:ScanConferencesOnLogon` gates on
-        // `not quick_logon`; a quick logon must skip the scan entirely —
-        // not even the `Scanning conferences for mail...` header is
-        // written. (Pins `MenuSession::quick_logon`: a mutant forcing it
-        // to `false` would let the scan run and emit the header.)
-        let services = test_services();
-        let mut terminal = CaptureTerminal::default();
-        let mut menu = quick_logon_menu_session();
-        {
-            let mut flow = super::MenuFlow {
-                terminal: &mut terminal,
-                services: &services,
-            };
-            flow.run_logon_conference_scan(&mut menu)
-                .await
-                .expect("scan");
-        }
-        assert!(
-            terminal.output.is_empty(),
-            "a quick logon must skip the logon conference scan, got {:?}",
-            String::from_utf8_lossy(&terminal.output)
-        );
-    }
 }

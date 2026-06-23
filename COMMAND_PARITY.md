@@ -63,8 +63,8 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `E` (body editor/save) | Ruler / `Msg. Options: A,C,D,E,L,S,?` editor matches structurally, but skips the `FullScreen Editor (y/N)?` fork and the `F`/`X` file-attach verbs, and prints `Message #N saved.` (not `Saving...Message Number N...done!`); `D`/`E` deferred. Reply/forward keep the `.`/`/A` editor | `FullScreen Editor (y/N)?` fork → ruler/line-number editor + `Msg. Options: A,C,D,E,F,L,S,X,?` save menu; `Saving...Message Number N...done!` |
 | `N` | `MenuCommand::Unknown` (new-files binding removed, deferred to Tier D) | Real command — `ACS_FILE_LISTINGS`-gated new-files scan / `AquaScan v1.0` |
 | `RP`/`FW`/`K`/`MV`/`EH` (top-level) | Menu **still advertises** all five, but every one is rejected as Unknown (internal inconsistency) | Never top-level; menu and dispatcher agree (they live in the `R` sub-prompt) |
-| `G` (plain) | Always logs off immediately | Plain `G` runs `checkFlagged()`: confirms if files flagged, else returns to menu without logging off |
-| `G` (side effects) | No flagged-file or history persistence | Runs `saveFlagged()` + `saveHistory()` on logoff |
+| `G` (plain) | ~~Always logs off immediately~~ **Resolved (slice D5/Ga):** plain `G` runs `checkFlagged()` — with files flagged it prints the live-captured confirm `You have flagged files still not downloaded.` / `Do you leave without them? (y/N)?` (`yesNo(2)`, single-key, default N); `N` returns to the menu, `Y` / `G Y` / an empty flag set log off. Byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt`. | Plain `G` runs `checkFlagged()`: with files flagged, confirms (default N → return to menu); with nothing flagged, logs off |
+| `G` (side effects) | No flagged-file or history persistence (slice D5) | Runs `saveFlagged()` + `saveHistory()` on logoff |
 | `VER` / `S` (© encoding) | UTF-8 `\xc2\xa9` (deliberate policy — see AGENTS.md "Wire encoding") | Latin-1 single byte `\xa9` |
 
 ### Cosmetic differences
@@ -665,15 +665,15 @@ AE emits **no** "Goodbye!" text. After the optional `SCREEN_LOGOFF` splash (gate
 The battery forces logoff with `G Y`, and that argument matters.
 
 In AE, `internalCommandG` (`express.e:25047`) sets `auto:=paramsContains('Y')` (`25053`). When `auto=FALSE` (plain `G`) it calls `checkFlagged()` (`25058`):
-- if files are flagged, the user is **prompted to confirm/abort** the logoff;
-- if nothing is flagged (`mystat=0`), it prints `\b\n` and **RETURNs to the menu without logging off** (`25059-25062`).
+- if files are flagged, the user is **prompted** (`yesNo(2)`, default N, `:12670`/`:2129`); answering **N** yields `mystat=0`, so it prints `\b\n` and **returns to the menu** (`25059-25062`); answering **Y** falls through to logoff;
+- if nothing is flagged, `checkFlagged` returns `1` (`ENDPROC 1`, `:12674`), so `mystat≠0` and it **logs off** — *not* a menu return.
 
-Only `G Y` (or flagged files + confirm) reaches the unconditional `saveFlagged()` / `setEnvStat(ENV_LOGOFF)` path.
+Only `G Y` (or a `Y` answer to the confirm, or an empty flag set) reaches the unconditional `saveFlagged()` / `setEnvStat(ENV_LOGOFF)` path.
 
-Rust's `MenuCommand::Logoff` (`menu_flow/mod.rs:125-139`) has no flagged-file model, no confirm prompt, and no menu-return branch — `G` always logs off immediately.
+**Resolved (slice D5/Ga).** Rust's `MenuCommand::Logoff { auto }` (`menu_flow/mod.rs`) now models this: plain `G` with a non-empty session flag set runs `confirm_leave_flagged()` (the `checkFlagged` prompt + single-key `yesNo` echo), returning to the menu on `N`/default; `G Y`, a `Y` answer, or an empty flag set log off. The confirm wire is byte-pinned to the live capture `comparison/transcripts/ae_tierd_g_confirm.txt`.
 
-- **BEHAVIOURAL** — Plain `G` in Rust behaves like AE's `G Y` (immediate logoff), never like AE's plain `G` (which confirms, or returns to the menu when nothing is flagged). Different control flow and a missing prompt.
-- **BEHAVIOURAL** — AE runs `saveFlagged()` (persist/clear `Partdownload` flag files, `express.e:25064/2798`) and `saveHistory()` (`25065`) on logoff. Rust performs neither. Because Rust has no flagged-file or history feature yet, this is a no-op functional gap today rather than data loss — but it is a missing side effect, not just cosmetic text.
+- **MATCH (slice D5/Ga)** — plain `G`'s confirm, the single-key `Yes`/`No` echo, the `N`→menu-return and the nothing-flagged→logoff control flow now match AE byte-for-byte.
+- **BEHAVIOURAL (slice D5)** — AE additionally runs `saveFlagged()` (persist/clear `Partdownload` flag files, `express.e:25064/2798`) and `saveHistory()` (`25065`) on logoff, emitting the `** AutoSaving File Flags **` banner. Rust persists neither yet — the flag set lives and dies with the session — so the `Y`/force-logoff tail is `Goodbye!` rather than the autosave banner. A missing side effect owed to slice D5, not cosmetic text.
 
 ### Note on the sysop gate
 
@@ -854,7 +854,7 @@ The most important behavioural gaps, in rough order of user impact:
 
 11. **`VER` drops AE's `Registered to NONE.` line.** A deliberate omission (NextExpress has no registration-key concept); the rest of the banner is cosmetic re-framing plus a deliberate behavioural departure on the UTF-8-vs-Latin-1 `©` byte-encoding (resolved by the wire-encoding policy — see AGENTS.md).
 
-12. **`G` (plain) always logs off in Rust, but AE's plain `G` confirms or returns to the menu.** Rust's `G` behaves like AE's `G Y` unconditionally; AE's plain `G` runs `checkFlagged()` and returns to the menu when nothing is flagged. Rust also performs none of AE's logoff side effects (`saveFlagged()`, `saveHistory()`) — a no-op gap today, but a missing side effect.
+12. **~~`G` (plain) always logs off in Rust~~ Resolved in part (slice D5/Ga).** Plain `G` now runs the genuine `checkFlagged()` confirm: with files flagged it prints `You have flagged files still not downloaded.` / `Do you leave without them? (y/N)?` (single-key `yesNo`, default N), returning to the menu on `N`; `G Y`, a `Y` answer, and the nothing-flagged case log off — matching AE, byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt`. (Earlier note's claim that AE returns to the menu when *nothing* is flagged was a source misreading — an empty list returns `1` and logs off.) **Still owed to slice D5:** the logoff side effects `saveFlagged()` / `saveHistory()` and their `** AutoSaving File Flags **` banner.
 
 13. **Several Rust-only notice lines have no legacy counterpart.** `Authenticated.` (post-login), `Message not found.` (failed `R <num>`), `Invalid conference number.` (`J abc`), and `Message aborted.` (blank subject) are all notices Rust emits where AE is silent or interactive. Individually minor; collectively they make Rust chattier than the legacy on edge paths.
 

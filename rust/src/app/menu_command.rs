@@ -7,8 +7,10 @@
 /// Parsed menu command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MenuCommand {
-    /// `G`: user requested logoff.
-    Logoff,
+    /// `G` / `G Y`: user requested logoff. `auto` is set by the `Y`
+    /// param (`amiexpress/express.e:25049`, `paramsContains('Y')`),
+    /// which forces logoff straight past the flagged-file confirm.
+    Logoff { auto: bool },
     /// `J` / `J <number>`: explicit conference join (Tier C C2).
     /// Mirrors `internalCommandJ()` at
     /// `amiexpress/express.e:25113-25183`.
@@ -298,8 +300,18 @@ pub(crate) enum PostArg {
 #[must_use]
 pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     let trimmed = line.trim();
-    if trimmed.eq_ignore_ascii_case("G") {
-        return MenuCommand::Logoff;
+    // `G` logs off; `G Y` forces logoff straight past the flagged-file
+    // confirm (`amiexpress/express.e:25049`, `paramsContains('Y')`).
+    // Any other `G <args>` behaves like plain `G`.
+    let mut g_parts = trimmed.splitn(2, char::is_whitespace);
+    if g_parts
+        .next()
+        .is_some_and(|head| head.eq_ignore_ascii_case("G"))
+    {
+        let auto = g_parts
+            .next()
+            .is_some_and(|rest| rest.split_whitespace().any(|t| t.eq_ignore_ascii_case("Y")));
+        return MenuCommand::Logoff { auto };
     }
     if trimmed.eq_ignore_ascii_case("C") {
         return MenuCommand::CommentToSysop;
@@ -572,8 +584,27 @@ mod tests {
 
     #[test]
     fn parses_logoff_command() {
-        assert_eq!(parse_menu_command("G"), MenuCommand::Logoff);
-        assert_eq!(parse_menu_command("g"), MenuCommand::Logoff);
+        assert_eq!(parse_menu_command("G"), MenuCommand::Logoff { auto: false });
+        assert_eq!(parse_menu_command("g"), MenuCommand::Logoff { auto: false });
+    }
+
+    #[test]
+    fn g_with_y_param_is_a_forced_logoff() {
+        // `G Y` skips the flagged-file confirm (express.e:25049); the
+        // `Y` is matched case-insensitively, like the rest of the menu.
+        assert_eq!(
+            parse_menu_command("G Y"),
+            MenuCommand::Logoff { auto: true }
+        );
+        assert_eq!(
+            parse_menu_command("g y"),
+            MenuCommand::Logoff { auto: true }
+        );
+        // A non-`Y` argument is still a plain (confirming) logoff.
+        assert_eq!(
+            parse_menu_command("G N"),
+            MenuCommand::Logoff { auto: false }
+        );
     }
 
     #[test]
@@ -1440,7 +1471,7 @@ mod tests {
     /// [`every_menu_command`] too so it is counted.
     fn advertised_token(command: &MenuCommand) -> Option<&'static str> {
         match command {
-            MenuCommand::Logoff => Some("G"),
+            MenuCommand::Logoff { .. } => Some("G"),
             MenuCommand::Join(_) => Some("J"),
             MenuCommand::Read(_) => Some("R"),
             MenuCommand::ScanAllMail => Some("MS"),
@@ -1472,7 +1503,7 @@ mod tests {
     /// (the compiler enforces that match; add the matching sample here).
     fn every_menu_command() -> Vec<MenuCommand> {
         vec![
-            MenuCommand::Logoff,
+            MenuCommand::Logoff { auto: false },
             MenuCommand::Join(JoinArg::Missing),
             MenuCommand::Read(NumberArg::Missing),
             MenuCommand::ScanAllMail,

@@ -269,7 +269,21 @@ deliberately distinct from the colourful `F` door.
   return — `ae_tierd_aquascan3.txt` S4), the on-row `[X]` marker, and
   the in-place repaint. D5 builds the rule layer and the downstream
   surfaces on top.
-- **In Scope**
+- **Landed (slice Ga):** the clean-logoff `checkFlagged` confirm.
+  Plain `G` with a non-empty session flag set runs
+  `confirm_leave_flagged()` — the `You have flagged files still not
+  downloaded.` / `Do you leave without them? (y/N)?` prompt
+  (`express.e:12667`/`:2129`, single-key `yesNo`, default N), returning
+  to the menu on `N`; `G Y` (new force form), a `Y` answer, or an empty
+  flag set log off. `MenuCommand::Logoff` now carries `auto`. Live
+  reference captured to `comparison/transcripts/ae_tierd_g_confirm.txt`
+  (flag a file via the AquaScan `F` verb → plain `G`, both branches);
+  byte-pinned in `menu_flow/tests.rs` + an e2e wire smoke in
+  `tierd_file_list_smoke.rs`. **Deferred to D5 proper:** the
+  `saveFlagged`/`saveHistory` persistence + `** AutoSaving File Flags
+  **` banner (so today's `Y`/force tail is `Goodbye!`, not the autosave
+  banner), and the logon `** Flagged File(s) Exist **` banner.
+- **In Scope (D5 proper, after Ga)**
   - `files.allium:FlagFile`, `UnflagFile`, with the per-session
     flagged list bounded by `max_flagged_files()` (legacy
     `MAX_FLAGGED_FILES = 1000`).
@@ -277,9 +291,11 @@ deliberately distinct from the colourful `F` door.
   - The downstream flag surfaces the captures/E source show: the
     logon `** Flagged File(s) Exist **` + BEL banner
     (`amiexpress/express.e:2791-2794`, captured at transcripts line
-    77), the clean-logoff `checkFlagged` "You have flagged files
-    still not downloaded." warning (`express.e:12667-12673`), and the
-    `** AutoSaving File Flags **` logoff banner (`express.e:2803`).
+    77) and the `** AutoSaving File Flags **` logoff banner
+    (`express.e:2803`). (The clean-logoff `checkFlagged` "You have
+    flagged files still not downloaded." warning itself already landed
+    in slice Ga; D5 adds the persistence that emits the autosave banner
+    on the same logoff path.)
   - A fresh capture session for AquaScan's own un-exercised in-door
     flag verbs (`A` alter-flags, `D` quit-and-download) before
     porting them (D6a/D6b own `A`).

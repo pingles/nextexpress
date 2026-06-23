@@ -17,7 +17,8 @@ top-level modules under `rust/src/`:
   `MessageBaseRef`, `Bytes`, `ConferenceScan`, and the `pub(crate)`
   `FlaggedFiles`/`FlaggedKey` — the session-scoped flagged-file set the
   `F`/`R` pager verbs build, an impl detail shared by `domain/files`,
-  `domain/session`, and `app/menu_flow/file_list`, slice D2f; D5
+  `domain/session`, and `app/menu_flow/file_list`, slice D2f; the
+  plain-`G` logoff confirm reads it via `is_empty()` (slice Ga); D5
   persists it),
   port traits (`UserRepository`, `ConferenceRepository`, `MailStore`,
   `PasswordHasher`, `CallerLogAppender`, `FileRepository`), phase-typed session wrappers, the
@@ -265,7 +266,7 @@ module under `app::menu_flow/`):
 
 | Command | Variant | Handler |
 |---|---|---|
-| `G` | `Logoff` | dispatch |
+| `G` / `G Y` | `Logoff { auto }` | dispatch (plain `G` with a non-empty session flag set runs the `checkFlagged` confirm via `confirm_leave_flagged` — the live-captured `Do you leave without them? (y/N)?` single-key `yesNo`, default N → return to menu; `G Y`, a `Y` answer, or an empty flag set log off, slice D5/Ga) |
 | `J` / `J <n>` / `J <n>.<b>` / `J <n> <b>` | `Join(JoinArg)` | `join` (direct in-range arg joins; everything else opens the legacy `Conference Number (1-N): ` single-shot prompt; the dotted / two-token forms carry a message-base request, out-of-range bases opening the `Message Base Number (1-N): ` prompt whose answer goes to the join unclamped) |
 | `JM` / `JM <b>` | `JoinMsgBase(MsgBaseArg)` | `join` (message base of the current conference; single-base conferences get the legacy "does not contain multiple message bases" notice; missing/out-of-range args open the base prompt, whose answer is clamped — the legacy `J`/`JM` asymmetry; a dotted arg delegates to `J`) |
 | `<` / `>` | `PrevConference` / `NextConference` | `join` (nearest granted conference below/above, primary base, skipping revoked; past the edge → the `J` prompt) |

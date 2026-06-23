@@ -60,6 +60,13 @@ impl FlaggedFiles {
     pub(crate) fn contains(&self, key: &FlaggedKey) -> bool {
         self.set.contains(key)
     }
+
+    /// Whether nothing is flagged — the `checkFlagged()` gate
+    /// (`amiexpress/express.e:12669`, `flagFilesList.count()`): plain
+    /// `G` only confirms when the set is non-empty.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.set.is_empty()
+    }
 }
 
 #[cfg(test)]
