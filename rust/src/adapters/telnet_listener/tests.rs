@@ -507,7 +507,7 @@ async fn connection_displays_amiexpress_copyright_line() {
 async fn connection_displays_nextexpress_copyright_line() {
     // The version slot in the banner is the short git SHA the
     // `build.rs` script captures at compile time — see
-    // `app::wire_text::COPYRIGHT_LINES`.
+    // `app::session_driver::COPYRIGHT_LINES`.
     let addr = spawn_listener_with(repo_with_alice()).await;
     let mut stream = TcpStream::connect(addr).await.unwrap();
     let buf = drain_to_name_prompt(&mut stream).await;
