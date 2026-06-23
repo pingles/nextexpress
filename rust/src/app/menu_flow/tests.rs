@@ -23,7 +23,7 @@ use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::app::terminal::{
     KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
 };
-use crate::app::wire_text::{GOODBYE_LINE, IDLE_TIMEOUT_LINE};
+use crate::app::wire_text::IDLE_TIMEOUT_LINE;
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
 use crate::domain::files::flagged::FlaggedKey;
 use crate::domain::password::{PasswordHashKind, PasswordHasher};
@@ -31,7 +31,7 @@ use crate::domain::session::typed::MenuSession;
 use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
 use crate::domain::user::{RatioMode, User};
 
-use super::{DispatchOutcome, MenuFlow};
+use super::{DispatchOutcome, MenuFlow, GOODBYE_LINE};
 
 /// Write-capturing terminal with a scripted key-read queue. The adapter
 /// echoes NOTHING in hot-key mode (the caller owns every visible byte),
@@ -395,5 +395,101 @@ async fn quick_logon_skips_the_logon_conference_scan() {
         terminal.output.is_empty(),
         "a quick logon must skip the logon conference scan, got {:?}",
         String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[test]
+fn version_banner_carries_lineage_lines_verbatim() {
+    // Pin the lineage block so a future edit can't quietly drift
+    // the wording. Each line is checked individually so a swap or
+    // reorder fails the test.
+    let banner = std::str::from_utf8(super::VERSION_BANNER).expect("utf8 banner");
+    assert!(
+        banner.contains("Based on Versions:\r\n"),
+        "missing lineage label: {banner:?}",
+    );
+    assert!(
+        banner.contains("AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n"),
+        "missing AmiExpress copyright line: {banner:?}",
+    );
+    assert!(
+        banner.contains("  (C)1989-91 Mike Thomas, Synthetic Technologies\r\n"),
+        "missing Thomas author line: {banner:?}",
+    );
+    assert!(
+        banner.contains("  (C)1992-95 Joe Hodge, LightSpeed Technologies Inc.\r\n"),
+        "missing Hodge author line: {banner:?}",
+    );
+}
+
+#[test]
+fn version_banner_carries_nextexpress_version_and_sha() {
+    // Slice A2: the leading line pins the running Rust port to
+    // its `Cargo.toml` version + `build.rs` SHA so the operator
+    // can correlate a running session with a specific build.
+    let banner = std::str::from_utf8(super::VERSION_BANNER).expect("utf8 banner");
+    let version = env!("CARGO_PKG_VERSION");
+    let sha = env!("NEXTEXPRESS_GIT_SHA");
+    let needle = format!("NextExpress {version} ({sha}) Copyright \u{00A9}2026 Paul Ingles\r\n");
+    assert!(
+        banner.contains(&needle),
+        "expected `{needle}` in banner: {banner:?}",
+    );
+}
+
+#[test]
+fn version_banner_starts_with_crlf_and_omits_registration_key_line() {
+    // Slice A2 (Out of Scope): the legacy `Registered to <key>.`
+    // line (`amiexpress/express.e:25696`) is deliberately elided.
+    let banner = std::str::from_utf8(super::VERSION_BANNER).expect("utf8 banner");
+    assert!(
+        banner.starts_with("\r\n"),
+        "banner missing CRLF prefix: {banner:?}"
+    );
+    assert!(
+        !banner.contains("Registered to"),
+        "banner must elide the legacy `Registered to` line: {banner:?}",
+    );
+}
+
+#[test]
+fn render_time_line_emits_legacy_it_is_prefix_and_us_format() {
+    // Pin the legacy `It is <MM-DD-YY> <HH:MM:SS>` wire format
+    // (`amiexpress/express.e:25636-25640`, FORMAT_USA). 1970-01-02
+    // 03:04:05 UTC is the chosen fixed instant so all fields are
+    // distinct two-digit numbers — any swap of fields shows up
+    // immediately in the assertion.
+    use std::time::{Duration, UNIX_EPOCH};
+    let at = UNIX_EPOCH + Duration::from_secs(86_400 + 3 * 3600 + 4 * 60 + 5);
+    assert_eq!(
+        super::render_time_line(at),
+        b"\r\nIt is 01-02-70 03:04:05\r\n"
+    );
+}
+
+#[test]
+fn render_time_line_zero_pads_single_digit_fields() {
+    // FORMAT_USA pads every numeric field to two digits; a leading
+    // zero is required for `09` and the like.
+    use std::time::{Duration, UNIX_EPOCH};
+    // 1970-01-01 00:00:00 UTC — every field is `00`.
+    let at = UNIX_EPOCH + Duration::from_secs(0);
+    assert_eq!(
+        super::render_time_line(at),
+        b"\r\nIt is 01-01-70 00:00:00\r\n"
+    );
+}
+
+#[test]
+fn render_time_line_uses_two_digit_year_wrap_after_2000() {
+    // FORMAT_USA on AmigaOS produces a two-digit year; 2001 must
+    // render as `01`, not `2001`. The Unix billennium (1e9 seconds
+    // past the epoch) is 2001-09-09 01:46:40 UTC — a widely-known
+    // reference instant.
+    use std::time::{Duration, UNIX_EPOCH};
+    let at = UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    assert_eq!(
+        super::render_time_line(at),
+        b"\r\nIt is 09-09-01 01:46:40\r\n"
     );
 }

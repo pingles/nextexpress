@@ -118,7 +118,7 @@ pub trait ScreenRepository {
     /// Used by the `H` menu command. Returns empty bytes when the
     /// asset is absent so the caller can fall back to the legacy
     /// `Sorry Help is unavailable at this time.` line
-    /// ([`crate::app::wire_text::HELP_UNAVAILABLE_LINE`]) instead of
+    /// (`HELP_UNAVAILABLE_LINE`) instead of
     /// silently rendering a built-in stub.
     fn bbs_help_screen(&self) -> ScreenFuture<'_>;
 
@@ -138,7 +138,7 @@ pub trait ScreenRepository {
     /// (`Screens/LOGOFF.txt`, `amiexpress/express.e:6554`, displayed at
     /// `:8187`). Rendered on a normal user-requested logoff
     /// (`G` menu command), immediately before the
-    /// [`crate::app::wire_text::GOODBYE_LINE`].
+    /// `GOODBYE_LINE`.
     ///
     /// The legacy gates rendering on `logonType != LOGON_TYPE_SYSOP`
     /// and `ftpConn = FALSE`; `NextExpress` has neither sysop direct

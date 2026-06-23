@@ -84,7 +84,7 @@ const FALLBACK_LOGOFF: &[u8] = b"";
 /// Built-in fallback for `<bbs-loc>/BBSHelp.txt`
 /// (`amiexpress/express.e:25079`). The `H` command's caller writes
 /// the dedicated `Sorry Help is unavailable at this time.` line
-/// ([`crate::app::wire_text::HELP_UNAVAILABLE_LINE`]) when the
+/// (`HELP_UNAVAILABLE_LINE`) when the
 /// returned bytes are empty, so the fallback here is empty.
 const FALLBACK_BBS_HELP: &[u8] = b"";
 

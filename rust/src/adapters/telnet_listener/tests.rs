@@ -1,9 +1,10 @@
 use crate::app::login_flow::PASSWORD_PROMPT;
+use crate::app::menu_flow::MENU_PROMPT_SUFFIX;
 use crate::app::registration_flow::{
     EMAIL_PROMPT, LINE_LENGTH_PROMPT, LOCATION_PROMPT, NEW_USER_PASSWORD_PROMPT, PHONE_PROMPT,
     REGISTRATION_HANDLE_PROMPT, REGISTRATION_PASSWORD_CONFIRM_PROMPT, REGISTRATION_PASSWORD_PROMPT,
 };
-use crate::app::wire_text::{ANSI_PROMPT, MENU_PROMPT_SUFFIX};
+use crate::app::wire_text::ANSI_PROMPT;
 
 use std::path::PathBuf;
 use std::time::SystemTime;
