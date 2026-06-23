@@ -123,7 +123,7 @@ state the `ColourTerminal` decorator reads).
 
 `rust/build.rs` captures the short git SHA (`git rev-parse --short HEAD`)
 into the `NEXTEXPRESS_GIT_SHA` compile-time env var. The connect banner
-(`app::wire_text::COPYRIGHT_LINES`) and the startup log line emitted by
+(`app::session_driver::COPYRIGHT_LINES`) and the startup log line emitted by
 `bootstrap::run` (via `startup_version_line`) both embed the SHA so operators can pin a running process to
 a source commit. The build script falls back to `unknown` outside a
 working tree.
@@ -176,14 +176,17 @@ flowchart LR
     AutoRejoin --> Typed
     Login --> SF["session_flow\n(typed-only use cases over ports)"]
     Registration --> SF
-    Driver --> Presenter["session_presenter\n+ wire_text"]
+    Driver --> Presenter["session_presenter\n(menu-prompt / join / stats renderers)"]
+    Driver --> WireText["wire_text\n(shared cross-cutting primitives:\nCRLF, ANSI prompt, idle/logon goodbyes,\ninvalid-message-number notice)"]
 
     Menu --> Parse["menu_command::parse_menu_command"]
     Parse --> Cmds["MenuCommand (24 variants)\n{Logoff, Join, JoinMsgBase, Read, ScanAllMail,\nPost, CommentToSysop,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle,\nShowMenu, TopicHelp, AnsiToggle,\nConferenceFlags,\nPrevConference, NextConference,\nPrevMsgBase, NextMsgBase,\nFileList, ZippySearch, Unknown}"]
-    Menu --> MenuFlowHandlers["menu_flow/*\n(one module per command:\nterminal-free core + handler)"]
+    Menu --> MenuFlowHandlers["menu_flow/*\n(one module per command:\nterminal-free core + handler +\nthat command's own wire text)"]
 
     MenuFlowHandlers --> ReadSub["read_subprompt loop\n(legacy readMSG: CR/A/R/F/\nD/M/EH/L/Q options)"]
     MenuFlowHandlers --> BaseHelpers["menu_flow shared helpers\n(current_base, lock_current_base,\nallowed_addressing_for)"]
+    MenuFlowHandlers --> MailText["menu_flow::mail_text\n(shared mail-family text:\nno-mail / store-error / post-* lines,\nrender_post_success)"]
+    MenuFlowHandlers --> Table["menu_flow::table\n(shared column helpers:\nleft_field, scan_row_status)"]
     BaseHelpers --> MailRegistryPort
     MenuFlowHandlers --> FileList["file_list\n(NextScan F lister: dir_row + wire\n+ 29-line ScanState pager;\nplus the internal Z zippy search, slice D4)"]
     FileList --> FilePort["FileRepository (port)"]
@@ -364,9 +367,15 @@ thin orchestrator:
 6. `MenuFlow::run` — the command loop above, returns `LoggingOffSession`.
 7. `finalise` — apply `session_flow::finalise_logoff` and persist.
 
-Rendering helpers shared by the auto-rejoin and explicit-join paths live
-in `app::session_presenter`. The wire byte constants live in
-`app::wire_text`.
+Rendering helpers shared by the auto-rejoin and explicit-join paths
+(`render_menu_prompt`, `auto_rejoin_line`, `explicit_join_line`,
+`render_stats_screen`) live in `app::session_presenter`. Each command's
+own user-facing text lives beside the module that emits it under
+`app::menu_flow/*`; the connect banner's `COPYRIGHT_LINES` (and
+`NO_CONFERENCE_ACCESS_LINE`) live in `app::session_driver`, the
+login/registration/password-reset text in the respective flow modules,
+and `app::wire_text` keeps only the handful of cross-cutting primitives
+no single command owns.
 
 ### Phase 6–8 messaging behaviour
 
@@ -448,33 +457,37 @@ covers two-boot persistence with a `tempdir`.
 ### Concentration-of-responsibility hotspots
 
 The current top files by line count (figures re-measured June 2026,
-after the slice-13 directory-module promotions). The largest files are
+after the slice-13 directory-module promotions and the wire_text
+migration — refactoring 9 below). The largest files are
 now **test** modules: the inline test blocks of `file_list`, `join` and
 `telnet_listener` were carved out to sibling `tests.rs` files
 (refactoring 13), so each command/adapter's production `mod.rs` is small
 (`file_list/mod.rs` 626, `join/mod.rs` 605, `telnet_listener/mod.rs`
-214) while its co-located test sibling rises to the top:
+214) while its co-located test sibling rises to the top. `app/wire_text.rs`
+no longer appears: the per-command text it once accumulated now lives
+beside each command (refactoring 9 below), leaving it at 36 lines of
+shared cross-cutting primitives.
 
 | File | Lines | Notes |
 |---|---|---|
+| `app/menu_flow/file_list/tests.rs` | 2285 | NextScan lister tests, carved out as a sibling of `file_list/mod.rs` (626 production lines) by refactoring 13. |
 | `domain/session/tests.rs` | 2062 | Cross-capability session tests in 14 nested mods, internally grouped but monolithic. |
-| `app/wire_text.rs` | 1746 | Wire-format constants and rendering helpers. Growing ~100–200 lines per command (`CF` added 132, `MS` 207); see refactoring 9. |
-| `app/menu_flow/file_list/tests.rs` | 1610 | NextScan lister tests, carved out as a sibling of `file_list/mod.rs` (626 production lines) by refactoring 13. |
-| `adapters/telnet_listener/tests.rs` | 1572 | In-process integration tests (44 fns) for `TelnetListener`/`TelnetTerminal`, sibling of `telnet_listener/mod.rs` (214 production lines); refactoring 13. |
-| `app/menu_flow/join/tests.rs` | 1567 | `J`/`JM`/`<`/`>`/`<<`/`>>` family tests, sibling of `join/mod.rs` (605 production lines + the inlined `scan_mail_on_join`); refactoring 13. |
+| `app/menu_flow/join/tests.rs` | 1615 | `J`/`JM`/`<`/`>`/`<<`/`>>` family tests, sibling of `join/mod.rs` (605 production lines + the inlined `scan_mail_on_join`); refactoring 13. |
+| `adapters/telnet_listener/tests.rs` | 1574 | In-process integration tests (44 fns) for `TelnetListener`/`TelnetTerminal`, sibling of `telnet_listener/mod.rs` (214 production lines); refactoring 13. |
+| `app/menu_command.rs` | 1532 | `parse_menu_command` if-chain + the 24-variant `MenuCommand` enum + the parse/reject test battery + the `advertised_token` safety net. |
 | `domain/user/mod.rs` | 1527 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
-| `app/session_flow.rs` | 1423 | Login-path use cases over the phase wrappers + `(UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade (refactoring 5 deleted the twin layer). |
-| `app/menu_command.rs` | 1263 | `parse_menu_command` if-chain + the 23-variant `MenuCommand` enum + the parse/reject test battery + the `advertised_token` safety net. |
-| `adapters/file_mail_store.rs` | 1242 | Per-msgbase JSON store + lock + tests. |
-| `app/session_driver.rs` | 1145 | Per-connection orchestrator + logon-order tests. |
-| `adapters/sqlite_user_repository.rs` | 1127 | Schema init + row codec + queries + ~30 tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
+| `app/session_flow.rs` | 1496 | Login-path use cases over the phase wrappers + `(UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade (refactoring 5 deleted the twin layer). |
+| `app/session_driver.rs` | 1390 | Per-connection orchestrator + logon-order tests; now also owns `COPYRIGHT_LINES` / `NO_CONFERENCE_ACCESS_LINE` (wire_text migration). |
+| `adapters/file_mail_store.rs` | 1350 | Per-msgbase JSON store + lock + tests. |
+| `adapters/sqlite_user_repository.rs` | 1205 | Schema init + row codec + queries + ~30 tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
 | `adapters/file_screen_repository.rs` | 1019 | File-backed screen assets with caching + tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
 | `domain/messaging/scan_mail.rs` | 941 | Scan rule + extensive test fixtures. |
+| `app/menu_flow/file_list/wire.rs` | 920 | Capture-pinned `F`-family wire constants + the date-group frame assembler (refactoring 9 colocation). |
 | `domain/conference.rs` | 896 | `Conference`, `MessageBase`, `ConferenceMembership` (incl. the M/A/F/Z `ScanFlag` accessors), `NameType`, `AllowedAddressing`, `AllScanScope`. The `CF` edit semantics live in the focused `domain/conference_flags.rs`. |
 | `domain/messaging/post_mail.rs` | 886 | Post rule + helpers + tests. |
-| `app/menu_flow/file_list/wire.rs` | 818 | Capture-pinned `F`-family wire constants + the date-group frame assembler (refactoring 9 colocation). |
-| `app/menu_flow/post_mail.rs` | 671 | The `E`/`C` editor command module (core fns + editor handlers + tests). |
-| `domain/session/typed.rs` | 644 | Phase-typed wrappers and their constructors. |
+| `app/menu_flow/post_mail.rs` | 789 | The `E`/`C` editor command module (core fns + editor handlers + co-located mail-entry/editor wire text + tests). |
+| `domain/session/typed.rs` | 650 | Phase-typed wrappers and their constructors. |
+| `app/menu_flow/mod.rs` | 631 | `MenuFlow` dispatch + shared base helpers + the menu-command consts colocated by the wire_text migration (`VERSION_BANNER`, toggle lines, `GOODBYE_LINE`, `render_time_line`, …). |
 
 ## Idiomatic-Rust read
 
@@ -762,23 +775,50 @@ mutants inside them.
 
 ### 9. Colocate command-specific wire bytes with the command module
 
-Policy change: a new command's single-consumer renderers and prompt
-constants live in its own `menu_flow` module (`pub(super)` items or a
-private `wire` submodule), not in `app/wire_text.rs`; the shared file
-keeps genuinely shared text (`UNKNOWN_COMMAND_LINE`, `GOODBYE_LINE`,
-`render_stats_screen`, …). `wire_text.rs` is at 1746 lines and grows
-~100–200 per command (`CF` added 132, `MS` 207 — both
-single-consumer). The policy is **already adopted for new commands**:
-the `F`-family bytes live in `app/menu_flow/file_list/wire.rs` (818
-lines), not `wire_text.rs`. What remains is migrating the existing
-`CF` block (`wire_text.rs:1071-1142`) and `MS` block
-(`wire_text.rs:659-770`) opportunistically when next touched; two
-shared private helpers (`left_field`, `scan_row_status`) still need
-`pub(crate)` widening. This is
-*not* the skip-listed "rewriting `wire_text.rs`": no shared constant
-moves and no string changes — it only removes the file from every
-command's mandatory tour and puts bytes-pinned tests next to the
-handler that emits them.
+**Landed (June 2026).** A new command's single-consumer renderers and
+prompt constants now live in its own `menu_flow` module (`pub(super)`
+items or a private `wire` submodule), not in `app/wire_text.rs`. The
+full migration of the pre-existing text followed: every per-command and
+per-flow string that had accumulated in `wire_text.rs` (~1746 lines at
+its peak) moved to the module that emits it, no string changes — only
+relocation, with the bytes-pinned tests moving next to the handler.
+
+The end state:
+
+- **Login / registration / password-reset text** → `app::login_flow`,
+  `app::registration_flow`, `app::password_reset_flow`.
+- **`COPYRIGHT_LINES` + `NO_CONFERENCE_ACCESS_LINE`** → `app::session_driver`.
+- **`render_menu_prompt`, `auto_rejoin_line`, `explicit_join_line`,
+  `render_stats_screen`** (and its private `STATS_DATE_FORMAT` /
+  `write_stat_line`) → `app::session_presenter`.
+- **Per-command text** into each command's `app::menu_flow` submodule
+  (`conf_flags`, `read_subprompt`, `scan_all_mail`, `list_messages`,
+  `read_mail`, `sysop_admin`, `reply_forward`, `post_mail`, `join`) —
+  so the `CF` block and `MS` block that this item once flagged as
+  "what remains" moved too.
+- **Menu-command consts** (`VERSION_BANNER`, `HELP_UNAVAILABLE_LINE`,
+  the `QUIET`/`EXPERT`/`ANSI_COLOR` toggle lines, `UNKNOWN_COMMAND_LINE`,
+  `GOODBYE_LINE`, `LEAVE_FLAGGED_CONFIRM`, `YESNO_*`, `render_time_line`,
+  `MENU_PROMPT_SUFFIX`) → `app::menu_flow::mod`.
+- **Two new shared submodules** absorb the cross-command duplication
+  rather than forcing it back into `wire_text`:
+  `app::menu_flow::mail_text` (mail-family shared lines —
+  `NO_MAIL_BASE_LINE`, `MAIL_STORE_ERROR_LINE`, `POST_ABORTED_LINE`,
+  `POST_RECIPIENT_NO_ACCESS_LINE`, `POST_ACCESS_DENIED_LINE`,
+  `POST_ADDRESSING_NOT_ALLOWED_LINE`, `SOURCE_NOT_FOUND_LINE`,
+  `FORWARD_UNKNOWN_USER_LINE`, `render_post_success`) and
+  `app::menu_flow::table` (shared column helpers `left_field`,
+  `scan_row_status`, which this item had flagged as needing
+  `pub(crate)` widening).
+- `app/wire_text.rs` is **slimmed to 36 lines** of five genuinely
+  cross-cutting primitives: `CRLF`, `ANSI_PROMPT`, `IDLE_TIMEOUT_LINE`,
+  `LOGON_REJECTED_LINE`, `INVALID_MESSAGE_NUMBER_LINE`.
+
+The per-command growth concern is resolved by co-location: `wire_text.rs`
+is no longer a mandatory stop on every command's tour, and it no longer
+grows ~100–200 lines per command. This was never the skip-listed
+"rewriting `wire_text.rs`" — no shared constant changed and no string
+changed; the text simply moved to where it is emitted.
 
 ### 10. One parameterised line reader + pure outcome-to-bytes functions
 
@@ -968,15 +1008,17 @@ than the work above:
   ceremony. Checked and rejected by the June 2026 assessment; the
   data-driven shape that *does* fit is the parser-side listing
   (refactoring 11).
-- **Rewriting `wire_text.rs`.** The legacy strings are the wire
-  contract; the file is long because the BBS has many lines, not
-  because of poor structure. (Refactoring 9 — colocating *new*
-  single-consumer text with its command — is a placement policy, not
-  a rewrite.)
+- **Rewriting the legacy wire strings.** The legacy strings *are* the
+  wire contract and stay verbatim: nothing about their content is a
+  refactoring target. (Refactoring 9 — co-locating each command's text
+  with its command, now landed — moved the strings to where they are
+  emitted without changing any of them; `app/wire_text.rs` is left at 36
+  lines of cross-cutting primitives. That was a placement policy, not a
+  rewrite.)
 
 ## Suggested order
 
-Refactorings 3, 4, 5, 6, 7 and 8 have **landed** (June 2026), one
+Refactorings 3, 4, 5, 6, 7, 8 and 9 have **landed** (June 2026), one
 commit each, with the full suite plus a focused `cargo mutants
 --in-diff` run per commit. What remains:
 
@@ -1004,9 +1046,10 @@ commit each, with the full suite plus a focused `cargo mutants
      not-yet-wired `force_password_reset` path and keeps a descriptive
      `panic!` until the password-reset slice handles it. Each landed as
      its own slice with a failing test first.
-1. Apply the placement policies (9, 10) opportunistically whenever a
-   command is touched; the declarative command listing (11) when next
-   in `menu_command.rs`.
+1. Apply the placement policy (10) opportunistically whenever a
+   command is touched (9 has landed — wire text is now co-located per
+   command); the declarative command listing (11) when next in
+   `menu_command.rs`.
 2. Test-support consolidation (12) the next time a smoke or handler
    test is being written; bundle the `Terminal` RPITIT conversion into
    it. Move the giant inline test modules (13) — `file_list/mod.rs`,
