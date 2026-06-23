@@ -332,12 +332,18 @@ where
         session: &mut MenuSession,
         number: u32,
     ) -> Result<(), T::Error> {
-        let new_subject = self
+        let Some(new_subject) = self
             .read_optional_unchanged_line(session, EDIT_HEADER_SUBJECT_PROMPT)
-            .await?;
-        let new_to_name = self
+            .await?
+        else {
+            return Ok(());
+        };
+        let Some(new_to_name) = self
             .read_optional_unchanged_line(session, EDIT_HEADER_TO_PROMPT)
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
 
         let outcome = edit_mail_header(
             session,
@@ -431,15 +437,28 @@ where
         Ok(())
     }
 
-    /// Reads a single trimmed line in response to `prompt`; returns
-    /// `Some(None)` for the blank-input case (semantics: "keep
-    /// current"), `Some(Some(value))` for non-empty input,
-    /// `None` for EOF/idle (the prompt aborted).
+    /// Reads a single trimmed line for an `EH` header field that may be
+    /// left unchanged. The three-state result distinguishes the cases the
+    /// caller must treat differently:
+    ///
+    /// * `Some(None)` — blank input: keep the current field value.
+    /// * `Some(Some(value))` — a new value was supplied.
+    /// * `None` — EOF / idle timeout: the edit is **aborted**.
+    ///
+    /// A dropped carrier or idle timeout must abort the whole edit rather
+    /// than silently keep the field and commit. The legacy `editHeader`
+    /// (`express.e:11602`) does `IF (stat < 0) THEN RETURN stat` on every
+    /// prompt's `lineInput` timeout — a *silent* return, distinct from the
+    /// blank-line keep branch — so the abort writes nothing here (the same
+    /// convention as the `R`-sub-prompt reply / forward commands, B6).
+    ///
+    /// # Errors
+    /// Returns the concrete terminal error if a write, flush, or read fails.
     async fn read_optional_unchanged_line(
         &mut self,
         session: &mut MenuSession,
         prompt: &[u8],
-    ) -> Result<Option<String>, T::Error> {
+    ) -> Result<Option<Option<String>>, T::Error> {
         use crate::app::terminal::{TerminalEcho, TerminalRead};
         use std::time::SystemTime;
         match self.read_prompted(prompt, TerminalEcho::Visible).await? {
@@ -447,12 +466,237 @@ where
                 session.record_input(SystemTime::now());
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
-                    Ok(None)
+                    Ok(Some(None))
                 } else {
-                    Ok(Some(trimmed.to_string()))
+                    Ok(Some(Some(trimmed.to_string())))
                 }
             }
             TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeSet, VecDeque};
+    use std::convert::Infallible;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    use crate::adapters::file_screen_repository::FileScreenRepository;
+    use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
+    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
+    use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
+    use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::services::AppServices;
+    use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
+    use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+    use crate::domain::password::PasswordHashKind;
+    use crate::domain::session::typed::MenuSession;
+    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+    use crate::domain::user::{NewUserDraft, RatioMode, User};
+
+    use super::{EDIT_HEADER_SUBJECT_PROMPT, EDIT_HEADER_TO_PROMPT, NO_MAIL_BASE_LINE};
+
+    /// A terminal double that replays a scripted sequence of line reads
+    /// (defaulting to `Eof` once exhausted) and records every written byte.
+    #[derive(Default)]
+    struct ScriptedTerminal {
+        output: Vec<u8>,
+        inputs: VecDeque<TerminalRead>,
+    }
+
+    impl Terminal for ScriptedTerminal {
+        type Error = Infallible;
+
+        fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
+            Box::pin(async move {
+                self.output.extend_from_slice(bytes);
+                Ok(())
+            })
+        }
+
+        fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn read_line(
+            &mut self,
+            _echo: TerminalEcho,
+            _timeout: Duration,
+        ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+            Box::pin(async move { Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof)) })
+        }
+    }
+
+    fn terminal_with(inputs: impl IntoIterator<Item = TerminalRead>) -> ScriptedTerminal {
+        ScriptedTerminal {
+            output: Vec::new(),
+            inputs: inputs.into_iter().collect(),
+        }
+    }
+
+    fn test_services() -> AppServices {
+        AppServices {
+            user_repo: Arc::new(InMemoryUserRepository::default()),
+            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
+            caller_log: Arc::new(InMemoryCallerLog::new()),
+            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
+            conferences: Arc::new(Vec::new()),
+            mail_stores: Arc::new(InMemoryMailStores::new()),
+            file_repo: Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
+            ),
+            session_policy: SessionPolicy::default(),
+            default_ratio: DefaultRatio {
+                mode: RatioMode::Disabled,
+                value: 0,
+            },
+            new_user_gate: Arc::new(NewUserGateConfig {
+                allow_new_users: true,
+                new_user_password: None,
+                max_new_user_password_attempts: 3,
+            }),
+            bbs_name: Arc::from("Test BBS"),
+        }
+    }
+
+    /// A Menu-phase session. The `EH` field prompts fire before any
+    /// access gate or base lookup, so the session tier is irrelevant to
+    /// the abort behaviour under test.
+    fn menu_session() -> MenuSession {
+        let user = User::register_new(
+            7,
+            NewUserDraft {
+                handle: "sysop".to_string(),
+                location: Some("Townsville".to_string()),
+                phone_number: Some("555-0123".to_string()),
+                email: Some("sysop@example.com".to_string()),
+                password_hash: "hash".to_string(),
+                password_salt: Some("salt".to_string()),
+                password_hash_kind: PasswordHashKind::Pbkdf210000,
+                line_length: 80,
+                ansi_colour: true,
+                flags: BTreeSet::new(),
+                ratio_mode: RatioMode::Disabled,
+                ratio_value: 0,
+                now: SystemTime::UNIX_EPOCH,
+            },
+        )
+        .expect("valid new user");
+        let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
+        session.prompt_for_name().expect("prompt");
+        session
+            .record_identified_user("sysop", user)
+            .expect("identify");
+        apply_password_match(
+            &mut session,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("password match");
+        session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
+        MenuSession::from_session(session)
+    }
+
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+
+    #[tokio::test]
+    async fn edit_header_aborts_when_the_subject_prompt_times_out() {
+        // A dropped carrier / idle timeout at the first `EH` prompt must
+        // abort the edit outright — the legacy `editHeader`
+        // (`express.e:11602`) does `IF (stat < 0) THEN RETURN stat` on the
+        // prompt's `lineInput` timeout, NOT treat it as "keep the current
+        // subject". The abort is silent, so only the subject prompt is
+        // written: the addressee prompt never appears and the edit never
+        // reaches the domain rule.
+        let services = test_services();
+        let mut terminal = terminal_with([TerminalRead::IdleTimedOut]);
+        let mut session = menu_session();
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_edit_header(&mut session, 1)
+                .await
+                .expect("handle_edit_header");
+        }
+        assert_eq!(
+            terminal.output.as_slice(),
+            EDIT_HEADER_SUBJECT_PROMPT,
+            "a subject-prompt timeout must abort silently, writing only the prompt; got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_header_aborts_when_the_addressee_prompt_times_out() {
+        // A timeout at the *second* `EH` prompt (after a real subject was
+        // typed) must also abort silently — the partially-collected edit is
+        // discarded and the domain rule is never reached. So the wire shows
+        // exactly the two prompts and nothing after them.
+        let services = test_services();
+        let mut terminal = terminal_with([
+            TerminalRead::Line("Updated subject".to_string()),
+            TerminalRead::IdleTimedOut,
+        ]);
+        let mut session = menu_session();
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_edit_header(&mut session, 1)
+                .await
+                .expect("handle_edit_header");
+        }
+        let expected = [EDIT_HEADER_SUBJECT_PROMPT, EDIT_HEADER_TO_PROMPT].concat();
+        assert_eq!(
+            terminal.output, expected,
+            "an addressee-prompt timeout must abort silently after the two prompts, never reaching the edit rule; got {:?}",
+            String::from_utf8_lossy(&terminal.output)
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_header_keeps_both_fields_on_blank_input_and_proceeds() {
+        // Regression guard for the keep-current path the abort fix must not
+        // disturb: blank input is "leave unchanged" (NOT abort), so the edit
+        // proceeds into the domain rule. With no joined base that surfaces as
+        // the no-mail-base outcome, proving the edit was not short-circuited.
+        let services = test_services();
+        let mut terminal = terminal_with([
+            TerminalRead::Line(String::new()),
+            TerminalRead::Line("   ".to_string()),
+        ]);
+        let mut session = menu_session();
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_edit_header(&mut session, 1)
+                .await
+                .expect("handle_edit_header");
+        }
+        let out = &terminal.output;
+        assert!(
+            contains(out, EDIT_HEADER_TO_PROMPT),
+            "a blank subject keeps the current value and proceeds to the addressee prompt; got {:?}",
+            String::from_utf8_lossy(out)
+        );
+        assert!(
+            contains(out, NO_MAIL_BASE_LINE),
+            "the kept-fields edit must reach the domain rule (no-base outcome here); got {:?}",
+            String::from_utf8_lossy(out)
+        );
     }
 }

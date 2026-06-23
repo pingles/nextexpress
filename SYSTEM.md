@@ -830,8 +830,9 @@ supersedes the earlier "small menu renderer" idea):
   `read_optional_unchanged_line`) into one helper parameterised by
   empty-line meaning and abort-notice policy, keeping thin named
   wrappers at the call sites. The `record_input` idle-clock stamp then
-  cannot be forgotten on a new prompt. **This carries a real bug fix,
-  not just dedup** — see below.
+  cannot be forgotten on a new prompt. The **`EH` abort bug** this merge
+  would have prevented has since been fixed directly (see below), so what
+  remains here is the dedup, not a correctness fix.
 - Convert the static error-rendering matches (`sysop_admin.rs`'s
   `render_delete/move/edit_header_error`, the static arms of
   `render_post_outcome`) from async methods into pure
@@ -842,26 +843,34 @@ supersedes the earlier "small menu renderer" idea):
   needs the message number, so only the *static* arms extract; a smaller
   async `match` remains per handler.
 
-> **Latent bug surfaced by this refactor (`EH` edit-header).**
-> `read_optional_unchanged_line` (`sysop_admin.rs:390`) returns
-> `Ok(None)` for **both** a blank line ("keep current") **and**
-> `Eof`/`IdleTimedOut` (abort). Its doc comment even claims a
-> three-state `Some(None)`/`Some(Some)`/`None` API that the
-> `Result<Option<String>, _>` signature cannot express. Its only caller,
-> `handle_edit_header` (`sysop_admin.rs:286`), feeds that `Option`
-> straight into `edit_mail_header`, where `None` means "keep current" —
-> so an idle timeout or dropped carrier during the subject/recipient
-> prompt is silently treated as "keep current" and the header edit
-> proceeds instead of aborting. Fix this with a failing test first; the
-> reader merge then makes the keep-current-vs-abort distinction explicit
-> for every future prompt.
+> **Fixed (2026-06-23): `EH` edit-header abort bug.**
+> `read_optional_unchanged_line` (`sysop_admin.rs:438`) previously
+> returned `Ok(None)` for **both** a blank line ("keep current") **and**
+> `Eof`/`IdleTimedOut` (abort), while its doc comment claimed a
+> three-state `Some(None)`/`Some(Some)`/`None` API the
+> `Result<Option<String>, _>` signature could not express. Its caller,
+> `handle_edit_header` (`sysop_admin.rs:330`), fed that `Option` straight
+> into `edit_mail_header`, where `None` means "keep current" — so an idle
+> timeout or dropped carrier during the subject/recipient prompt was
+> silently treated as "keep current" and the header edit proceeded
+> instead of aborting. The reader now returns the three-state
+> `Result<Option<Option<String>>, _>` its doc comment always described,
+> and `handle_edit_header` returns early on the abort case. The abort is
+> **silent**, matching the legacy `editHeader` (`express.e:11602`), whose
+> every prompt does `IF (stat < 0) THEN RETURN stat` with no notice (the
+> same convention as the `R`-sub-prompt reply / forward commands, B6).
+> Pinned by three `#[tokio::test]`s in `sysop_admin.rs` (subject-timeout
+> aborts silently, addressee-timeout aborts silently, blank input still
+> keeps-and-proceeds). The reader-merge dedup above remains open.
 
 Verified impact: net production LOC is roughly neutral to −25 (the
 finder's −35 to −55 was optimistic — the named wrappers, the
 empty-meaning/abort-policy enum, and the residual error `match`es claw
-most of it back). Test LOC *grows* (~+40 to +80): the readers and error
-arms are currently unpinned by any unit test (`sysop_admin.rs` has no
-`mod tests`), so the sync byte asserts are net additions. Justify the
+most of it back). Test LOC *grows* (~+40 to +80): the remaining readers
+(`read_required_line`, `read_optional_line`) and the static error arms
+are still unpinned by any unit test — the `mod tests` added with the
+`EH` abort fix covers only `handle_edit_header`'s abort/keep paths — so
+the sync byte asserts are net additions. Justify the
 slice on the bug fix and mutant-resistance, not the line count. Land
 the error-arm `line_for` extraction + asserts as a standalone TDD move;
 fold the reader merge into the next slice that touches `post_mail.rs` or
@@ -1022,12 +1031,16 @@ Refactorings 3, 4, 5, 6, 7, 8 and 9 have **landed** (June 2026), one
 commit each, with the full suite plus a focused `cargo mutants
 --in-diff` run per commit. What remains:
 
-0. **Latent correctness bugs surfaced by the review:**
-   - The `EH` edit-header abort bug: `read_optional_unchanged_line`
-     conflates "blank = keep current" with "EOF/idle = abort", so an
-     idle timeout silently keeps the field instead of aborting the edit
-     (refactoring 10). The reader merge naturally encodes the fix.
-     **Open.**
+0. **Correctness bugs surfaced by the review:**
+   - **Fixed (2026-06-23):** the `EH` edit-header abort bug.
+     `read_optional_unchanged_line` conflated "blank = keep current"
+     with "EOF/idle = abort", so an idle timeout silently kept the field
+     and committed the edit instead of aborting it. The reader now
+     returns the three-state `Option<Option<String>>` it always
+     documented and `handle_edit_header` returns early on abort, **silent**
+     per the legacy `editHeader` (`express.e:11602`). Pinned by three
+     unit tests in `sysop_admin.rs`. The reader merge (refactoring 10)
+     that would encode the same distinction is still open.
    - **Fixed (June 2026):** the save → `.expect()` panic on persistence
      failure, across all three sign-in/​logoff save points:
      - `LoginFlow::authenticate` (`verify_password`) — the
