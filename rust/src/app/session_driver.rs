@@ -826,8 +826,8 @@ mod tests {
         let output = terminal.output();
         assert!(
             output
-                .windows(crate::app::wire_text::PASSWORD_RESET_REQUIRED_LINE.len())
-                .any(|w| w == crate::app::wire_text::PASSWORD_RESET_REQUIRED_LINE),
+                .windows(crate::app::password_reset_flow::PASSWORD_RESET_REQUIRED_LINE.len())
+                .any(|w| w == crate::app::password_reset_flow::PASSWORD_RESET_REQUIRED_LINE),
             "forced reset notice should be shown"
         );
         assert!(
@@ -922,8 +922,8 @@ mod tests {
         let output = driver.into_terminal().output().to_vec();
         assert!(
             output
-                .windows(crate::app::wire_text::PASSWORD_RESET_EXHAUSTED_LINE.len())
-                .any(|w| w == crate::app::wire_text::PASSWORD_RESET_EXHAUSTED_LINE),
+                .windows(crate::app::password_reset_flow::PASSWORD_RESET_EXHAUSTED_LINE.len())
+                .any(|w| w == crate::app::password_reset_flow::PASSWORD_RESET_EXHAUSTED_LINE),
             "reset exhaustion notice should be shown"
         );
         assert!(

@@ -24,19 +24,6 @@ pub(crate) const CRLF: &[u8] = b"\r\n";
 /// stripped.
 pub(crate) const ANSI_PROMPT: &[u8] = b"ANSI Graphics (Y/n)? ";
 
-/// Notice shown when a user must rotate their password before menu
-/// entry. Verbatim from `amiexpress/express.e:29805`.
-pub(crate) const PASSWORD_RESET_REQUIRED_LINE: &[u8] =
-    b"\r\nYour account requires your password to be changed.\r\n\r\n";
-
-/// Prompt for the first forced-reset password entry. Verbatim from
-/// `amiexpress/express.e:29808`.
-pub(crate) const PASSWORD_RESET_PROMPT: &[u8] = b"Enter New Password: ";
-
-/// Prompt for confirming the forced-reset password. Verbatim from
-/// `amiexpress/express.e:29810`.
-pub(crate) const PASSWORD_RESET_CONFIRM_PROMPT: &[u8] = b"Reenter New Password: ";
-
 /// The invariant tail of the menu prompt rendered by
 /// `render_menu_prompt` — `mins. left): ` (Tier A quickwin A4). The
 /// leading BBS name, conference block and minute count vary per
@@ -131,27 +118,6 @@ pub(crate) const ANSI_COLOR_ON_LINE: &[u8] = b"\r\nAnsi Color On\r\n";
 /// off. Verbatim from `amiexpress/express.e:25243`'s
 /// `\b\nAnsi Color Off\b\n`.
 pub(crate) const ANSI_COLOR_OFF_LINE: &[u8] = b"\r\nAnsi Color Off\r\n";
-
-/// Sent when the two forced-reset password entries don't match.
-/// Verbatim from `amiexpress/express.e:29835`.
-pub(crate) const PASSWORD_RESET_MISMATCH_LINE: &[u8] =
-    b"\r\nPasswords do not match, please try again.\r\n\r\n";
-
-/// Sent when the forced-reset candidate matches the current password.
-/// Verbatim from `amiexpress/express.e:29813`.
-pub(crate) const PASSWORD_RESET_SAME_AS_CURRENT_LINE: &[u8] =
-    b"\r\nYour new password must be different from your old password...\r\n\r\n";
-
-/// Sent when the forced-reset candidate fails the configured password
-/// strength policy. The legacy distinguishes length vs category
-/// failures, but the app-layer rule currently reports a single weak
-/// password error.
-pub(crate) const PASSWORD_RESET_WEAK_LINE: &[u8] = b"\r\nInvalid PassWord\r\n";
-
-/// Sent when the user exhausts forced-reset attempts without changing
-/// their password. Verbatim from `amiexpress/express.e:29841`.
-pub(crate) const PASSWORD_RESET_EXHAUSTED_LINE: &[u8] =
-    b"\r\nYou have not updated your password so you will now be disconnected...\r\n\r\n";
 
 /// Sent for unrecognised menu commands.
 pub(crate) const UNKNOWN_COMMAND_LINE: &[u8] = b"Unknown command. Type G to log off.\r\n";

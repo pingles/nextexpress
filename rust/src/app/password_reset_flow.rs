@@ -11,17 +11,47 @@ use std::time::SystemTime;
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, CompletePasswordResetFlowError};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{
-    IDLE_TIMEOUT_LINE, PASSWORD_RESET_CONFIRM_PROMPT, PASSWORD_RESET_EXHAUSTED_LINE,
-    PASSWORD_RESET_MISMATCH_LINE, PASSWORD_RESET_PROMPT, PASSWORD_RESET_REQUIRED_LINE,
-    PASSWORD_RESET_SAME_AS_CURRENT_LINE, PASSWORD_RESET_WEAK_LINE,
-};
+use crate::app::wire_text::IDLE_TIMEOUT_LINE;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::typed::{LoggingOffSession, OnboardedSession};
 use crate::domain::session::SessionPolicy;
 use crate::domain::user_repository::UserRepository;
 
 const MAX_PASSWORD_RESET_ATTEMPTS: u32 = 3;
+
+/// Notice shown when a user must rotate their password before menu
+/// entry. Verbatim from `amiexpress/express.e:29805`.
+pub(crate) const PASSWORD_RESET_REQUIRED_LINE: &[u8] =
+    b"\r\nYour account requires your password to be changed.\r\n\r\n";
+
+/// Prompt for the first forced-reset password entry. Verbatim from
+/// `amiexpress/express.e:29808`.
+const PASSWORD_RESET_PROMPT: &[u8] = b"Enter New Password: ";
+
+/// Prompt for confirming the forced-reset password. Verbatim from
+/// `amiexpress/express.e:29810`.
+const PASSWORD_RESET_CONFIRM_PROMPT: &[u8] = b"Reenter New Password: ";
+
+/// Sent when the two forced-reset password entries don't match.
+/// Verbatim from `amiexpress/express.e:29835`.
+const PASSWORD_RESET_MISMATCH_LINE: &[u8] =
+    b"\r\nPasswords do not match, please try again.\r\n\r\n";
+
+/// Sent when the forced-reset candidate matches the current password.
+/// Verbatim from `amiexpress/express.e:29813`.
+const PASSWORD_RESET_SAME_AS_CURRENT_LINE: &[u8] =
+    b"\r\nYour new password must be different from your old password...\r\n\r\n";
+
+/// Sent when the forced-reset candidate fails the configured password
+/// strength policy. The legacy distinguishes length vs category
+/// failures, but the app-layer rule currently reports a single weak
+/// password error.
+const PASSWORD_RESET_WEAK_LINE: &[u8] = b"\r\nInvalid PassWord\r\n";
+
+/// Sent when the user exhausts forced-reset attempts without changing
+/// their password. Verbatim from `amiexpress/express.e:29841`.
+pub(crate) const PASSWORD_RESET_EXHAUSTED_LINE: &[u8] =
+    b"\r\nYou have not updated your password so you will now be disconnected...\r\n\r\n";
 
 /// Outcome reported by [`PasswordResetFlow::run`].
 pub(crate) enum PasswordResetOutcome {
