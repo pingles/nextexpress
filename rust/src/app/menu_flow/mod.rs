@@ -34,13 +34,13 @@ use self::scan_all_mail::ScanFilter;
 use crate::app::mail_stores::{MailStoreGuard, MailStores};
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
-use crate::app::session_presenter::format_menu_prompt;
+use crate::app::session_presenter::{format_menu_prompt, render_stats_screen};
 use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_stats_screen, render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE, CRLF,
-    EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE, GOODBYE_LINE, HELP_UNAVAILABLE_LINE,
-    IDLE_TIMEOUT_LINE, INVALID_MESSAGE_NUMBER_LINE, LEAVE_FLAGGED_CONFIRM, QUIET_MODE_OFF_LINE,
-    QUIET_MODE_ON_LINE, UNKNOWN_COMMAND_LINE, VERSION_BANNER, YESNO_NO_ECHO, YESNO_YES_ECHO,
+    render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE, CRLF, EXPERT_MODE_DISABLED_LINE,
+    EXPERT_MODE_ENABLED_LINE, GOODBYE_LINE, HELP_UNAVAILABLE_LINE, IDLE_TIMEOUT_LINE,
+    INVALID_MESSAGE_NUMBER_LINE, LEAVE_FLAGGED_CONFIRM, QUIET_MODE_OFF_LINE, QUIET_MODE_ON_LINE,
+    UNKNOWN_COMMAND_LINE, VERSION_BANNER, YESNO_NO_ECHO, YESNO_YES_ECHO,
 };
 use crate::app::yes_no::{yes_no, YesNo};
 use crate::domain::conference::{

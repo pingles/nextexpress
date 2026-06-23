@@ -51,8 +51,8 @@ pub trait ScreenRepository {
     /// output (`Conference <n>: <name> Auto-ReJoined` /
     /// `Joining Conference: <name>`) is hardcoded inline at
     /// `amiexpress/express.e:5071-5085` and rendered by the driver
-    /// via [`crate::app::wire_text::auto_rejoin_line`] /
-    /// [`crate::app::wire_text::explicit_join_line`].
+    /// via [`crate::app::session_presenter::auto_rejoin_line`] /
+    /// [`crate::app::session_presenter::explicit_join_line`].
     fn joinconf_screen(&self) -> ScreenFuture<'_>;
 
     /// Returns the screen shown before the

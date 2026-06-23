@@ -29,9 +29,11 @@ use crate::app::password_reset_flow::{
 use crate::app::registration_flow::{RegistrationFlow, RegistrationOutcome};
 use crate::app::services::AppServices;
 use crate::app::session_flow;
-use crate::app::session_presenter::{format_auto_rejoin_line, render_name_type_promotion};
+use crate::app::session_presenter::{
+    format_auto_rejoin_line, render_name_type_promotion, render_stats_screen,
+};
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::{render_stats_screen, COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
+use crate::app::wire_text::{COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
 use crate::domain::conference::NameType;
 use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
