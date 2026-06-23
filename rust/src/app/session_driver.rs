@@ -33,7 +33,6 @@ use crate::app::session_presenter::{
     format_auto_rejoin_line, render_name_type_promotion, render_stats_screen,
 };
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::{COPYRIGHT_LINES, NO_CONFERENCE_ACCESS_LINE};
 use crate::domain::conference::NameType;
 use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
@@ -41,6 +40,30 @@ use crate::domain::session::typed::{
 };
 use crate::domain::session::LogonChannel;
 use crate::domain::user_repository::UserRepositoryError;
+
+/// Two-line copyright block printed on every accepted connection,
+/// directly after the BBS title banner. The `NextExpress` line sits
+/// above the `AmiExpress` line to make the lineage obvious; the
+/// `AmiExpress` line mirrors the original BBS's banner verbatim
+/// (`amiexpress/express.e:25690`, modulo the legacy file's mojibake of
+/// the © glyph).
+///
+/// The `NextExpress` version slot carries the short git SHA the
+/// `build.rs` script captures into `NEXTEXPRESS_GIT_SHA` — pinning the
+/// running binary to a specific source commit beats `Cargo.toml`'s
+/// long-lived `0.1.0` placeholder for a project that ships continuously.
+const COPYRIGHT_LINES: &[u8] = concat!(
+    "NextExpress (",
+    env!("NEXTEXPRESS_GIT_SHA"),
+    ") Copyright \u{00A9}2026\r\n",
+    "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
+)
+.as_bytes();
+
+/// Sent when the auto-rejoin / explicit-join flow can't find any
+/// conference the user has access to (Slice 30 / Slice 34a). The
+/// session terminates with `LogoffReason::NoConferenceAccess`.
+const NO_CONFERENCE_ACCESS_LINE: &[u8] = b"\r\nNo accessible conferences. Goodbye.\r\n";
 
 /// App-layer session workflow over a terminal port.
 ///
@@ -763,7 +786,7 @@ mod tests {
         let output = driver.into_terminal().output().to_vec();
         // The no-access notice precedes the failing finalise, confirming we
         // reached the finalise step rather than aborting earlier.
-        let no_access = crate::app::wire_text::NO_CONFERENCE_ACCESS_LINE;
+        let no_access = super::NO_CONFERENCE_ACCESS_LINE;
         assert!(
             output.windows(no_access.len()).any(|w| w == no_access),
             "the no-conference-access path should have been taken"
@@ -1341,6 +1364,27 @@ mod tests {
         assert!(
             output.windows(taken.len()).any(|w| w == taken),
             "expected handle-taken line to appear after typing NEW at the registration prompt",
+        );
+    }
+
+    #[test]
+    fn copyright_lines_wrap_build_git_sha_in_parens() {
+        // The banner shown on connect must reflect the source commit
+        // the binary was built from. `build.rs` captures
+        // `git rev-parse --short HEAD` into `NEXTEXPRESS_GIT_SHA`; the
+        // wire format wraps it in parentheses (`NextExpress (sha)
+        // Copyright ©…`) so the build identifier is visually distinct
+        // from the product name.
+        let sha = env!("NEXTEXPRESS_GIT_SHA");
+        assert!(
+            !sha.is_empty(),
+            "build script must capture a non-empty git SHA",
+        );
+        let copyright = std::str::from_utf8(super::COPYRIGHT_LINES).expect("utf8 copyright");
+        let needle = format!("NextExpress ({sha}) Copyright");
+        assert!(
+            copyright.contains(&needle),
+            "expected `{needle}` in copyright lines: {copyright:?}",
         );
     }
 }

@@ -75,7 +75,7 @@ pub async fn main() -> ExitCode {
 /// process start. The short git SHA — captured by `build.rs` into
 /// `NEXTEXPRESS_GIT_SHA` — is wrapped in parentheses so operators can
 /// match a running process back to a specific source commit, mirroring
-/// the wire-format banner in [`crate::app::wire_text::COPYRIGHT_LINES`].
+/// the wire-format banner in [`crate::app::session_driver::COPYRIGHT_LINES`].
 fn startup_version_line() -> String {
     format!("NextExpress ({}) starting", env!("NEXTEXPRESS_GIT_SHA"))
 }

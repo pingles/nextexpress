@@ -34,25 +34,6 @@ pub(crate) const ANSI_PROMPT: &[u8] = b"ANSI Graphics (Y/n)? ";
 #[cfg(test)]
 pub(crate) const MENU_PROMPT_SUFFIX: &[u8] = b"mins. left): ";
 
-/// Two-line copyright block printed on every accepted connection,
-/// directly after the BBS title banner. The `NextExpress` line sits
-/// above the `AmiExpress` line to make the lineage obvious; the
-/// `AmiExpress` line mirrors the original BBS's banner verbatim
-/// (`amiexpress/express.e:25690`, modulo the legacy file's mojibake of
-/// the © glyph).
-///
-/// The `NextExpress` version slot carries the short git SHA the
-/// `build.rs` script captures into `NEXTEXPRESS_GIT_SHA` — pinning the
-/// running binary to a specific source commit beats `Cargo.toml`'s
-/// long-lived `0.1.0` placeholder for a project that ships continuously.
-pub(crate) const COPYRIGHT_LINES: &[u8] = concat!(
-    "NextExpress (",
-    env!("NEXTEXPRESS_GIT_SHA"),
-    ") Copyright \u{00A9}2026\r\n",
-    "AmiExpress 5 Copyright \u{00A9}2018-2023 Darren Coles\r\n",
-)
-.as_bytes();
-
 /// Full response to the `VER` menu command (Tier A quickwin A2),
 /// mirroring `internalCommandVER()` at
 /// `amiexpress/express.e:25688-25698`.
@@ -148,11 +129,6 @@ pub(crate) const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
 /// access.
 pub(crate) const LOGON_REJECTED_LINE: &[u8] = b"Logon rejected. Goodbye.\r\n";
 
-/// Sent when the auto-rejoin / explicit-join flow can't find any
-/// conference the user has access to (Slice 30 / Slice 34a). The
-/// session terminates with `LogoffReason::NoConferenceAccess`.
-pub(crate) const NO_CONFERENCE_ACCESS_LINE: &[u8] = b"\r\nNo accessible conferences. Goodbye.\r\n";
-
 /// Sent when `R <something>` cannot be parsed as a message number.
 pub(crate) const INVALID_MESSAGE_NUMBER_LINE: &[u8] = b"\r\nInvalid message number.\r\n";
 
@@ -184,27 +160,6 @@ pub(crate) fn render_time_line(at: std::time::SystemTime) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn copyright_lines_wrap_build_git_sha_in_parens() {
-        // The banner shown on connect must reflect the source commit
-        // the binary was built from. `build.rs` captures
-        // `git rev-parse --short HEAD` into `NEXTEXPRESS_GIT_SHA`; the
-        // wire format wraps it in parentheses (`NextExpress (sha)
-        // Copyright ©…`) so the build identifier is visually distinct
-        // from the product name.
-        let sha = env!("NEXTEXPRESS_GIT_SHA");
-        assert!(
-            !sha.is_empty(),
-            "build script must capture a non-empty git SHA",
-        );
-        let copyright = std::str::from_utf8(COPYRIGHT_LINES).expect("utf8 copyright");
-        let needle = format!("NextExpress ({sha}) Copyright");
-        assert!(
-            copyright.contains(&needle),
-            "expected `{needle}` in copyright lines: {copyright:?}",
-        );
-    }
 
     #[test]
     fn version_banner_carries_lineage_lines_verbatim() {
