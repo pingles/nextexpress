@@ -18,6 +18,22 @@ rust/        # Implement your Rust code here.
 
 Always use the `amiexpress` source when referencing original strings/messages/commands etc.
 
+## Code Navigation
+
+A `rust-analyzer` LSP is configured for this project (the
+`rust-analyzer-lsp` plugin). **Prefer the LSP for symbol-level navigation**
+— finding a definition, all references, implementations, or call hierarchy of
+a function/struct/enum/method. It understands scope, shadowing, and
+re-exports, so it beats grep on names that collide (e.g. `select`, `Runtime`).
+The `LSP` tool is *deferred*: load its schema once per session with
+`ToolSearch` (`select:LSP`) before the first call, then use
+`workspaceSymbol`/`findReferences`/`goToDefinition`/`incomingCalls` etc.
+rust-analyzer indexes lazily, so the first query may return nothing — retry
+after a moment.
+
+Use **grep / Glob** for non-symbol text: wire strings, comments, config keys,
+capture transcripts, and discovering files by name.
+
 ## Key Workflow
 
 Do not add more code than is necessary for a particular feature/problem. Always start with a failing test. Use mutant testing to help improve the code.
