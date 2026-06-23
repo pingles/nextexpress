@@ -9,6 +9,9 @@ RELEASE_BIN := rust/target/release/$(BIN)
 SOURCES     := $(shell find rust/src -name '*.rs') rust/Cargo.toml rust/Cargo.lock
 MUTANTS_LOG := target/mutants-run.log
 MUTANTS_ARGS ?=
+# Base for `make mutants-diff`. Default mutates the working-tree changes vs the
+# last commit; override with `make mutants-diff DIFF_BASE=main` for a branch.
+DIFF_BASE ?= HEAD
 AMIEXPRESS_IMAGE ?= nextexpress/amiexpress-fsuae
 AMIEXPRESS_PORT ?= 6023
 AMIEXPRESS_AROS_ROMS_VOLUME ?= nextexpress-aros-roms
@@ -16,7 +19,7 @@ AMIEXPRESS_AROS_SYSTEM_VOLUME ?= nextexpress-aros-system
 AMIEXPRESS_BBS_VOLUME ?= nextexpress-bbs
 AMIEXPRESS_DOCKER_ARGS ?=
 
-.PHONY: all build test doctest mutants check fmt clippy clean amiexpress-docker-build amiexpress-docker
+.PHONY: all build test doctest mutants mutants-diff check fmt clippy clean amiexpress-docker-build amiexpress-docker
 
 all: build
 
@@ -39,6 +42,14 @@ doctest:
 mutants:
 	mkdir -p rust/target
 	cd rust && bash -o pipefail -c 'cargo mutants $(MUTANTS_ARGS) 2>&1 | tee $(MUTANTS_LOG)'
+
+# Mutate only the lines changed since DIFF_BASE. The diff is generated with
+# `--relative` from inside rust/ so its paths are crate-relative; a repo-root
+# diff makes cargo-mutants report "No mutants to filter".
+mutants-diff:
+	mkdir -p rust/target
+	cd rust && git diff $(DIFF_BASE) --relative > target/mutants.diff && \
+		bash -o pipefail -c 'cargo mutants --in-diff target/mutants.diff $(MUTANTS_ARGS) 2>&1 | tee $(MUTANTS_LOG)'
 
 # Mirrors the "Before Committing" checklist in AGENTS.md.
 check:

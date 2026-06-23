@@ -57,11 +57,15 @@ cd rust
 cargo mutants
 ```
 
-For narrow changes or when a full mutation run is too expensive, still run a
-focused cargo-mutants command such as `cargo mutants --in-diff main...HEAD` or
-`cargo mutants --file path/to/file.rs`. Treat surviving mutants as test gaps:
-add or strengthen tests before completing the turn, or explicitly report why a
-surviving mutant is equivalent or intentionally deferred.
+For narrow changes or when a full mutation run is too expensive, run
+`make mutants-diff` to mutate only the lines changed since the last commit
+(use `make mutants-diff DIFF_BASE=main` to cover a whole branch). The target
+generates the diff with crate-relative paths so cargo-mutants actually filters
+to your changes — a repo-root diff reports "No mutants to filter". You can
+still scope to a single file with `cargo mutants --file path/to/file.rs` from
+`rust/`. Treat surviving mutants as test gaps: add or strengthen tests before
+completing the turn, or explicitly report why a surviving mutant is equivalent
+or intentionally deferred.
 
 ## Style Guidelines
 
