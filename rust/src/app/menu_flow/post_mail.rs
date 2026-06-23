@@ -19,11 +19,6 @@ use crate::app::menu_flow::mail_text::{
     POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE, POST_RECIPIENT_NO_ACCESS_LINE,
 };
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{
-    render_editor_line_prompt, render_editor_listing, EDITOR_ABORT_CONFIRM_PROMPT, EDITOR_INTRO,
-    EDITOR_MSG_OPTIONS_HELP, EDITOR_MSG_OPTIONS_PROMPT, NO_SYSOP_LINE, POST_BODY_PROMPT,
-    POST_PRIVATE_PROMPT, POST_SUBJECT_PROMPT, POST_TO_PROMPT, POST_UNKNOWN_USER_LINE,
-};
 use crate::domain::conference::Conference;
 use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
 use crate::domain::messaging::mail::{BroadcastTo, Mail};
@@ -35,6 +30,93 @@ use crate::domain::messaging::post_mail::{
 };
 use crate::domain::session::typed::MenuSession;
 use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
+
+/// Prompt shown when the `E` command needs the recipient handle.
+/// The legacy `enterMSG` uses the bare `To:` line that
+/// `msgToHeader` paints (`amiexpress/express.e:10778`).
+const POST_TO_PROMPT: &[u8] = b"\r\nTo: ";
+
+/// Prompt for the subject during line-mode mail composition.
+/// Simplified from `amiexpress/express.e:10847` (the legacy form
+/// adds an ANSI-coloured "(Blank)=abort?" hint).
+const POST_SUBJECT_PROMPT: &[u8] = b"Subject: ";
+
+/// Prompt asking whether the new mail should be private.
+/// Verbatim text from `amiexpress/express.e:10861`'s `Private` prompt
+/// modulo the colour escapes the legacy `yesNo` macro renders.
+const POST_PRIVATE_PROMPT: &[u8] = b"Private (y/N)? ";
+
+/// Instructions printed before the body input loop. Slice 42 uses a
+/// minimal line-mode editor — a full editor (`/S` save, `/A` abort,
+/// numbered line edits) arrives in Phase 8. Still used by the `R`
+/// sub-prompt reply (B6); `E` / `C` use the ruler editor below.
+const POST_BODY_PROMPT: &[u8] =
+    b"Enter your message. End with a single '.' on a line by itself; '/A' aborts.\r\n";
+
+/// The `E` / `C` ruler-editor intro: the "Enter your text" instruction
+/// and the 75-column ruler (`amiexpress/express.e:10146-10152`, the
+/// repeating `|-------` pattern truncated to `maxLineLen`=75). Input
+/// ends on a blank line.
+const EDITOR_INTRO: &[u8] =
+    b"\r\n   Enter your text. (Enter) alone to end. (75 chars/line)\r\n   (|-------|-------|-------|-------|-------|-------|-------|-------|-------|--)\r\n";
+
+/// The ruler editor's `Msg. Options:` save-menu prompt, shown after a
+/// blank line ends input (`amiexpress/express.e:10375-10379`, rendered
+/// for the no-file-attach case so `F`/`X` are absent). `S` saves, `A`
+/// aborts (with confirm), `C` continues editing, `L` lists, `?` shows
+/// the verb help. `D`/`E` (delete / edit lines) are advertised but
+/// deferred.
+const EDITOR_MSG_OPTIONS_PROMPT: &[u8] =
+    b"\r\n\x1b[32mMsg. Options: \x1b[33mA\x1b[36m,\x1b[33mC\x1b[36m,\x1b[33mD\x1b[36m,\x1b[33mE\x1b[36m,\x1b[33mL\x1b[36m,\x1b[33mS\x1b[36m,\x1b[33m? \x1b[0m>:";
+
+/// The expanded `Msg. Options:` help list shown after `?`
+/// (`amiexpress/express.e:10381-10389`, no-file-attach case). It ends
+/// in its own ` >: ` prompt and reads the next verb directly.
+const EDITOR_MSG_OPTIONS_HELP: &[u8] = b"\r\n\x1b[33mA\x1b[32m>\x1b[36mbort\x1b[0m\r\n\x1b[33mC\x1b[32m>\x1b[36montinue\x1b[0m\r\n\x1b[33mD\x1b[32m>\x1b[36melete Lines\x1b[0m\r\n\x1b[33mE\x1b[32m>\x1b[36mdit\x1b[0m\r\n\x1b[33mL\x1b[32m>\x1b[36mist\x1b[0m\r\n\x1b[33mS\x1b[32m>\x1b[36mave\x1b[0m\r\n\x1b[0m >: ";
+
+/// The `A`bort confirmation prompt from the save menu
+/// (`amiexpress/express.e:10568`). A `y` answer abandons the message.
+const EDITOR_ABORT_CONFIRM_PROMPT: &[u8] = b"\r\nAbort message entry (y/n)? ";
+
+/// Renders one ruler-editor line prompt, `<n>> ` with the number
+/// left-justified to a 2-character field for lines 1..=99 and a
+/// 3-character field beyond (legacy `\d[2]> ` / `\d[3]> ` at
+/// `amiexpress/express.e:10180-10184`). Line 1 renders `"1 > "`,
+/// line 10 `"10> "`, line 100 `"100> "`.
+#[must_use]
+fn render_editor_line_prompt(line_number: usize) -> Vec<u8> {
+    if line_number <= 99 {
+        format!("{line_number:<2}> ").into_bytes()
+    } else {
+        format!("{line_number:<3}> ").into_bytes()
+    }
+}
+
+/// Renders the ruler editor's `L`ist output: a leading CRLF, then each
+/// stored line as `<n>> <text>` followed by CRLF
+/// (`amiexpress/express.e:10496-10504`).
+#[must_use]
+fn render_editor_listing(lines: &[String]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"\r\n");
+    for (index, line) in lines.iter().enumerate() {
+        out.extend_from_slice(&render_editor_line_prompt(index + 1));
+        out.extend_from_slice(line.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    out
+}
+
+/// Sent when the typed recipient can't be resolved against the user
+/// repository. Mirrors the legacy `User does not exist!!` notice
+/// (`amiexpress/express.e:10814`).
+const POST_UNKNOWN_USER_LINE: &[u8] = b"\r\nUnknown user.\r\n";
+
+/// Sent when the `C` (comment to sysop) command can't resolve a slot-1
+/// sysop user (e.g. a fresh installation that never seeded one). The
+/// legacy BBS always has a sysop on disk; this notice surfaces the
+/// misconfiguration so the operator can run the seed.
+const NO_SYSOP_LINE: &[u8] = b"\r\nNo sysop is configured on this BBS.\r\n";
 
 /// Already-collected fields for an `E` command.
 struct PostMailInput {
@@ -674,5 +756,34 @@ mod tests {
             Recipient::Broadcast(BroadcastTo::Eall, _) => "broadcast(Eall)",
             Recipient::Individual(_) => "individual",
         }
+    }
+
+    #[test]
+    fn editor_line_prompt_left_justifies_the_number() {
+        // Legacy `\d[2]> ` (`amiexpress/express.e:10180`): the number is
+        // left-justified to a 2-char field, so line 1 reads `"1 > "`.
+        assert_eq!(render_editor_line_prompt(1), b"1 > ");
+        assert_eq!(render_editor_line_prompt(9), b"9 > ");
+        // Two digits fill the field exactly.
+        assert_eq!(render_editor_line_prompt(10), b"10> ");
+        assert_eq!(render_editor_line_prompt(99), b"99> ");
+        // Beyond 99 the legacy widens to `\d[3]` (`:10182`).
+        assert_eq!(render_editor_line_prompt(100), b"100> ");
+    }
+
+    #[test]
+    fn editor_listing_numbers_each_line() {
+        // Legacy `L` (`amiexpress/express.e:10496-10504`): leading CRLF,
+        // then `<n>> <text>` + CRLF per line.
+        let lines = vec!["first".to_string(), "second".to_string()];
+        assert_eq!(
+            render_editor_listing(&lines),
+            b"\r\n1 > first\r\n2 > second\r\n"
+        );
+    }
+
+    #[test]
+    fn editor_listing_with_no_lines_is_just_a_crlf() {
+        assert_eq!(render_editor_listing(&[]), b"\r\n");
     }
 }
