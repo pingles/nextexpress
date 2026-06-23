@@ -131,7 +131,7 @@ where
         {
             TerminalRead::Line(line) => {
                 session.record_input(SystemTime::now());
-                self.write_and_flush(b"\r\n").await?;
+                self.write_newline().await?;
                 Ok(!matches!(line.trim().chars().next(), Some('n' | 'N')))
             }
             TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(false),

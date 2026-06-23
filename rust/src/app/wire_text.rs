@@ -9,6 +9,12 @@
 //! Each constant's doc comment cross-references the legacy `AmiExpress`
 //! source so spec-driven changes can be traced back to the original.
 
+/// The telnet line terminator (`\r\n`) — the one newline primitive the
+/// whole wire is built from. Standalone newline writes go through
+/// [`MenuFlow::write_newline`](crate::app::menu_flow); this constant is
+/// for composing it into larger byte sequences.
+pub(crate) const CRLF: &[u8] = b"\r\n";
+
 /// Prompt sent before reading the user's handle. Mirrors the original
 /// `AmiExpress` wire format: a CRLF prefix and trailing space around the
 /// default `NAME_PROMPT` of `Enter your Name:` (see

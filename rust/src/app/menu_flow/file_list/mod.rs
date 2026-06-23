@@ -11,6 +11,7 @@ mod wire;
 
 use crate::app::menu_command::{FileListArg, FileSpan, ZippyArg};
 use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
+use crate::app::wire_text::CRLF;
 use crate::domain::files::area::FileArea;
 use crate::domain::files::file::File;
 use crate::domain::session::typed::MenuSession;
@@ -108,12 +109,12 @@ where
         } else if answer.chars().next().is_some_and(|c| c.is_ascii_digit()) {
             FileSpan::Dir(crate::app::menu_command::val_prefix(answer))
         } else {
-            self.terminal.write(b"\r\n").await?;
+            self.terminal.write(CRLF).await?;
             self.terminal.write(wire::ERROR_IN_INPUT).await?;
             self.terminal.write(b"\r\n\r\n\x1b[0m\r\n").await?;
             return self.terminal.flush().await;
         };
-        self.terminal.write(b"\r\n").await?;
+        self.terminal.write(CRLF).await?;
         // The chosen span runs forward for bare `F`, reverse for bare
         // `FR` (`express.e` `displayFileList` passes the `reverse` flag
         // straight through the prompt path).
@@ -184,7 +185,7 @@ where
             FileSpan::Dir(n) => {
                 if n < 1 || n > i64::from(max) {
                     self.terminal.write(&wire::highest_dir_error(max)).await?;
-                    self.terminal.write(b"\r\n").await?;
+                    self.terminal.write(CRLF).await?;
                     return self.finish_listing().await;
                 }
                 vec![u32::try_from(n).expect("range-checked above")]
@@ -258,7 +259,7 @@ where
                 // Y at a non-last dir's post-End More?: the verb's
                 // overprint clear, then CRLF, then the next Scanning
                 // header (ae_tierd_aquascan3.txt S8 repr :673).
-                self.terminal.write(b"\r\n").await?;
+                self.terminal.write(CRLF).await?;
             }
         }
         self.finish_listing().await
@@ -323,7 +324,7 @@ where
         flagged: &mut crate::domain::files::flagged::FlaggedFiles,
     ) -> Result<ScanFlow, T::Error> {
         self.terminal.write(&line.bytes).await?;
-        self.terminal.write(b"\r\n").await?;
+        self.terminal.write(CRLF).await?;
         // A listed file row joins the scan-wide registry (the F/R
         // verbs match against it) regardless of paging mode.
         if let Some(listed) = &line.listed {
@@ -407,7 +408,7 @@ where
                         // echoed as \r\n and the exit tail following
                         // directly — no Quit word, no BS-SP-BS; the
                         // held n stays on the prompt line.
-                        self.terminal.write(b"\r\n").await?;
+                        self.terminal.write(CRLF).await?;
                         return Ok(ScanFlow::Quit);
                     }
                     other => {
@@ -469,7 +470,7 @@ where
                     let page = state.page.clone();
                     for line in &page {
                         self.terminal.write(&line.bytes).await?;
-                        self.terminal.write(b"\r\n").await?;
+                        self.terminal.write(CRLF).await?;
                     }
                     self.terminal.write(wire::MORE_PROMPT).await?;
                 }
@@ -595,7 +596,7 @@ where
         arg: ZippyArg,
     ) -> Result<(), T::Error> {
         // express.e:26137 — a blank line precedes the search.
-        self.terminal.write(b"\r\n").await?;
+        self.terminal.write(CRLF).await?;
 
         // The query and an optional inline directory span
         // (express.e:26143-26163). Bare `Z` prompts for the query
@@ -612,7 +613,7 @@ where
                     return self.terminal.flush().await;
                 };
                 // express.e:26154 — blank after the search-string read.
-                self.terminal.write(b"\r\n").await?;
+                self.terminal.write(CRLF).await?;
                 let answer = answer.trim();
                 if answer.is_empty() {
                     // express.e:26155-26156 — StrLen=0 returns to the menu.
@@ -641,7 +642,7 @@ where
             };
             let answer = answer.trim();
             if answer.is_empty() {
-                self.terminal.write(b"\r\n").await?;
+                self.terminal.write(CRLF).await?;
                 return self.terminal.flush().await;
             }
             answer.to_string()
@@ -654,13 +655,13 @@ where
         };
 
         // express.e:26172 — blank after a successful getDirSpan.
-        self.terminal.write(b"\r\n").await?;
+        self.terminal.write(CRLF).await?;
 
         let needle = query.to_ascii_uppercase().into_bytes();
         match span {
             ZippySpan::Hold => {
                 self.terminal.write(wire::ZIPPY_SCANNING_HOLD).await?;
-                self.terminal.write(b"\r\n").await?;
+                self.terminal.write(CRLF).await?;
                 let files = self.services.file_repo.list_held(conference);
                 self.zippy_dump_matches(&files, &needle).await?;
             }
@@ -669,7 +670,7 @@ where
                     self.terminal
                         .write(&wire::zippy_scanning_dir_header(dir))
                         .await?;
-                    self.terminal.write(b"\r\n").await?;
+                    self.terminal.write(CRLF).await?;
                     let files = self.services.file_repo.find_in_area(conference, dir);
                     self.zippy_dump_matches(&files, &needle).await?;
                 }
@@ -677,7 +678,7 @@ where
         }
 
         // express.e:26211 — trailing blank.
-        self.terminal.write(b"\r\n").await?;
+        self.terminal.write(CRLF).await?;
         self.terminal.flush().await
     }
 
@@ -685,7 +686,7 @@ where
     /// legacy leading and trailing blanks
     /// (`amiexpress/express.e:26905`).
     async fn zippy_no_such_directory(&mut self) -> Result<(), T::Error> {
-        self.terminal.write(b"\r\n").await?;
+        self.terminal.write(CRLF).await?;
         self.terminal.write(wire::ZIPPY_NO_SUCH_DIRECTORY).await?;
         self.terminal.write(b"\r\n\r\n").await?;
         self.terminal.flush().await
@@ -706,7 +707,7 @@ where
             if rows.iter().any(|row| row_contains_ci(row, needle_upper)) {
                 for row in rows {
                     self.terminal.write(&row).await?;
-                    self.terminal.write(b"\r\n").await?;
+                    self.terminal.write(CRLF).await?;
                 }
             }
         }

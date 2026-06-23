@@ -189,7 +189,7 @@ where
         // The legacy entry blank line (`express.e:11987`) precedes the
         // prompt-first loop; no message is displayed yet, so
         // `last_displayed` is `None`.
-        self.write_and_flush(b"\r\n").await?;
+        self.write_newline().await?;
         self.run_read_subprompt(session, start, None).await
     }
 

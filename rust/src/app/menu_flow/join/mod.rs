@@ -413,7 +413,7 @@ where
             // Blank aborts silently (`amiexpress/express.e:25228`);
             // the only wire output is `lineInput`'s trailing `\b\n`
             // (`:2378`) — one CRLF after the echoed empty line.
-            self.write_and_flush(b"\r\n").await?;
+            self.write_newline().await?;
             return Ok(None);
         }
         Ok(Some(val_prefix(&line)))
@@ -458,7 +458,7 @@ where
             // Blank aborts silently (`amiexpress/express.e:25148`);
             // the only wire output is `lineInput`'s trailing `\b\n`
             // (`:2378`) — one CRLF after the echoed empty line.
-            self.write_and_flush(b"\r\n").await?;
+            self.write_newline().await?;
             return Ok(None);
         }
         let mut value = val_prefix(&line);

@@ -33,13 +33,14 @@ use crate::app::mail_stores::{MailStoreGuard, MailStores};
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::format_menu_prompt;
-use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{
-    render_stats_screen, render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE,
+    render_stats_screen, render_time_line, ANSI_COLOR_OFF_LINE, ANSI_COLOR_ON_LINE, CRLF,
     EXPERT_MODE_DISABLED_LINE, EXPERT_MODE_ENABLED_LINE, GOODBYE_LINE, HELP_UNAVAILABLE_LINE,
     IDLE_TIMEOUT_LINE, INVALID_MESSAGE_NUMBER_LINE, LEAVE_FLAGGED_CONFIRM, QUIET_MODE_OFF_LINE,
     QUIET_MODE_ON_LINE, UNKNOWN_COMMAND_LINE, VERSION_BANNER, YESNO_NO_ECHO, YESNO_YES_ECHO,
 };
+use crate::app::yes_no::{yes_no, YesNo};
 use crate::domain::conference::{
     find_msgbase_in, AllowedAddressing, Conference, MessageBase, MessageBaseRef,
 };
@@ -189,7 +190,7 @@ where
                 LeaveFlagged::Stay => {
                     // mystat=0 path: one CRLF, back to the menu
                     // (`amiexpress/express.e:25060`).
-                    self.write_and_flush(b"\r\n").await?;
+                    self.write_newline().await?;
                     return Ok(DispatchOutcome::Continue(session));
                 }
                 LeaveFlagged::Leave => {}
@@ -404,25 +405,36 @@ where
     async fn confirm_leave_flagged(&mut self) -> Result<LeaveFlagged, T::Error> {
         self.write_and_flush(LEAVE_FLAGGED_CONFIRM).await?;
         loop {
-            match self.read_key().await? {
-                KeyRead::Key(KeyEvent::Char(b'y' | b'Y')) => {
+            let key = match self.read_key().await? {
+                KeyRead::Key(key) => key,
+                KeyRead::Eof => return Ok(LeaveFlagged::Disconnected),
+                KeyRead::IdleTimedOut => return Ok(LeaveFlagged::TimedOut),
+            };
+            // yesNo(2): CR defaults to No (`amiexpress/express.e:2145`).
+            match yes_no(key, YesNo::No) {
+                Some(YesNo::Yes) => {
                     self.write_and_flush(YESNO_YES_ECHO).await?;
                     return Ok(LeaveFlagged::Leave);
                 }
-                KeyRead::Key(KeyEvent::Char(b'n' | b'N') | KeyEvent::Enter) => {
+                Some(YesNo::No) => {
                     self.write_and_flush(YESNO_NO_ECHO).await?;
                     return Ok(LeaveFlagged::Stay);
                 }
-                KeyRead::Eof => return Ok(LeaveFlagged::Disconnected),
-                KeyRead::IdleTimedOut => return Ok(LeaveFlagged::TimedOut),
                 // Any other key is ignored, like yesNo's `LOOP`.
-                KeyRead::Key(_) => {}
+                None => {}
             }
         }
     }
 
     async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
         crate::app::terminal::write_and_flush(self.terminal, bytes).await
+    }
+
+    /// Writes a single line terminator ([`CRLF`]) and flushes — the
+    /// common "blank line / end the current line" emit, named so the
+    /// bare `b"\r\n"` literal does not recur at call sites.
+    async fn write_newline(&mut self) -> Result<(), T::Error> {
+        self.write_and_flush(CRLF).await
     }
 
     /// Renders the conference menu screen for the session's current
