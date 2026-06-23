@@ -19,7 +19,6 @@ use crate::app::menu_flow::mail_text::{
     POST_RECIPIENT_NO_ACCESS_LINE, SOURCE_NOT_FOUND_LINE,
 };
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{FORWARD_NOTE_PROMPT, FORWARD_TO_PROMPT, SOURCE_DELETED_LINE};
 use crate::domain::conference::Conference;
 use crate::domain::messaging::forward_mail::{
     forward_mail as forward_mail_rule, ForwardMailError, ForwardMailRequest,
@@ -32,6 +31,19 @@ use crate::domain::messaging::reply_to_mail::{
 };
 use crate::domain::session::typed::MenuSession;
 use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
+
+/// Sent when a reply targets a soft-deleted source (Slice 49a). The
+/// underlying domain check fires before any prompts; the rule
+/// rejects with `ReplyToMailError::SourceDeleted`.
+const SOURCE_DELETED_LINE: &[u8] = b"\r\nThat message has been deleted; cannot reply.\r\n";
+
+/// Prompt for the `FW` command's new-addressee handle (Slice 49a).
+const FORWARD_TO_PROMPT: &[u8] = b"\r\nForward to: ";
+
+/// Prompt for the optional `--`-separated note the user may append
+/// to a forwarded mail (Slice 49a). Empty input means "no note".
+const FORWARD_NOTE_PROMPT: &[u8] =
+    b"Optional note. End with a single '.' on a line by itself; blank line skips.\r\n";
 
 /// Caller-collected fields for an `RP <num>` command.
 struct ReplyInput {

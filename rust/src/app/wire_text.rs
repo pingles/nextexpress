@@ -420,20 +420,6 @@ pub(crate) const POST_UNKNOWN_USER_LINE: &[u8] = b"\r\nUnknown user.\r\n";
 /// misconfiguration so the operator can run the seed.
 pub(crate) const NO_SYSOP_LINE: &[u8] = b"\r\nNo sysop is configured on this BBS.\r\n";
 
-/// Sent when a reply targets a soft-deleted source (Slice 49a). The
-/// underlying domain check fires before any prompts; the rule
-/// rejects with `ReplyToMailError::SourceDeleted`.
-pub(crate) const SOURCE_DELETED_LINE: &[u8] =
-    b"\r\nThat message has been deleted; cannot reply.\r\n";
-
-/// Prompt for the `FW` command's new-addressee handle (Slice 49a).
-pub(crate) const FORWARD_TO_PROMPT: &[u8] = b"\r\nForward to: ";
-
-/// Prompt for the optional `--`-separated note the user may append
-/// to a forwarded mail (Slice 49a). Empty input means "no note".
-pub(crate) const FORWARD_NOTE_PROMPT: &[u8] =
-    b"Optional note. End with a single '.' on a line by itself; blank line skips.\r\n";
-
 /// Formats the mail-scan summary line (Slice 40 / 41). Mirrors the
 /// legacy `searchNewMail` output's "New Mail" notice and the
 /// "No New Mail" fallback at `amiexpress/express.e:26499`.
