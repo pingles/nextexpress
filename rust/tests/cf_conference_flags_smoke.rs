@@ -153,12 +153,14 @@ async fn spawn_two_conference_listener() -> std::net::SocketAddr {
     };
     let runtime = bootstrap::build_runtime(
         &config,
-        user_repo,
-        hasher_shared,
-        caller_log,
-        conferences_handle,
-        mail_stores,
-        Arc::new(InMemoryFileRepository::new(Vec::new(), Vec::new())),
+        bootstrap::RuntimeAdapters {
+            user_repo,
+            hasher: hasher_shared,
+            caller_log,
+            conferences: conferences_handle,
+            mail_stores,
+            file_repo: Arc::new(InMemoryFileRepository::new(Vec::new(), Vec::new())),
+        },
     );
 
     let listener = TelnetListener::bind("127.0.0.1:0", runtime)

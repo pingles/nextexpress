@@ -41,17 +41,19 @@ fn test_runtime(
         as std::sync::Arc<dyn MailStores + Send + Sync>;
     crate::bootstrap::build_runtime(
         config,
-        user_repo,
-        hasher,
-        caller_log,
-        conferences,
-        mail_stores,
-        std::sync::Arc::new(
-            crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                Vec::new(),
-                Vec::new(),
+        crate::bootstrap::RuntimeAdapters {
+            user_repo,
+            hasher,
+            caller_log,
+            conferences,
+            mail_stores,
+            file_repo: std::sync::Arc::new(
+                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
+                    Vec::new(),
+                    Vec::new(),
+                ),
             ),
-        ),
+        },
     )
 }
 

@@ -4,6 +4,10 @@
 //! line into a typed command shape and leaves all session, repository,
 //! and terminal effects to [`crate::app::menu_flow::MenuFlow`].
 
+mod files;
+mod join;
+mod mail;
+
 /// Parsed menu command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MenuCommand {
@@ -360,13 +364,13 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
         Some(">>") => return MenuCommand::NextMsgBase,
         _ => {}
     }
-    if let Some(arg) = parse_join_command(trimmed) {
+    if let Some(arg) = join::parse_join_command(trimmed) {
         return MenuCommand::Join(arg);
     }
-    if let Some(command) = parse_join_msgbase_command(trimmed) {
+    if let Some(command) = join::parse_join_msgbase_command(trimmed) {
         return command;
     }
-    if let Some(arg) = parse_number_command(trimmed, "R") {
+    if let Some(arg) = mail::parse_number_command(trimmed, "R") {
         return MenuCommand::Read(arg);
     }
     // `MS` (bare) is the multi-conference scan; an `eq_ignore_ascii_case`
@@ -375,207 +379,16 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if trimmed.eq_ignore_ascii_case("MS") {
         return MenuCommand::ScanAllMail;
     }
-    if let Some(post) = parse_post_command(trimmed) {
+    if let Some(post) = mail::parse_post_command(trimmed) {
         return MenuCommand::Post(post);
     }
-    if let Some(arg) = parse_file_list_command(trimmed) {
+    if let Some(arg) = files::parse_file_list_command(trimmed) {
         return MenuCommand::FileList(arg);
     }
-    if let Some(arg) = parse_zippy_command(trimmed) {
+    if let Some(arg) = files::parse_zippy_command(trimmed) {
         return MenuCommand::ZippySearch(arg);
     }
     MenuCommand::Unknown
-}
-
-/// Parses the `Z` command line into a [`ZippyArg`]. Exact-token dispatch
-/// (`StrCmp(cmdcode,'Z')`, `amiexpress/express.e:28388`): the command
-/// binds only when the first whitespace token is exactly `Z`, so `ZOOM`
-/// (`internalCommandZOOM`, `:26215`) stays a separate token reserved for
-/// a later slice. The search string is the first parameter token
-/// (`item(0)`, `:26146`); a bare `Z` is the prompt form (`:26150`).
-/// Extra tokens — the `item(1)` directory span — are dropped: D4 is
-/// single-area, honouring the span is slice D7.
-fn parse_zippy_command(line: &str) -> Option<ZippyArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("Z") {
-        return None;
-    }
-    let Some(query) = tokens.next() else {
-        return Some(ZippyArg::Prompt);
-    };
-    Some(match tokens.next() {
-        Some(span) => ZippyArg::QueryInDir {
-            query: query.to_string(),
-            span: span.to_string(),
-        },
-        None => ZippyArg::Query(query.to_string()),
-    })
-}
-
-/// Parses the `F` / `FR` command line into a [`FileListArg`] following
-/// the captured `AquaScan` grammar (dir = `U` | `A` | number | `H`,
-/// optional trailing `NS`). `FR` is the concatenated reverse token
-/// (`express.e:28310` dispatches the whole code); it mirrors `F`'s
-/// grammar with `reverse: true`, except bare `FR` skips the
-/// `Directories:` prompt and reverse-scans the upload/highest dir.
-/// Tokens the slice does not port (`Q`, `W`) and any other unrecognised
-/// shape — including `F R` with a space — map to
-/// [`FileListArg::Invalid`] — the `Argument error!` path. Numeric
-/// directory tokens carry their [`val_prefix`] result raw; range
-/// checks happen at dispatch.
-fn parse_file_list_command(line: &str) -> Option<FileListArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let command = tokens.next()?;
-    let reverse = if command.eq_ignore_ascii_case("F") {
-        false
-    } else if command.eq_ignore_ascii_case("FR") {
-        true
-    } else {
-        return None;
-    };
-    let Some(first) = tokens.next() else {
-        // Bare `F` and bare `FR` both open the `Directories:` prompt
-        // (`express.e:27645-27648` → `getDirSpan('')`); `FR` then
-        // reverse-walks whichever span the caller picks. We follow the
-        // original here over the AquaScan capture, which skips the
-        // prompt for `FR`.
-        return Some(FileListArg::Prompt { reverse });
-    };
-    if first == "?" {
-        return Some(if tokens.next().is_none() {
-            FileListArg::Help
-        } else {
-            FileListArg::Invalid
-        });
-    }
-
-    let span = if first.eq_ignore_ascii_case("A") {
-        FileSpan::All
-    } else if first.eq_ignore_ascii_case("U") {
-        FileSpan::Upload
-    } else if first.eq_ignore_ascii_case("H") {
-        FileSpan::Hold
-    } else if first.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-        FileSpan::Dir(val_prefix(first))
-    } else {
-        return Some(FileListArg::Invalid);
-    };
-
-    let non_stop = match tokens.next() {
-        None => false,
-        Some(token) if token.eq_ignore_ascii_case("NS") && tokens.next().is_none() => true,
-        Some(_) => return Some(FileListArg::Invalid),
-    };
-    Some(FileListArg::Span {
-        span,
-        non_stop,
-        reverse,
-    })
-}
-
-/// Parses the `J` command line into a [`JoinArg`]. Mirrors the legacy
-/// `internalCommandJ` parameter handling
-/// (`amiexpress/express.e:25125-25136`): whitespace-split tokens, the
-/// first token's `Val` prefix selects the conference, and a `.`
-/// inside the first token or the presence of a second token signals
-/// the message-base forms (tokens past the second are ignored, as
-/// `parseParams` only ever reads items 0 and 1 here).
-fn parse_join_command(line: &str) -> Option<JoinArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("J") {
-        return None;
-    }
-    let Some(first) = tokens.next() else {
-        return Some(JoinArg::Missing);
-    };
-    Some(parse_join_params(first, tokens))
-}
-
-/// Parses `J`'s parameter tokens (`amiexpress/express.e:25130-25136`)
-/// into a [`JoinArg`]: `Val` of the first token is the conference
-/// (stopping at any `.`); the text after the first `.` — else a
-/// second token — `Val`s to the message base; further tokens are
-/// ignored. Shared with `JM`'s dotted-argument delegation, which
-/// hands its raw params to the same logic
-/// (`amiexpress/express.e:25203-25205`).
-fn parse_join_params<'a>(first: &str, mut rest: impl Iterator<Item = &'a str>) -> JoinArg {
-    let conference = val_prefix(first);
-    if let Some(dot) = first.find('.') {
-        return JoinArg::WithMsgBase {
-            conference,
-            msgbase: val_prefix(&first[dot + 1..]),
-        };
-    }
-    if let Some(second) = rest.next() {
-        return JoinArg::WithMsgBase {
-            conference,
-            msgbase: val_prefix(second),
-        };
-    }
-    JoinArg::Conference(conference)
-}
-
-/// Parses the `JM` command line (`internalCommandJM` parameter
-/// handling, `amiexpress/express.e:25197-25208`). A `.` anywhere in
-/// the first token delegates the raw params to the `J` logic
-/// (`:25203-25205`), yielding [`MenuCommand::Join`]; otherwise the
-/// `Val` of the first token is the message-base request and extra
-/// tokens are ignored.
-fn parse_join_msgbase_command(line: &str) -> Option<MenuCommand> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("JM") {
-        return None;
-    }
-    let Some(first) = tokens.next() else {
-        return Some(MenuCommand::JoinMsgBase(MsgBaseArg::Missing));
-    };
-    if first.contains('.') {
-        return Some(MenuCommand::Join(parse_join_params(first, tokens)));
-    }
-    Some(MenuCommand::JoinMsgBase(MsgBaseArg::Base(val_prefix(
-        first,
-    ))))
-}
-
-fn parse_number_command(line: &str, command: &str) -> Option<NumberArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case(command) {
-        return None;
-    }
-    let Some(arg) = tokens.next() else {
-        return Some(NumberArg::Missing);
-    };
-    if tokens.next().is_some() {
-        return Some(NumberArg::Invalid);
-    }
-    match arg.parse::<u32>() {
-        Ok(n) => Some(NumberArg::Number(n)),
-        Err(_) => Some(NumberArg::Invalid),
-    }
-}
-
-fn parse_post_command(line: &str) -> Option<PostArg> {
-    let mut chars = line.chars();
-    let head = chars.next()?;
-    if !matches!(head, 'E' | 'e') {
-        return None;
-    }
-    let rest: String = chars.collect();
-    let trimmed = rest.trim();
-    if trimmed.is_empty() {
-        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-            return Some(PostArg::Missing);
-        }
-        return None;
-    }
-    if !rest.starts_with(char::is_whitespace) {
-        return None;
-    }
-    Some(PostArg::To(trimmed.to_string()))
 }
 
 #[cfg(test)]

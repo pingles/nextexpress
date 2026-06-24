@@ -513,12 +513,14 @@ async fn spawn_listener_with_demo_files() -> std::net::SocketAddr {
     };
     let runtime = bootstrap::build_runtime(
         &config,
-        user_repo,
-        hasher_shared,
-        caller_log,
-        conferences_handle,
-        mail_stores,
-        file_repo,
+        bootstrap::RuntimeAdapters {
+            user_repo,
+            hasher: hasher_shared,
+            caller_log,
+            conferences: conferences_handle,
+            mail_stores,
+            file_repo,
+        },
     );
 
     let listener = TelnetListener::bind("127.0.0.1:0", runtime)

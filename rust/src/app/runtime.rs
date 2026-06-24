@@ -31,6 +31,29 @@ pub struct Runtime {
     services: AppServices,
 }
 
+/// Driven-port handles needed to construct a [`Runtime`].
+///
+/// The composition root owns the concrete adapter choices; the runtime
+/// only receives shared trait-object handles. Keeping them in one
+/// named struct avoids widening constructor signatures every time a
+/// new application port is introduced.
+pub struct RuntimePorts {
+    /// User repository port.
+    pub user_repo: SharedUserRepo,
+    /// Password hasher port.
+    pub hasher: SharedHasher,
+    /// Caller-log appender port.
+    pub caller_log: SharedCallerLog,
+    /// Screen repository port.
+    pub screens: SharedScreens,
+    /// Conference catalogue.
+    pub conferences: SharedConferences,
+    /// Mail-store registry.
+    pub mail_stores: SharedMailStores,
+    /// File catalogue repository.
+    pub file_repo: SharedFileRepo,
+}
+
 impl Runtime {
     /// Wires `config`, the supplied driven-port handles and the
     /// screen repository into a runtime.
@@ -40,17 +63,16 @@ impl Runtime {
     /// in production, an in-memory fake in tests) and passes the handle
     /// in here.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        config: &Config,
-        user_repo: SharedUserRepo,
-        hasher: SharedHasher,
-        caller_log: SharedCallerLog,
-        screens: SharedScreens,
-        conferences: SharedConferences,
-        mail_stores: SharedMailStores,
-        file_repo: SharedFileRepo,
-    ) -> Self {
+    pub fn new(config: &Config, ports: RuntimePorts) -> Self {
+        let RuntimePorts {
+            user_repo,
+            hasher,
+            caller_log,
+            screens,
+            conferences,
+            mail_stores,
+            file_repo,
+        } = ports;
         let pool = Arc::new(NodePool::new(config.max_nodes));
         let default_ratio = DefaultRatio {
             mode: config.default_ratio_mode,

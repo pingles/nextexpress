@@ -36,7 +36,7 @@ use crate::adapters::telnet_listener::TelnetListener;
 use crate::app::config::Config;
 use crate::app::config_loader;
 use crate::app::mail_stores::MailStores;
-use crate::app::runtime::Runtime;
+use crate::app::runtime::{Runtime, RuntimePorts};
 use crate::app::seed;
 use crate::app::services::{
     SharedCallerLog, SharedConferences, SharedFileRepo, SharedHasher, SharedMailStores,
@@ -126,13 +126,15 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
 
     let runtime = Runtime::new(
         &config,
-        repo,
-        hasher,
-        log,
-        screens,
-        conferences_handle,
-        mail_stores,
-        file_repo,
+        RuntimePorts {
+            user_repo: repo,
+            hasher,
+            caller_log: log,
+            screens,
+            conferences: conferences_handle,
+            mail_stores,
+            file_repo,
+        },
     );
     let listen_addr = format!("127.0.0.1:{}", config.port);
     let listener = TelnetListener::bind(&listen_addr, runtime).await?;
@@ -231,34 +233,47 @@ fn open_mail_stores(
     Ok(shared)
 }
 
-/// Builds a [`Runtime`] from the supplied driven-port handles and a
-/// [`Config`], constructing a [`FileScreenRepository`] rooted at the
-/// configured `bbs_path` for the screen-asset port.
+/// Driven adapters passed to [`build_runtime`] by tests and alternate
+/// composition paths that still want the production file-screen
+/// adapter rooted at [`Config::bbs_path`].
+pub struct RuntimeAdapters {
+    /// User repository port.
+    pub user_repo: SharedUserRepo,
+    /// Password hasher port.
+    pub hasher: SharedHasher,
+    /// Caller-log appender port.
+    pub caller_log: SharedCallerLog,
+    /// Conference catalogue.
+    pub conferences: SharedConferences,
+    /// Mail-store registry.
+    pub mail_stores: SharedMailStores,
+    /// File catalogue repository.
+    pub file_repo: SharedFileRepo,
+}
+
+/// Builds a [`Runtime`] from `config` and the supplied driven-port handles.
 ///
-/// Test code reaches for this helper when it needs the production
-/// screen-loading behaviour but wants to drive the rest of the runtime
-/// with in-memory adapters. Production code goes through [`run`].
+/// This helper constructs a [`FileScreenRepository`] rooted at
+/// [`Config::bbs_path`] for the screen-asset port, then delegates to
+/// [`Runtime::new`]. Tests use it when they need production screen-loading
+/// behaviour with in-memory adapters for the other ports. Production startup
+/// goes through [`run`].
+///
+/// Returns a fully wired runtime ready to pass to a listener.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
-pub fn build_runtime(
-    config: &Config,
-    user_repo: SharedUserRepo,
-    hasher: SharedHasher,
-    caller_log: SharedCallerLog,
-    conferences: SharedConferences,
-    mail_stores: SharedMailStores,
-    file_repo: SharedFileRepo,
-) -> Runtime {
+pub fn build_runtime(config: &Config, adapters: RuntimeAdapters) -> Runtime {
     let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
     Runtime::new(
         config,
-        user_repo,
-        hasher,
-        caller_log,
-        screens,
-        conferences,
-        mail_stores,
-        file_repo,
+        RuntimePorts {
+            user_repo: adapters.user_repo,
+            hasher: adapters.hasher,
+            caller_log: adapters.caller_log,
+            screens,
+            conferences: adapters.conferences,
+            mail_stores: adapters.mail_stores,
+            file_repo: adapters.file_repo,
+        },
     )
 }
 
@@ -289,12 +304,14 @@ mod tests {
 
         let runtime = build_runtime(
             &config,
-            user_repo,
-            hasher,
-            caller_log,
-            conferences_handle,
-            mail_stores,
-            file_repo,
+            RuntimeAdapters {
+                user_repo,
+                hasher,
+                caller_log,
+                conferences: conferences_handle,
+                mail_stores,
+                file_repo,
+            },
         );
 
         let services = runtime.services();

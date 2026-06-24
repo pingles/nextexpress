@@ -1,71 +1,97 @@
-//! Phase 6 binary smoke test (Slice 41a).
+//! Phase 6 in-process smoke test (Slice 41a).
 //!
-//! Spawns the compiled `nextexpress` binary against a temp BBS path
-//! pre-populated with a `Conf01/` and `Conf01/MsgBase/0000001.json`,
-//! then drives the Phase 6 read flow over real telnet:
-//!
-//!   1. Sign in as the seeded `sysop` / `sysop`.
-//!   2. The logon conference scan (L1, legacy `confScan`) runs before
-//!      the auto-rejoin, surfacing the seeded unread message in the
-//!      `Scanning conferences for mail...` listing and offering to read
-//!      it now; the walk declines the offer here.
-//!   3. `R 1` invokes Slice 39's `ReadMail` rule, marks `received_at`,
-//!      and renders the legacy header block + body.
-//!   4. `N` rescans for new mail; the previous read advanced
-//!      `last_scanned` past the only message, so the listener writes
-//!      "No new mail." (the spec's empty-scan summary).
-//!   5. `G` ends the session cleanly.
-//!
-//! Library-level slice tests assert each piece in isolation; this
-//! test proves a fresh `cargo run` actually delivers the headline
-//! "Messaging (read)" capability.
+//! Boots a `TelnetListener` in-process against a temp BBS path
+//! pre-populated with a `Conf01/MsgBase/0000001.json`, then drives the
+//! Phase 6 read flow over real telnet.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+mod support;
+
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
 
-const PER_READ_TIMEOUT: Duration = Duration::from_secs(2);
-const NEEDLE_DEADLINE: Duration = Duration::from_secs(10);
-const STARTUP_DEADLINE: Duration = Duration::from_secs(15);
+use nextexpress::domain::conference::{Conference, MessageBase};
 
-#[test]
-fn binary_walks_phase6_mail_read_flow_over_telnet() {
+use support::{
+    contains, drain_until, empty_file_repo, file_mail_stores, spawn_seeded_sysop, write_line,
+    TestRuntime,
+};
+
+#[tokio::test]
+async fn listener_walks_phase6_mail_read_flow_over_telnet() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let config_path = dir.path().join("nextexpress.toml");
-    let toml = format!(
-        "port = 0\nmax_nodes = 1\nbbs_path = {}\nmax_password_failures = 3\n",
-        toml_string(dir.path()),
-    );
-    std::fs::write(&config_path, toml).expect("write config");
     seed_conf01_with_one_unread_message(dir.path());
+    let conferences = phase6_conferences();
+    let mail_stores = file_mail_stores(dir.path(), &conferences);
+    let addr = spawn_seeded_sysop(TestRuntime::new(
+        dir.path().to_path_buf(),
+        conferences,
+        mail_stores,
+        empty_file_repo(),
+    ))
+    .await;
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_nextexpress"))
-        .arg(&config_path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn binary");
+    let (mut stream, post_auth) = support::sign_in_seeded_sysop_declining_logon_scan(&addr).await;
+    assert!(
+        contains(&post_auth, b"Scanning conferences for mail"),
+        "expected the logon conference scan header, got {:?}",
+        String::from_utf8_lossy(&post_auth)
+    );
+    assert!(
+        contains(&post_auth, b"Welcome to"),
+        "expected the seeded message in the logon scan listing, got {:?}",
+        String::from_utf8_lossy(&post_auth)
+    );
 
-    let outcome = (|| -> Result<(), String> {
-        let addr = read_listen_addr(&mut child)?;
-        walk_phase6_read_flow(&addr)
-    })();
+    write_line(&mut stream, b"R 1").await;
+    let post_r = drain_until(&mut stream, b">: ").await;
+    assert!(
+        contains(&post_r, b"Subject") && contains(&post_r, b"Welcome to NextExpress"),
+        "expected ReadMail header + subject, got {:?}",
+        String::from_utf8_lossy(&post_r)
+    );
+    assert!(
+        contains(&post_r, b"Hello sysop, this is your first message."),
+        "expected ReadMail to render body, got {:?}",
+        String::from_utf8_lossy(&post_r)
+    );
 
-    let _ = child.kill();
-    let _ = child.wait();
+    write_line(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
 
-    if let Err(message) = outcome {
-        panic!("smoke test failed: {message}");
-    }
+    write_line(&mut stream, b"N").await;
+    let post_n = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&post_n, b"Unknown command. Type G to log off."),
+        "expected `N` to be an unknown command after the B2 rebind, got {:?}",
+        String::from_utf8_lossy(&post_n)
+    );
+
+    write_line(&mut stream, b"J 1").await;
+    let post_j = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        !contains(&post_j, b"New mail in this conference"),
+        "auto scan-on-join must not render SCREEN_MAILSCAN when unread_count is zero, got {:?}",
+        String::from_utf8_lossy(&post_j)
+    );
+    assert!(
+        contains(&post_j, b"No new mail."),
+        "expected `No new mail.` summary after zero-unread re-join, got {:?}",
+        String::from_utf8_lossy(&post_j)
+    );
+
+    support::end_session(&mut stream).await;
+}
+
+fn phase6_conferences() -> Vec<Conference> {
+    vec![Conference::new(
+        1,
+        "Main".to_string(),
+        vec![MessageBase::new(1, 1, "main".to_string())],
+    )
+    .expect("valid Conf01")]
 }
 
 /// Seeds a single-msgbase Conf01 with one message addressed to the
-/// seeded sysop (slot 1). The JSON payload mirrors the
-/// `FileMailStore` on-disk format exactly so the binary's startup
-/// scan picks it up as `highest_message = 1` and lets us walk the R
-/// / M / N flow against real data.
+/// seeded sysop (slot 1).
 fn seed_conf01_with_one_unread_message(bbs_path: &Path) {
     let conf01 = bbs_path.join("Conf01");
     std::fs::create_dir_all(&conf01).expect("create Conf01");
@@ -78,9 +104,6 @@ fn seed_conf01_with_one_unread_message(bbs_path: &Path) {
 
     let msgbase = conf01.join("MsgBase");
     std::fs::create_dir_all(&msgbase).expect("create MsgBase");
-    // The seeded sysop is slot 1, handle "sysop". Address the
-    // message to that slot so the ReadMail rule will mark it
-    // received_at and so the auto-scan-on-join counts it as unread.
     let mail = r#"{
         "conference_number": 1,
         "msgbase_number": 1,
@@ -97,174 +120,4 @@ fn seed_conf01_with_one_unread_message(bbs_path: &Path) {
         "body": "Hello sysop, this is your first message.\n"
     }"#;
     std::fs::write(msgbase.join("0000001.json"), mail).expect("write 0000001.json");
-}
-
-fn toml_string(path: &Path) -> String {
-    format!("\"{}\"", path.display())
-}
-
-fn read_listen_addr(child: &mut Child) -> Result<String, String> {
-    let stdout = child.stdout.take().ok_or("stdout not piped")?;
-    let mut reader = BufReader::new(stdout);
-    let deadline = Instant::now() + STARTUP_DEADLINE;
-    while Instant::now() < deadline {
-        let mut line = String::new();
-        let n = reader
-            .read_line(&mut line)
-            .map_err(|e| format!("reading stdout: {e}"))?;
-        if n == 0 {
-            return Err("binary exited before printing 'Listening on ...'".to_string());
-        }
-        if let Some(addr) = line.trim().strip_prefix("Listening on ") {
-            return Ok(addr.to_string());
-        }
-    }
-    Err("timed out waiting for 'Listening on ...'".to_string())
-}
-
-/// Walks Phase 6: sign-in → auto-rejoin + auto-scan → R 1 → N → G.
-fn walk_phase6_read_flow(addr: &str) -> Result<(), String> {
-    let mut stream = TcpStream::connect(addr).map_err(|e| format!("connect {addr}: {e}"))?;
-    stream
-        .set_read_timeout(Some(PER_READ_TIMEOUT))
-        .map_err(|e| format!("set_read_timeout: {e}"))?;
-
-    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ")
-        .map_err(|e| format!("Graphics prompt: {e}"))?;
-    write_line(&mut stream, b"Y")?;
-    drain_until(&mut stream, b"Enter your Name: ").map_err(|e| format!("Name prompt: {e}"))?;
-    write_line(&mut stream, b"sysop")?;
-    drain_until(&mut stream, b"PassWord: ").map_err(|e| format!("Password prompt: {e}"))?;
-    write_line(&mut stream, b"sysop")?;
-
-    // After auth, the logon conference scan (legacy confScan, L1) runs
-    // before the auto-rejoin: it surfaces the seeded unread message —
-    // the `Scanning conferences for mail...` header, the conference
-    // banner and the listing — then offers to read it now. Decline the
-    // offer here; `R 1` reads it below.
-    let post_auth = drain_until_capturing(&mut stream, b"read it now ")
-        .map_err(|e| format!("logon scan read-it-now offer: {e}"))?;
-    if !contains(&post_auth, b"Scanning conferences for mail") {
-        return Err(format!(
-            "expected the logon conference scan header, got {:?}",
-            String::from_utf8_lossy(&post_auth)
-        ));
-    }
-    if !contains(&post_auth, b"Welcome to") {
-        return Err(format!(
-            "expected the seeded message in the logon scan listing, got {:?}",
-            String::from_utf8_lossy(&post_auth)
-        ));
-    }
-    write_line(&mut stream, b"n")?;
-    drain_until(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("menu prompt after declining the logon read: {e}"))?;
-
-    // R 1 invokes Slice 39's ReadMail. Expect: legacy header block
-    // (From, To, Subject, Conf), the body line, and a return to
-    // the menu prompt.
-    write_line(&mut stream, b"R 1")?;
-    let post_r = drain_until_capturing(&mut stream, b">: ")
-        .map_err(|e| format!("read sub-prompt after R 1: {e}"))?;
-    if !contains(&post_r, b"Subject") || !contains(&post_r, b"Welcome to NextExpress") {
-        return Err(format!(
-            "expected ReadMail header + subject, got {:?}",
-            String::from_utf8_lossy(&post_r)
-        ));
-    }
-    if !contains(&post_r, b"Hello sysop, this is your first message.") {
-        return Err(format!(
-            "expected ReadMail to render body, got {:?}",
-            String::from_utf8_lossy(&post_r)
-        ));
-    }
-    // Tier B B4: `R` now drops into the read sub-prompt; `Q` leaves it.
-    write_line(&mut stream, b"Q")?;
-    drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("menu prompt after R 1 sub-prompt Q: {e}"))?;
-
-    // Tier B B2: `N` is no longer a mail scan (a NextExpress drift —
-    // legacy `N` is the new-files scan, landing in Tier D); it is now an
-    // unknown command. The "no new mail after reading" check is made by
-    // the re-join auto-scan below.
-    write_line(&mut stream, b"N")?;
-    let post_n = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after N: {e}"))?;
-    if !contains(&post_n, b"Unknown command. Type G to log off.") {
-        return Err(format!(
-            "expected `N` to be an unknown command after the B2 rebind, got {:?}",
-            String::from_utf8_lossy(&post_n)
-        ));
-    }
-
-    // J 1 re-joins the same conference and fires Slice 41's auto
-    // scan-on-join. Because the previous scans advanced
-    // last_scanned past the only message, the re-join sees zero
-    // unread, must NOT render SCREEN_MAILSCAN, and must still emit
-    // the "No new mail." summary. Pins the `unread_count > 0`
-    // boundary that gates the SCREEN_MAILSCAN render.
-    write_line(&mut stream, b"J 1")?;
-    let post_j = drain_until_capturing(&mut stream, b"mins. left): ")
-        .map_err(|e| format!("Command prompt after J 1: {e}"))?;
-    if contains(&post_j, b"New mail in this conference") {
-        return Err(format!(
-            "auto scan-on-join must not render SCREEN_MAILSCAN when unread_count is zero, got {:?}",
-            String::from_utf8_lossy(&post_j)
-        ));
-    }
-    if !contains(&post_j, b"No new mail.") {
-        return Err(format!(
-            "expected `No new mail.` summary after zero-unread re-join, got {:?}",
-            String::from_utf8_lossy(&post_j)
-        ));
-    }
-
-    write_line(&mut stream, b"G")?;
-    drain_until(&mut stream, b"Goodbye").map_err(|e| format!("Goodbye line: {e}"))?;
-    Ok(())
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
-}
-
-fn write_line(stream: &mut TcpStream, body: &[u8]) -> Result<(), String> {
-    stream
-        .write_all(body)
-        .map_err(|e| format!("write body: {e}"))?;
-    stream
-        .write_all(b"\r\n")
-        .map_err(|e| format!("write CRLF: {e}"))?;
-    stream.flush().map_err(|e| format!("flush: {e}"))?;
-    Ok(())
-}
-
-fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Result<(), String> {
-    drain_until_capturing(stream, needle).map(|_| ())
-}
-
-fn drain_until_capturing(stream: &mut TcpStream, needle: &[u8]) -> Result<Vec<u8>, String> {
-    let deadline = Instant::now() + NEEDLE_DEADLINE;
-    let mut buf = [0u8; 256];
-    let mut acc = Vec::new();
-    while Instant::now() < deadline {
-        let n = match stream.read(&mut buf) {
-            Ok(n) => n,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => 0,
-            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => 0,
-            Err(error) => return Err(format!("read: {error}")),
-        };
-        if n > 0 {
-            acc.extend_from_slice(&buf[..n]);
-            if acc.windows(needle.len()).any(|w| w == needle) {
-                return Ok(acc);
-            }
-        }
-    }
-    Err(format!(
-        "needle {:?} not found within {:?}; got {:?}",
-        std::str::from_utf8(needle).unwrap_or("<bin>"),
-        NEEDLE_DEADLINE,
-        String::from_utf8_lossy(&acc)
-    ))
 }
