@@ -28,9 +28,6 @@ impl FlaggedKey {
     }
 
     /// The uppercase-folded file name.
-    // Consumed by Task 3.4 (flag-prompt token matching); until then
-    // only the tests read it.
-    #[allow(dead_code)]
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -66,6 +63,15 @@ impl FlaggedFiles {
     /// `G` only confirms when the set is non-empty.
     pub(crate) fn is_empty(&self) -> bool {
         self.set.is_empty()
+    }
+
+    /// The flagged file names, upper-cased, in catalogue-key order
+    /// (conference, area, name). Backs the `A` listing —
+    /// `showFlaggedFiles(-1)` (`amiexpress/express.e:2830`), which the
+    /// legacy walks in insertion order; `NextExpress` walks the sorted
+    /// `BTreeSet`, a deliberate ordering divergence (slice D6a).
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.set.iter().map(FlaggedKey::name)
     }
 }
 

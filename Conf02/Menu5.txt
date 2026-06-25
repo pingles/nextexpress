@@ -23,6 +23,7 @@
   FILES
     F [n]    List files (<n>=dir, A=all, U=upload, ?=help)
     Z <str>  Zippy search file descriptions for <str>
+    A        List your flagged files
 
   SESSION
     S        User stats

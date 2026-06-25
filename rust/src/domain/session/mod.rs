@@ -404,6 +404,12 @@ impl Session {
         &mut self.flagged_files
     }
 
+    /// The session's flagged-file set, read-only — the `A` listing
+    /// (slice D6a) reads it.
+    pub(crate) fn flagged_files(&self) -> &FlaggedFiles {
+        &self.flagged_files
+    }
+
     /// Returns the [`NameType`] the session is currently rendering
     /// the user's identity as
     /// (`session.allium:Session.display_name_type`, Slice 34).

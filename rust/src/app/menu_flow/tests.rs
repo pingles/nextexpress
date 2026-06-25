@@ -349,6 +349,52 @@ async fn confirm_ignores_unrecognised_keys_until_a_yes_or_no() {
 }
 
 #[tokio::test]
+async fn a_with_no_flags_lists_no_file_flags() {
+    // Slice D6a. `A` -> alterFlags -> showFlags (express.e:12486): an
+    // empty set prints `No file flags`, framed by alterFlags's leading
+    // `\b\n`. Live: ae_tierd_alterflags.txt `* -> cleared, empty
+    // listing` (`\r\nNo file flags\r\n` before the prompt). The caller
+    // stays at the menu (Continue).
+    let services = test_services();
+    let mut terminal = CaptureTerminal::default();
+    let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
+
+    assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    assert_eq!(
+        terminal.output,
+        b"\r\nNo file flags\r\n",
+        "got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
+async fn a_lists_flagged_names_uppercased_and_space_joined() {
+    // Slice D6a. showFlaggedFiles(-1) (express.e:2830) space-joins the
+    // upper-cased flagged names. Live: ae_tierd_alterflags.txt
+    // `A again -> clean ... listing` (`\r\nMYDEMO.DMS\r\n`). Names are
+    // upper-cased on flagging and ordered by the catalogue key.
+    let services = test_services();
+    let mut session = menu_session();
+    session
+        .flagged_files_mut()
+        .flag(FlaggedKey::new(1, 1, "termv48.lha"));
+    session
+        .flagged_files_mut()
+        .flag(FlaggedKey::new(1, 1, "mydemo.dms"));
+    let mut terminal = CaptureTerminal::default();
+    let outcome = dispatch_line(&services, &mut terminal, session, "A").await;
+
+    assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    assert_eq!(
+        terminal.output,
+        b"\r\nMYDEMO.DMS TERMV48.LHA\r\n",
+        "got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
 async fn confirm_disconnect_mid_prompt_logs_off_without_a_goodbye() {
     // A dropped carrier at the confirm (readChar < 0, express.e:2142)
     // ends the session — the confirm was written, but no echo and no

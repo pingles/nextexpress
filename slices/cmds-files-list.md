@@ -313,13 +313,28 @@ deliberately distinct from the colourful `F` door.
   - Persisting the flagged list across sessions (open question in
     `files.allium`).
 
-## Slice D6a — `A` (list flagged set, read-only)
+## Slice D6a — `A` (list flagged set, read-only) — **Done**
 
-- **In Scope**
-  - `MenuCommand::AlterFlags` no-arg form: prints the current
-    per-session flagged list using the legacy wire text
-    (`alterFlags` listing rows at `amiexpress/express.e:24604`).
-  - Pure read of the structure D5 already added; no mutation paths.
+- **Done** — bare `A` parses to `MenuCommand::AlterFlags` and runs the
+  genuine internal `internalCommandA` -> `alterFlags` -> `showFlags`
+  (`amiexpress/express.e:24601`, `:12648`, `:12486`): the handler emits
+  `\r\n` + the listing + `\r\n`, where the listing is `No file flags`
+  when empty (`NO_FILE_FLAGS`) or the upper-cased flagged names
+  space-joined (`showFlaggedFiles(-1)`, `:2830`). It returns to the menu
+  — the `Filename(s) to flag:` prompt loop is D6b. `A` is advertised in
+  `Conf02/Menu5.txt` under `FILES`. Read-only: a new `FlaggedFiles::names`
+  accessor + immutable `Session`/`MenuSession::flagged_files`, no mutation.
+  Byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`
+  (captured live this session, `A` is *not* AquaScan-shadowed); parser +
+  2 handler unit tests + the `a_lists_the_session_flag_set_over_telnet`
+  smoke; mutation-clean; live-verified against the Rust server
+  (lowercase `ansipack.lha` flagged -> `A` lists `ANSIPACK.LHA`).
+- **Deviation (documented):** the legacy `showFlaggedFiles` walks
+  `flagFilesList` in insertion order; NextExpress walks the sorted
+  `BTreeSet` (conference, area, name). The `A <name>` inline-flag form
+  and the prompt loop are slice D6b, so bare `A` is the only token that
+  binds; `A <args>` stays Unknown. The `ACS_DOWNLOAD` gate
+  (`express.e:24602`) is not yet ported (deferred with D6b).
 - **Why split**: users flag files in `F`/`Z` and then want to see
   what they've collected before downloading. The listing alone
   closes that loop and ships ahead of the edit grammar.

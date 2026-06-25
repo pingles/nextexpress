@@ -484,6 +484,51 @@ async fn plain_g_with_a_flagged_file_confirms_then_n_stays_and_y_leaves() {
     );
 }
 
+#[tokio::test]
+async fn a_lists_the_session_flag_set_over_telnet() {
+    // Slice D6a. `A` runs the genuine internal alterFlags -> showFlags
+    // (express.e:24601 -> :12486). Reference:
+    // `comparison/transcripts/ae_tierd_alterflags.txt` — empty prints
+    // `\r\nNo file flags\r\n`; a flagged set prints `\r\n<NAMES>\r\n`
+    // (upper-cased, space-joined). The `Filename(s) to flag:` prompt
+    // loop is slice D6b, so D6a's `A` returns straight to the menu.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // Nothing flagged yet: `A` lists `No file flags`, back to the menu.
+    write_line(&mut stream, b"A").await;
+    let empty = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&empty, b"\r\nNo file flags\r\n"),
+        "bare A with no flags must list `No file flags`, got {:?}",
+        String::from_utf8_lossy(&empty),
+    );
+
+    // Flag ANSIPACK.LHA (dir-1 #1) through the More? `F` verb.
+    write_line(&mut stream, b"F 1").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+    write_key(&mut stream, b"F").await;
+    drain_until(&mut stream, b"to flag:\x1b[0m ").await;
+    for &byte in b"ANSIPACK.LHA" {
+        write_key(&mut stream, &[byte]).await;
+    }
+    write_key(&mut stream, b"\r").await;
+    drain_until(&mut stream, MORE_PROMPT).await;
+    write_key(&mut stream, b"Q").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    // `A` now lists the flagged name, back to the menu.
+    write_line(&mut stream, b"A").await;
+    let listed = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&listed, b"\r\nANSIPACK.LHA\r\n"),
+        "A must list the flagged name, got {:?}",
+        String::from_utf8_lossy(&listed),
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// Boots an in-process listener whose file catalogue is the seeded
 /// demo corpus (landing conference 1: areas 1-2; conference 2: one
 /// empty area) — the same wiring `bootstrap::run` performs.

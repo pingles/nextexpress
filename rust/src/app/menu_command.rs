@@ -115,6 +115,14 @@ pub(crate) enum MenuCommand {
     /// target is the genuine internal command — captured live in
     /// `comparison/transcripts/ae_tierd_zippy.txt`.
     ZippySearch(ZippyArg),
+    /// `A` (bare): list the session's flagged-file set (slice D6a).
+    /// Runs the genuine internal `internalCommandA` -> `alterFlags`
+    /// (`amiexpress/express.e:24601`, `:12648`); D6a ships the read-only
+    /// `showFlags` listing (`:12486`), the `Filename(s) to flag:` prompt
+    /// loop is slice D6b. `A` is *not* `AquaScan`-shadowed, so the parity
+    /// target is the genuine internal — captured in
+    /// `comparison/transcripts/ae_tierd_alterflags.txt`.
+    AlterFlags,
     /// Any command not recognised by this slice.
     Unknown,
 }
@@ -382,6 +390,12 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if let Some(post) = mail::parse_post_command(trimmed) {
         return MenuCommand::Post(post);
     }
+    // `A` (bare): list the flagged set (slice D6a). The `A <name>`
+    // inline-flag form and the `Filename(s) to flag:` prompt loop are
+    // slice D6b, so only the bare token binds here.
+    if trimmed.eq_ignore_ascii_case("A") {
+        return MenuCommand::AlterFlags;
+    }
     if let Some(arg) = files::parse_file_list_command(trimmed) {
         return MenuCommand::FileList(arg);
     }
@@ -394,6 +408,16 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_bare_alter_flags_command() {
+        // Slice D6a: bare `A` (any case) lists the flagged set. The
+        // `A <name>` inline-flag form is slice D6b, so it stays Unknown.
+        assert_eq!(parse_menu_command("A"), MenuCommand::AlterFlags);
+        assert_eq!(parse_menu_command("a"), MenuCommand::AlterFlags);
+        assert_eq!(parse_menu_command("  A  "), MenuCommand::AlterFlags);
+        assert_eq!(parse_menu_command("A FOO.LHA"), MenuCommand::Unknown);
+    }
 
     #[test]
     fn parses_logoff_command() {
@@ -1307,6 +1331,7 @@ mod tests {
             MenuCommand::NextMsgBase => Some(">>"),
             MenuCommand::FileList(_) => Some("F"),
             MenuCommand::ZippySearch(_) => Some("Z"),
+            MenuCommand::AlterFlags => Some("A"),
             MenuCommand::Unknown => None,
         }
     }
@@ -1339,6 +1364,7 @@ mod tests {
             MenuCommand::NextMsgBase,
             MenuCommand::FileList(FileListArg::Prompt { reverse: false }),
             MenuCommand::ZippySearch(ZippyArg::Prompt),
+            MenuCommand::AlterFlags,
             MenuCommand::Unknown,
         ]
     }

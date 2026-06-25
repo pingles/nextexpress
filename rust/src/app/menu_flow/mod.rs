@@ -135,6 +135,11 @@ const GOODBYE_LINE: &[u8] = b"Goodbye!\r\n";
 /// themselves (the per-slot `flagged` file) is slice D5-persist.
 const AUTOSAVING_FILE_FLAGS: &[u8] = b"\r\n** AutoSaving File Flags **\r\n\x07\r\n";
 
+/// `showFlags`'s empty-set line (`amiexpress/express.e:12488`), printed
+/// by `A` (slice D6a) when nothing is flagged. Live-captured in
+/// `comparison/transcripts/ae_tierd_alterflags.txt`.
+const NO_FILE_FLAGS: &str = "No file flags";
+
 /// The `checkFlagged()` leave-confirm prompt
 /// (`amiexpress/express.e:12670`) followed by `yesNo(2)`'s own ANSI
 /// `(y/N)? ` suffix (`:2134`). Server bytes, live-captured
@@ -284,6 +289,23 @@ where
         }
         self.handle_scan_all_mail(session, ScanFilter::MailScanFlagged)
             .await
+    }
+
+    /// `A` (slice D6a): lists the session's flagged-file set —
+    /// `alterFlags`'s opening `showFlags` (`amiexpress/express.e:12486`,
+    /// reached via `internalCommandA` `:24601`). Empty prints
+    /// `No file flags`; otherwise the upper-cased names space-joined
+    /// (`showFlaggedFiles(-1)`, `:2830`), each framed by a blank line.
+    /// The `Filename(s) to flag:` prompt loop is slice D6b.
+    async fn handle_alter_flags(&mut self, session: &MenuSession) -> Result<(), T::Error> {
+        let names: Vec<&str> = session.flagged_files().names().collect();
+        let body = if names.is_empty() {
+            NO_FILE_FLAGS.to_string()
+        } else {
+            names.join(" ")
+        };
+        let listing = format!("\r\n{body}\r\n");
+        self.write_and_flush(listing.as_bytes()).await
     }
 
     /// Renders the baseline user-stats screen — Tier A quickwin A3
@@ -511,6 +533,10 @@ where
             // Slice D4 (`Z`): the internal zippy text search — see
             // `file_list::handle_zippy_search` for the parity record.
             MenuCommand::ZippySearch(arg) => self.handle_zippy_search(&mut session, arg).await?,
+            // Slice D6a (`A`): the read-only flagged-set listing
+            // (`showFlags`, `amiexpress/express.e:12486`). The
+            // `Filename(s) to flag:` prompt loop is slice D6b.
+            MenuCommand::AlterFlags => self.handle_alter_flags(&session).await?,
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))
