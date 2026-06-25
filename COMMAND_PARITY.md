@@ -64,7 +64,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `N` | `MenuCommand::Unknown` (new-files binding removed, deferred to Tier D) | Real command — `ACS_FILE_LISTINGS`-gated new-files scan / `AquaScan v1.0` |
 | `RP`/`FW`/`K`/`MV`/`EH` (top-level) | Menu **still advertises** all five, but every one is rejected as Unknown (internal inconsistency) | Never top-level; menu and dispatcher agree (they live in the `R` sub-prompt) |
 | `G` (plain) | ~~Always logs off immediately~~ **Resolved (slice D5/Ga):** plain `G` runs `checkFlagged()` — with files flagged it prints the live-captured confirm `You have flagged files still not downloaded.` / `Do you leave without them? (y/N)?` (`yesNo(2)`, single-key, default N); `N` returns to the menu, `Y` / `G Y` / an empty flag set log off. Byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt`. | Plain `G` runs `checkFlagged()`: with files flagged, confirms (default N → return to menu); with nothing flagged, logs off |
-| `G` (side effects) | No flagged-file or history persistence (slice D5) | Runs `saveFlagged()` + `saveHistory()` on logoff |
+| `G` (side effects) | Emits `saveFlagged()`'s `** AutoSaving File Flags **` banner + `<BEL>` on every `G` logoff, even with nothing flagged (slice D5-banner); still no cross-session flag persistence or `saveHistory()` (slice D5-persist) | Runs `saveFlagged()` (banner + persist) + `saveHistory()` on logoff |
 | `VER` / `S` (© encoding) | UTF-8 `\xc2\xa9` (deliberate policy — see AGENTS.md "Wire encoding") | Latin-1 single byte `\xa9` |
 
 ### Cosmetic differences
@@ -89,7 +89,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `E` (Private prompt) | `Private (y/N)? ` full-line read | ANSI `Private (y/N)?` single-keystroke, echoes `Yes`/`No` |
 | `E` (unknown recipient) | `Unknown user.` | `User does not exist!!` |
 | Unknown command | `Unknown command. Type G to log off.` + full menu redraw | `No such command!!  Use '?' for command list.` (blank-line framed), prompt only |
-| `G` (closing text) | `Goodbye!` | `** AutoSaving File Flags **` + `<BEL>` + `Click...` |
+| `G` (closing text) | `** AutoSaving File Flags **` + `<BEL>` then `Goodbye!` on every `G` logoff, even with nothing flagged (slice D5-banner) | `** AutoSaving File Flags **` + `<BEL>` + `Click...` |
 
 ### Exact matches
 
@@ -656,8 +656,8 @@ Click...<ESC[0m>
 ```
 AE emits **no** "Goodbye!" text. After the optional `SCREEN_LOGOFF` splash (gated at `express.e:8187`), `internalCommandG` calls `saveFlagged()` (`express.e:25064`), which prints `'\b\n** AutoSaving File Flags **\b\n'` (rendered `\r\n…\r\n`) and rings the bell via `sendBELL()` (`express.e:2803-2804`). It then prints `Click...` (`express.e:8191`) and drops carrier.
 
-- **COSMETIC** — Closing wording. Rust's `Goodbye!\r\n` vs AE's `** AutoSaving File Flags **` + `<BEL>` + `Click...`. Entirely different closing text, but both merely mark end-of-session ahead of the identical carrier drop.
-- **COSMETIC** — AE rings the bell (`<BEL>`) on logoff; Rust does not. Audible only.
+- **COSMETIC** — Closing wording. Rust now emits `** AutoSaving File Flags **` + `<BEL>` on every `G` logoff (slice D5-banner, matching AE's banner — including the nothing-flagged case, live-confirmed in `comparison/transcripts/ae_tierd_g_empty.txt`); the residual difference is the final word only — Rust's `Goodbye!\r\n` vs AE's `Click...`. Both merely mark end-of-session ahead of the identical carrier drop. (The older `rust_sysop.txt` battery capture predates D5-banner, so it still shows the bare `Goodbye!`.)
+- **COSMETIC** — AE rings the bell (`<BEL>`) on every logoff; Rust now rings it (inside the autosave banner) only when leaving with files flagged. Audible only.
 - **COSMETIC** — AE prints a `Click...` teardown notice before dropping DTR; Rust prints nothing equivalent.
 
 ### G vs `G Y` — the flagged-file confirm (BEHAVIOURAL)
@@ -673,7 +673,8 @@ Only `G Y` (or a `Y` answer to the confirm, or an empty flag set) reaches the un
 **Resolved (slice D5/Ga).** Rust's `MenuCommand::Logoff { auto }` (`menu_flow/mod.rs`) now models this: plain `G` with a non-empty session flag set runs `confirm_leave_flagged()` (the `checkFlagged` prompt + single-key `yesNo` echo), returning to the menu on `N`/default; `G Y`, a `Y` answer, or an empty flag set log off. The confirm wire is byte-pinned to the live capture `comparison/transcripts/ae_tierd_g_confirm.txt`.
 
 - **MATCH (slice D5/Ga)** — plain `G`'s confirm, the single-key `Yes`/`No` echo, the `N`→menu-return and the nothing-flagged→logoff control flow now match AE byte-for-byte.
-- **BEHAVIOURAL (slice D5)** — AE additionally runs `saveFlagged()` (persist/clear `Partdownload` flag files, `express.e:25064/2798`) and `saveHistory()` (`25065`) on logoff, emitting the `** AutoSaving File Flags **` banner. Rust persists neither yet — the flag set lives and dies with the session — so the `Y`/force-logoff tail is `Goodbye!` rather than the autosave banner. A missing side effect owed to slice D5, not cosmetic text.
+- **MATCH (slice D5-banner)** — every `G` logoff now emits `saveFlagged()`'s visible `** AutoSaving File Flags **` banner + `<BEL>` before the goodbye, unconditionally — the banner precedes saveFlagged's own flag-count gate (`express.e:2803`), so it shows even with nothing flagged. Byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt:177` (flagged) and `comparison/transcripts/ae_tierd_g_empty.txt` (empty). Only the Stay branch (plain `G` + flagged + `N`) skips it.
+- **BEHAVIOURAL (slice D5-persist)** — AE's `saveFlagged()` also writes/clears the per-slot `Partdownload/flagged` file (`express.e:2798`) and `saveHistory()` runs (`25065`); Rust persists neither yet — the flag set still lives and dies with the session, and the logon `** Flagged File(s) Exist **` banner (live-captured in `ae_tierd_alterflags.txt`, gated on a restored non-empty set per `ae_tierd_g_empty.txt`) is not yet shown. Owed to slice D5-persist.
 
 ### Note on the sysop gate
 
@@ -776,7 +777,7 @@ stays the forward `Scanning HOLD dir from top...`, matching
 | Divergence | Detail |
 |---|---|
 | Art/© byte encoding | NextScan emits UTF-8 multi-byte sequences for high-bit glyphs (art `\xb8\xf8\xa4…` → `\u{b8}\u{f8}\u{a4}…`, © `\xa9` → `\u{a9}`); the AquaScan door emitted raw Latin-1 single bytes. Deliberate policy — see AGENTS.md "Wire encoding"; design rationale in `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. |
-| On-row flag marker (slice D2f) | `F`/`R` flag listed files into a session set; an aligned row gains a 4-column `[X] ` marker slot between the name and the check byte, an over-long row a trailing ` [X]` — a deliberate NextExpress aid the AquaScan door has not (its rows stay byte-identical to the captures). The captured F/R prompt exchange is unchanged (flagging is silent there); flagging a row still on the current page additionally repaints its marker in place (cursor up, `\x1b[14G[X]`, cursor back), suppressed when ANSI is off. Design §5; `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. The persisted set + the door's downstream flag surfaces (logon `** Flagged File(s) Exist **`, logoff `checkFlagged` warning, `** AutoSaving File Flags **`, the `A` alter-flags verb) are owed to slice D5. |
+| On-row flag marker (slice D2f) | `F`/`R` flag listed files into a session set; an aligned row gains a 4-column `[X] ` marker slot between the name and the check byte, an over-long row a trailing ` [X]` — a deliberate NextExpress aid the AquaScan door has not (its rows stay byte-identical to the captures). The captured F/R prompt exchange is unchanged (flagging is silent there); flagging a row still on the current page additionally repaints its marker in place (cursor up, `\x1b[14G[X]`, cursor back), suppressed when ANSI is off. Design §5; `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. The logoff `checkFlagged` warning (slice Ga) and the `** AutoSaving File Flags **` autosave banner (slice D5-banner) have landed; the persisted set, the logon `** Flagged File(s) Exist **` banner (slice D5-persist), and the `A` alter-flags verb (slices D6a/D6b) remain owed. |
 
 **UNVERIFIED (provisional, tagged in test names).** `F 0` →
 highest-dir error; unknown `More?` keys continue; the counter reset
@@ -854,7 +855,7 @@ The most important behavioural gaps, in rough order of user impact:
 
 11. **`VER` drops AE's `Registered to NONE.` line.** A deliberate omission (NextExpress has no registration-key concept); the rest of the banner is cosmetic re-framing plus a deliberate behavioural departure on the UTF-8-vs-Latin-1 `©` byte-encoding (resolved by the wire-encoding policy — see AGENTS.md).
 
-12. **~~`G` (plain) always logs off in Rust~~ Resolved in part (slice D5/Ga).** Plain `G` now runs the genuine `checkFlagged()` confirm: with files flagged it prints `You have flagged files still not downloaded.` / `Do you leave without them? (y/N)?` (single-key `yesNo`, default N), returning to the menu on `N`; `G Y`, a `Y` answer, and the nothing-flagged case log off — matching AE, byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt`. (Earlier note's claim that AE returns to the menu when *nothing* is flagged was a source misreading — an empty list returns `1` and logs off.) **Still owed to slice D5:** the logoff side effects `saveFlagged()` / `saveHistory()` and their `** AutoSaving File Flags **` banner.
+12. **~~`G` (plain) always logs off in Rust~~ Resolved in part (slice D5/Ga).** Plain `G` now runs the genuine `checkFlagged()` confirm: with files flagged it prints `You have flagged files still not downloaded.` / `Do you leave without them? (y/N)?` (single-key `yesNo`, default N), returning to the menu on `N`; `G Y`, a `Y` answer, and the nothing-flagged case log off — matching AE, byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt`. (Earlier note's claim that AE returns to the menu when *nothing* is flagged was a source misreading — an empty list returns `1` and logs off.) **Resolved further (slice D5-banner):** every `G` logoff now emits `saveFlagged()`'s `** AutoSaving File Flags **` banner + `<BEL>` before the goodbye, unconditionally (even with nothing flagged, live-confirmed in `ae_tierd_g_empty.txt`). **Still owed to slice D5-persist:** the cross-session flag persistence (the per-slot `Partdownload/flagged` file), `saveHistory()`, and the logon `** Flagged File(s) Exist **` banner.
 
 13. **Several Rust-only notice lines have no legacy counterpart.** `Authenticated.` (post-login), `Message not found.` (failed `R <num>`), `Invalid conference number.` (`J abc`), and `Message aborted.` (blank subject) are all notices Rust emits where AE is silent or interactive. Individually minor; collectively they make Rust chattier than the legacy on edge paths.
 

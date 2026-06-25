@@ -55,6 +55,11 @@ const MORE_PROMPT: &[u8] =
 const LEAVE_FLAGGED_CONFIRM: &[u8] =
     b"\r\nYou have flagged files still not downloaded.\r\nDo you leave without them? \x1b[32m(\x1b[33my\x1b[32m/\x1b[33mN\x1b[32m)\x1b[32m?\x1b[0m ";
 
+/// `saveFlagged`'s autosave banner + BEL, emitted on logoff with a
+/// non-empty flag set (`amiexpress/express.e:2803`). Live-captured
+/// (`comparison/transcripts/ae_tierd_g_confirm.txt:177`).
+const AUTOSAVING_FILE_FLAGS: &[u8] = b"\r\n** AutoSaving File Flags **\r\n\x07\r\n";
+
 #[tokio::test]
 async fn f_1_pages_the_seeded_corpus_and_q_quits() {
     // ae_tierd_aquascan3.txt S4: banner, scan header, framed rows;
@@ -468,6 +473,13 @@ async fn plain_g_with_a_flagged_file_confirms_then_n_stays_and_y_leaves() {
     assert!(
         contains(&after_y, b"Yes\r\n"),
         "Y must echo Yes before logging off, got {:?}",
+        String::from_utf8_lossy(&after_y),
+    );
+    // saveFlagged's autosave banner + BEL lands between the `Yes` echo
+    // and the goodbye tail (ae_tierd_g_confirm.txt:177).
+    assert!(
+        contains(&after_y, AUTOSAVING_FILE_FLAGS),
+        "leaving with a flagged file must emit the AutoSaving banner before goodbye, got {:?}",
         String::from_utf8_lossy(&after_y),
     );
 }

@@ -31,7 +31,7 @@ use crate::domain::session::typed::MenuSession;
 use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
 use crate::domain::user::{RatioMode, User};
 
-use super::{DispatchOutcome, MenuFlow, GOODBYE_LINE};
+use super::{DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, GOODBYE_LINE};
 
 /// Write-capturing terminal with a scripted key-read queue. The adapter
 /// echoes NOTHING in hot-key mode (the caller owns every visible byte),
@@ -257,9 +257,9 @@ async fn confirm_default_enter_answer_stays_at_menu() {
 
 #[tokio::test]
 async fn plain_g_with_flagged_files_y_leaves_and_logs_off() {
-    // Live: ae_tierd_g_confirm.txt:168-177. A `Y` echoes `Yes\r\n` and
-    // proceeds to logoff. (saveFlagged's `** AutoSaving File Flags **`
-    // banner is slice D5, not yet emitted — only the `Goodbye!` tail.)
+    // Live: ae_tierd_g_confirm.txt:168-177. A `Y` echoes `Yes\r\n`, then
+    // saveFlagged prints the `** AutoSaving File Flags **` banner + BEL
+    // (express.e:25064 -> :2803) before the `Goodbye!` tail (slice D5).
     let services = test_services();
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'Y')]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
@@ -270,6 +270,7 @@ async fn plain_g_with_flagged_files_y_leaves_and_logs_off() {
     );
     let mut expected = LEAVE_FLAGGED_CONFIRM.to_vec();
     expected.extend_from_slice(b"Yes\r\n");
+    expected.extend_from_slice(AUTOSAVING_FILE_FLAGS);
     expected.extend_from_slice(GOODBYE_LINE);
     assert_eq!(
         terminal.output,
@@ -283,33 +284,43 @@ async fn plain_g_with_flagged_files_y_leaves_and_logs_off() {
 async fn plain_g_without_flagged_files_logs_off_without_confirming() {
     // checkFlagged() only prompts when `flagFilesList.count()` is
     // non-zero (express.e:12669); an empty flag set logs off straight
-    // away, emitting no confirm and reading no key.
+    // away, emitting no confirm and reading no key. saveFlagged still
+    // runs unconditionally on the logoff path (express.e:25064 ->
+    // :2803), so the autosave banner appears even with nothing flagged
+    // — live-confirmed by `comparison/transcripts/ae_tierd_g_empty.txt`
+    // (`G\r\n\r\n** AutoSaving File Flags **\r\n\x07\r\n...`).
     let services = test_services();
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "G").await;
 
     assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
+    let mut expected = AUTOSAVING_FILE_FLAGS.to_vec();
+    expected.extend_from_slice(GOODBYE_LINE);
     assert_eq!(
         terminal.output,
-        GOODBYE_LINE,
-        "an empty flag set must skip the confirm entirely, got {:?}",
+        expected,
+        "an empty flag set skips the confirm but still autosave-banners, got {:?}",
         String::from_utf8_lossy(&terminal.output)
     );
 }
 
 #[tokio::test]
 async fn g_y_forces_logoff_past_the_flagged_confirm() {
-    // `G Y` sets `auto` (express.e:25049), bypassing checkFlagged()
-    // even with files flagged — straight to logoff, no confirm.
+    // `G Y` sets `auto` (express.e:25049), bypassing checkFlagged()'s
+    // confirm even with files flagged — but saveFlagged still runs
+    // (express.e:25064), so a non-empty flag set still prints the
+    // autosave banner before goodbye. No confirm prompt, no key read.
     let services = test_services();
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G Y").await;
 
     assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
+    let mut expected = AUTOSAVING_FILE_FLAGS.to_vec();
+    expected.extend_from_slice(GOODBYE_LINE);
     assert_eq!(
         terminal.output,
-        GOODBYE_LINE,
-        "G Y must force logoff with no confirm, got {:?}",
+        expected,
+        "G Y must force logoff (no confirm) but still autosave-banner with flags, got {:?}",
         String::from_utf8_lossy(&terminal.output)
     );
 }
@@ -323,9 +334,11 @@ async fn confirm_ignores_unrecognised_keys_until_a_yes_or_no() {
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
 
     assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
-    // The `x` produced no echo — only the prompt, the `Yes`, the tail.
+    // The `x` produced no echo — only the prompt, the `Yes`, the
+    // autosave banner (flag set non-empty), then the goodbye tail.
     let mut expected = LEAVE_FLAGGED_CONFIRM.to_vec();
     expected.extend_from_slice(b"Yes\r\n");
+    expected.extend_from_slice(AUTOSAVING_FILE_FLAGS);
     expected.extend_from_slice(GOODBYE_LINE);
     assert_eq!(
         terminal.output,

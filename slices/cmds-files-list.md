@@ -279,23 +279,33 @@ deliberately distinct from the colourful `F` door.
   reference captured to `comparison/transcripts/ae_tierd_g_confirm.txt`
   (flag a file via the AquaScan `F` verb → plain `G`, both branches);
   byte-pinned in `menu_flow/tests.rs` + an e2e wire smoke in
-  `tierd_file_list_smoke.rs`. **Deferred to D5 proper:** the
-  `saveFlagged`/`saveHistory` persistence + `** AutoSaving File Flags
-  **` banner (so today's `Y`/force tail is `Goodbye!`, not the autosave
-  banner), and the logon `** Flagged File(s) Exist **` banner.
-- **In Scope (D5 proper, after Ga)**
+  `tierd_file_list_smoke.rs`.
+- **Done (slice D5-banner)** — every `G` logoff now emits
+  `saveFlagged()`'s visible `** AutoSaving File Flags **` banner +
+  `<BEL>` (`AUTOSAVING_FILE_FLAGS`, `menu_flow/mod.rs`) before the
+  goodbye tail, unconditionally — the banner precedes saveFlagged's own
+  flag-count gate (`express.e:2803`), so it shows even with nothing
+  flagged; only the Stay branch (plain `G` + flagged + `N`) skips it.
+  Byte-pinned to `ae_tierd_g_confirm.txt:177` (flagged) and
+  `ae_tierd_g_empty.txt` (empty) (`express.e:25064` → `:2803`); 4 unit
+  tests in `menu_flow/tests.rs` + the e2e wire smoke in
+  `tierd_file_list_smoke.rs`. **Deferred to D5-persist:** the per-slot
+  `Partdownload/flagged` file write + `saveHistory()`, the cross-session
+  restore, and the logon `** Flagged File(s) Exist **` banner.
+- **In Scope (D5-persist, after the banner)**
   - `files.allium:FlagFile`, `UnflagFile`, with the per-session
     flagged list bounded by `max_flagged_files()` (legacy
     `MAX_FLAGGED_FILES = 1000`).
   - `FlaggedFilesAreDownloadable` invariant.
-  - The downstream flag surfaces the captures/E source show: the
-    logon `** Flagged File(s) Exist **` + BEL banner
+  - The remaining downstream flag surface the captures/E source show:
+    the logon `** Flagged File(s) Exist **` + BEL banner
     (`amiexpress/express.e:2791-2794`, captured at transcripts line
-    77) and the `** AutoSaving File Flags **` logoff banner
-    (`express.e:2803`). (The clean-logoff `checkFlagged` "You have
-    flagged files still not downloaded." warning itself already landed
-    in slice Ga; D5 adds the persistence that emits the autosave banner
-    on the same logoff path.)
+    77), shown when a restored flag set is non-empty. (The clean-logoff
+    `checkFlagged` "You have flagged files still not downloaded."
+    warning landed in slice Ga and the `** AutoSaving File Flags **`
+    logoff banner in slice D5-banner; D5-persist adds the per-slot file
+    write that makes the flag set survive a disconnect, plus the logon
+    banner that announces a restored set.)
   - A fresh capture session for AquaScan's own un-exercised in-door
     flag verbs (`A` alter-flags, `D` quit-and-download) before
     porting them (D6a/D6b own `A`).

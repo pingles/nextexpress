@@ -1,0 +1,209 @@
+@@@@@ CONNECT @@@@@
+(landed on node, attempt 0)
+\r\n
+/X Native Telnet:  Searching for free node...\r\n
+/X Native Telnet:  Successful connection to node 0\r\n
+\r\n
+CONNECT 19200\r\n
+**EMSI_IRQ8E08\r\n
+\r\n
+⟨ESC[0m⟩Welcome to NextExpress Reference, located in Docker\r\n
+\r\n
+Running AmiExpress 5.6.0 Copyright ⟨a9⟩2018-2023 Darren Coles\r\n
+Registration NONE. You are connected to Node 0 at 19200 baud\r\n
+Connection occured at Thu 25-Jun-2026 20:11:08.\r\n
+\r\n
+ANSI, RIP or No graphics (A/r/n)? 
+
+@@@@@ graphics -> A @@@@@ [MATCHED]
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+Enter your Name: 
+----- REPR -----
+b'A\r\n\r\nEnter your Name: '
+
+@@@@@ name -> sysop @@@@@ [MATCHED]
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+Password: 
+----- REPR -----
+b'sysop\r\nPassword: '
+
+@@@@@ password -> POST-LOGIN @@@@@ [MENU]
+>>> SENT b'sysop\r'
+----- RENDER -----
+*****\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩New Users - No mail today!\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Amiga - No mail today!\r\n
+\r\n
+⟨ESC[32m⟩(⟨ESC[33m⟩Pause⟨ESC[32m⟩)⟨ESC[34m⟩...⟨ESC[32m⟩Space To Resume⟨ESC[33m⟩: ⟨ESC[0m⟩<<<harness sends SPACE>>>\r\n
+\r\n
+\r\n
+\r\n
+⟨ESC[32m⟩Area Name  ⟨ESC[33m⟩:⟨ESC[0m⟩ Sysop\r\n
+⟨ESC[32m⟩Caller Num.⟨ESC[33m⟩:⟨ESC[0m⟩ 46\r\n
+⟨ESC[32m⟩Lst Date On⟨ESC[33m⟩:⟨ESC[0m⟩ Mon 22-Jun-2026 22:04:22\r\n
+⟨ESC[32m⟩Security Lv⟨ESC[33m⟩:⟨ESC[0m⟩ 255\r\n
+⟨ESC[32m⟩# Times On ⟨ESC[33m⟩:⟨ESC[0m⟩ 30\r\n
+⟨ESC[32m⟩Times Today⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Msgs Posted⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+⟨ESC[32m⟩Online Baud⟨ESC[33m⟩:⟨ESC[0m⟩ 19200\r\n
+⟨ESC[32m⟩Rate CPS UP⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Rate CPS DN⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Screen  Clr⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+⟨ESC[32m⟩Protocol   ⟨ESC[33m⟩:⟨ESC[0m⟩ /X ZMODEM\r\n
+⟨ESC[32m⟩Sysop  Here⟨ESC[33m⟩:⟨ESC[0m⟩ NO\r\n
+\r\n
+⟨ESC[32m⟩              Uploads                 Downloads\r\n
+\r\n
+⟨ESC[32m⟩    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n
+⟨ESC[0m⟩    ----  -------  -------------- -------  -------------- -----------  -----\r\n
+⟨ESC[33m⟩       2⟨ESC[0m⟩> ⟨ESC[33m⟩      0               0       0               0    Infinite  ⟨ESC[31m⟩DSBLD\r\n
+⟨ESC[0m⟩\r\n
+\r\n
+Conference 2: Amiga Auto-ReJoined\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+** Flagged File(s) Exist **\r\n
+⟨BEL⟩\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩600⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'*****\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mNew Users - No mail today!\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mAmiga - No mail today!\r\n\r\n\x1b[32m(\x1b[33mPause\x1b[32m)\x1b[34m...\x1b[32mSpace To Resume\x1b[33m: \x1b[0m<<<harness sends SPACE>>>\r\n\r\n\r\n\r\n\x1b[32mArea Name  \x1b[33m:\x1b[0m Sysop\r\n\x1b[32mCaller Num.\x1b[33m:\x1b[0m 46\r\n\x1b[32mLst Date On\x1b[33m:\x1b[0m Mon 22-Jun-2026 22:04:22\r\n\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\x1b[32m# Times On \x1b[33m:\x1b[0m 30\r\n\x1b[32mTimes Today\x1b[33m:\x1b[0m 0\r\n\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 2\r\n\x1b[32mOnline Baud\x1b[33m:\x1b[0m 19200\r\n\x1b[32mRate CPS UP\x1b[33m:\x1b[0m 0\r\n\x1b[32mRate CPS DN\x1b[33m:\x1b[0m 0\r\n\x1b[32mScreen  Clr\x1b[33m:\x1b[0m NO\r\n\x1b[32mProtocol   \x1b[33m:\x1b[0m /X ZMODEM\r\n\x1b[32mSysop  Here\x1b[33m:\x1b[0m NO\r\n\r\n\x1b[32m              Uploads                 Downloads\r\n\r\n\x1b[32m    Conf  Files    Bytes          Files    Bytes          Bytes Avail  Ratio\r\n\x1b[0m    ----  -------  -------------- -------  -------------- -----------  -----\r\n\x1b[33m       2\x1b[0m> \x1b[33m      0               0       0               0    Infinite  \x1b[31mDSBLD\r\n\x1b[0m\r\n\r\nConference 2: Amiga Auto-ReJoined\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n** Flagged File(s) Exist **\r\n\x07\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m600\x1b[0m mins. left): '
+
+@@@@@ BANNER CHECK (D5-persist logon banner) @@@@@ [info]
+----- RENDER -----
+** Flagged File(s) Exist ** PRESENT at login
+----- REPR -----
+b'** Flagged File(s) Exist ** PRESENT at login'
+
+@@@@@ J 2 (Amiga, seeded files) @@@@@ [MENU]
+>>> SENT b'J 2\r'
+----- RENDER -----
+J 2\r\n
+\r\n
+⟨ESC[32m⟩Joining Conference⟨ESC[33m⟩:⟨ESC[0m⟩ Amiga\r\n
+\r\n
+⟨ESC[32m⟩Total messages           ⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+\r\n
+⟨ESC[32m⟩Last message auto scanned⟨ESC[33m⟩:⟨ESC[0m⟩ 3\r\n
+⟨ESC[32m⟩Last message read        ⟨ESC[33m⟩:⟨ESC[0m⟩ 2\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩600⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'J 2\r\n\r\n\x1b[32mJoining Conference\x1b[33m:\x1b[0m Amiga\r\n\r\n\x1b[32mTotal messages           \x1b[33m:\x1b[0m 3\r\n\r\n\x1b[32mLast message auto scanned\x1b[33m:\x1b[0m 3\r\n\x1b[32mLast message read        \x1b[33m:\x1b[0m 2\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m600\x1b[0m mins. left): '
+
+@@@@@ A -> listing + flag prompt @@@@@ [MATCHED]
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+R 1 TERMV48.LHA MYDEMO.DMS\r\n
+⟨ESC[36m⟩Filename(s) to flag: ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩)⟨ESC[36m⟩rom, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none⟨ESC[0m⟩? 
+----- REPR -----
+b'A\r\n\r\nR 1 TERMV48.LHA MYDEMO.DMS\r\n\x1b[36mFilename(s) to flag: \x1b[32m(\x1b[33mF\x1b[32m)\x1b[36mrom, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? '
+
+@@@@@ at prompt: C -> Clear sub-prompt @@@@@ [MATCHED]
+>>> SENT b'C\r'
+----- RENDER -----
+C\r\n
+⟨ESC[36m⟩Filename(s) to Clear: ⟨ESC[32m⟩(⟨ESC[33m⟩*⟨ESC[32m⟩)⟨ESC[36m⟩All, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none⟨ESC[0m⟩? 
+----- REPR -----
+b'C\r\n\x1b[36mFilename(s) to Clear: \x1b[32m(\x1b[33m*\x1b[32m)\x1b[36mAll, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? '
+
+@@@@@ at Clear prompt: * -> cleared, empty listing @@@@@ [MATCHED]
+>>> SENT b'*\r'
+----- RENDER -----
+*\r\n
+\r\n
+No file flags\r\n
+⟨ESC[36m⟩Filename(s) to flag: ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩)⟨ESC[36m⟩rom, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none⟨ESC[0m⟩? 
+----- REPR -----
+b'*\r\n\r\nNo file flags\r\n\x1b[36mFilename(s) to flag: \x1b[32m(\x1b[33mF\x1b[32m)\x1b[36mrom, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? '
+
+@@@@@ flag 'mydemo.dms' -> 1-name listing @@@@@ [GOT b'mins. left): ']
+>>> SENT b'mydemo.dms\r'
+----- RENDER -----
+mydemo.dms\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩600⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'mydemo.dms\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m600\x1b[0m mins. left): '
+
+@@@@@ flag 'report.txt' -> 2-name listing @@@@@ [GOT b'mins. left): ']
+>>> SENT b'report.txt\r'
+----- RENDER -----
+report.txt\r\n
+\r\n
+No such command!!  Use '?' for command list.\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"report.txt\r\n\r\nNo such command!!  Use '?' for command list.\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): "
+
+@@@@@ Enter (=none) -> back to menu @@@@@ [MENU]
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ A again -> clean 2-name listing @@@@@ [MATCHED]
+>>> SENT b'A\r'
+----- RENDER -----
+A\r\n
+\r\n
+MYDEMO.DMS\r\n
+⟨ESC[36m⟩Filename(s) to flag: ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩)⟨ESC[36m⟩rom, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none⟨ESC[0m⟩? 
+----- REPR -----
+b'A\r\n\r\nMYDEMO.DMS\r\n\x1b[36mFilename(s) to flag: \x1b[32m(\x1b[33mF\x1b[32m)\x1b[36mrom, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? '
+
+@@@@@ cleanup: C -> Clear sub-prompt @@@@@ [MATCHED]
+>>> SENT b'C\r'
+----- RENDER -----
+C\r\n
+⟨ESC[36m⟩Filename(s) to Clear: ⟨ESC[32m⟩(⟨ESC[33m⟩*⟨ESC[32m⟩)⟨ESC[36m⟩All, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none⟨ESC[0m⟩? 
+----- REPR -----
+b'C\r\n\x1b[36mFilename(s) to Clear: \x1b[32m(\x1b[33m*\x1b[32m)\x1b[36mAll, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? '
+
+@@@@@ cleanup: * -> empty @@@@@ [MATCHED]
+>>> SENT b'*\r'
+----- RENDER -----
+*\r\n
+\r\n
+No file flags\r\n
+⟨ESC[36m⟩Filename(s) to flag: ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩)⟨ESC[36m⟩rom, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩Enter⟨ESC[32m⟩)⟨ESC[36m⟩=none⟨ESC[0m⟩? 
+----- REPR -----
+b'*\r\n\r\nNo file flags\r\n\x1b[36mFilename(s) to flag: \x1b[32m(\x1b[33mF\x1b[32m)\x1b[36mrom, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? '
+
+@@@@@ cleanup: Enter -> menu @@@@@ [MENU]
+>>> SENT b'\r'
+----- RENDER -----
+\r\n
+\r\n
+\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress Reference ⟨ESC[0m⟩[⟨ESC[36m⟩2⟨ESC[34m⟩:⟨ESC[36m⟩Amiga⟨ESC[0m⟩] Menu (⟨ESC[33m⟩599⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b'\r\n\r\n\r\n\x1b[0m\x1b[35mNextExpress Reference \x1b[0m[\x1b[36m2\x1b[34m:\x1b[36mAmiga\x1b[0m] Menu (\x1b[33m599\x1b[0m mins. left): '
+
+@@@@@ SAFETY LOGOFF round @@@@@
+G Y\r\n
+\r\n
+** AutoSaving File Flags **\r\n
+⟨BEL⟩\r\n
+Click...⟨ESC[0m⟩
+
+@@@@@ SAFETY LOGOFF round @@@@@

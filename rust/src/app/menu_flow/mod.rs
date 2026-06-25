@@ -125,6 +125,16 @@ const UNKNOWN_COMMAND_LINE: &[u8] = b"Unknown command. Type G to log off.\r\n";
 /// Sent immediately before the connection closes on a normal logoff.
 const GOODBYE_LINE: &[u8] = b"Goodbye!\r\n";
 
+/// `saveFlagged`'s autosave announcement (`amiexpress/express.e:2803`),
+/// emitted on every `G` logoff (the banner precedes saveFlagged's own
+/// flag-count gate, so it shows even with nothing flagged): a blank
+/// line, the banner, then the `sendBELL` BEL (`\x07`, valid UTF-8) and a
+/// trailing CRLF. Live-captured with files flagged
+/// (`comparison/transcripts/ae_tierd_g_confirm.txt:177`) and empty
+/// (`comparison/transcripts/ae_tierd_g_empty.txt`). Persisting the flags
+/// themselves (the per-slot `flagged` file) is slice D5-persist.
+const AUTOSAVING_FILE_FLAGS: &[u8] = b"\r\n** AutoSaving File Flags **\r\n\x07\r\n";
+
 /// The `checkFlagged()` leave-confirm prompt
 /// (`amiexpress/express.e:12670`) followed by `yesNo(2)`'s own ANSI
 /// `(y/N)? ` suffix (`:2134`). Server bytes, live-captured
@@ -327,6 +337,14 @@ where
                 }
             }
         }
+        // saveFlagged (express.e:25064 -> :2803) runs on every `G`
+        // logoff and prints the autosave banner + BEL unconditionally —
+        // even with nothing flagged (the banner sits before saveFlagged's
+        // own count gate). Live-confirmed for the empty case in
+        // `comparison/transcripts/ae_tierd_g_empty.txt`. Only the Stay
+        // branch above returns early and skips it. Persisting the flags
+        // is slice D5-persist.
+        self.write_and_flush(AUTOSAVING_FILE_FLAGS).await?;
         let logging_off = session.user_requests_logoff();
         // SCREEN_LOGOFF (amiexpress/express.e:6554, displayed at :8187):
         // sysop-supplied pre-goodbye splash. The adapter returns empty
