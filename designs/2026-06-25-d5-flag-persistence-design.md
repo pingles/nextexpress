@@ -79,10 +79,21 @@ Persist `(conference, name)` and **restore with `area = 0`**. This:
   download (`checkForFileSize` takes name + confNum, `express.e:16010`)
   needs.
 
+`(conference, name)` is the **persisted identity**; `area` is never
+stored. The `FlaggedStore` contract is uniform across adapters: a flag
+saved at any area loads back at `area = 0` (the in-memory adapter
+normalises on save exactly as the SQLite projection does, so swapping
+backends never changes behaviour).
+
 Documented divergence: a file flagged via `F`/`R` in `(conf, area=3,
-NAME)` round-trips as `(conf, area=0, NAME)`. The only observable effect
-is the in-scan `[X]` marker, which is recomputed from live scan context
-anyway, not from the restored key.
+NAME)` round-trips as `(conf, area=0, NAME)`. It still appears in the
+logon banner (count) and the `A` listing (names only). It will **not**
+repaint the `[X]` marker on a *next-session* `F`/`R` scan, because that
+scan builds `(conf, area=N, NAME)` keys and `contains` matches the full
+key — the restored flag must be re-flagged to mark again. The legacy
+matches by `(conf, name)` regardless of area, so this is a minor,
+documented NextExpress limitation; making the flag-match area-agnostic
+is a separate later refinement, out of scope here.
 
 ### ② Separate `SqliteFlaggedStore`, not an extension of `SqliteUserRepository`
 
