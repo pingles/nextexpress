@@ -8,4 +8,5 @@
 pub mod area;
 pub mod file;
 pub mod flagged;
+pub mod flagged_store;
 pub mod repository;
