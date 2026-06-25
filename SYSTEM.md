@@ -17,9 +17,10 @@ top-level modules under `rust/src/`:
   `MessageBaseRef`, `Bytes`, `ConferenceScan`, and the `pub(crate)`
   `FlaggedFiles`/`FlaggedKey` — the session-scoped flagged-file set the
   `F`/`R` pager verbs build, an impl detail shared by `domain/files`,
-  `domain/session`, and `app/menu_flow/file_list`, slice D2f; the
-  plain-`G` logoff confirm reads it via `is_empty()` (slice Ga); D5
-  persists it),
+  `domain/session`, and `app/menu_flow/file_list`, slice D2f; the `A`
+  alter-flags loop also adds (`flag`) and clears (`clear`) it (slices
+  D6a/D6b); the plain-`G` logoff confirm reads it via `is_empty()` (slice
+  Ga); D5 persists it),
   port traits (`UserRepository`, `ConferenceRepository`, `MailStore`,
   `PasswordHasher`, `CallerLogAppender`, `FileRepository`), phase-typed session wrappers, the
   `messaging.allium` rule family (`read_mail`, `scan_mail`, `post_mail`,
@@ -180,7 +181,7 @@ flowchart LR
     Driver --> WireText["wire_text\n(shared cross-cutting primitives:\nCRLF, ANSI prompt, idle/logon goodbyes,\ninvalid-message-number notice)"]
 
     Menu --> Parse["menu_command::parse_menu_command"]
-    Parse --> Cmds["MenuCommand (24 variants)\n{Logoff, Join, JoinMsgBase, Read, ScanAllMail,\nPost, CommentToSysop,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle,\nShowMenu, TopicHelp, AnsiToggle,\nConferenceFlags,\nPrevConference, NextConference,\nPrevMsgBase, NextMsgBase,\nFileList, ZippySearch, Unknown}"]
+    Parse --> Cmds["MenuCommand (25 variants)\n{Logoff, Join, JoinMsgBase, Read, ScanAllMail,\nPost, CommentToSysop,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle,\nShowMenu, TopicHelp, AnsiToggle,\nConferenceFlags,\nPrevConference, NextConference,\nPrevMsgBase, NextMsgBase,\nFileList, ZippySearch, AlterFlags, Unknown}"]
     Menu --> MenuFlowHandlers["menu_flow/*\n(one module per command:\nterminal-free core + handler +\nthat command's own wire text)"]
 
     MenuFlowHandlers --> ReadSub["read_subprompt loop\n(legacy readMSG: CR/A/R/F/\nD/M/EH/L/Q options)"]
@@ -290,6 +291,7 @@ module under `app::menu_flow/`):
 | `CF` | `ConferenceFlags` | `conf_flags` — the M/A/F/Z scan-flag editor (legacy `internalCommandCF`); redraws the listing, reads a mask key then a conference expression (`+`/`-`/`*`/list) and applies it to the caller's own `ConferenceMembership` flags via `domain::conference_flags`. Gated on `Right::EditConferenceFlags`. |
 | `F` / `F <dir>` / `F A`/`U`/`H` / `… NS` / `F ?` / `FR …` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). The `FR` reverse token (slice D3) reuses this code path via a `reverse` flag on `FileListArg::Span`: banner `'fr ?'` (dash run flexed 40→39), `Reverse-scanning dir N... Ok!` header, files newest-first, multi-dir spans descending; bare `FR` opens the `Directories:` prompt under the reverse banner (symmetric with bare `F`), then reverse-walks the chosen span — following `express.e:27645` over the AquaScan capture (which skips the prompt for `FR`). `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`) over true single-key hotkey reads (`Terminal::read_key`, slice D2b; held-`n`/Enter and bare-LF corners probe-pinned). `F`/`R` flag listed files into the session's `FlaggedFiles` set (slice D2f), rendered as an on-row `[X]` marker and repainted in place when ANSI is on; `ScanState` carries the scan-wide `listed` registry the flag verbs match against. Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
 | `Z` / `Z <token>` | `ZippySearch(ZippyArg)` | `file_list::handle_zippy_search` — the internal zippy text search (Tier D D4; `internalCommandZ`, `express.e:26123`). **Not** AquaScan-shadowed, so parity is the genuine internal command — captured live (`comparison/transcripts/ae_tierd_zippy{,2}.txt`). Emits plain text (raw `dir_row` rows, **no** NextScan frames/colour): the `Enter string to search for:` prompt (bare `Z`), the internal `getDirSpan('')` `Directories: …=none? ` prompt (distinct from the AquaScan `=None ?` form), `Scanning directory N` headers, and the `No such directory.` error. The prompt's number/`U`/`A`/`H`/none/out-of-range answers are honoured. The inline `item(1)` form `Z <term> <span>` (slice D7) resolves the span with the same `getDirSpan` logic but **without** the prompt — `Z ART 1` scans immediately (`ZippyArg::QueryInDir`); large-match pagination still defers. Matching is `UpperStr`+`InStr` over each rendered row (filename included) — a hit dumps the whole block. Reads `services.file_repo` only. |
+| `A` | `AlterFlags` | `handle_alter_flags` — the genuine internal `alterFlags` -> `flagFiles` loop (Tier D D6a/D6b; `express.e:24601`, `:12648`, `:12594`). **Not** AquaScan-shadowed, captured live (`comparison/transcripts/ae_tierd_alterflags.txt`). Each pass renders the `showFlags` listing (`No file flags` or the upper-cased flagged names space-joined, `render_flag_listing`) then the `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` prompt (`FLAG_PROMPT`). A typed name flags via `flag_add` (`addFlagToList`, no on-disk existence check, current conference + area `0`) and exits to the menu with no trailing line; bare `C` opens the `Filename(s) to Clear: (*)All, …` sub-prompt (`CLEAR_PROMPT`) where `*` clears the whole set and re-prompts; `<CR>`=none ends the loop. The `FlaggedFiles` set is the same session aggregate the `F`/`R` pager verbs build. Deferred: `F`-from (`flagFrom`), clear-by-name (`removeFlagFromList`), the `ACS_DOWNLOAD` gate. |
 | anything else | `Unknown` | dispatch (`UNKNOWN_COMMAND_LINE`) |
 
 `read_subprompt` is the legacy `readMSG` sub-prompt loop (Tier B). `R <n>`

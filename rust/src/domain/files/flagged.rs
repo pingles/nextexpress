@@ -65,6 +65,13 @@ impl FlaggedFiles {
         self.set.is_empty()
     }
 
+    /// Drops every flag — the legacy `clearFlagItems(flagFilesList)`,
+    /// reached by `A`'s `C` -> `*` (=All) clear path (slice D6b,
+    /// `amiexpress/express.e:12622`).
+    pub(crate) fn clear(&mut self) {
+        self.set.clear();
+    }
+
     /// The flagged file names, upper-cased, in catalogue-key order
     /// (conference, area, name). Backs the `A` listing —
     /// `showFlaggedFiles(-1)` (`amiexpress/express.e:2830`), which the

@@ -140,6 +140,22 @@ const AUTOSAVING_FILE_FLAGS: &[u8] = b"\r\n** AutoSaving File Flags **\r\n\x07\r
 /// `comparison/transcripts/ae_tierd_alterflags.txt`.
 const NO_FILE_FLAGS: &str = "No file flags";
 
+/// `flagFiles`'s main prompt (`amiexpress/express.e:12601`): the
+/// `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` line the `A`
+/// loop renders after each listing (slice D6b). The legacy `[..m`
+/// embedded-ESC colour codes are emitted verbatim as `\x1b[..m` (valid
+/// UTF-8). Live-captured in
+/// `comparison/transcripts/ae_tierd_alterflags.txt:114`.
+const FLAG_PROMPT: &[u8] =
+    b"\x1b[36mFilename(s) to flag: \x1b[32m(\x1b[33mF\x1b[32m)\x1b[36mrom, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? ";
+
+/// `flagFiles`'s clear sub-prompt (`amiexpress/express.e:12614`): the
+/// `Filename(s) to Clear: (*)All, (Enter)=none? ` line shown when the
+/// caller types bare `C` at [`FLAG_PROMPT`] (slice D6b). Live-captured
+/// in `comparison/transcripts/ae_tierd_alterflags.txt:122`.
+const CLEAR_PROMPT: &[u8] =
+    b"\x1b[36mFilename(s) to Clear: \x1b[32m(\x1b[33m*\x1b[32m)\x1b[36mAll, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? ";
+
 /// The `checkFlagged()` leave-confirm prompt
 /// (`amiexpress/express.e:12670`) followed by `yesNo(2)`'s own ANSI
 /// `(y/N)? ` suffix (`:2134`). Server bytes, live-captured
@@ -181,6 +197,47 @@ fn render_time_line(at: std::time::SystemTime) -> Vec<u8> {
     format!("\r\nIt is {formatted}\r\n").into_bytes()
 }
 
+/// Renders one `showFlags` listing (`amiexpress/express.e:12486`) for the
+/// `A` loop: the space-joined upper-cased flagged names — or
+/// [`NO_FILE_FLAGS`] when empty — closed by a blank line. The leading
+/// blank line is alterFlags's, emitted once before the loop, so this
+/// renders only `<body>\r\n`.
+fn render_flag_listing(session: &MenuSession) -> Vec<u8> {
+    let names: Vec<&str> = session.flagged_files().names().collect();
+    let body = if names.is_empty() {
+        NO_FILE_FLAGS.to_string()
+    } else {
+        names.join(" ")
+    };
+    format!("{body}\r\n").into_bytes()
+}
+
+/// Whether `token` is the legacy `flagFiles` clear family
+/// (`amiexpress/express.e:12609`): a `C`/`c` first character followed by
+/// nothing or a space. The caller has already trimmed, so a bare `C` is
+/// length 1 and an inline clear is `C <arg>`.
+fn is_clear_family(token: &str) -> bool {
+    let mut chars = token.chars();
+    matches!(chars.next(), Some('C' | 'c')) && matches!(chars.next(), None | Some(' '))
+}
+
+/// `addFlagToList` (`amiexpress/express.e:12523`): flags `name` under the
+/// session's current conference. The legacy keys flags by `(confNum,
+/// fileName)` with no area, so a name typed at the prompt carries no
+/// catalogue area — it is stored under area `0`. Returns `true` when a
+/// new file was flagged (legacy `RETURN 2`); `false` for a no-op — a
+/// name of one character or less (the `StrLen(fileName)>1` gate,
+/// `:12532`) or one already flagged (`isInFlaggedList`, `:12534`).
+fn flag_add(session: &mut MenuSession, name: &str) -> bool {
+    let name = name.trim();
+    if name.len() <= 1 {
+        return false;
+    }
+    let conference = session.current_conference_number().unwrap_or(0);
+    let key = crate::domain::files::flagged::FlaggedKey::new(conference, 0, name);
+    session.flagged_files_mut().flag(key)
+}
+
 /// Internal control-flow signal returned by
 /// [`MenuFlow::dispatch`]: either the loop continues with the supplied
 /// live [`MenuSession`], or it terminates with the supplied
@@ -201,6 +258,22 @@ enum LeaveFlagged {
     Disconnected,
     /// No key arrived before the input timeout.
     TimedOut,
+}
+
+/// Control signal returned by one [`MenuFlow::flag_files_once`] pass to
+/// the `alterFlags` REPEAT loop (`amiexpress/express.e:12659-12662`),
+/// mapping the legacy `flagFiles` return code (`stat`).
+enum FlagLoop {
+    /// `stat < 0` — `alterFlags` returns at once with no trailing blank
+    /// line: a new file was flagged (`RESULT_FAILURE`, `:12642`) or the
+    /// caller dropped/idled at a prompt (`:12603`).
+    Exit,
+    /// `stat = 0` (`RESULT_SUCCESS`) — the REPEAT loop ends; `alterFlags`
+    /// emits its trailing blank line (`<CR>`=none, `:12646`/`:12618`).
+    Done,
+    /// `stat = 1` — keep looping: a clear happened (`:12623`), so the
+    /// next pass re-shows the (now changed) listing.
+    Again,
 }
 
 /// Menu sub-flow.
@@ -291,21 +364,117 @@ where
             .await
     }
 
-    /// `A` (slice D6a): lists the session's flagged-file set —
-    /// `alterFlags`'s opening `showFlags` (`amiexpress/express.e:12486`,
-    /// reached via `internalCommandA` `:24601`). Empty prints
-    /// `No file flags`; otherwise the upper-cased names space-joined
-    /// (`showFlaggedFiles(-1)`, `:2830`), each framed by a blank line.
-    /// The `Filename(s) to flag:` prompt loop is slice D6b.
-    async fn handle_alter_flags(&mut self, session: &MenuSession) -> Result<(), T::Error> {
-        let names: Vec<&str> = session.flagged_files().names().collect();
-        let body = if names.is_empty() {
-            NO_FILE_FLAGS.to_string()
-        } else {
-            names.join(" ")
+    /// `A` — the legacy `alterFlags(NIL)` (`amiexpress/express.e:12648`,
+    /// reached via `internalCommandA` `:24601`). Emits a leading blank
+    /// line, then loops `flagFiles(NIL)` (`:12659-12662`): each pass shows
+    /// the flag set (slice D6a `showFlags`) and prompts. A bare `<CR>`
+    /// (=none) or a no-op token ends the loop with a trailing blank line;
+    /// flagging a new file or a dropped caller exits immediately
+    /// (`IF(stat<0) THEN RETURN`, `:12661`); `C` -> `*` clears and loops
+    /// (slice D6b). `F`-from and clear-by-name are deferred.
+    async fn handle_alter_flags(&mut self, session: &mut MenuSession) -> Result<(), T::Error> {
+        // alterFlags's leading `aePuts('\b\n')` (express.e:12651).
+        self.write_and_flush(CRLF).await?;
+        loop {
+            match self.flag_files_once(session).await? {
+                // stat < 0: a new file was flagged or the caller dropped
+                // — alterFlags returns with no trailing blank line.
+                FlagLoop::Exit => return Ok(()),
+                // stat = 0 (RESULT_SUCCESS): the REPEAT loop ends.
+                FlagLoop::Done => break,
+                // stat = 1: a clear happened — re-show and re-prompt.
+                FlagLoop::Again => {}
+            }
+        }
+        // alterFlags's trailing `aePuts('\b\n')` (express.e:12664).
+        self.write_and_flush(CRLF).await
+    }
+
+    /// One pass of the legacy `flagFiles(NIL)` (`amiexpress/express.e:12594`):
+    /// renders the current flag set (`showFlags`), prompts with
+    /// [`FLAG_PROMPT`], reads one line, and acts on it. Returns the
+    /// control signal for the [`Self::handle_alter_flags`] REPEAT loop.
+    async fn flag_files_once(&mut self, session: &mut MenuSession) -> Result<FlagLoop, T::Error> {
+        // showFlags() (express.e:12598): `<names>` space-joined (or
+        // `No file flags`) closed by a blank line — alterFlags's leading
+        // `\b\n` already opened the frame.
+        let listing = render_flag_listing(session);
+        self.write_and_flush(&listing).await?;
+        let TerminalRead::Line(answer) = self
+            .read_prompted(FLAG_PROMPT, TerminalEcho::Visible)
+            .await?
+        else {
+            // lineInput < 0 (timeout / carrier loss): RETURN stat — the
+            // menu loop's next read applies the idle/carrier outcome.
+            return Ok(FlagLoop::Exit);
         };
-        let listing = format!("\r\n{body}\r\n");
-        self.write_and_flush(listing.as_bytes()).await
+        let answer = answer.trim();
+
+        // `<CR>` (=none): StrLen 0 falls through to RESULT_SUCCESS,
+        // ending the loop (express.e:12646).
+        if answer.is_empty() {
+            return Ok(FlagLoop::Done);
+        }
+        // `C` / `c` (bare, or `C ` which trims to `C`): the clear family
+        // (express.e:12609). Inline `C <arg>` and the sub-prompt resolve
+        // a target; `*` clears all, a name (removeFlagFromList) is
+        // deferred for slice D6b.
+        if is_clear_family(answer) {
+            return self.flag_clear(session, answer).await;
+        }
+        // (`F`-from, express.e:12625, is deferred for slice D6b.)
+        //
+        // A filename token: addFlagToList (express.e:12638). A newly
+        // flagged file returns RESULT_FAILURE (stat=2 -> -1), exiting the
+        // loop with no trailing line; a no-op (too short, or already
+        // flagged) falls through to RESULT_SUCCESS.
+        if flag_add(session, answer) {
+            Ok(FlagLoop::Exit)
+        } else {
+            Ok(FlagLoop::Done)
+        }
+    }
+
+    /// The `C`lear path of `flagFiles` (`amiexpress/express.e:12609-12623`).
+    /// `token` is the user's clear-family line (`C`, `C ` or `C <arg>`).
+    /// Bare `C` renders [`CLEAR_PROMPT`] and reads the target; an inline
+    /// `C <arg>` uses the argument directly (no sub-prompt, no blank
+    /// line). `*` clears every flag; an empty sub-prompt answer ends the
+    /// loop (`RESULT_SUCCESS`); clearing-by-name is deferred. Always loops
+    /// (`RETURN 1`) once a clear is resolved.
+    async fn flag_clear(
+        &mut self,
+        session: &mut MenuSession,
+        token: &str,
+    ) -> Result<FlagLoop, T::Error> {
+        // Inline `C <arg>` (express.e:12610): strip the `C ` prefix.
+        let target = if token.len() > 1 {
+            token[1..].trim().to_ascii_uppercase()
+        } else {
+            // Bare `C`: the clear sub-prompt + lineInput (express.e:12614).
+            let TerminalRead::Line(answer) = self
+                .read_prompted(CLEAR_PROMPT, TerminalEcho::Visible)
+                .await?
+            else {
+                return Ok(FlagLoop::Exit);
+            };
+            let answer = answer.trim();
+            // Empty -> RESULT_SUCCESS, no clear, end the loop (:12618).
+            if answer.is_empty() {
+                return Ok(FlagLoop::Done);
+            }
+            // The post-input `aePuts('\b\n')` (:12619), only on the bare-C
+            // path with a non-empty answer.
+            self.write_and_flush(CRLF).await?;
+            answer.to_ascii_uppercase()
+        };
+        // `*` -> clearFlagItems (:12622). A name -> removeFlagFromList,
+        // deferred for slice D6b (treated as a no-op so the listing
+        // re-renders unchanged).
+        if target.starts_with('*') {
+            session.flagged_files_mut().clear();
+        }
+        Ok(FlagLoop::Again)
     }
 
     /// Renders the baseline user-stats screen — Tier A quickwin A3
@@ -533,10 +702,9 @@ where
             // Slice D4 (`Z`): the internal zippy text search — see
             // `file_list::handle_zippy_search` for the parity record.
             MenuCommand::ZippySearch(arg) => self.handle_zippy_search(&mut session, arg).await?,
-            // Slice D6a (`A`): the read-only flagged-set listing
-            // (`showFlags`, `amiexpress/express.e:12486`). The
-            // `Filename(s) to flag:` prompt loop is slice D6b.
-            MenuCommand::AlterFlags => self.handle_alter_flags(&session).await?,
+            // Slices D6a/D6b (`A`): the `alterFlags` flag listing +
+            // `Filename(s) to flag:` prompt loop (`amiexpress/express.e:12648`).
+            MenuCommand::AlterFlags => self.handle_alter_flags(&mut session).await?,
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))

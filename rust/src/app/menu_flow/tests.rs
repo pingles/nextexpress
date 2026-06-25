@@ -31,7 +31,9 @@ use crate::domain::session::typed::MenuSession;
 use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
 use crate::domain::user::{RatioMode, User};
 
-use super::{DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, GOODBYE_LINE};
+use super::{
+    DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, CLEAR_PROMPT, FLAG_PROMPT, GOODBYE_LINE,
+};
 
 /// Write-capturing terminal with a scripted key-read queue. The adapter
 /// echoes NOTHING in hot-key mode (the caller owns every visible byte),
@@ -40,6 +42,7 @@ use super::{DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, GOODBYE_LINE};
 struct CaptureTerminal {
     output: Vec<u8>,
     keys: VecDeque<KeyRead>,
+    lines: VecDeque<TerminalRead>,
 }
 
 impl CaptureTerminal {
@@ -47,6 +50,20 @@ impl CaptureTerminal {
         Self {
             output: Vec::new(),
             keys: keys.into(),
+            lines: VecDeque::new(),
+        }
+    }
+
+    /// Scripts the `read_line` (`lineInput`) queue for line-prompt loops
+    /// like `A`'s `flagFiles` (slice D6b). Like the real adapter in
+    /// hot-key parity, the test terminal echoes NOTHING, so `output`
+    /// stays the pure server-generated wire. A drained queue reads as
+    /// `Eof` (carrier loss), matching the default terminal.
+    fn with_lines(lines: Vec<TerminalRead>) -> Self {
+        Self {
+            output: Vec::new(),
+            keys: VecDeque::new(),
+            lines: lines.into(),
         }
     }
 }
@@ -70,7 +87,8 @@ impl Terminal for CaptureTerminal {
         _echo: TerminalEcho,
         _timeout: Duration,
     ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
-        Box::pin(async { Ok(TerminalRead::Eof) })
+        let read = self.lines.pop_front().unwrap_or(TerminalRead::Eof);
+        Box::pin(async move { Ok(read) })
     }
 
     fn read_key(&mut self, _timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
@@ -85,6 +103,12 @@ fn char_key(c: u8) -> KeyRead {
 
 fn enter_key() -> KeyRead {
     KeyRead::Key(KeyEvent::Enter)
+}
+
+/// A scripted `read_line` result carrying `text` (the legacy `lineInput`
+/// returning a typed line). An empty `text` is the `<CR>`/none answer.
+fn line(text: &str) -> TerminalRead {
+    TerminalRead::Line(text.to_string())
 }
 
 fn conference(number: u32) -> Conference {
@@ -350,19 +374,23 @@ async fn confirm_ignores_unrecognised_keys_until_a_yes_or_no() {
 
 #[tokio::test]
 async fn a_with_no_flags_lists_no_file_flags() {
-    // Slice D6a. `A` -> alterFlags -> showFlags (express.e:12486): an
+    // Slice D6a/D6b. `A` -> alterFlags -> showFlags (express.e:12486): an
     // empty set prints `No file flags`, framed by alterFlags's leading
-    // `\b\n`. Live: ae_tierd_alterflags.txt `* -> cleared, empty
-    // listing` (`\r\nNo file flags\r\n` before the prompt). The caller
-    // stays at the menu (Continue).
+    // `\b\n`, then the flag prompt. Live: ae_tierd_alterflags.txt
+    // `* -> cleared, empty listing`. Here the prompt's lineInput hits
+    // EOF (carrier loss, stat<0), so alterFlags returns with no trailing
+    // blank line; the caller stays in the menu (Continue), which detects
+    // the dropped carrier on its next read.
     let services = test_services();
-    let mut terminal = CaptureTerminal::default();
+    let mut terminal = CaptureTerminal::default(); // read_line -> Eof
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
 
     assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    let mut expected = b"\r\nNo file flags\r\n".to_vec();
+    expected.extend_from_slice(FLAG_PROMPT);
     assert_eq!(
         terminal.output,
-        b"\r\nNo file flags\r\n",
+        expected,
         "got {:?}",
         String::from_utf8_lossy(&terminal.output)
     );
@@ -370,10 +398,11 @@ async fn a_with_no_flags_lists_no_file_flags() {
 
 #[tokio::test]
 async fn a_lists_flagged_names_uppercased_and_space_joined() {
-    // Slice D6a. showFlaggedFiles(-1) (express.e:2830) space-joins the
-    // upper-cased flagged names. Live: ae_tierd_alterflags.txt
-    // `A again -> clean ... listing` (`\r\nMYDEMO.DMS\r\n`). Names are
-    // upper-cased on flagging and ordered by the catalogue key.
+    // Slice D6a/D6b. showFlaggedFiles(-1) (express.e:2830) space-joins
+    // the upper-cased flagged names, then the flag prompt follows. Live:
+    // ae_tierd_alterflags.txt `A again -> clean ... listing`. Names are
+    // upper-cased on flagging and ordered by the catalogue key; the
+    // prompt's lineInput hits EOF here (no trailing line).
     let services = test_services();
     let mut session = menu_session();
     session
@@ -386,11 +415,179 @@ async fn a_lists_flagged_names_uppercased_and_space_joined() {
     let outcome = dispatch_line(&services, &mut terminal, session, "A").await;
 
     assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    let mut expected = b"\r\nMYDEMO.DMS TERMV48.LHA\r\n".to_vec();
+    expected.extend_from_slice(FLAG_PROMPT);
     assert_eq!(
         terminal.output,
-        b"\r\nMYDEMO.DMS TERMV48.LHA\r\n",
+        expected,
         "got {:?}",
         String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
+async fn a_flag_prompt_then_enter_returns_to_menu() {
+    // Slice D6b. `A` -> alterFlags (express.e:12648): the leading `\b\n`,
+    // showFlags's `No file flags\r\n`, then the `flagFiles` main prompt
+    // (express.e:12601). A bare `<CR>` (=none) falls through to
+    // RESULT_SUCCESS, ending the REPEAT loop, so alterFlags emits its
+    // trailing `\b\n` and returns to the menu. Live:
+    // ae_tierd_alterflags.txt `Enter (=none) -> back to menu`.
+    let services = test_services();
+    let mut terminal = CaptureTerminal::with_lines(vec![line("")]);
+    let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
+
+    assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    let mut expected = b"\r\nNo file flags\r\n".to_vec();
+    expected.extend_from_slice(FLAG_PROMPT);
+    expected.extend_from_slice(b"\r\n");
+    assert_eq!(
+        terminal.output,
+        expected,
+        "got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
+async fn a_flagging_a_typed_name_exits_to_the_menu() {
+    // Slice D6b. A filename typed at the flag prompt is added via
+    // addFlagToList (express.e:12638); a *new* file returns
+    // RESULT_FAILURE (stat=2 -> -1), so alterFlags returns at once with
+    // NO trailing blank line. Live: ae_tierd_alterflags.txt
+    // `flag 'mydemo.dms' -> ... Menu`. The name is upper-cased.
+    let services = test_services();
+    let mut terminal = CaptureTerminal::with_lines(vec![line("mydemo.dms")]);
+    let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
+
+    let DispatchOutcome::Continue(session) = outcome else {
+        panic!("flagging a name returns to the menu");
+    };
+    assert_eq!(
+        session.flagged_files().names().collect::<Vec<_>>(),
+        vec!["MYDEMO.DMS"],
+        "the typed name is flagged, upper-cased"
+    );
+    let mut expected = b"\r\nNo file flags\r\n".to_vec();
+    expected.extend_from_slice(FLAG_PROMPT);
+    assert_eq!(
+        terminal.output,
+        expected,
+        "a new flag exits with no trailing blank line, got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
+async fn a_single_char_token_is_a_no_op_that_ends_the_loop() {
+    // Slice D6b. addFlagToList's `StrLen(fileName)>1` gate
+    // (express.e:12532): a one-character token is not flagged and returns
+    // 0 (RESULT_SUCCESS), so the loop ends with a trailing blank line —
+    // unlike a real filename, which exits with none.
+    let services = test_services();
+    let mut terminal = CaptureTerminal::with_lines(vec![line("x")]);
+    let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
+
+    let DispatchOutcome::Continue(session) = outcome else {
+        panic!("a no-op token stays in the menu");
+    };
+    assert!(
+        session.flagged_files().is_empty(),
+        "a one-character token must not be flagged"
+    );
+    let mut expected = b"\r\nNo file flags\r\n".to_vec();
+    expected.extend_from_slice(FLAG_PROMPT);
+    expected.extend_from_slice(b"\r\n");
+    assert_eq!(
+        terminal.output,
+        expected,
+        "got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
+async fn a_clear_all_empties_the_set_and_reprompts() {
+    // Slice D6b. Bare `C` opens the clear sub-prompt (express.e:12614);
+    // `*` runs clearFlagItems (:12622), emits the post-input `\b\n`, and
+    // returns 1, so the REPEAT loop re-shows the now-empty listing. A
+    // final `<CR>` ends it. Live: ae_tierd_alterflags.txt
+    // `C -> Clear sub-prompt` / `* -> cleared, empty listing`.
+    let services = test_services();
+    let mut terminal = CaptureTerminal::with_lines(vec![line("C"), line("*"), line("")]);
+    let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "A").await;
+
+    let DispatchOutcome::Continue(session) = outcome else {
+        panic!("clearing stays in the menu");
+    };
+    assert!(
+        session.flagged_files().is_empty(),
+        "`C` -> `*` clears every flag"
+    );
+    let mut expected = b"\r\nMYDEMO.DMS\r\n".to_vec(); // leading + listing
+    expected.extend_from_slice(FLAG_PROMPT); // main prompt
+    expected.extend_from_slice(CLEAR_PROMPT); // bare C -> clear sub-prompt
+    expected.extend_from_slice(b"\r\n"); // post-clear `\b\n`
+    expected.extend_from_slice(b"No file flags\r\n"); // reloop listing (empty)
+    expected.extend_from_slice(FLAG_PROMPT); // main prompt again
+    expected.extend_from_slice(b"\r\n"); // trailing (CR=none)
+    assert_eq!(
+        terminal.output,
+        expected,
+        "got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
+async fn a_inline_clear_star_skips_the_subprompt() {
+    // Slice D6b. `C *` on one line (express.e:12610) strips the `C `
+    // prefix and clears directly — no clear sub-prompt, no post-input
+    // blank line — then returns 1 and re-shows the empty listing. The
+    // two-step `C` then `*` is the capture-pinned form
+    // (ae_tierd_alterflags.txt); this inline variant is source-derived.
+    let services = test_services();
+    let mut terminal = CaptureTerminal::with_lines(vec![line("C *"), line("")]);
+    let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "A").await;
+
+    let DispatchOutcome::Continue(session) = outcome else {
+        panic!("clearing stays in the menu");
+    };
+    assert!(
+        session.flagged_files().is_empty(),
+        "`C *` clears every flag"
+    );
+    let mut expected = b"\r\nMYDEMO.DMS\r\n".to_vec();
+    expected.extend_from_slice(FLAG_PROMPT); // main prompt
+    expected.extend_from_slice(b"No file flags\r\n"); // reloop — NO sub-prompt, NO post-`\b\n`
+    expected.extend_from_slice(FLAG_PROMPT);
+    expected.extend_from_slice(b"\r\n");
+    assert_eq!(
+        terminal.output,
+        expected,
+        "inline `C *` skips the sub-prompt, got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
+async fn a_clear_by_name_is_deferred_and_leaves_the_set_intact() {
+    // Slice D6b deferral. At the clear sub-prompt a name (not `*`) maps
+    // to removeFlagFromList (express.e:12622), which NextExpress does not
+    // yet implement: the flag set is left intact and the loop re-shows
+    // it. Pins the `*`-only clear guard so a mutant clearing on any token
+    // is caught.
+    let services = test_services();
+    let mut terminal = CaptureTerminal::with_lines(vec![line("C"), line("mydemo.dms"), line("")]);
+    let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "A").await;
+
+    let DispatchOutcome::Continue(session) = outcome else {
+        panic!("stays in the menu");
+    };
+    assert_eq!(
+        session.flagged_files().names().collect::<Vec<_>>(),
+        vec!["MYDEMO.DMS"],
+        "clear-by-name is deferred — the flag survives"
     );
 }
 

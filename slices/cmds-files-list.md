@@ -339,11 +339,48 @@ deliberately distinct from the colourful `F` door.
   what they've collected before downloading. The listing alone
   closes that loop and ships ahead of the edit grammar.
 
-## Slice D6b — `A` (edit file flags, add / remove)
+## Slice D6b — `A` (edit file flags, the `flagFiles` prompt loop) — **Done**
 
-- **In Scope**
-  - Interactive add / remove sub-prompt over the flagged list
-    (`+filename`, `-filename`, list-by-area), with legacy wire text.
+- **Done** — `A` now runs the full `alterFlags` REPEAT loop
+  (`amiexpress/express.e:12648` -> `flagFiles(NIL)` `:12594`), not just
+  the opening listing. After the leading `\r\n`, each pass shows the
+  `showFlags` listing (D6a) and renders the main prompt
+  `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` (`FLAG_PROMPT`,
+  `:12601`). The loop maps the legacy `stat` return (`*axenums`:
+  `RESULT_FAILURE=-1`, `RESULT_SUCCESS=0`) to a `FlagLoop` signal:
+  - **A filename token** is flagged via `addFlagToList` (`:12638`); a
+    *new* file returns `2` -> `RESULT_FAILURE`, so the loop exits **with
+    no trailing blank line** straight to the menu (only one name flags
+    per `A`). The name is upper-cased and stored under the current
+    conference with area `0` (the legacy keys flags by `(confNum,
+    fileName)` with no area). A one-character token or an already-flagged
+    name is a no-op (`StrLen>1` gate, `isInFlaggedList`) -> `RESULT_SUCCESS`.
+  - **Bare `C`** opens the clear sub-prompt
+    `Filename(s) to Clear: (*)All, (Enter)=none? ` (`CLEAR_PROMPT`,
+    `:12614`); `*` runs `clearFlagItems` (`:12622`), emits the post-input
+    `\r\n`, and loops (`RETURN 1`) so the next pass re-shows the emptied
+    listing. An empty sub-prompt answer ends the loop (`RESULT_SUCCESS`).
+    Inline `C *` (`:12610`) clears directly with no sub-prompt and no
+    post-input blank line.
+  - **`<CR>` (=none)** ends the loop; `alterFlags` emits its trailing
+    `\r\n` and returns to the menu.
+  - A dropped / idle caller at any prompt (`lineInput < 0`) exits the
+    loop; the menu loop's next read applies the carrier-loss / idle
+    outcome.
+- Byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`; the
+  `FLAG_PROMPT` / `CLEAR_PROMPT` literals are restated in both the
+  handler unit tests and the
+  `a_flag_prompt_loop_flags_a_name_then_clears_over_telnet` telnet smoke.
+  6 handler unit tests + 2 telnet smokes; mutation-clean
+  (`make mutants-diff`: 14 caught, 3 unviable, 0 missed); live-verified
+  by hand against the Rust server.
+- **Deferred (not built):**
+  - `F`-from (`flagFrom`, `:12625`) — flag every catalogue file from a
+    named start point; uncaptured.
+  - Clear-**by-name** (`removeFlagFromList`, the non-`*` clear target,
+    `:12622`) — a name at the clear sub-prompt is currently a no-op that
+    re-shows the unchanged listing; only `*` (=All) clears.
+  - The `ACS_DOWNLOAD` gate (`express.e:24602`).
 - **Out of Scope**
   - "Flag from outside the current conference" — the legacy permits
     cross-conference flagging in some configurations; deferred.

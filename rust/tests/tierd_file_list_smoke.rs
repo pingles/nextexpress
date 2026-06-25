@@ -60,6 +60,22 @@ const LEAVE_FLAGGED_CONFIRM: &[u8] =
 /// (`comparison/transcripts/ae_tierd_g_confirm.txt:177`).
 const AUTOSAVING_FILE_FLAGS: &[u8] = b"\r\n** AutoSaving File Flags **\r\n\x07\r\n";
 
+/// `flagFiles`'s main prompt (`amiexpress/express.e:12601`), live-captured
+/// (`comparison/transcripts/ae_tierd_alterflags.txt:114`): the `A`-loop
+/// `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` line (slice D6b).
+const FLAG_PROMPT: &[u8] =
+    b"\x1b[36mFilename(s) to flag: \x1b[32m(\x1b[33mF\x1b[32m)\x1b[36mrom, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? ";
+
+/// `flagFiles`'s clear sub-prompt (`amiexpress/express.e:12614`),
+/// live-captured (`comparison/transcripts/ae_tierd_alterflags.txt:122`):
+/// `Filename(s) to Clear: (*)All, (Enter)=none? ` (slice D6b).
+const CLEAR_PROMPT: &[u8] =
+    b"\x1b[36mFilename(s) to Clear: \x1b[32m(\x1b[33m*\x1b[32m)\x1b[36mAll, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=none\x1b[0m? ";
+
+/// The shared tail of both flag prompts (`=none? ` with the reset),
+/// used to drain the connection up to a completed prompt.
+const PROMPT_TAIL: &[u8] = b"=none\x1b[0m? ";
+
 #[tokio::test]
 async fn f_1_pages_the_seeded_corpus_and_q_quits() {
     // ae_tierd_aquascan3.txt S4: banner, scan header, framed rows;
@@ -486,23 +502,26 @@ async fn plain_g_with_a_flagged_file_confirms_then_n_stays_and_y_leaves() {
 
 #[tokio::test]
 async fn a_lists_the_session_flag_set_over_telnet() {
-    // Slice D6a. `A` runs the genuine internal alterFlags -> showFlags
-    // (express.e:24601 -> :12486). Reference:
-    // `comparison/transcripts/ae_tierd_alterflags.txt` — empty prints
-    // `\r\nNo file flags\r\n`; a flagged set prints `\r\n<NAMES>\r\n`
-    // (upper-cased, space-joined). The `Filename(s) to flag:` prompt
-    // loop is slice D6b, so D6a's `A` returns straight to the menu.
+    // Slice D6a/D6b. `A` runs the genuine internal alterFlags -> showFlags
+    // (express.e:24601 -> :12486 -> :12598). Reference:
+    // `comparison/transcripts/ae_tierd_alterflags.txt` — each `A` shows
+    // the listing (empty `No file flags`, else upper-cased space-joined
+    // names) framed by `\r\n`, then the `Filename(s) to flag:` prompt
+    // (slice D6b). `<CR>` (=none) returns to the menu.
     let addr = spawn_listener_with_demo_files().await;
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
-    // Nothing flagged yet: `A` lists `No file flags`, back to the menu.
+    // Nothing flagged yet: `A` lists `No file flags`, then the prompt.
     write_line(&mut stream, b"A").await;
-    let empty = drain_until(&mut stream, b"mins. left): ").await;
+    let empty = drain_until(&mut stream, PROMPT_TAIL).await;
     assert!(
-        contains(&empty, b"\r\nNo file flags\r\n"),
-        "bare A with no flags must list `No file flags`, got {:?}",
+        contains(&empty, b"\r\nNo file flags\r\n") && contains(&empty, FLAG_PROMPT),
+        "bare A with no flags must list `No file flags` then the flag prompt, got {:?}",
         String::from_utf8_lossy(&empty),
     );
+    // `<CR>` (=none) ends the loop, back to the menu.
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b"mins. left): ").await;
 
     // Flag ANSIPACK.LHA (dir-1 #1) through the More? `F` verb.
     write_line(&mut stream, b"F 1").await;
@@ -517,14 +536,69 @@ async fn a_lists_the_session_flag_set_over_telnet() {
     write_key(&mut stream, b"Q").await;
     drain_until(&mut stream, b"mins. left): ").await;
 
-    // `A` now lists the flagged name, back to the menu.
+    // `A` now lists the flagged name, then the prompt; `<CR>` exits.
     write_line(&mut stream, b"A").await;
-    let listed = drain_until(&mut stream, b"mins. left): ").await;
+    let listed = drain_until(&mut stream, PROMPT_TAIL).await;
     assert!(
-        contains(&listed, b"\r\nANSIPACK.LHA\r\n"),
-        "A must list the flagged name, got {:?}",
+        contains(&listed, b"\r\nANSIPACK.LHA\r\n") && contains(&listed, FLAG_PROMPT),
+        "A must list the flagged name then the flag prompt, got {:?}",
         String::from_utf8_lossy(&listed),
     );
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn a_flag_prompt_loop_flags_a_name_then_clears_over_telnet() {
+    // Slice D6b. The `A` flagFiles loop (express.e:12594) driven over the
+    // compiled listener against `ae_tierd_alterflags.txt`: type a name to
+    // flag it (addFlagToList does NOT check the file exists, :12555), see
+    // it listed, then `C` -> `*` clears the set and re-prompts, and `<CR>`
+    // returns to the menu.
+    let addr = spawn_listener_with_demo_files().await;
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+
+    // `A` -> empty listing + the flag prompt.
+    write_line(&mut stream, b"A").await;
+    drain_until(&mut stream, PROMPT_TAIL).await;
+
+    // Type a name: it is flagged (upper-cased) and the loop returns to
+    // the menu with no trailing blank line (RESULT_FAILURE exit, :12642).
+    write_line(&mut stream, b"mydemo.dms").await;
+    drain_until(&mut stream, b"mins. left): ").await;
+
+    // `A` again -> the flagged name is listed before the prompt.
+    write_line(&mut stream, b"A").await;
+    let listed = drain_until(&mut stream, PROMPT_TAIL).await;
+    assert!(
+        contains(&listed, b"\r\nMYDEMO.DMS\r\n"),
+        "the typed name lists upper-cased, got {:?}",
+        String::from_utf8_lossy(&listed),
+    );
+
+    // `C` opens the clear sub-prompt; `*` clears all and re-shows the
+    // empty listing + the flag prompt.
+    write_line(&mut stream, b"C").await;
+    let clear = drain_until(&mut stream, PROMPT_TAIL).await;
+    assert!(
+        contains(&clear, CLEAR_PROMPT),
+        "bare C must open the clear sub-prompt, got {:?}",
+        String::from_utf8_lossy(&clear),
+    );
+    write_line(&mut stream, b"*").await;
+    let cleared = drain_until(&mut stream, PROMPT_TAIL).await;
+    assert!(
+        contains(&cleared, b"\r\nNo file flags\r\n"),
+        "`*` must clear the set and re-show `No file flags`, got {:?}",
+        String::from_utf8_lossy(&cleared),
+    );
+
+    // `<CR>` (=none) returns to the menu; the set is already empty so the
+    // logoff teardown takes the plain path.
+    write_line(&mut stream, b"").await;
+    drain_until(&mut stream, b"mins. left): ").await;
 
     end_session(&mut stream).await;
 }
