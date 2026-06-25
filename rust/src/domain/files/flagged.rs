@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 /// case-insensitively (stored uppercase) — the DIR catalogue is
 /// case-preserving but the legacy flag prompt is not.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct FlaggedKey {
+pub struct FlaggedKey {
     conference: u32,
     area: u32,
     name: String,
@@ -31,12 +31,21 @@ impl FlaggedKey {
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
+
+    /// The conference this flag belongs to — the legacy `confNum`
+    /// half of the persisted `(confNum, fileName)` key (slice D5-persist).
+    // Consumed by Task 2 (FlaggedStore port); until then only the tests
+    // exercise it.
+    #[allow(dead_code)]
+    pub(crate) fn conference(&self) -> u32 {
+        self.conference
+    }
 }
 
 /// The session's flagged-file set. Slice D5 will persist it; until
 /// then it lives and dies with the session.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct FlaggedFiles {
+pub struct FlaggedFiles {
     set: BTreeSet<FlaggedKey>,
 }
 
@@ -80,6 +89,18 @@ impl FlaggedFiles {
     pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
         self.set.iter().map(FlaggedKey::name)
     }
+
+    /// The flags as `(conference, name)` pairs in catalogue-key order —
+    /// the projection `FlaggedStore::save` persists (slice D5-persist).
+    /// `area` is deliberately omitted: it is a session-local concern and
+    /// the legacy `flagged` file stores only conf + name
+    /// (`amiexpress/express.e:2822`).
+    // Consumed by Task 2 (FlaggedStore port); until then only the tests
+    // exercise it.
+    #[allow(dead_code)]
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (u32, &str)> {
+        self.set.iter().map(|k| (k.conference(), k.name()))
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +126,18 @@ mod tests {
     fn name_is_uppercase_folded_for_matching() {
         let key = FlaggedKey::new(2, 1, "TermV48.lha");
         assert_eq!(key.name(), "TERMV48.LHA");
+    }
+
+    #[test]
+    fn entries_yield_conference_and_name_pairs_in_key_order() {
+        let mut flags = FlaggedFiles::default();
+        flags.flag(FlaggedKey::new(2, 1, "termv48.lha"));
+        flags.flag(FlaggedKey::new(1, 3, "mydemo.dms"));
+        let entries: Vec<(u32, &str)> = flags.entries().collect();
+        assert_eq!(
+            entries,
+            vec![(1, "MYDEMO.DMS"), (2, "TERMV48.LHA")],
+            "entries are (conference, upper-name) in BTreeSet key order"
+        );
     }
 }
