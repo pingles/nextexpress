@@ -732,50 +732,25 @@ fn row_to_partial_snapshot(row: &Row<'_>) -> rusqlite::Result<PersistedUser> {
 
 // ─── Boxed error wrappers for SQLite's conversion-error vocabulary ──
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("unknown password_hash_kind: {0}")]
 struct InvalidHashKind(String);
-impl std::fmt::Display for InvalidHashKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown password_hash_kind: {}", self.0)
-    }
-}
-impl std::error::Error for InvalidHashKind {}
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("unknown ratio_mode: {0}")]
 struct InvalidRatioMode(String);
-impl std::fmt::Display for InvalidRatioMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown ratio_mode: {}", self.0)
-    }
-}
-impl std::error::Error for InvalidRatioMode {}
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{0} value out of range for u8")]
 struct OutOfRange(&'static str);
-impl std::fmt::Display for OutOfRange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} value out of range for u8", self.0)
-    }
-}
-impl std::error::Error for OutOfRange {}
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
 struct UserBuildError(UserError);
-impl std::fmt::Display for UserBuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for UserBuildError {}
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
 struct PointerBuildError(crate::domain::messaging::read_pointers::ReadPointersError);
-impl std::fmt::Display for PointerBuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-impl std::error::Error for PointerBuildError {}
 
 #[cfg(test)]
 mod tests {

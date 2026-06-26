@@ -32,6 +32,12 @@ pub enum SqliteFlaggedStoreError {
     Schema(#[source] rusqlite::Error),
 }
 
+impl From<rusqlite::Error> for FlaggedStoreError {
+    fn from(error: rusqlite::Error) -> Self {
+        FlaggedStoreError::Backend(error.to_string())
+    }
+}
+
 /// `rusqlite`-backed [`FlaggedStore`]; owns one connection behind a
 /// [`Mutex`], WAL + `busy_timeout` like the user repository.
 pub struct SqliteFlaggedStore {
@@ -87,17 +93,14 @@ impl SqliteFlaggedStore {
 impl FlaggedStore for SqliteFlaggedStore {
     fn load(&self, slot: u32) -> Result<FlaggedFiles, FlaggedStoreError> {
         let conn = self.conn.lock().expect("flagged store mutex");
-        let mut stmt = conn
-            .prepare("SELECT conference, name FROM flagged_files WHERE slot_number = ?1")
-            .map_err(|e| FlaggedStoreError::Backend(e.to_string()))?;
-        let rows = stmt
-            .query_map(params![slot], |row| {
-                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| FlaggedStoreError::Backend(e.to_string()))?;
+        let mut stmt =
+            conn.prepare("SELECT conference, name FROM flagged_files WHERE slot_number = ?1")?;
+        let rows = stmt.query_map(params![slot], |row| {
+            Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+        })?;
         let mut flags = FlaggedFiles::default();
         for row in rows {
-            let (conference, name) = row.map_err(|e| FlaggedStoreError::Backend(e.to_string()))?;
+            let (conference, name) = row?;
             flags.flag(FlaggedKey::new(conference, 0, &name));
         }
         Ok(flags)
@@ -105,23 +108,18 @@ impl FlaggedStore for SqliteFlaggedStore {
 
     fn save(&self, slot: u32, flags: &FlaggedFiles) -> Result<(), FlaggedStoreError> {
         let mut conn = self.conn.lock().expect("flagged store mutex");
-        let tx = conn
-            .transaction()
-            .map_err(|e| FlaggedStoreError::Backend(e.to_string()))?;
+        let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM flagged_files WHERE slot_number = ?1",
             params![slot],
-        )
-        .map_err(|e| FlaggedStoreError::Backend(e.to_string()))?;
+        )?;
         for (conference, name) in flags.entries() {
             tx.execute(
                 "INSERT INTO flagged_files (slot_number, conference, name) VALUES (?1, ?2, ?3)",
                 params![slot, conference, name],
-            )
-            .map_err(|e| FlaggedStoreError::Backend(e.to_string()))?;
+            )?;
         }
-        tx.commit()
-            .map_err(|e| FlaggedStoreError::Backend(e.to_string()))?;
+        tx.commit()?;
         Ok(())
     }
 }
