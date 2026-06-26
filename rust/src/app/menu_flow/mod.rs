@@ -536,6 +536,17 @@ where
         // branch above returns early and skips it. Persisting the flags
         // is slice D5-persist.
         self.write_and_flush(AUTOSAVING_FILE_FLAGS).await?;
+        // D5-persist: saveFlagged writes the set to the durable store
+        // (express.e:2806). Read slot + set before `user_requests_logoff`
+        // consumes the session. A store error is logged, never fatal.
+        let slot = session.user().slot_number();
+        if let Err(error) = self
+            .services
+            .flagged_store
+            .save(slot, session.flagged_files())
+        {
+            eprintln!("saveFlagged: could not persist flags for slot {slot}: {error}");
+        }
         let logging_off = session.user_requests_logoff();
         // SCREEN_LOGOFF (amiexpress/express.e:6554, displayed at :8187):
         // sysop-supplied pre-goodbye splash. The adapter returns empty

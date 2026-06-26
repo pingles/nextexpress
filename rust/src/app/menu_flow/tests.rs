@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime};
 
 use crate::adapters::file_screen_repository::FileScreenRepository;
@@ -25,7 +25,9 @@ use crate::app::terminal::{
 };
 use crate::app::wire_text::IDLE_TIMEOUT_LINE;
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
+use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::files::flagged::FlaggedKey;
+use crate::domain::files::flagged_store::{FlaggedStore, FlaggedStoreError};
 use crate::domain::password::{PasswordHashKind, PasswordHasher};
 use crate::domain::session::typed::MenuSession;
 use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
@@ -34,6 +36,46 @@ use crate::domain::user::{RatioMode, User};
 use super::{
     DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, CLEAR_PROMPT, FLAG_PROMPT, GOODBYE_LINE,
 };
+
+#[derive(Default)]
+struct SpyFlaggedStore {
+    /// (slot, sorted names) recorded on each save.
+    saved: StdMutex<Vec<(u32, Vec<String>)>>,
+    /// Pre-seeded sets returned by `load`, keyed by slot.
+    seeded: StdMutex<std::collections::HashMap<u32, FlaggedFiles>>,
+    /// When true, `save`/`load` return an error.
+    fail: bool,
+}
+
+impl FlaggedStore for SpyFlaggedStore {
+    fn load(&self, slot: u32) -> Result<FlaggedFiles, FlaggedStoreError> {
+        if self.fail {
+            return Err(FlaggedStoreError::Backend("boom".into()));
+        }
+        Ok(self
+            .seeded
+            .lock()
+            .unwrap()
+            .get(&slot)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    fn save(&self, slot: u32, flags: &FlaggedFiles) -> Result<(), FlaggedStoreError> {
+        if self.fail {
+            return Err(FlaggedStoreError::Backend("boom".into()));
+        }
+        let names: Vec<String> = flags.names().map(str::to_owned).collect();
+        self.saved.lock().unwrap().push((slot, names));
+        Ok(())
+    }
+}
+
+fn services_with_flagged_store(store: Arc<dyn FlaggedStore + Send + Sync>) -> AppServices {
+    let mut services = test_services();
+    services.flagged_store = store;
+    services
+}
 
 /// Write-capturing terminal with a scripted key-read queue. The adapter
 /// echoes NOTHING in hot-key mode (the caller owns every visible byte),
@@ -750,5 +792,40 @@ fn render_time_line_uses_two_digit_year_wrap_after_2000() {
     assert_eq!(
         super::render_time_line(at),
         b"\r\nIt is 09-09-01 01:46:40\r\n"
+    );
+}
+
+#[tokio::test]
+async fn logoff_saves_the_flag_set_for_the_user_slot() {
+    // Slice D5-persist: saveFlagged (express.e:2806) writes the session
+    // set to the durable store on the `G Y` logoff path, after the
+    // autosave banner. The sysop fixture is slot 2 (test_user()).
+    let spy = Arc::new(SpyFlaggedStore::default());
+    let services = services_with_flagged_store(spy.clone());
+    let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
+    let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G Y").await;
+
+    assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
+    let saved = spy.saved.lock().unwrap();
+    assert_eq!(saved.len(), 1, "save called exactly once on logoff");
+    assert_eq!(
+        saved[0],
+        (2, vec!["MYDEMO.DMS".to_string()]),
+        "saved (slot, names) for the logged-on user"
+    );
+}
+
+#[tokio::test]
+async fn logoff_proceeds_when_the_flag_save_fails() {
+    let spy = Arc::new(SpyFlaggedStore {
+        fail: true,
+        ..SpyFlaggedStore::default()
+    });
+    let services = services_with_flagged_store(spy);
+    let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
+    let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G Y").await;
+    assert!(
+        matches!(outcome, DispatchOutcome::LogoffComplete(_)),
+        "a save failure must not block logoff"
     );
 }
