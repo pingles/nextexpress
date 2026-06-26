@@ -651,6 +651,9 @@ async fn spawn_listener_with_demo_files() -> std::net::SocketAddr {
             conferences: conferences_handle,
             mail_stores,
             file_repo,
+            flagged_store: Arc::new(
+                nextexpress::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
         },
     );
 

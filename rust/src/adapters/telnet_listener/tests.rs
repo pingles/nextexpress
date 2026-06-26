@@ -53,6 +53,9 @@ fn test_runtime(
                     Vec::new(),
                 ),
             ),
+            flagged_store: std::sync::Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
         },
     )
 }

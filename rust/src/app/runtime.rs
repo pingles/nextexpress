@@ -17,8 +17,8 @@ use std::sync::Arc;
 use crate::app::config::Config;
 use crate::app::node_pool::NodePool;
 use crate::app::services::{
-    AppServices, SharedCallerLog, SharedConferences, SharedFileRepo, SharedHasher,
-    SharedMailStores, SharedScreens, SharedUserRepo,
+    AppServices, SharedCallerLog, SharedConferences, SharedFileRepo, SharedFlaggedStore,
+    SharedHasher, SharedMailStores, SharedScreens, SharedUserRepo,
 };
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 
@@ -52,6 +52,8 @@ pub struct RuntimePorts {
     pub mail_stores: SharedMailStores,
     /// File catalogue repository.
     pub file_repo: SharedFileRepo,
+    /// Flagged-file store (slice D5-persist).
+    pub flagged_store: SharedFlaggedStore,
 }
 
 impl Runtime {
@@ -72,6 +74,7 @@ impl Runtime {
             conferences,
             mail_stores,
             file_repo,
+            flagged_store,
         } = ports;
         let pool = Arc::new(NodePool::new(config.max_nodes));
         let default_ratio = DefaultRatio {
@@ -91,6 +94,7 @@ impl Runtime {
             conferences,
             mail_stores,
             file_repo,
+            flagged_store,
             session_policy: config.session_policy(),
             default_ratio,
             new_user_gate: Arc::new(new_user_gate),

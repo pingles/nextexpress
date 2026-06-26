@@ -125,6 +125,9 @@ pub async fn spawn_seeded_sysop(fixture: TestRuntime) -> SocketAddr {
             conferences,
             mail_stores: fixture.mail_stores,
             file_repo: fixture.file_repo,
+            flagged_store: Arc::new(
+                nextexpress::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
         },
     );
 

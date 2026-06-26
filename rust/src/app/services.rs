@@ -18,6 +18,7 @@ use crate::app::screens::ScreenRepository;
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::Conference;
+use crate::domain::files::flagged_store::FlaggedStore;
 use crate::domain::files::repository::FileRepository;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::SessionPolicy;
@@ -37,6 +38,8 @@ pub type SharedConferences = Arc<Vec<Conference>>;
 pub type SharedMailStores = Arc<dyn MailStores + Send + Sync + 'static>;
 /// Shared file-catalogue repository handle (slice D1).
 pub type SharedFileRepo = Arc<dyn FileRepository + Send + Sync + 'static>;
+/// Shared flagged-file store handle (slice D5-persist).
+pub type SharedFlaggedStore = Arc<dyn FlaggedStore + Send + Sync + 'static>;
 
 /// Container for the trait-object ports and policy values an
 /// interactive BBS session reads. Cheap to clone (one `Arc` bump per
@@ -64,6 +67,9 @@ pub struct AppServices {
     /// File catalogue (slice D1): areas + listings for the `F`
     /// family of commands.
     pub file_repo: SharedFileRepo,
+    /// Flagged-file store (slice D5-persist): per-slot persistence of the
+    /// session flag set.
+    pub flagged_store: SharedFlaggedStore,
     /// Session policy values (`Copy`).
     pub session_policy: SessionPolicy,
     /// Ratio defaults applied to fresh registrations (`Copy`).

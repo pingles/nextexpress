@@ -170,6 +170,9 @@ fn services_with(file_repo: InMemoryFileRepository) -> AppServices {
         conferences: Arc::new(vec![conference(1)]),
         mail_stores: Arc::new(InMemoryMailStores::new()),
         file_repo: Arc::new(file_repo),
+        flagged_store: Arc::new(
+            crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+        ),
         session_policy: SessionPolicy::default(),
         default_ratio: DefaultRatio {
             mode: RatioMode::Disabled,

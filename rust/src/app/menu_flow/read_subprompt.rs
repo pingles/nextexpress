@@ -452,6 +452,9 @@ mod tests {
                     Vec::new(),
                 ),
             ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
                 mode: RatioMode::Disabled,

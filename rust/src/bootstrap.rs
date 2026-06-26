@@ -28,9 +28,11 @@ use crate::adapters::file_mail_store::FileMailStore;
 use crate::adapters::file_screen_repository::FileScreenRepository;
 use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
 use crate::adapters::in_memory_file_repository::InMemoryFileRepository;
+use crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore;
 use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+use crate::adapters::sqlite_flagged_store::SqliteFlaggedStore;
 use crate::adapters::sqlite_user_repository::SqliteUserRepository;
 use crate::adapters::telnet_listener::TelnetListener;
 use crate::app::config::Config;
@@ -39,8 +41,8 @@ use crate::app::mail_stores::MailStores;
 use crate::app::runtime::{Runtime, RuntimePorts};
 use crate::app::seed;
 use crate::app::services::{
-    SharedCallerLog, SharedConferences, SharedFileRepo, SharedHasher, SharedMailStores,
-    SharedScreens, SharedUserRepo,
+    SharedCallerLog, SharedConferences, SharedFileRepo, SharedFlaggedStore, SharedHasher,
+    SharedMailStores, SharedScreens, SharedUserRepo,
 };
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::{Conference, MessageBaseRef};
@@ -124,6 +126,8 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
     let conferences_handle: SharedConferences = Arc::new(conferences);
     let screens: SharedScreens = Arc::new(FileScreenRepository::new(config.bbs_path.clone()));
 
+    let flagged_store = open_flagged_store(&config)?;
+
     let runtime = Runtime::new(
         &config,
         RuntimePorts {
@@ -134,6 +138,7 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
             conferences: conferences_handle,
             mail_stores,
             file_repo,
+            flagged_store,
         },
     );
     let listen_addr = format!("127.0.0.1:{}", config.port);
@@ -182,6 +187,19 @@ fn open_user_repository(
          SQLite file for durable storage."
     );
     Ok(Arc::new(InMemoryUserRepository::new(vec![seeded])))
+}
+
+/// Constructs the configured [`crate::domain::files::flagged_store::FlaggedStore`]
+/// adapter. `None` for `config.user_storage` selects the in-memory
+/// adapter (process-lifetime, cleared on restart); `Some(path)` opens a
+/// [`SqliteFlaggedStore`] at the same database the user repository uses.
+fn open_flagged_store(
+    config: &Config,
+) -> Result<SharedFlaggedStore, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(path) = config.user_storage.as_deref() {
+        return Ok(Arc::new(SqliteFlaggedStore::open(path)?));
+    }
+    Ok(Arc::new(InMemoryFlaggedStore::new()))
 }
 
 /// Loads the conference catalogue from `bbs_path` (Slice 34a).
@@ -249,6 +267,8 @@ pub struct RuntimeAdapters {
     pub mail_stores: SharedMailStores,
     /// File catalogue repository.
     pub file_repo: SharedFileRepo,
+    /// Flagged-file store (slice D5-persist).
+    pub flagged_store: SharedFlaggedStore,
 }
 
 /// Builds a [`Runtime`] from `config` and the supplied driven-port handles.
@@ -273,6 +293,7 @@ pub fn build_runtime(config: &Config, adapters: RuntimeAdapters) -> Runtime {
             conferences: adapters.conferences,
             mail_stores: adapters.mail_stores,
             file_repo: adapters.file_repo,
+            flagged_store: adapters.flagged_store,
         },
     )
 }
@@ -280,6 +301,19 @@ pub fn build_runtime(config: &Config, adapters: RuntimeAdapters) -> Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_flagged_store_is_in_memory_without_user_storage() {
+        let config = Config::default(); // user_storage = None
+        let store = open_flagged_store(&config).expect("store");
+        // A fresh in-memory store loads empty for any slot and round-trips.
+        use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
+        assert!(store.load(1).expect("load").is_empty());
+        let mut flags = FlaggedFiles::default();
+        flags.flag(FlaggedKey::new(1, 0, "ansipack.lha"));
+        store.save(1, &flags).expect("save");
+        assert!(!store.load(1).expect("load").is_empty());
+    }
 
     #[test]
     fn build_runtime_serves_the_seeded_demo_file_catalogue() {
@@ -311,6 +345,7 @@ mod tests {
                 conferences: conferences_handle,
                 mail_stores,
                 file_repo,
+                flagged_store: Arc::new(InMemoryFlaggedStore::new()),
             },
         );
 

@@ -1151,6 +1151,9 @@ async fn spawn_one_conference_listener(
             conferences: conferences_handle,
             mail_stores,
             file_repo: Arc::new(InMemoryFileRepository::new(Vec::new(), Vec::new())),
+            flagged_store: Arc::new(
+                nextexpress::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
         },
     );
 

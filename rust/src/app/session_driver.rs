@@ -636,6 +636,9 @@ mod tests {
                     Vec::new(),
                 ),
             ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
             new_user_gate: Arc::new(gate),
@@ -695,6 +698,9 @@ mod tests {
                     Vec::new(),
                     Vec::new(),
                 ),
+            ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
@@ -821,6 +827,9 @@ mod tests {
                     Vec::new(),
                 ),
             ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
                 mode: RatioMode::ByFiles,
@@ -915,6 +924,9 @@ mod tests {
                     Vec::new(),
                 ),
             ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
                 mode: RatioMode::ByFiles,
@@ -991,6 +1003,9 @@ mod tests {
                     Vec::new(),
                     Vec::new(),
                 ),
+            ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
@@ -1093,6 +1108,9 @@ mod tests {
                     Vec::new(),
                 ),
             ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
+            ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
             new_user_gate: Arc::new(gate),
@@ -1171,6 +1189,9 @@ mod tests {
                     Vec::new(),
                     Vec::new(),
                 ),
+            ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
@@ -1338,6 +1359,9 @@ mod tests {
                     Vec::new(),
                     Vec::new(),
                 ),
+            ),
+            flagged_store: Arc::new(
+                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
