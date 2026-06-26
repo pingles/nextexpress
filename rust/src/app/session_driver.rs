@@ -614,39 +614,7 @@ mod tests {
             InMemoryUserRepository::new(vec![alice]),
             0,
         ));
-        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
-        let caller_log = Arc::new(InMemoryCallerLog::new());
-        let screens = Arc::new(StaticScreens);
-        let gate = NewUserGateConfig {
-            allow_new_users: true,
-            new_user_password: None,
-            max_new_user_password_attempts: 3,
-        };
-        let ratio = DefaultRatio {
-            mode: RatioMode::ByFiles,
-            value: 3,
-        };
-        let services = AppServices {
-            user_repo: repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences: Arc::new(conferences),
-            mail_stores: test_mail_stores(),
-            file_repo: Arc::new(
-                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            ),
-            flagged_store: Arc::new(
-                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-            ),
-            session_policy: SessionPolicy::default(),
-            default_ratio: ratio,
-            new_user_gate: Arc::new(gate),
-            bbs_name: Arc::from("TestBBS"),
-        };
+        let services = services_with(repo, conferences);
         let terminal = FakeTerminal::new([
             TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
@@ -681,11 +649,11 @@ mod tests {
         );
     }
 
-    /// Builds the standard test services around a caller-supplied user
-    /// repository and conference set — shared by the save-failure
-    /// regression tests, which differ only in the repo and the user's
-    /// conference grants.
-    fn save_failure_services(
+    /// Builds the default test services around a caller-supplied user
+    /// repository and conference set. Shared by the driver tests that
+    /// only vary the repo and the user's conference grants (save-failure
+    /// regressions, forced-reset, graphics-prompt, registration, …).
+    fn services_with(
         user_repo: SharedUserRepo,
         conferences: Vec<crate::domain::conference::Conference>,
     ) -> AppServices {
@@ -739,7 +707,7 @@ mod tests {
             InMemoryUserRepository::new(vec![alice]),
             1,
         ));
-        let services = save_failure_services(repo, conferences);
+        let services = services_with(repo, conferences);
         let terminal = FakeTerminal::new([
             TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
@@ -779,7 +747,7 @@ mod tests {
             InMemoryUserRepository::new(vec![alice]),
             1,
         ));
-        let services = save_failure_services(repo, conferences);
+        let services = services_with(repo, conferences);
         let terminal = FakeTerminal::new([
             TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
@@ -914,34 +882,7 @@ mod tests {
         alice.set_force_password_reset(true);
         crate::app::seed::grant_all_memberships(&mut alice, &conferences);
         let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
-        let services = AppServices {
-            user_repo: repo,
-            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
-            caller_log: Arc::new(InMemoryCallerLog::new()),
-            screens: Arc::new(StaticScreens),
-            conferences: Arc::new(conferences),
-            mail_stores: test_mail_stores(),
-            file_repo: Arc::new(
-                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            ),
-            flagged_store: Arc::new(
-                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-            ),
-            session_policy: SessionPolicy::default(),
-            default_ratio: DefaultRatio {
-                mode: RatioMode::ByFiles,
-                value: 3,
-            },
-            new_user_gate: Arc::new(NewUserGateConfig {
-                allow_new_users: true,
-                new_user_password: None,
-                max_new_user_password_attempts: 3,
-            }),
-            bbs_name: Arc::from("TestBBS"),
-        };
+        let services = services_with(repo, conferences);
         let terminal = FakeTerminal::new([
             TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
@@ -1086,39 +1027,7 @@ mod tests {
         let mut alice = alice_with_password("secret");
         crate::app::seed::grant_all_memberships(&mut alice, &conferences);
         let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
-        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
-        let caller_log = Arc::new(InMemoryCallerLog::new());
-        let screens = Arc::new(StaticScreens);
-        let gate = NewUserGateConfig {
-            allow_new_users: true,
-            new_user_password: None,
-            max_new_user_password_attempts: 3,
-        };
-        let ratio = DefaultRatio {
-            mode: RatioMode::ByFiles,
-            value: 3,
-        };
-        let services = AppServices {
-            user_repo: repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences: Arc::new(conferences),
-            mail_stores: test_mail_stores(),
-            file_repo: Arc::new(
-                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            ),
-            flagged_store: Arc::new(
-                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-            ),
-            session_policy: SessionPolicy::default(),
-            default_ratio: ratio,
-            new_user_gate: Arc::new(gate),
-            bbs_name: Arc::from("TestBBS"),
-        };
+        let services = services_with(repo, conferences);
         let terminal = FakeTerminal::new([
             TerminalRead::Line("Y".to_string()),
             TerminalRead::Line("alice".to_string()),
@@ -1168,39 +1077,7 @@ mod tests {
         let mut alice = alice_with_password("secret");
         crate::app::seed::grant_all_memberships(&mut alice, &conferences);
         let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
-        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
-        let caller_log = Arc::new(InMemoryCallerLog::new());
-        let screens = Arc::new(StaticScreens);
-        let gate = NewUserGateConfig {
-            allow_new_users: true,
-            new_user_password: None,
-            max_new_user_password_attempts: 3,
-        };
-        let ratio = DefaultRatio {
-            mode: RatioMode::ByFiles,
-            value: 3,
-        };
-        AppServices {
-            user_repo: repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences: Arc::new(conferences),
-            mail_stores: test_mail_stores(),
-            file_repo: Arc::new(
-                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            ),
-            flagged_store: Arc::new(
-                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-            ),
-            session_policy: SessionPolicy::default(),
-            default_ratio: ratio,
-            new_user_gate: Arc::new(gate),
-            bbs_name: Arc::from("TestBBS"),
-        }
+        services_with(repo, conferences)
     }
 
     #[tokio::test]
@@ -1338,39 +1215,7 @@ mod tests {
         // under the same name the login flow uses to trigger
         // registration in the first place.
         let repo = Arc::new(InMemoryUserRepository::new(vec![]));
-        let hasher = Arc::new(Pbkdf2PasswordHasher::new());
-        let caller_log = Arc::new(InMemoryCallerLog::new());
-        let screens = Arc::new(StaticScreens);
-        let gate = NewUserGateConfig {
-            allow_new_users: true,
-            new_user_password: None,
-            max_new_user_password_attempts: 3,
-        };
-        let ratio = DefaultRatio {
-            mode: RatioMode::ByFiles,
-            value: 3,
-        };
-        let services = AppServices {
-            user_repo: repo,
-            hasher,
-            caller_log,
-            screens,
-            conferences: Arc::new(vec![]),
-            mail_stores: test_mail_stores(),
-            file_repo: Arc::new(
-                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            ),
-            flagged_store: Arc::new(
-                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-            ),
-            session_policy: SessionPolicy::default(),
-            default_ratio: ratio,
-            new_user_gate: Arc::new(gate),
-            bbs_name: Arc::from("TestBBS"),
-        };
+        let services = services_with(repo, vec![]);
         let terminal = FakeTerminal::new([
             // Answer the graphics prompt, then drive registration.
             TerminalRead::Line("Y".to_string()),
