@@ -3,20 +3,6 @@
 //!
 //! Private to the `domain::user` module.
 
-use crate::domain::user::credentials::AccountLockState;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AccountValidationStatus {
-    Existing,
-    AwaitingSysopValidation,
-}
-
-impl AccountValidationStatus {
-    fn is_new_user(self) -> bool {
-        matches!(self, Self::AwaitingSysopValidation)
-    }
-}
-
 /// Access tier, lockout counters, and validation status for a
 /// [`crate::domain::user::User`].
 #[derive(Debug, Clone)]
@@ -26,9 +12,9 @@ pub(super) struct AccountStatus {
     /// Recent invalid password attempts.
     invalid_attempts: u32,
     /// Independent account-lock flag set by lockout rules/admin tools.
-    lock: AccountLockState,
+    account_locked: bool,
     /// Whether the account is awaiting sysop validation.
-    validation: AccountValidationStatus,
+    new_user: bool,
     /// `core.allium:User.censored` — when true the user's posts are
     /// silently downgraded to `private_to_sysop` (`messaging.allium`
     /// visibility selector, Slice 47). Defaults to false; sysop
@@ -43,8 +29,8 @@ impl AccountStatus {
         Self {
             access_level,
             invalid_attempts: 0,
-            lock: AccountLockState::Unlocked,
-            validation: AccountValidationStatus::Existing,
+            account_locked: false,
+            new_user: false,
             censored: false,
         }
     }
@@ -54,8 +40,8 @@ impl AccountStatus {
         Self {
             access_level: 2,
             invalid_attempts: 0,
-            lock: AccountLockState::Unlocked,
-            validation: AccountValidationStatus::AwaitingSysopValidation,
+            account_locked: false,
+            new_user: true,
             censored: false,
         }
     }
@@ -73,21 +59,11 @@ impl AccountStatus {
         is_new_user: bool,
         censored: bool,
     ) -> Self {
-        let validation = if is_new_user {
-            AccountValidationStatus::AwaitingSysopValidation
-        } else {
-            AccountValidationStatus::Existing
-        };
-        let lock = if account_locked {
-            AccountLockState::Locked
-        } else {
-            AccountLockState::Unlocked
-        };
         Self {
             access_level,
             invalid_attempts,
-            lock,
-            validation,
+            account_locked,
+            new_user: is_new_user,
             censored,
         }
     }
@@ -105,7 +81,7 @@ impl AccountStatus {
     }
 
     pub(super) fn is_account_locked(&self) -> bool {
-        self.lock.is_locked()
+        self.account_locked
     }
 
     pub(super) fn access_level(&self) -> u8 {
@@ -125,11 +101,11 @@ impl AccountStatus {
     }
 
     pub(super) fn lock_account(&mut self) {
-        self.lock = AccountLockState::Locked;
+        self.account_locked = true;
         self.invalid_attempts = 0;
     }
 
     pub(super) fn is_new_user(&self) -> bool {
-        self.validation.is_new_user()
+        self.new_user
     }
 }

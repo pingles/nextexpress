@@ -80,15 +80,24 @@ macro_rules! impl_constructor {
     };
 }
 
-/// Implements [`record_input`] for an active-phase wrapper.
-macro_rules! impl_record_input {
-    ($wrapper:ident) => {
+/// Implements the active-phase API — `record_input` and `into_active`
+/// — for a phase wrapper, where `$variant` is the matching
+/// [`ActivePhase`] arm.
+macro_rules! impl_active_phase {
+    ($wrapper:ident, $variant:ident) => {
         impl $wrapper {
             /// Records a successful read against the inner session's
             /// idle clock. Safe from any active phase — the underlying
             /// `Session::record_input` is unconditional.
             pub(crate) fn record_input(&mut self, at: SystemTime) {
                 self.session.record_input(at);
+            }
+
+            /// Wraps `self` in the [`ActivePhase`] enum so cross-phase
+            /// operations (idle timeout, carrier loss) can dispatch.
+            #[must_use]
+            pub(crate) fn into_active(self) -> ActivePhase {
+                ActivePhase::$variant(self)
             }
         }
     };
@@ -139,49 +148,24 @@ pub(crate) struct IdentifyingSession {
     session: Session,
 }
 
-impl IdentifyingSession {
-    /// Wraps `self` in the [`ActivePhase`] enum so cross-phase
-    /// operations (idle timeout, carrier loss) can dispatch.
-    #[must_use]
-    pub(crate) fn into_active(self) -> ActivePhase {
-        ActivePhase::Identifying(self)
-    }
-}
-
 impl_constructor!(IdentifyingSession, Identifying);
-impl_record_input!(IdentifyingSession);
+impl_active_phase!(IdentifyingSession, Identifying);
 
 /// Wraps a [`Session`] in [`SessionState::Authenticating`].
 pub(crate) struct AuthenticatingSession {
     session: Session,
 }
 
-impl AuthenticatingSession {
-    /// Wraps `self` in the [`ActivePhase`] enum.
-    #[must_use]
-    pub(crate) fn into_active(self) -> ActivePhase {
-        ActivePhase::Authenticating(self)
-    }
-}
-
 impl_constructor!(AuthenticatingSession, Authenticating);
-impl_record_input!(AuthenticatingSession);
+impl_active_phase!(AuthenticatingSession, Authenticating);
 
 /// Wraps a [`Session`] in [`SessionState::NewUserRegistering`].
 pub(crate) struct NewUserRegisteringSession {
     session: Session,
 }
 
-impl NewUserRegisteringSession {
-    /// Wraps `self` in the [`ActivePhase`] enum.
-    #[must_use]
-    pub(crate) fn into_active(self) -> ActivePhase {
-        ActivePhase::NewUserRegistering(self)
-    }
-}
-
 impl_constructor!(NewUserRegisteringSession, NewUserRegistering);
-impl_record_input!(NewUserRegisteringSession);
+impl_active_phase!(NewUserRegisteringSession, NewUserRegistering);
 
 /// Wraps a [`Session`] in [`SessionState::Onboarded`]. Authentication
 /// has succeeded; the on-logon screens haven't run yet. The normal
@@ -236,16 +220,10 @@ impl OnboardedSession {
             .user()
             .expect("Onboarded phase always has a bound user")
     }
-
-    /// Wraps `self` in the [`ActivePhase`] enum.
-    #[must_use]
-    pub(crate) fn into_active(self) -> ActivePhase {
-        ActivePhase::Onboarded(self)
-    }
 }
 
 impl_constructor!(OnboardedSession, Onboarded);
-impl_record_input!(OnboardedSession);
+impl_active_phase!(OnboardedSession, Onboarded);
 
 /// Wraps a [`Session`] in [`SessionState::Menu`]. The user is at the
 /// conference command prompt.
@@ -421,16 +399,10 @@ impl MenuSession {
             }),
         }
     }
-
-    /// Wraps `self` in the [`ActivePhase`] enum.
-    #[must_use]
-    pub(crate) fn into_active(self) -> ActivePhase {
-        ActivePhase::Menu(self)
-    }
 }
 
 impl_constructor!(MenuSession, Menu);
-impl_record_input!(MenuSession);
+impl_active_phase!(MenuSession, Menu);
 
 /// Wraps a [`Session`] in [`SessionState::LoggingOff`]. Ready for
 /// `finalise_logoff`.

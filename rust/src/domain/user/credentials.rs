@@ -9,42 +9,6 @@ use std::time::SystemTime;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::user::{requires_salt, UserError};
 
-/// Whether an account is currently locked from logging on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum AccountLockState {
-    Unlocked,
-    Locked,
-}
-
-impl AccountLockState {
-    pub(super) fn is_locked(self) -> bool {
-        matches!(self, Self::Locked)
-    }
-}
-
-/// Whether the next logon must force the user to change password.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PasswordResetRequirement {
-    NotRequired,
-    Required,
-}
-
-impl PasswordResetRequirement {
-    pub(super) fn is_required(self) -> bool {
-        matches!(self, Self::Required)
-    }
-}
-
-impl From<bool> for PasswordResetRequirement {
-    fn from(value: bool) -> Self {
-        if value {
-            Self::Required
-        } else {
-            Self::NotRequired
-        }
-    }
-}
-
 /// Stored credentials and password-reset state for a
 /// [`crate::domain::user::User`].
 #[derive(Debug, Clone)]
@@ -58,7 +22,7 @@ pub(super) struct Credentials {
     /// Timestamp when the credential triple was last rotated.
     last_updated: SystemTime,
     /// Whether the next logon must force a password change.
-    reset: PasswordResetRequirement,
+    reset: bool,
 }
 
 impl Credentials {
@@ -78,7 +42,7 @@ impl Credentials {
             hash,
             salt,
             last_updated,
-            reset: PasswordResetRequirement::NotRequired,
+            reset: false,
         })
     }
 
@@ -99,11 +63,11 @@ impl Credentials {
     }
 
     pub(super) fn reset_required(&self) -> bool {
-        self.reset.is_required()
+        self.reset
     }
 
     pub(super) fn set_reset_required(&mut self, value: bool) {
-        self.reset = PasswordResetRequirement::from(value);
+        self.reset = value;
     }
 
     pub(super) fn record_change(
@@ -117,6 +81,6 @@ impl Credentials {
         self.salt = salt;
         self.hash_kind = kind;
         self.last_updated = at;
-        self.reset = PasswordResetRequirement::NotRequired;
+        self.reset = false;
     }
 }

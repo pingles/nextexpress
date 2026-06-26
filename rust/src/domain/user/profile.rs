@@ -8,28 +8,6 @@ use std::time::SystemTime;
 
 use crate::domain::user::UserFlag;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AnsiColourPreference {
-    Disabled,
-    Enabled,
-}
-
-impl AnsiColourPreference {
-    fn enabled(self) -> bool {
-        matches!(self, Self::Enabled)
-    }
-}
-
-impl From<bool> for AnsiColourPreference {
-    fn from(value: bool) -> Self {
-        if value {
-            Self::Enabled
-        } else {
-            Self::Disabled
-        }
-    }
-}
-
 /// User-entered profile data and presentation preferences.
 #[derive(Debug, Clone)]
 pub(super) struct Profile {
@@ -42,7 +20,7 @@ pub(super) struct Profile {
     /// Preferred terminal width (`0` = auto).
     line_length: u32,
     /// Whether the user wants ANSI colour output.
-    ansi_colour: AnsiColourPreference,
+    ansi_colour: bool,
     /// Whether the user is in expert mode — the menu is not
     /// auto-displayed before each prompt (legacy `User.expert`,
     /// `amiexpress/express.e:26114`). Toggled in-session by `X`.
@@ -61,7 +39,7 @@ impl Profile {
             phone_number: None,
             email: None,
             line_length: 0,
-            ansi_colour: AnsiColourPreference::Disabled,
+            ansi_colour: false,
             expert_mode: false,
             account_created,
             flags: BTreeSet::new(),
@@ -88,7 +66,7 @@ impl Profile {
             phone_number,
             email,
             line_length,
-            ansi_colour: AnsiColourPreference::from(ansi_colour),
+            ansi_colour,
             expert_mode,
             account_created,
             flags,
@@ -112,7 +90,7 @@ impl Profile {
     }
 
     pub(super) fn ansi_colour(&self) -> bool {
-        self.ansi_colour.enabled()
+        self.ansi_colour
     }
 
     pub(super) fn expert_mode(&self) -> bool {
