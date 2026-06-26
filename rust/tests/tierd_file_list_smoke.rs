@@ -60,6 +60,10 @@ const LEAVE_FLAGGED_CONFIRM: &[u8] =
 /// (`comparison/transcripts/ae_tierd_g_confirm.txt:177`).
 const AUTOSAVING_FILE_FLAGS: &[u8] = b"\r\n** AutoSaving File Flags **\r\n\x07\r\n";
 
+/// `loadFlagged`'s logon restore banner (`amiexpress/express.e:2792`),
+/// live-captured at login (`ae_tierd_alterflags.txt:77-81`).
+const FLAGGED_FILES_EXIST: &[u8] = b"\r\n** Flagged File(s) Exist **\r\n\x07\r\n";
+
 /// `flagFiles`'s main prompt (`amiexpress/express.e:12601`), live-captured
 /// (`comparison/transcripts/ae_tierd_alterflags.txt:114`): the `A`-loop
 /// `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` line (slice D6b).
@@ -601,6 +605,68 @@ async fn a_flag_prompt_loop_flags_a_name_then_clears_over_telnet() {
     drain_until(&mut stream, b"mins. left): ").await;
 
     end_session(&mut stream).await;
+}
+
+#[tokio::test]
+async fn flags_persist_across_logoff_and_logon_over_telnet() {
+    // Slice D5-persist: flag a name, log off (saveFlagged), then sign in
+    // again as the same sysop on the same listener (shared in-memory
+    // store) and see the `** Flagged File(s) Exist **` banner before the
+    // menu, with `A` listing the restored name.
+    let addr = spawn_listener_with_demo_files().await;
+
+    // --- Session 1: flag MYDEMO.DMS via the A loop, then log off ---
+    let mut s1 = sign_in_seeded_sysop(&addr).await;
+    write_line(&mut s1, b"A").await;
+    drain_until(&mut s1, PROMPT_TAIL).await;
+    write_line(&mut s1, b"mydemo.dms").await; // flags + returns to menu
+    drain_until(&mut s1, b"mins. left): ").await;
+    write_line(&mut s1, b"G Y").await;
+    drain_until(&mut s1, b"Goodbye").await;
+    drop(s1);
+
+    // --- Session 2: same user, same listener -> restored + banner ---
+    let mut s2 = TcpStream::connect(addr).await.expect("reconnect");
+    // Drive the login by hand so we can scan the whole logon stream for
+    // the banner (sign_in_seeded_sysop drains past it to the menu).
+    let login = drive_login_capturing(&mut s2).await;
+    assert!(
+        contains(&login, FLAGGED_FILES_EXIST),
+        "the restored non-empty set announces at logon, got {:?}",
+        String::from_utf8_lossy(&login),
+    );
+
+    write_line(&mut s2, b"A").await;
+    let listed = drain_until(&mut s2, PROMPT_TAIL).await;
+    assert!(
+        contains(&listed, b"\r\nMYDEMO.DMS\r\n"),
+        "A lists the restored flag, got {:?}",
+        String::from_utf8_lossy(&listed),
+    );
+    // Clear so teardown is clean, then log off.
+    write_line(&mut s2, b"C").await;
+    drain_until(&mut s2, PROMPT_TAIL).await;
+    write_line(&mut s2, b"*").await;
+    drain_until(&mut s2, PROMPT_TAIL).await;
+    write_line(&mut s2, b"").await;
+    drain_until(&mut s2, b"mins. left): ").await;
+    end_session(&mut s2).await;
+}
+
+/// Signs in `sysop`/`sysop` and returns the full byte stream from the
+/// graphics prompt through to the menu prompt (so a caller can scan the
+/// logon banners). Mirrors `sign_in_seeded_sysop` but captures and
+/// returns all bytes received up to the menu prompt.
+async fn drive_login_capturing(stream: &mut TcpStream) -> Vec<u8> {
+    let mut all = Vec::new();
+    all.extend(drain_until(stream, b"ANSI Graphics (Y/n)? ").await);
+    write_line(stream, b"Y").await;
+    all.extend(drain_until(stream, b"Enter your Name: ").await);
+    write_line(stream, b"sysop").await;
+    all.extend(drain_until(stream, b"PassWord: ").await);
+    write_line(stream, b"sysop").await;
+    all.extend(drain_until(stream, b"mins. left): ").await);
+    all
 }
 
 /// Boots an in-process listener whose file catalogue is the seeded
