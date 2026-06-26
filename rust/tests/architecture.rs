@@ -279,17 +279,20 @@ fn strip_cfg_test_modules(content: &str) -> String {
     out
 }
 
-/// A sibling test module (`#[cfg(test)] mod tests;` -> `tests.rs`, or a
-/// `tests/` submodule directory) is test-only code, exactly like an
+/// A sibling test module (`#[cfg(test)] mod tests;` -> `tests.rs`, a
+/// `#[cfg(test)] mod test_support;` -> `test_support.rs` fixture module,
+/// or a `tests/` submodule directory) is test-only code, exactly like an
 /// inline `#[cfg(test)] mod tests { ... }`. The walker strips inline test
 /// modules via [`strip_cfg_test_modules`]; sibling test files have no
 /// in-file `#[cfg(test)]` marker (the attribute is on the parent's `mod`
 /// declaration), so they are excluded here by path. This mirrors how
 /// `rust-lang/rust`'s own `tidy` tool classifies test code — by the
-/// `tests.rs` / `tests` name, not by attribute.
+/// `tests.rs` / `test_support.rs` / `tests` name, not by attribute.
 fn is_sibling_test_module(path: &Path) -> bool {
-    path.file_name().and_then(OsStr::to_str) == Some("tests.rs")
-        || path.components().any(|c| c.as_os_str() == "tests")
+    matches!(
+        path.file_name().and_then(OsStr::to_str),
+        Some("tests.rs" | "test_support.rs")
+    ) || path.components().any(|c| c.as_os_str() == "tests")
 }
 
 #[test]
@@ -402,6 +405,9 @@ fn forbidden_module_reference_ignores_comments_and_identifiers() {
 fn is_sibling_test_module_classifies_test_files() {
     assert!(is_sibling_test_module(Path::new(
         "src/app/menu_flow/file_list/tests.rs"
+    )));
+    assert!(is_sibling_test_module(Path::new(
+        "src/app/menu_flow/test_support.rs"
     )));
     assert!(is_sibling_test_module(Path::new(
         "src/app/foo/tests/mod.rs"

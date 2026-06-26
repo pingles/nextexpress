@@ -11,15 +11,10 @@ use std::convert::Infallible;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime};
 
-use crate::adapters::file_screen_repository::FileScreenRepository;
-use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
-use crate::adapters::in_memory_file_repository::InMemoryFileRepository;
-use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
-use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::app::menu_command::parse_menu_command;
+use crate::app::menu_flow::test_support::test_services;
 use crate::app::services::AppServices;
-use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::app::terminal::{
     KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
 };
@@ -31,7 +26,7 @@ use crate::domain::files::flagged_store::{FlaggedStore, FlaggedStoreError};
 use crate::domain::password::{PasswordHashKind, PasswordHasher};
 use crate::domain::session::typed::MenuSession;
 use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
-use crate::domain::user::{RatioMode, User};
+use crate::domain::user::User;
 
 use super::{
     DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, CLEAR_PROMPT, FLAGGED_FILES_EXIST,
@@ -238,32 +233,6 @@ fn quick_logon_menu_session() -> MenuSession {
     session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
     session.set_quick_logon(true);
     MenuSession::from_session(session)
-}
-
-fn test_services() -> AppServices {
-    AppServices {
-        user_repo: Arc::new(InMemoryUserRepository::default()),
-        hasher: Arc::new(Pbkdf2PasswordHasher::new()),
-        caller_log: Arc::new(InMemoryCallerLog::new()),
-        screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-        conferences: Arc::new(Vec::new()),
-        mail_stores: Arc::new(InMemoryMailStores::new()),
-        file_repo: Arc::new(InMemoryFileRepository::new(Vec::new(), Vec::new())),
-        flagged_store: Arc::new(
-            crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-        ),
-        session_policy: SessionPolicy::default(),
-        default_ratio: DefaultRatio {
-            mode: RatioMode::Disabled,
-            value: 0,
-        },
-        new_user_gate: Arc::new(NewUserGateConfig {
-            allow_new_users: true,
-            new_user_password: None,
-            max_new_user_password_attempts: 3,
-        }),
-        bbs_name: Arc::from("Test BBS"),
-    }
 }
 
 /// Drives one menu command through the real `dispatch`, returning the

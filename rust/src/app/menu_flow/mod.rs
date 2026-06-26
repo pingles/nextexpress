@@ -26,6 +26,8 @@ mod scan_all_mail;
 mod sysop_admin;
 pub(crate) mod table;
 #[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
 mod tests;
 
 use std::time::SystemTime;

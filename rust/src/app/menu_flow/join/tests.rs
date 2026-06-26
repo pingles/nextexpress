@@ -6,13 +6,10 @@ use std::time::{Duration, SystemTime};
 
 use super::NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE;
 use crate::adapters::file_screen_repository::FileScreenRepository;
-use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
 use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
-use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
-use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::app::menu_command::{parse_menu_command, JoinArg, MenuCommand};
+use crate::app::menu_flow::test_support::test_services;
 use crate::app::services::AppServices;
-use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, MessageBaseRef};
 use crate::domain::messaging::mail::{BroadcastTo, MailDraft, MailVisibility};
@@ -21,7 +18,7 @@ use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::session::typed::MenuSession;
 use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
-use crate::domain::user::{RatioMode, User};
+use crate::domain::user::User;
 
 /// Write-capturing terminal with a scripted input queue
 /// (the `FakeTerminal` precedent from `session_driver.rs`);
@@ -133,34 +130,11 @@ fn services_with(
     stores: InMemoryMailStores,
     bbs_path: &Path,
 ) -> AppServices {
-    AppServices {
-        user_repo: Arc::new(InMemoryUserRepository::default()),
-        hasher: Arc::new(Pbkdf2PasswordHasher::new()),
-        caller_log: Arc::new(InMemoryCallerLog::new()),
-        screens: Arc::new(FileScreenRepository::new(bbs_path.to_path_buf())),
-        conferences: Arc::new(conferences),
-        mail_stores: Arc::new(stores),
-        file_repo: Arc::new(
-            crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                Vec::new(),
-                Vec::new(),
-            ),
-        ),
-        flagged_store: Arc::new(
-            crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-        ),
-        session_policy: SessionPolicy::default(),
-        default_ratio: DefaultRatio {
-            mode: RatioMode::Disabled,
-            value: 0,
-        },
-        new_user_gate: Arc::new(NewUserGateConfig {
-            allow_new_users: true,
-            new_user_password: None,
-            max_new_user_password_attempts: 3,
-        }),
-        bbs_name: Arc::from("Test BBS"),
-    }
+    let mut services = test_services();
+    services.screens = Arc::new(FileScreenRepository::new(bbs_path.to_path_buf()));
+    services.conferences = Arc::new(conferences);
+    services.mail_stores = Arc::new(stores);
+    services
 }
 
 fn services_with_one_broadcast_message() -> AppServices {

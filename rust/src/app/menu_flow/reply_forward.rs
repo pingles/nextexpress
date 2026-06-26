@@ -374,21 +374,12 @@ where
 mod tests {
     use std::collections::VecDeque;
     use std::convert::Infallible;
-    use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::adapters::file_screen_repository::FileScreenRepository;
-    use crate::adapters::in_memory_caller_log::InMemoryCallerLog;
-    use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
-    use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
-    use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
     use crate::app::menu_flow::mail_text::POST_ABORTED_LINE;
-    use crate::app::services::AppServices;
-    use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
+    use crate::app::menu_flow::test_support::test_services;
     use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
     use crate::domain::messaging::post_mail::PostMailError;
-    use crate::domain::session::SessionPolicy;
-    use crate::domain::user::RatioMode;
 
     #[derive(Default)]
     struct CaptureTerminal {
@@ -416,37 +407,6 @@ mod tests {
             _timeout: Duration,
         ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
             Box::pin(async move { Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof)) })
-        }
-    }
-
-    fn test_services() -> AppServices {
-        AppServices {
-            user_repo: Arc::new(InMemoryUserRepository::default()),
-            hasher: Arc::new(Pbkdf2PasswordHasher::new()),
-            caller_log: Arc::new(InMemoryCallerLog::new()),
-            screens: Arc::new(FileScreenRepository::new(std::env::temp_dir())),
-            conferences: Arc::new(Vec::new()),
-            mail_stores: Arc::new(InMemoryMailStores::new()),
-            file_repo: Arc::new(
-                crate::adapters::in_memory_file_repository::InMemoryFileRepository::new(
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            ),
-            flagged_store: Arc::new(
-                crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-            ),
-            session_policy: SessionPolicy::default(),
-            default_ratio: DefaultRatio {
-                mode: RatioMode::Disabled,
-                value: 0,
-            },
-            new_user_gate: Arc::new(NewUserGateConfig {
-                allow_new_users: true,
-                new_user_password: None,
-                max_new_user_password_attempts: 3,
-            }),
-            bbs_name: Arc::from("Test BBS"),
         }
     }
 
