@@ -173,6 +173,25 @@ where
     Ok(summary.first_unread_number)
 }
 
+/// Guards that `store` is bound to `msgbase`, returning
+/// [`ScanMailError::StoreMismatch`] otherwise. Shared by [`scan_mail`]
+/// and [`walk`] so the bound-store check reads identically in both.
+fn ensure_store_matches<S>(store: &S, msgbase: MessageBaseRef) -> Result<(), ScanMailError>
+where
+    S: MailStore + ?Sized,
+{
+    if store.msgbase() != msgbase {
+        let s = store.msgbase();
+        return Err(ScanMailError::StoreMismatch {
+            store_conf: s.conference_number(),
+            store_msg: s.msgbase_number(),
+            req_conf: msgbase.conference_number(),
+            req_msg: msgbase.msgbase_number(),
+        });
+    }
+    Ok(())
+}
+
 /// Applies `messaging.allium:ScanMail` to `(user, msgbase)` at `now`.
 ///
 /// Side effects (per the spec's `ensures` block):
@@ -207,15 +226,7 @@ pub fn scan_mail<S>(
 where
     S: MailStore + ?Sized,
 {
-    if store.msgbase() != msgbase {
-        let s = store.msgbase();
-        return Err(ScanMailError::StoreMismatch {
-            store_conf: s.conference_number(),
-            store_msg: s.msgbase_number(),
-            req_conf: msgbase.conference_number(),
-            req_msg: msgbase.msgbase_number(),
-        });
-    }
+    ensure_store_matches(store, msgbase)?;
 
     if !user.has_granted_membership_for(msgbase.conference_number()) {
         return Err(ScanMailError::NoMembership(msgbase.conference_number()));
@@ -262,15 +273,7 @@ fn walk<S>(
 where
     S: MailStore + ?Sized,
 {
-    if store.msgbase() != msgbase {
-        let s = store.msgbase();
-        return Err(ScanMailError::StoreMismatch {
-            store_conf: s.conference_number(),
-            store_msg: s.msgbase_number(),
-            req_conf: msgbase.conference_number(),
-            req_msg: msgbase.msgbase_number(),
-        });
-    }
+    ensure_store_matches(store, msgbase)?;
     let highest = store.highest_message();
     let start = from.max(1);
     let mut listing: Vec<MailScanRow> = Vec::new();

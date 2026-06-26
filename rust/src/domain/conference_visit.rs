@@ -259,12 +259,8 @@ pub fn primary_msgbase_of(conference: &Conference) -> &MessageBase {
         .msgbases()
         .iter()
         .find(|m| m.number() == 1)
-        .unwrap_or_else(|| {
-            conference
-                .msgbases()
-                .first()
-                .expect("AtLeastOneMessageBase guarantees a non-empty msgbases collection")
-        })
+        .or_else(|| conference.msgbases().first())
+        .expect("AtLeastOneMessageBase guarantees a non-empty msgbases collection")
 }
 
 /// Resolves the `JoinConference` rule for the auto-rejoin path

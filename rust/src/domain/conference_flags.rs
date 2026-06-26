@@ -86,30 +86,27 @@ pub fn apply_scan_flag_edit(
     flag: ScanFlag,
     selection: &ScanFlagSelection,
 ) {
+    // `+`/`-` set the flag absolutely; `*` and every named-conference
+    // toggle flip it (a number listed twice cancels — the legacy EOR).
+    let apply_to = |m: &mut ConferenceMembership| match selection {
+        ScanFlagSelection::AllOn => m.set_scan_flag(flag, true),
+        ScanFlagSelection::AllOff => m.set_scan_flag(flag, false),
+        _ => m.toggle_scan_flag(flag),
+    };
     match selection {
-        ScanFlagSelection::AllOn => {
-            for m in memberships.iter_mut().filter(|m| m.is_granted()) {
-                m.set_scan_flag(flag, true);
-            }
-        }
-        ScanFlagSelection::AllOff => {
-            for m in memberships.iter_mut().filter(|m| m.is_granted()) {
-                m.set_scan_flag(flag, false);
-            }
-        }
-        ScanFlagSelection::ToggleAll => {
-            for m in memberships.iter_mut().filter(|m| m.is_granted()) {
-                m.toggle_scan_flag(flag);
-            }
-        }
         ScanFlagSelection::Toggle(numbers) => {
             for &number in numbers {
                 if let Some(m) = memberships
                     .iter_mut()
                     .find(|m| m.is_granted() && m.conference_number() == number)
                 {
-                    m.toggle_scan_flag(flag);
+                    apply_to(m);
                 }
+            }
+        }
+        _ => {
+            for m in memberships.iter_mut().filter(|m| m.is_granted()) {
+                apply_to(m);
             }
         }
     }
