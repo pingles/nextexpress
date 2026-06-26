@@ -125,6 +125,13 @@ const UNKNOWN_COMMAND_LINE: &[u8] = b"Unknown command. Type G to log off.\r\n";
 /// Sent immediately before the connection closes on a normal logoff.
 const GOODBYE_LINE: &[u8] = b"Goodbye!\r\n";
 
+/// `loadFlagged`'s restore notice (`amiexpress/express.e:2792-2793`),
+/// emitted on logon when a non-empty flag set is restored: blank line,
+/// the banner, then the `sendBELL` BEL and a trailing CRLF —
+/// structurally identical to [`AUTOSAVING_FILE_FLAGS`]. Live-captured at
+/// login in `comparison/transcripts/ae_tierd_alterflags.txt:77-81`.
+const FLAGGED_FILES_EXIST: &[u8] = b"\r\n** Flagged File(s) Exist **\r\n\x07\r\n";
+
 /// `saveFlagged`'s autosave announcement (`amiexpress/express.e:2803`),
 /// emitted on every `G` logoff (the banner precedes saveFlagged's own
 /// flag-count gate, so it shows even with nothing flagged): a blank
@@ -362,6 +369,29 @@ where
         }
         self.handle_scan_all_mail(session, ScanFilter::MailScanFlagged)
             .await
+    }
+
+    /// Restores the user's saved flag set on logon (legacy `loadFlagged`,
+    /// `amiexpress/express.e:2757`) and, when the restored set is
+    /// non-empty, emits the `** Flagged File(s) Exist **` banner
+    /// (`:2791-2794`) — the logon analogue of the logoff autosave banner.
+    /// A load error logs and leaves the set empty; the caller still
+    /// reaches the menu (slice D5-persist).
+    pub(crate) async fn restore_flags_and_announce(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> Result<(), T::Error> {
+        let slot = session.user().slot_number();
+        match self.services.flagged_store.load(slot) {
+            Ok(restored) => *session.flagged_files_mut() = restored,
+            Err(error) => {
+                eprintln!("loadFlagged: could not restore flags for slot {slot}: {error}");
+            }
+        }
+        if !session.flagged_files_mut().is_empty() {
+            self.write_and_flush(FLAGGED_FILES_EXIST).await?;
+        }
+        Ok(())
     }
 
     /// `A` — the legacy `alterFlags(NIL)` (`amiexpress/express.e:12648`,

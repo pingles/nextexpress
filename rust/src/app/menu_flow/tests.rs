@@ -34,7 +34,8 @@ use crate::domain::session::{apply_password_match, LogonChannel, Session, Sessio
 use crate::domain::user::{RatioMode, User};
 
 use super::{
-    DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, CLEAR_PROMPT, FLAG_PROMPT, GOODBYE_LINE,
+    DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, CLEAR_PROMPT, FLAGGED_FILES_EXIST,
+    FLAG_PROMPT, GOODBYE_LINE,
 };
 
 #[derive(Default)]
@@ -828,4 +829,82 @@ async fn logoff_proceeds_when_the_flag_save_fails() {
         matches!(outcome, DispatchOutcome::LogoffComplete(_)),
         "a save failure must not block logoff"
     );
+}
+
+#[tokio::test]
+async fn logon_restores_flags_and_announces_when_non_empty() {
+    // Slice D5-persist: loadFlagged (express.e:2757) restores the set on
+    // logon; a non-empty restore emits the banner (express.e:2791-2794).
+    let spy = Arc::new(SpyFlaggedStore::default());
+    {
+        let mut flags = FlaggedFiles::default();
+        flags.flag(FlaggedKey::new(1, 0, "ansipack.lha"));
+        spy.seeded.lock().unwrap().insert(2, flags); // slot 2 = test_user
+    }
+    let services = services_with_flagged_store(spy);
+    let mut terminal = CaptureTerminal::default();
+    let mut session = menu_session();
+    {
+        let mut flow = MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.restore_flags_and_announce(&mut session)
+            .await
+            .expect("restore");
+    }
+    assert!(
+        session
+            .flagged_files()
+            .contains(&FlaggedKey::new(1, 0, "ANSIPACK.LHA")),
+        "the saved flag is restored into the session"
+    );
+    assert_eq!(
+        terminal.output, FLAGGED_FILES_EXIST,
+        "a non-empty restore emits exactly the banner"
+    );
+}
+
+#[tokio::test]
+async fn logon_with_no_saved_flags_is_silent() {
+    let spy = Arc::new(SpyFlaggedStore::default()); // nothing seeded
+    let services = services_with_flagged_store(spy);
+    let mut terminal = CaptureTerminal::default();
+    let mut session = menu_session();
+    {
+        let mut flow = MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.restore_flags_and_announce(&mut session)
+            .await
+            .expect("restore");
+    }
+    assert!(session.flagged_files().is_empty());
+    assert!(
+        terminal.output.is_empty(),
+        "an empty restore emits no banner"
+    );
+}
+
+#[tokio::test]
+async fn logon_with_a_load_error_starts_empty_and_silent() {
+    let spy = Arc::new(SpyFlaggedStore {
+        fail: true,
+        ..SpyFlaggedStore::default()
+    });
+    let services = services_with_flagged_store(spy);
+    let mut terminal = CaptureTerminal::default();
+    let mut session = menu_session();
+    {
+        let mut flow = MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.restore_flags_and_announce(&mut session)
+            .await
+            .expect("restore");
+    }
+    assert!(session.flagged_files().is_empty());
+    assert!(terminal.output.is_empty());
 }

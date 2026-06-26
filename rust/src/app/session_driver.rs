@@ -209,6 +209,9 @@ where
                                 self.announce_auto_rejoin(&announcement).await?;
                                 self.render_login_stats(&menu).await?;
                                 MenuFlow::new(&mut self.terminal, &self.services)
+                                    .restore_flags_and_announce(&mut menu)
+                                    .await?;
+                                MenuFlow::new(&mut self.terminal, &self.services)
                                     .run(menu)
                                     .await?
                             }
