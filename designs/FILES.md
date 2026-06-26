@@ -198,11 +198,19 @@ At ~26K rows, DIZ/comment search remains comfortably inside SQLite's
 expected scale. Full text/art file search is out of v1 unless measurement
 says the extra content index is worth it.
 
-### `FlaggedFile` is per-session, in-memory only
+### `FlaggedFile` — per-session set, optionally persisted (slice D5-persist)
 
 - Lives on the session struct, capped at `max_flagged_files()` (1000).
-- Dies with the session.
-- No SQLite involvement; no need for durability.
+- On logoff, the set is saved via the `FlaggedStore` port
+  (`domain/files/flagged_store.rs`); on logon, it is restored.
+- Two adapters wired by `config.user_storage` (the same switch that
+  selects the user repository):
+  - `InMemoryFlaggedStore` (default) — process-lifetime; a restart clears it.
+  - `SqliteFlaggedStore` — durable; a `flagged_files (slot_number,
+    conference, name)` table in the same `users.db` as the user store.
+- Keying on disk is `(conference, name)`; `area` is dropped on save and
+  restored as `0` (matches the legacy `{confNum} {fileName}` format;
+  `area` is a NextExpress session-local concern the `F`/`R` pager uses).
 - Cascade on file delete (per `DeleteFile` rule) is a fan-out across
   active sessions, not a SQL `ON DELETE`.
 
@@ -375,10 +383,14 @@ For 32+ concurrent BBS users:
 
 ```
 domain/files/
-  file.rs            — File entity, FileStatus state machine, invariants
-  flagged.rs         — FlaggedFile (per-session, in-memory)
-  transfer.rs        — Transfer entity, outcome accounting
-  repository.rs      — FileRepository, TransferLog ports
+  file.rs              — File entity, FileStatus state machine, invariants
+  flagged.rs           — FlaggedFiles/FlaggedKey (per-session set)
+  flagged_store.rs     — FlaggedStore port + FlaggedStoreError (slice D5-persist)
+  transfer.rs          — Transfer entity, outcome accounting
+  repository.rs        — FileRepository, TransferLog ports
+adapters/
+  in_memory_flagged_store.rs  — Mutex<HashMap<u32, FlaggedFiles>> (default)
+  sqlite_flagged_store.rs     — flagged_files table in users.db (durable, slice D5-persist)
 adapters/files/
   sqlite_files.rs    — rusqlite + FTS5 trigram implementation
   fs_blob_store.rs   — blob read/write/move/delete on disk

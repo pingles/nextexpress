@@ -14,15 +14,15 @@ top-level modules under `rust/src/`:
   `ConferenceActivity` sub-aggregate (owns the `Vec<ConferenceVisit>` +
   `Option<ConferenceScan>` and lives outside the phase enum so it
   survives `Onboarded → Menu`), value objects (`ReadPointers`,
-  `MessageBaseRef`, `Bytes`, `ConferenceScan`, and the `pub(crate)`
+  `MessageBaseRef`, `Bytes`, `ConferenceScan`, and the `pub`
   `FlaggedFiles`/`FlaggedKey` — the session-scoped flagged-file set the
-  `F`/`R` pager verbs build, an impl detail shared by `domain/files`,
-  `domain/session`, and `app/menu_flow/file_list`, slice D2f; the `A`
-  alter-flags loop also adds (`flag`) and clears (`clear`) it (slices
-  D6a/D6b); the plain-`G` logoff confirm reads it via `is_empty()` (slice
-  Ga); D5 persists it),
+  `F`/`R` pager verbs build, shared by `domain/files`, `domain/session`,
+  and `app/menu_flow/file_list`, slice D2f; the `A` alter-flags loop also
+  adds (`flag`) and clears (`clear`) it (slices D6a/D6b); the plain-`G`
+  logoff confirm reads it via `is_empty()` (slice Ga); slice D5-persist
+  saves it on logoff and restores it on logon via the `FlaggedStore` port),
   port traits (`UserRepository`, `ConferenceRepository`, `MailStore`,
-  `PasswordHasher`, `CallerLogAppender`, `FileRepository`), phase-typed session wrappers, the
+  `PasswordHasher`, `CallerLogAppender`, `FileRepository`, `FlaggedStore`), phase-typed session wrappers, the
   `messaging.allium` rule family (`read_mail`, `scan_mail`, `post_mail`,
   `post_comment_to_sysop`, `reply_to_mail`, `forward_mail`, `delete_mail`,
   `edit_mail_header`, `move_mail`, `attach_file_to_mail`), the password
@@ -32,8 +32,13 @@ top-level modules under `rust/src/`:
   `FileConferenceRepository`, `FileScreenRepository` (file-backed assets with
   caching), `FileMailStore` (one JSON file per message),
   `InMemoryMailStores` (registry), `InMemoryUserRepository`,
-  `SqliteUserRepository`, `InMemoryFileRepository` (the seeded demo
-  file catalogue, slice D1), `InMemoryCallerLog`, `Pbkdf2PasswordHasher`,
+  `SqliteUserRepository`, `InMemoryFlaggedStore` (process-lifetime flag
+  persistence — the default when no `user_storage` path is configured),
+  `SqliteFlaggedStore` (durable flag persistence in the same `users.db`,
+  a `flagged_files (slot_number, conference, name)` table — selected when
+  `user_storage` points to a SQLite path, slice D5-persist),
+  `InMemoryFileRepository` (the seeded demo file catalogue, slice D1),
+  `InMemoryCallerLog`, `Pbkdf2PasswordHasher`,
   `telnet_line` codec (`read_telnet_line` with an `EchoMode` plus
   `read_telnet_key`, the single-keystroke decoder that lets the NextScan
   pager run true hotkeys and emit its own captured echo bytes — slice D2b).
@@ -139,6 +144,7 @@ flowchart LR
     AppRun --> Seed["app::seed (sysop bootstrap)"]
     AppRun --> ConfRepo["FileConferenceRepository::load_all"]
     AppRun --> UserRepo["UserRepository\n(InMemory or SQLite\nper config.user_storage)"]
+    AppRun --> FlaggedRepo["FlaggedStore\n(InMemory or SQLite\nper config.user_storage,\nslice D5-persist)"]
     AppRun --> Hasher["Pbkdf2PasswordHasher"]
     AppRun --> CallerLog["InMemoryCallerLog"]
     AppRun --> Screens["SharedScreens\n(FileScreenRepository)"]
@@ -157,6 +163,7 @@ flowchart LR
     Services --> SharedConfs["SharedConferences\n(Arc&lt;Vec&lt;Conference&gt;&gt;)"]
     Services --> SharedMail["SharedMailStores"]
     Services --> SharedFiles["SharedFileRepo"]
+    Services --> SharedFlagged["SharedFlaggedStore\n(Arc&lt;dyn FlaggedStore&gt;)"]
     Services --> Policy["SessionPolicy / DefaultRatio\nNewUserGateConfig / bbs_name"]
 
     AppRun --> Telnet["TelnetListener::bind"]
@@ -208,6 +215,8 @@ flowchart LR
     SharedScreens -.implements.-> ScreenPort["ScreenRepository\n(app port)"]
     MailRegistry -.implements.-> MailRegistryPort["MailStores\n(app port)"]
     FileMailStore -.implements.-> MailPort
+    FlaggedRepo -.implements.-> FlaggedPort["FlaggedStore (port)"]
+    SharedFlagged --> FlaggedPort
     Terminal -.implements.-> TermPort["Terminal\n(app port)"]
     Colour -.implements.-> TermPort
 ```

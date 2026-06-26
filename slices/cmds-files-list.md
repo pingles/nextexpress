@@ -292,26 +292,42 @@ deliberately distinct from the colourful `F` door.
   `tierd_file_list_smoke.rs`. **Deferred to D5-persist:** the per-slot
   `Partdownload/flagged` file write + `saveHistory()`, the cross-session
   restore, and the logon `** Flagged File(s) Exist **` banner.
-- **In Scope (D5-persist, after the banner)**
-  - `files.allium:FlagFile`, `UnflagFile`, with the per-session
-    flagged list bounded by `max_flagged_files()` (legacy
-    `MAX_FLAGGED_FILES = 1000`).
-  - `FlaggedFilesAreDownloadable` invariant.
-  - The remaining downstream flag surface the captures/E source show:
-    the logon `** Flagged File(s) Exist **` + BEL banner
-    (`amiexpress/express.e:2791-2794`, captured at transcripts line
-    77), shown when a restored flag set is non-empty. (The clean-logoff
-    `checkFlagged` "You have flagged files still not downloaded."
-    warning landed in slice Ga and the `** AutoSaving File Flags **`
-    logoff banner in slice D5-banner; D5-persist adds the per-slot file
-    write that makes the flag set survive a disconnect, plus the logon
-    banner that announces a restored set.)
-  - A fresh capture session for AquaScan's own un-exercised in-door
-    flag verbs (`A` alter-flags, `D` quit-and-download) before
-    porting them (D6a/D6b own `A`).
-- **Out of Scope**
-  - Persisting the flagged list across sessions (open question in
-    `files.allium`).
+## Slice D5-persist — flag persistence + logon banner — **Done**
+
+- **Done** — the session flag set is saved on logoff and restored on
+  logon via the `FlaggedStore` port (`domain/files/flagged_store.rs`).
+  Two adapters, selected by `config.user_storage`:
+  - `InMemoryFlaggedStore` (default) — `Mutex<HashMap<u32, FlaggedFiles>>`;
+    process-lifetime (a logoff→logon within the same running server
+    round-trips the set, but a restart clears it).
+  - `SqliteFlaggedStore` — one `flagged_files (slot_number, conference,
+    name)` table in the same `users.db`, durable across restarts.
+  No new config key; the same switch that selects the user repository
+  selects the flag store.
+- **Save on logoff** — `handle_logoff` (`menu_flow/mod.rs`) calls
+  `services.flagged_store.save(slot, session.flagged_files())` immediately
+  after the `AUTOSAVING_FILE_FLAGS` banner emit. A save error is logged
+  and the logoff proceeds.
+- **Restore + banner on logon** — `restore_flags_and_announce`
+  (`MenuFlow`/`session_driver.rs`) runs after `render_login_stats` and
+  before the menu loop, replacing the session's `FlaggedFiles` with the
+  stored set. When the restored set is non-empty it emits
+  `FLAGGED_FILES_EXIST = b"\r\n** Flagged File(s) Exist **\r\n\x07\r\n"`
+  (`express.e:2791-2794`, captured at `ae_tierd_alterflags.txt:77`).
+- **Keying** — `(conference, name)` only; `area` is dropped on save
+  and restored as `0`. A restored flag appears in the logon banner and
+  the `A` listing but will **not** repaint the `[X]` marker on a
+  next-session `F`/`R` scan (the scan keys on the full `(conf, area,
+  name)` tuple) until the file is re-flagged. Documented NextExpress
+  limitation; area-agnostic matching is a later refinement.
+- **Deferred** — `saveHistory()` + the `dump` partial-downloads file
+  (file-transfer slice); the `FlagFile`/`UnflagFile` rule layer;
+  the SQLite file-metadata store (slice D2s).
+- Verified: adapter + lifecycle unit tests, an in-process
+  logoff→logon→banner telnet smoke (`quickwins_smoke.rs` shape),
+  mutation-clean (16 caught / 5 unviable / 0 survived), and a manual
+  cross-restart check (real binary + SQLite: flag → restart → banner +
+  `A` lists the name).
 
 ## Slice D6a — `A` (list flagged set, read-only) — **Done**
 
