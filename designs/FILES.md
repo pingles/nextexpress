@@ -366,9 +366,11 @@ For 32+ concurrent BBS users:
   enforced across concurrent sessions, `BeginDownload` reserves billable
   bytes in the writer transaction. Without that reservation, limits are
   advisory under parallel FTP transfers.
-- **`FlaggedFile` writes never hit SQLite** — they're per-session in
-  memory, so the most frequent in-session "write" doesn't touch the
-  database at all.
+- **`FlaggedFile` flagging stays in memory during a session** —
+  per-keystroke flagging mutates the session set only; the set is flushed
+  to the `FlaggedStore` once per logoff (`save`) and reloaded once per
+  logon (`load`), so under SQLite the database is touched twice a session,
+  not per flag (slice D5-persist).
 - **Extraction runs on a separate worker pool.** DIZ extraction and any
   future archive/AV checks live on a bounded `spawn_blocking` (or rayon)
   pool sized below CPU count and independent of the connection pool. One

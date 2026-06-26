@@ -34,9 +34,6 @@ impl FlaggedKey {
 
     /// The conference this flag belongs to — the legacy `confNum`
     /// half of the persisted `(confNum, fileName)` key (slice D5-persist).
-    // Consumed by Task 2 (FlaggedStore port); until then only the tests
-    // exercise it.
-    #[allow(dead_code)]
     pub(crate) fn conference(&self) -> u32 {
         self.conference
     }
@@ -95,9 +92,6 @@ impl FlaggedFiles {
     /// `area` is deliberately omitted: it is a session-local concern and
     /// the legacy `flagged` file stores only conf + name
     /// (`amiexpress/express.e:2822`).
-    // Consumed by Task 2 (FlaggedStore port); until then only the tests
-    // exercise it.
-    #[allow(dead_code)]
     pub(crate) fn entries(&self) -> impl Iterator<Item = (u32, &str)> {
         self.set.iter().map(|k| (k.conference(), k.name()))
     }

@@ -179,5 +179,14 @@ mod tests {
         let store = SqliteFlaggedStore::in_memory().expect("open");
         store.save(1, &set_with(1)).expect("save");
         assert!(store.load(2).expect("load").is_empty());
+        // A save to one slot must not disturb another slot's rows — the
+        // `DELETE ... WHERE slot_number = ?1` is per-slot. Pins the WHERE
+        // clause directly (a future `save` refactor that widened the
+        // delete would survive the assertion above but fail here).
+        store.save(2, &set_with(1)).expect("save slot 2");
+        assert!(
+            !store.load(1).expect("load").is_empty(),
+            "slot 1 survives a slot-2 save"
+        );
     }
 }
