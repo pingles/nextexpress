@@ -93,7 +93,7 @@ pub fn can_delete(user: &User, mail: &Mail) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
 
     use crate::domain::bytes::Bytes;
     use crate::domain::conference::{ConferenceMembership, MessageBaseRef};
@@ -101,29 +101,10 @@ mod tests {
     use crate::domain::messaging::mail::{
         BroadcastTo, Mail, MailAttachment, MailDraft, MailVisibility,
     };
-    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::{make_user, t, InMemoryMailStore};
     use crate::domain::messaging::mail_store::MailStore;
     use crate::domain::password::PasswordHashKind;
     use crate::domain::user::User;
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn make_user(slot: u32) -> User {
-        let mut user = User::new(
-            slot,
-            format!("user{slot}"),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            100,
-        )
-        .expect("valid user");
-        user.upsert_membership(ConferenceMembership::new(2, true));
-        user
-    }
 
     fn insert_sample(store: &mut InMemoryMailStore, author_slot: u32, addressee_slot: u32) -> Mail {
         store

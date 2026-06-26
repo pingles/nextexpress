@@ -81,32 +81,14 @@ pub fn can_edit_header(user: &User) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, SystemTime};
 
     use crate::domain::conference::MessageBaseRef;
     use crate::domain::messaging::edit_mail_header::{edit_mail_header, EditMailHeaderError};
     use crate::domain::messaging::mail::{BroadcastTo, MailDraft, MailVisibility};
-    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::{
+        make_user_with_level, t, InMemoryMailStore,
+    };
     use crate::domain::messaging::mail_store::MailStore;
-    use crate::domain::password::PasswordHashKind;
-    use crate::domain::user::User;
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn make_user(slot: u32, access_level: u8) -> User {
-        User::new(
-            slot,
-            format!("user{slot}"),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            access_level,
-        )
-        .expect("valid user")
-    }
 
     fn insert_sample(store: &mut InMemoryMailStore) -> u32 {
         store
@@ -129,7 +111,7 @@ mod tests {
     fn sysop_can_rewrite_subject() {
         // Spec EditMailHeader: `if new_subject != null: mail.subject
         // = new_subject`. Sysop is allowed by the access disjunct.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         assert!(sysop.is_sysop());
         let mut store = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let number = insert_sample(&mut store);
@@ -155,7 +137,7 @@ mod tests {
         // Spec consequent: `mail.to_name = new_to_name; mail.addressee
         // = lookup_user_by_name(new_to_name, ...)`. The caller pre-
         // resolves the slot.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut store = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let number = insert_sample(&mut store);
 
@@ -179,7 +161,7 @@ mod tests {
         // Both consequents are gated on `!= null`. Passing None for
         // both is a no-op (other than the save) — the row remains
         // bit-identical.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut store = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let number = insert_sample(&mut store);
         let before = store.load(number).unwrap().unwrap();
@@ -193,7 +175,7 @@ mod tests {
     #[test]
     fn access_level_210_can_edit_header() {
         // Spec access disjunct: `session.user.access_level >= 210`.
-        let co_sysop = make_user(7, 210);
+        let co_sysop = make_user_with_level(7, 210);
         assert!(!co_sysop.is_sysop());
         let mut store = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let number = insert_sample(&mut store);
@@ -214,7 +196,7 @@ mod tests {
     fn ordinary_user_cannot_edit_header() {
         // Neither the sysop nor the access-210 disjunct holds — a
         // regular user at access_level 100 is refused.
-        let ordinary = make_user(5, 100);
+        let ordinary = make_user_with_level(5, 100);
         let mut store = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let number = insert_sample(&mut store);
 
@@ -239,7 +221,7 @@ mod tests {
 
     #[test]
     fn rejects_when_mail_does_not_exist() {
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut store = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
 
         let err = edit_mail_header(&sysop, &mut store, 99, Some("anything".to_string()), None)

@@ -471,14 +471,10 @@ pub enum MailTransitionError {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
 
     use super::*;
     use crate::domain::conference::{AllScanScope, AllowedAddressing};
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
+    use crate::domain::messaging::mail_store::test_support::t;
 
     fn sample(number: u32) -> NewMail {
         NewMail {

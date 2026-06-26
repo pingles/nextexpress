@@ -247,7 +247,12 @@ mod tests {
 /// type into their own test modules.
 #[cfg(test)]
 pub(crate) mod test_support {
+    use std::time::{Duration, SystemTime};
+
     use super::{Mail, MailDraft, MailStore, MailStoreError, MessageBaseRef};
+    use crate::domain::conference::ConferenceMembership;
+    use crate::domain::password::PasswordHashKind;
+    use crate::domain::user::User;
 
     pub(crate) struct InMemoryMailStore {
         msgbase: MessageBaseRef,
@@ -288,5 +293,51 @@ pub(crate) mod test_support {
             }
             Ok(())
         }
+    }
+
+    /// A `SystemTime` `secs` seconds after the Unix epoch.
+    pub(crate) fn t(secs: u64) -> SystemTime {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    /// A user at access level 100 with a granted membership in
+    /// conference 2 — the default fixture for the messaging rules, which
+    /// gate on a granted membership for the mail's parent conference.
+    pub(crate) fn make_user(slot: u32) -> User {
+        make_user_with_handle(slot, &format!("user{slot}"))
+    }
+
+    /// [`make_user`] with a caller-chosen handle, for the
+    /// addressee-resolution tests (`forward`, `reply`).
+    pub(crate) fn make_user_with_handle(slot: u32, handle: &str) -> User {
+        let mut user = User::new(
+            slot,
+            handle.to_string(),
+            PasswordHashKind::Pbkdf210000,
+            "hash".to_string(),
+            Some("salt".to_string()),
+            SystemTime::UNIX_EPOCH,
+            100,
+        )
+        .expect("valid user");
+        user.upsert_membership(ConferenceMembership::new(2, true));
+        user
+    }
+
+    /// A user at a caller-chosen access level with NO conference
+    /// membership. The `move` / `edit-header` tests assert on the access
+    /// gate before any membership lookup, so they deliberately omit the
+    /// grant.
+    pub(crate) fn make_user_with_level(slot: u32, access_level: u8) -> User {
+        User::new(
+            slot,
+            format!("user{slot}"),
+            PasswordHashKind::Pbkdf210000,
+            "hash".to_string(),
+            Some("salt".to_string()),
+            SystemTime::UNIX_EPOCH,
+            access_level,
+        )
+        .expect("valid user")
     }
 }

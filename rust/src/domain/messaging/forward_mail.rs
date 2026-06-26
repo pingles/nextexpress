@@ -178,38 +178,21 @@ pub fn forward_mail(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
 
-    use crate::domain::conference::{AllowedAddressing, ConferenceMembership, MessageBaseRef};
+    use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
     use crate::domain::messaging::forward_mail::{
         forward_header_for, forward_mail, ForwardMailError, ForwardMailRequest,
     };
     use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
     use crate::domain::messaging::mail::{BroadcastTo, Mail, MailDraft, MailVisibility};
-    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::{
+        make_user_with_handle, t, InMemoryMailStore,
+    };
     use crate::domain::messaging::mail_store::MailStore;
     use crate::domain::messaging::post_mail::PostMailError;
     use crate::domain::password::PasswordHashKind;
     use crate::domain::user::User;
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn make_user(slot: u32, handle: &str) -> User {
-        let mut user = User::new(
-            slot,
-            handle.to_string(),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            100,
-        )
-        .expect("valid user");
-        user.upsert_membership(ConferenceMembership::new(2, true));
-        user
-    }
 
     fn source_from(
         store: &mut InMemoryMailStore,
@@ -263,7 +246,7 @@ mod tests {
         // Spec ForwardMail: new mail is in the same msgbase, addressed
         // to the new addressee, with `Fwd: <subject>` and a body
         // containing the forward header + original body.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(
@@ -320,7 +303,7 @@ mod tests {
         // Spec ForwardMail body:
         //   header + "\n" + source.body
         //   + (if additional_note: "\n--\n" + additional_note else: "")
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(
@@ -362,7 +345,7 @@ mod tests {
         // Spec ForwardMail consequent: `private: source.visibility !=
         // public`. Private (and PrivateToSysop) forwards must stay
         // private.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(
@@ -399,7 +382,7 @@ mod tests {
         // Mirror of the previous test: a Public source must NOT
         // become Private. Pins the `!= public` direction so a
         // future refactor that inverts the condition trips here.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(
@@ -434,7 +417,7 @@ mod tests {
     #[test]
     fn rejects_when_source_is_deleted() {
         // Spec ForwardMail: `requires: not request.source.is_deleted`.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let mut source = source_from(
@@ -475,7 +458,7 @@ mod tests {
 
     #[test]
     fn rejects_private_source_the_user_cannot_read() {
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_to(
@@ -513,7 +496,7 @@ mod tests {
 
     #[test]
     fn rejects_forward_when_the_derived_body_would_exceed_the_size_limit() {
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let huge_body = "x".repeat(MAX_MAIL_BODY_BYTES);
@@ -553,7 +536,7 @@ mod tests {
 
     #[test]
     fn accepts_forward_when_the_derived_body_exactly_hits_the_size_limit() {
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut header_store = InMemoryMailStore::new(msgbase);
         let header_source = source_from(

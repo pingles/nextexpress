@@ -147,13 +147,9 @@ pub enum ReadPointersError {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
 
     use super::*;
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
+    use crate::domain::messaging::mail_store::test_support::t;
 
     #[test]
     fn new_round_trips_basic_fields() {

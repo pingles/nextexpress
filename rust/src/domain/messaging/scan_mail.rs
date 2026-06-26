@@ -335,31 +335,12 @@ fn is_unread_for(user: &User, mail: &Mail, scope: AllScanScope) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
     use crate::domain::messaging::mail::{MailDraft, NewMail};
+    use crate::domain::messaging::mail_store::test_support::{make_user, t};
     use crate::domain::password::PasswordHashKind;
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn make_user(slot: u32) -> User {
-        let mut user = User::new(
-            slot,
-            format!("user{slot}"),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            100,
-        )
-        .expect("valid user");
-        user.upsert_membership(ConferenceMembership::new(2, true));
-        user
-    }
 
     /// In-memory single-msgbase [`MailStore`] used by these tests.
     /// Implements only what [`scan_mail`] / `walk` exercise — `insert`

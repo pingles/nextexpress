@@ -106,33 +106,14 @@ pub fn post_comment_to_sysop(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
 
     use super::*;
     use crate::domain::conference::ConferenceMembership;
     use crate::domain::messaging::mail::MailVisibility;
     use crate::domain::password::PasswordHashKind;
 
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn make_user(slot: u32) -> User {
-        let mut user = User::new(
-            slot,
-            format!("user{slot}"),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            100,
-        )
-        .expect("valid user");
-        user.upsert_membership(ConferenceMembership::new(2, true));
-        user
-    }
-
-    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::{make_user, t, InMemoryMailStore};
 
     fn sample_draft() -> CommentToSysopDraft {
         CommentToSysopDraft {

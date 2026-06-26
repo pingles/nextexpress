@@ -153,35 +153,20 @@ pub fn can_move(user: &User) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
 
     use crate::domain::bytes::Bytes;
     use crate::domain::conference::MessageBaseRef;
     use crate::domain::messaging::mail::{
         BroadcastTo, Mail, MailAttachment, MailDraft, MailVisibility,
     };
-    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::{
+        make_user_with_level, t, InMemoryMailStore,
+    };
     use crate::domain::messaging::mail_store::MailStore;
     use crate::domain::messaging::move_mail::{move_mail, MoveMailError};
     use crate::domain::password::PasswordHashKind;
     use crate::domain::user::{Right, User};
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn make_user(slot: u32, access_level: u8) -> User {
-        User::new(
-            slot,
-            format!("user{slot}"),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            access_level,
-        )
-        .expect("valid user")
-    }
 
     fn insert_sample(store: &mut InMemoryMailStore) -> Mail {
         store
@@ -204,7 +189,7 @@ mod tests {
         // Spec MoveMail: ensures Mail.created in target with every
         // preserved field, target.highest_message bumps, source
         // visibility becomes deleted.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         assert!(sysop.is_sysop());
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let mut target = InMemoryMailStore::new(MessageBaseRef::new(3, 4));
@@ -240,7 +225,7 @@ mod tests {
         // Spec consequent: `received_at: mail.received_at`. The
         // freshly-inserted copy must carry the timestamp forward
         // even though `MailStore::insert` always sets `None`.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let mut target = InMemoryMailStore::new(MessageBaseRef::new(3, 4));
         let mut original = insert_sample(&mut source);
@@ -257,7 +242,7 @@ mod tests {
     fn moving_a_private_mail_preserves_visibility() {
         // Spec consequent: `visibility: mail.visibility`. A Private
         // source moves over as Private, not Public.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let mut target = InMemoryMailStore::new(MessageBaseRef::new(3, 4));
         let mut original = insert_sample(&mut source);
@@ -276,7 +261,7 @@ mod tests {
         // MailAttachment.created(mail: target_msgbase, ...)`. The
         // attachments end up on the new mail; the source is
         // emptied as part of the soft-delete.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let mut target = InMemoryMailStore::new(MessageBaseRef::new(3, 4));
         let mut original = insert_sample(&mut source);
@@ -303,7 +288,7 @@ mod tests {
         // sufficient access to hold MessageEdit. Currently slot >= 2
         // with access_level >= 100 holds MessageEdit, mirroring the
         // existing user-tier mapping.
-        let editor = make_user(7, 100);
+        let editor = make_user_with_level(7, 100);
         assert!(!editor.is_sysop());
         assert!(editor.has_access(Right::MessageEdit));
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
@@ -361,7 +346,7 @@ mod tests {
     fn rejects_when_target_equals_source() {
         // Spec requires: `target_msgbase != mail.msgbase`. Moving a
         // mail onto its own base is a no-op trap.
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let original = insert_sample(&mut source);
         // The trick: we need a second mut borrow into the same
@@ -376,7 +361,7 @@ mod tests {
 
     #[test]
     fn rejects_when_mail_does_not_exist_in_source() {
-        let sysop = make_user(1, 255);
+        let sysop = make_user_with_level(1, 255);
         let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
         let mut target = InMemoryMailStore::new(MessageBaseRef::new(3, 4));
 

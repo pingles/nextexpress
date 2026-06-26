@@ -152,36 +152,19 @@ pub fn reply_to_mail(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
 
-    use crate::domain::conference::{AllowedAddressing, ConferenceMembership, MessageBaseRef};
+    use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
     use crate::domain::messaging::mail::{BroadcastTo, Mail, MailDraft, MailVisibility};
-    use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
+    use crate::domain::messaging::mail_store::test_support::{
+        make_user_with_handle, t, InMemoryMailStore,
+    };
     use crate::domain::messaging::mail_store::MailStore;
     use crate::domain::messaging::reply_to_mail::{
         reply_to_mail, ReplyToMailDraft, ReplyToMailError,
     };
     use crate::domain::password::PasswordHashKind;
     use crate::domain::user::User;
-
-    fn t(secs: u64) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
-    }
-
-    fn make_user(slot: u32, handle: &str) -> User {
-        let mut user = User::new(
-            slot,
-            handle.to_string(),
-            PasswordHashKind::Pbkdf210000,
-            "hash".to_string(),
-            Some("salt".to_string()),
-            SystemTime::UNIX_EPOCH,
-            100,
-        )
-        .expect("valid user");
-        user.upsert_membership(ConferenceMembership::new(2, true));
-        user
-    }
 
     fn source_from_with_visibility(
         store: &mut InMemoryMailStore,
@@ -242,7 +225,7 @@ mod tests {
         // Spec ReplyToMail: when source.broadcast_to != all, the
         // reply's to_name = source.from_name and addressee_slot =
         // source.author_slot, with broadcast_to = None.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(
@@ -279,7 +262,7 @@ mod tests {
         // Spec ReplyToMail: if source.broadcast_to = all and
         // reply_keeps_broadcast(draft), reply_to_name = "ALL"; the
         // post then receives broadcast_to = All.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(&mut store, "charlie", 4, "ALL", None, BroadcastTo::All);
@@ -307,7 +290,7 @@ mod tests {
         // (`reply_keeps_broadcast = false`) treats the ALL source as
         // if it were a personal message — the reply goes privately
         // back to the original author.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(&mut store, "charlie", 4, "ALL", None, BroadcastTo::All);
@@ -332,7 +315,7 @@ mod tests {
         // Spec ReplyToMail: `requires: source.visibility != deleted`.
         // The store still holds the row (DeleteMail is a soft delete
         // — Slice 49) but we refuse to thread a reply off it.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let mut source = source_from(
@@ -368,7 +351,7 @@ mod tests {
 
     #[test]
     fn rejects_private_source_the_user_cannot_read() {
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from_with_visibility(
@@ -406,7 +389,7 @@ mod tests {
         // through to `else: source.from_name`. Pin this so a future
         // refactor that broadens the match to "any broadcast" trips
         // here.
-        let mut alice = make_user(2, "alice");
+        let mut alice = make_user_with_handle(2, "alice");
         let msgbase = MessageBaseRef::new(2, 1);
         let mut store = InMemoryMailStore::new(msgbase);
         let source = source_from(&mut store, "charlie", 4, "EALL", None, BroadcastTo::Eall);
