@@ -61,8 +61,10 @@ pub enum PasswordError {
 /// - `min_categories`: minimum distinct character categories.
 #[must_use]
 pub fn meets_password_strength(candidate: &str, min_length: u32, min_categories: u32) -> bool {
+    // `min_length == 0` disables the check: `min_len` is then 0, and a
+    // `char` count can never be `< 0`, so no explicit guard is needed.
     let min_len = usize::try_from(min_length).unwrap_or(usize::MAX);
-    if min_length > 0 && candidate.chars().count() < min_len {
+    if candidate.chars().count() < min_len {
         return false;
     }
     if min_categories > 0 {

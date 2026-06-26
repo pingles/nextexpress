@@ -299,9 +299,15 @@ mod tests {
     #[test]
     fn plus_sets_the_flag_on_every_granted_conference_only() {
         let mut ms = memberships();
+        // Pre-set conference 2 so `+` must be an absolute *set*, not a
+        // toggle: a toggle of the already-on flag would clear it.
+        ms[1].set_scan_flag(ScanFlag::MailScanAll, true);
         apply_scan_flag_edit(&mut ms, ScanFlag::MailScanAll, &ScanFlagSelection::AllOn);
         assert!(flag_of(&ms, 1, ScanFlag::MailScanAll));
-        assert!(flag_of(&ms, 2, ScanFlag::MailScanAll));
+        assert!(
+            flag_of(&ms, 2, ScanFlag::MailScanAll),
+            "already-on flag stays on (set, not toggle)"
+        );
         assert!(flag_of(&ms, 3, ScanFlag::MailScanAll));
         assert!(
             !flag_of(&ms, 4, ScanFlag::MailScanAll),
@@ -312,9 +318,15 @@ mod tests {
     #[test]
     fn minus_clears_the_flag_on_every_granted_conference() {
         let mut ms = memberships();
+        // Pre-clear conference 2 so `-` must be an absolute *clear*, not
+        // a toggle: a toggle of the already-off flag would set it.
+        ms[1].set_scan_flag(ScanFlag::MailScan, false);
         apply_scan_flag_edit(&mut ms, ScanFlag::MailScan, &ScanFlagSelection::AllOff);
         assert!(!flag_of(&ms, 1, ScanFlag::MailScan));
-        assert!(!flag_of(&ms, 2, ScanFlag::MailScan));
+        assert!(
+            !flag_of(&ms, 2, ScanFlag::MailScan),
+            "already-off flag stays off (clear, not toggle)"
+        );
         assert!(!flag_of(&ms, 3, ScanFlag::MailScan));
     }
 
