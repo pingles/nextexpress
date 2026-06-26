@@ -304,10 +304,11 @@ mod tests {
 
     #[test]
     fn open_flagged_store_is_in_memory_without_user_storage() {
+        use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
+
         let config = Config::default(); // user_storage = None
         let store = open_flagged_store(&config).expect("store");
         // A fresh in-memory store loads empty for any slot and round-trips.
-        use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
         assert!(store.load(1).expect("load").is_empty());
         let mut flags = FlaggedFiles::default();
         flags.flag(FlaggedKey::new(1, 0, "ansipack.lha"));
