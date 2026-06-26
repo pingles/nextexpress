@@ -8,6 +8,8 @@ mod files;
 mod join;
 mod mail;
 
+use std::str::SplitAsciiWhitespace;
+
 /// Parsed menu command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MenuCommand {
@@ -308,6 +310,18 @@ pub(crate) enum PostArg {
     Missing,
 }
 
+/// Splits `line` on ASCII whitespace and consumes the leading token
+/// when it case-insensitively equals `command`, yielding the remaining
+/// tokens. Returns `None` when the head differs — the shared preamble of
+/// the exact-head parameter parsers (`R`/`J`/`JM`/`Z`).
+fn command_tokens<'a>(line: &'a str, command: &str) -> Option<SplitAsciiWhitespace<'a>> {
+    let mut tokens = line.split_ascii_whitespace();
+    tokens
+        .next()?
+        .eq_ignore_ascii_case(command)
+        .then_some(tokens)
+}
+
 /// Parses a raw menu line into a typed [`MenuCommand`].
 #[must_use]
 pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
@@ -325,38 +339,30 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
             .is_some_and(|rest| rest.split_whitespace().any(|t| t.eq_ignore_ascii_case("Y")));
         return MenuCommand::Logoff { auto };
     }
-    if trimmed.eq_ignore_ascii_case("C") {
-        return MenuCommand::CommentToSysop;
-    }
-    if trimmed.eq_ignore_ascii_case("CF") {
-        return MenuCommand::ConferenceFlags;
-    }
-    if trimmed.eq_ignore_ascii_case("T") {
-        return MenuCommand::ShowTime;
-    }
-    if trimmed.eq_ignore_ascii_case("VER") {
-        return MenuCommand::ShowVersion;
-    }
-    if trimmed.eq_ignore_ascii_case("H") {
-        return MenuCommand::ShowHelp;
-    }
-    if trimmed.eq_ignore_ascii_case("Q") {
-        return MenuCommand::QuietToggle;
-    }
-    if trimmed.eq_ignore_ascii_case("S") {
-        return MenuCommand::ShowStats;
-    }
-    if trimmed.eq_ignore_ascii_case("X") {
-        return MenuCommand::ExpertToggle;
-    }
-    if trimmed == "?" {
-        return MenuCommand::ShowMenu;
+    // Exact whole-line, no-argument commands (case-insensitive). `MS`
+    // and `A` (bare) are hoisted here from below: no intervening
+    // argument parser binds either token, so precedence is unchanged.
+    match trimmed.to_ascii_uppercase().as_str() {
+        "C" => return MenuCommand::CommentToSysop,
+        "CF" => return MenuCommand::ConferenceFlags,
+        "T" => return MenuCommand::ShowTime,
+        "VER" => return MenuCommand::ShowVersion,
+        "H" => return MenuCommand::ShowHelp,
+        "Q" => return MenuCommand::QuietToggle,
+        "S" => return MenuCommand::ShowStats,
+        "X" => return MenuCommand::ExpertToggle,
+        "M" => return MenuCommand::AnsiToggle,
+        "?" => return MenuCommand::ShowMenu,
+        // `MS <n>` is not the scan; the exact match rejects it, the same
+        // way the other no-argument commands fall through to Unknown.
+        "MS" => return MenuCommand::ScanAllMail,
+        // `A` (bare) lists the flagged set (slice D6a); `A <name>` and
+        // the `Filename(s) to flag:` loop are slice D6b.
+        "A" => return MenuCommand::AlterFlags,
+        _ => {}
     }
     if let Some(topic) = trimmed.strip_prefix('^') {
         return MenuCommand::TopicHelp(topic.trim().to_string());
-    }
-    if trimmed.eq_ignore_ascii_case("M") {
-        return MenuCommand::AnsiToggle;
     }
     // `<` / `>` / `<<` / `>>` dispatch on the head token alone — the
     // legacy tokenizer keeps everything before the first space as the
@@ -381,20 +387,8 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     if let Some(arg) = mail::parse_number_command(trimmed, "R") {
         return MenuCommand::Read(arg);
     }
-    // `MS` (bare) is the multi-conference scan; an `eq_ignore_ascii_case`
-    // on the whole line rejects `MS <n>` (which falls through to
-    // Unknown) the same way the other no-argument commands do.
-    if trimmed.eq_ignore_ascii_case("MS") {
-        return MenuCommand::ScanAllMail;
-    }
     if let Some(post) = mail::parse_post_command(trimmed) {
         return MenuCommand::Post(post);
-    }
-    // `A` (bare): list the flagged set (slice D6a). The `A <name>`
-    // inline-flag form and the `Filename(s) to flag:` prompt loop are
-    // slice D6b, so only the bare token binds here.
-    if trimmed.eq_ignore_ascii_case("A") {
-        return MenuCommand::AlterFlags;
     }
     if let Some(arg) = files::parse_file_list_command(trimmed) {
         return MenuCommand::FileList(arg);

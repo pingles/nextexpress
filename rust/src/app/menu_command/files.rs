@@ -7,11 +7,7 @@ use super::{val_prefix, FileListArg, FileSpan, ZippyArg};
 /// a later slice. The search string is the first parameter token
 /// (`item(0)`, `:26146`); a bare `Z` is the prompt form (`:26150`).
 pub(super) fn parse_zippy_command(line: &str) -> Option<ZippyArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("Z") {
-        return None;
-    }
+    let mut tokens = super::command_tokens(line, "Z")?;
     let Some(query) = tokens.next() else {
         return Some(ZippyArg::Prompt);
     };

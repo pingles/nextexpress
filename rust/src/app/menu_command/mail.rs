@@ -1,21 +1,14 @@
 use super::{NumberArg, PostArg};
 
 pub(super) fn parse_number_command(line: &str, command: &str) -> Option<NumberArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case(command) {
-        return None;
-    }
+    let mut tokens = super::command_tokens(line, command)?;
     let Some(arg) = tokens.next() else {
         return Some(NumberArg::Missing);
     };
     if tokens.next().is_some() {
         return Some(NumberArg::Invalid);
     }
-    match arg.parse::<u32>() {
-        Ok(n) => Some(NumberArg::Number(n)),
-        Err(_) => Some(NumberArg::Invalid),
-    }
+    Some(arg.parse().map_or(NumberArg::Invalid, NumberArg::Number))
 }
 
 pub(super) fn parse_post_command(line: &str) -> Option<PostArg> {

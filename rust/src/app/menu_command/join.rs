@@ -7,11 +7,7 @@ use super::{val_prefix, JoinArg, MenuCommand, MsgBaseArg};
 /// inside the first token or the presence of a second token signals
 /// the message-base forms.
 pub(super) fn parse_join_command(line: &str) -> Option<JoinArg> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("J") {
-        return None;
-    }
+    let mut tokens = super::command_tokens(line, "J")?;
     let Some(first) = tokens.next() else {
         return Some(JoinArg::Missing);
     };
@@ -41,11 +37,7 @@ fn parse_join_params<'a>(first: &str, mut rest: impl Iterator<Item = &'a str>) -
 /// handling, `amiexpress/express.e:25197-25208`). A `.` anywhere in
 /// the first token delegates the raw params to the `J` logic.
 pub(super) fn parse_join_msgbase_command(line: &str) -> Option<MenuCommand> {
-    let mut tokens = line.split_ascii_whitespace();
-    let head = tokens.next()?;
-    if !head.eq_ignore_ascii_case("JM") {
-        return None;
-    }
+    let mut tokens = super::command_tokens(line, "JM")?;
     let Some(first) = tokens.next() else {
         return Some(MenuCommand::JoinMsgBase(MsgBaseArg::Missing));
     };
