@@ -616,6 +616,24 @@ the add-a-command tour from ~6 app-layer touch-points to ~4 (empirical
 baseline: the `CF` commit touched 9 files / ~630 lines; `MS` touched
 13 files).
 
+Items 14–27 come from a second, **forward-looking assessment
+(July 2026)** run against the SLICES.md roadmap: seven parallel
+subsystem readers, seven design lenses (ports/boundaries, domain
+modelling, concurrency readiness, binary-transport readiness,
+persistence evolution, app structure, test strategy), deduplication,
+then adversarial per-item verification against the code — 18
+candidates survived, 0 refuted. Four of the 18 re-timed existing items
+in place (1, 2, 10, 12); the rest are new, under "Forward-looking
+review additions" below. The headline finding: the next tiers each
+stress a seam that does not exist yet — Tier D transfer needs a
+binary-clean transport (item 20) and schema evolution (item 22),
+Tier E needs cross-session state (items 25–26; today there is none —
+no registry, no channel, and production nodes never leave
+`Connecting`), and Tiers G–I need finer-grained user writes than the
+whole-aggregate upsert (item 1). The review also surfaced three live
+defects (the open-defects list under "Suggested order"). Sizes are the
+verifiers' adjusted estimates.
+
 ### 1. Evolve user persistence away from full aggregate saves
 
 `UserRepository::save(User)` persists the whole aggregate, and flows
@@ -634,6 +652,30 @@ conference position, profile fields, and password changes.
 This does not need to happen immediately. It becomes important before
 adding cross-session sysop edits, background maintenance jobs, or
 multiple concurrent logons for the same account.
+
+**Re-timed + mechanism decided (July 2026 review): land after N,
+before D-T2.** The accepted transfer design (designs/FILES.md's ledger
+deltas — `SET bytes_downloaded_total = bytes_downloaded_total + ?`)
+applies additive projection deltas that a whole-aggregate save at the
+session's next save point silently reverts, so the first real
+second-writer path arrives with D-T2, not Tier H. Mechanism:
+**command-style writes, not optimistic versioning** — three naturally
+commutative commands, each one SQL transaction:
+`record_auth_outcome` (invalid attempts / lock / force-reset, at
+verify_password), `record_logon` (times_called additive, last_call
+monotonic MAX, at enter_menu), and `apply_logoff_patch`
+(time_used_today delta, preference/last_joined patch, messages_posted
+delta, per-row read-pointer MAX-upserts, at finalise). Versioning is
+rejected for now: a `row_version` column cannot be added to existing
+users.db files until migrations (item 22) exist, and it turns
+commutative counter bumps into retry loops — keep it in reserve for
+the Tier H preference-editor UX. The same pass fixes a verified tear:
+`save` runs the 32-column upsert + membership DELETE/reinsert **bare**
+on the connection while `create_user` gets a transaction
+(`sqlite_user_repository.rs:494-511` vs `:513-546`), so a crash
+mid-save tears the aggregate. Verified size: 4–6 days, ~10–14 files —
+`apply_logoff_patch` needs the domain to yield per-call deltas rather
+than absolutes, plus dual-adapter parity tests.
 
 ### 2. Rebalance port error boundaries
 
@@ -684,6 +726,26 @@ Verified June 2026 (both are real but LOC-modest, not LOC-wins):
   out of the domain enum. Expect the rich enum to *reappear*
   adapter-side, so it is hygiene, not reduction. Best done as one
   error-boundary pass alongside the `ConferenceRepository` move.
+
+**Re-verified + scope widened (July 2026): do the pass before D2s.**
+Still open — nothing has landed. The convention actually diverges four
+ways, not two: `FlaggedStoreError::Backend(String)`
+(`domain/files/flagged_store.rs`) is stringly and discards the source
+chain, and `UserRepositoryError::Storage { context, message }`
+(`domain/user_repository.rs:31-46`) likewise (it leaks no adapter
+vocabulary, but a pass claiming to pin one convention must include or
+explicitly defer it). Pin the convention as: one opaque
+`Backend { source: Box<dyn Error + Send + Sync> }` plus only genuinely
+contractual variants (e.g. `MessageMissing`, `MsgbaseMismatch`), rich
+diagnostics adapter-private and Display-chained into `Backend`.
+Timing: **before slice D2s mints the port family's fourth member** by
+copying whichever template it finds — and today the most prominent
+template (`MailStoreError`) is the leaky one. No wire impact: app
+consumers only emit the fixed `MAIL_STORE_ERROR_LINE`. Verified size:
+~1 day, realistically 12–15 files (doc-comment retargeting in
+conference.rs / conference_visit.rs / conferencing.rs / join /
+services.rs, ~15 file_mail_store test assertions reworked against the
+adapter-private enum, the composition diagram above).
 
 ### 3. One module per menu command: fold `app/menu/*` into `app/menu_flow/*`
 
@@ -887,6 +949,25 @@ the error-arm `line_for` extraction + asserts as a standalone TDD move;
 fold the reader merge into the next slice that touches `post_mail.rs` or
 `sysop_admin.rs`.
 
+**Sharpened (July 2026): land the menu_flow scope before the N and FM
+slices.** Two updates. (a) The duplication is six near-identical
+readers across the flows once the join/menu variants are counted, not
+three, and the `record_input` idle-stamp convention is quietly
+fraying — stamped at 17 menu_flow sites but absent from the `A`
+flag-loop reads, the `F` `Directories:` prompt, and both `Z` zippy
+prompts. The merged reader (`prompt_line(prompt, EmptyMeaning,
+AbortNotice)`) should stamp `record_input` internally so the idle
+clock cannot be forgotten, and the unstamped prompts should be swept
+onto it or documented as intentional. The `EmptyMeaning` enum must
+encode join's no-trim/lone-CRLF blank semantics vs post_mail's
+trim+notice. (b) N and FM are the next prompt-heavy slices, so this is
+this item's own "fold into the next slice that touches these files"
+trigger arriving; ~1–1.5 days for the menu_flow scope. The wider
+cross-flow Eof/IdleTimedOut outcome-mapping consolidation
+(login/registration/password-reset) was reviewed and **cut**: Rust's
+exhaustive matching already protects future outcome variants — the
+compiler flags every site when Tier G adds `TimeExpired`.
+
 ### 11. Declarative command listing in `menu_command.rs` (low priority)
 
 A const table (`&[(&str, ArgSpec)]`) or a ~40-line `commands!` macro
@@ -942,6 +1023,32 @@ Zero production risk, large test-code wins:
 Test clarity beats DRY in this codebase: only the scaffolding moves;
 scenario-specific assertions stay in the test files.
 
+**Status (July 2026): the crate-side half landed; the smoke-harness
+half remains and is due before the FS smoke.** The late-June `tidy:`
+commits consolidated the crate-internal fixtures
+(`app/menu_flow/test_support.rs`, the session_driver services helper,
+`domain::messaging::mail_store::test_support`). `tests/support/mod.rs`
+now exists (quickwins + the phase smokes use it) but models one shape
+only: seeded sysop, `max_nodes` hardcoded to 1 (`support/mod.rs:114`),
+sysop-only sign-in helpers, and a `drain_until` that collapses
+timeout/EOF/IO-error into one panic message. Six in-process smokes
+still re-roll a ~110–155-line helper quintet (`tierd_file_list`,
+`tierb_mail_scan`, `tierb_read_subprompt`, `confnav`,
+`cf_conference_flags`, `logon_conference_scan`), and `tierd_file_list`
+alone carries the keystroke primitives (`write_key`/`read_idle`) the
+hotkey pager forced. Remaining work (~1 day, test-only): builder knobs
+on `TestRuntime` (extra users, max_nodes, Config overrides — a corpus
+knob already exists via the `file_repo` field), migrate the six
+hold-outs (assertion literals stay put), move `write_key`/`read_idle`
+and a generalised `sign_in(addr, handle, password)` into support, and
+split `drain_until`'s failure modes into distinct timeout/EOF/error
+panics. FS is the next slice to write a smoke — do this first or it
+becomes helper-copy #7. Deferred within this item: the keys-capable
+CaptureTerminal promotion (wait for its second consumer, FS or N) and
+the two-session primitives (`sign_in_as` returning independent
+streams, `expect_within(stream, needle, window)`), which stage with
+the first Tier E slice.
+
 ### 13. Keep file-size refactors opportunistic
 
 The older navigability refactors are still useful, just lower leverage
@@ -993,6 +1100,364 @@ than the work above:
   Do these one-per-commit when the file is otherwise quiet (the move
   noises up `git blame`).
 
+## Forward-looking review additions (July 2026)
+
+Items 14–27 target the seams the remaining tiers need (see the
+assessment provenance in the section intro above). Each is listed with
+its **trigger** — the slice it must precede — because most of them
+should NOT land now: the project rule "one field lands with the slice
+that first consumes it" applies to seams too. Items 14 and 15 are the
+exceptions (a live defect and a 1–2 hour chore).
+
+### 14. Unify flag identity to `(conference, name)` — live defect
+
+`FlaggedFiles` has two competing identities by convention:
+listing-driven flags carry the real dir number
+(`file_list/wire.rs:294`, sourced from `run_span`) while the
+`A`-prompt (`menu_flow/mod.rs:246`), the logon restore
+(`mod.rs:387-392`), and both `FlaggedStore` adapters
+(`sqlite_flagged_store.rs:104`, `in_memory_flagged_store.rs:41`) build
+`area = 0` keys — and `FlaggedKey`'s `Ord` includes `area`
+(`domain/files/flagged.rs:10-15`), so the same file can occupy two
+`BTreeSet` keys in one session (flag from an `F` listing plus the same
+name at the `A` prompt, or restore-then-reflag). Verified
+consequences: `names()` duplicates the name in the `A` listing (any
+config); `entries()` emits duplicate `(conference, name)` pairs; and
+under `user_storage = sqlite` the logoff save's plain `INSERT` under
+`PRIMARY KEY (slot_number, conference, name)` hits a PK violation and
+the transaction rolls back — **the session's flag changes are silently
+lost** (previously persisted rows survive the rollback; the in-memory
+store is unaffected because its `save` dedupes through
+`FlaggedFiles::flag`).
+
+Fix: drop `area` from `FlaggedKey` so the domain identity equals the
+legacy and persisted identity, `(conference, UPPER(name))`. The
+documented "restored flags don't repaint the `[X]` marker" limitation
+dissolves as a side effect — validate the marker semantics for a
+same-named file in two areas against the FS-UAE reference before
+re-pinning, and add the restore → re-flag → save round-trip regression
+test. ~0.5–1 day: flagged.rs, `flag_add`, file_list wire+mod, both
+adapters, the bootstrap seed, tests, and the three docs restating the
+repaint limitation (SLICES.md, this file, designs/FILES.md).
+**Trigger: now — the defect is live, and D-T2 consumes the flag list
+as the default download set.**
+
+### 15. Re-scope the routine mutation gate to diff-vs-main
+
+`make check` — the target mirroring AGENTS.md's "Before Committing"
+checklist — still runs the FULL `cargo mutants` sweep (Makefile:61):
+1,882 mutants at an observed ~11–17 s each ≈ 6–9 hours serial. Nobody
+runs it; the practiced norm is the per-commit `--in-diff` run recorded
+under "Suggested order" — so the documented gate and the practiced
+gate have diverged, and the checklist is executed literally by agents.
+Point `check` at `mutants-diff DIFF_BASE=main`, reword AGENTS.md
+item 4 to match, keep the full sweep as a scheduled/sharded target
+(`--shard k/n` already passes through via `MUTANTS_ARGS`, Makefile:11)
+and persist `mutants.out` as the baseline artifact. Explicitly do NOT
+add `exclude_globs`: excluding wire-const modules would blind the
+sweep to exactly the smoke-killed mutants this project cares about.
+1–2 hours, no production code. **Trigger: now.**
+
+### 16. Clock port in `AppServices`
+
+The domain is already clock-clean (rules take `now: SystemTime`; zero
+`SystemTime::now()` hits in domain/), but the app layer resolves "now"
+directly at 48 production sites across 14 flow files, so no in-process
+test can control the date — the `T` smoke asserts date *shape*, not
+value, and the `N` date-scan smoke ("(-X) Days" against the seeded
+2026-01..06 corpus) cannot be deterministic. Add a minimal app-layer
+`Clock` port (`fn now(&self) -> SystemTime`) as one more `Arc` field
+on `AppServices`, a trivial `SystemClock` adapter, a steppable
+`TestClock` in test_support plus a clock knob on the `tests/support`
+builder (item 12), and mechanically substitute the 48 sites; domain
+signatures are unchanged. Upgrade one shape-only time assertion to an
+exact pin as the kill test. ~1 day (~20 files; `AppServices` has 17
+construction sites across 7 files, mostly the consolidated test
+helpers). Also the groundwork for Tier I daily-cap/rollover tests and
+item 27's exact-minutes smoke. **Trigger: before the N slice; every
+date-stamping slice built first adds migration sites.**
+
+### 17. Extract the NextScan scan engine from `file_list`
+
+The entire NextScan machine — `ScanState`, `run_span` (6 non-self
+params, `file_list/mod.rs:174-266`), `stream_dir_body`,
+`emit_scan_line`, `scan_more_prompt` (the held-`n`/Q/C/F/R/`?` verb
+machine, `:368-485`), the flag repaint/overprint helpers — is private
+to the 862-line `file_list/mod.rs` and hard-wired to `F`'s row source.
+`N` is pinned to the same door engine (date prompt, then per-dir
+`Scanning dir N for <mm-dd-yy>...` headers through the same `More?`
+pager). Split the engine into a sibling module — note
+`menu_flow/pager.rs` already names the *message* pager, so use e.g.
+`file_list/scan.rs` or `menu_flow/nextscan.rs` — generalising
+`run_span` so the caller supplies the per-dir row set and header
+bytes; `N` then lands as a thin entry point plus its date-prompt wire
+consts. Fold in one shared A/U/H/digit span-token resolver: the logic
+is currently tripled (`menu_command/files.rs:48-58`,
+`file_list/mod.rs:103-116`, `resolve_zippy_span` at `:799-818`), each
+caller keeping its own pinned error envelope (the divergent
+`Error in input!` vs `No such directory.` wires are legacy parity, not
+accidents). 1–1.5 days including moving the pager tests out of the
+2,265-line `file_list/tests.rs`. **Trigger: first task of the N
+slice — the second consumer keeps the generalisation honest; do not
+extract earlier.**
+
+### 18. `FileRepository` port prep: fallibility + file identity
+
+The port is read-only and infallible by explicit deferral
+(`domain/files/repository.rs:7-9` defers `Result` plumbing to D2s),
+which bundles a breaking signature change across every call site into
+the same slice as a brand-new SQLite adapter — and N and V/VS add more
+infallible call sites first. The blast radius is still small: seven
+production call sites, all in `file_list/mod.rs`, plus
+`bootstrap.rs:354-356`. Prep slice, three decisions: (1) convert the
+three read methods to `Result<_, FileRepositoryError>` now, using
+item 2's opaque-`Backend` convention; (2) introduce
+`FileAreaRef { conference, area }` (mirroring `MessageBaseRef`) as the
+port's addressing type — the natural file key
+`(conference, area, name)` matches designs/FILES.md's
+`UNIQUE(area_id, name)`; (3) record the concurrency decision (no
+per-area lock registry until a writer slice needs one) in
+designs/FILES.md. Write methods land rule-named with their consuming
+slices: `list_new_since` with N, `record_download` with D-T2,
+`begin/complete_upload` with D-T4a; a separate `FileContentStore` port
+(content bytes vs metadata) lands with D-T1. ~0.5–1 day. **Trigger:
+before the N slice — its date query must be a since-bounded port
+method, not client-side filtering, because that is the contract D2s
+inherits.**
+
+### 19. Re-scope the UTF-8 wire policy to interactive text mode
+
+AGENTS.md declares "the NextExpress wire is valid UTF-8, always",
+enforced by `utf8_gate_every_session_byte_decodes`
+(`tierd_file_list_smoke.rs:328-350`). A Zmodem payload is arbitrary
+bytes — the first transfer slice violates the written contract as-is,
+and undirected it will be weakened ad hoc mid-slice. Decide the policy
+first: amend AGENTS.md to scope the invariant to **interactive
+text-mode traffic**, with the transfer window (between item 20's
+raw-channel entry and exit) exempt; the existing gate test drives only
+`F` surfaces and survives unchanged. Two adjacent facts: (a) a
+pre-existing hole — in `EchoMode::Visible` the codec echoes any
+accepted byte ≥ 0x20 raw (`telnet_line.rs:97-109`), so a Latin-1
+client typing `©` (lone 0xA9) puts invalid UTF-8 on the wire *today*;
+fix alongside item 20 and record the COMMAND_PARITY.md row. (b)
+`file_screen_repository.rs:154-157` serves operator screen files as
+raw bytes with no validation — a second avenue worth naming in the
+policy. Binary test primitives (`read_exact_n` with deadline, raw
+write, an IAC escape/unescape helper so expected frames are stated
+unescaped, frame-level pins plus before/after-window UTF-8 asserts)
+land inside the first slice that exchanges binary bytes — earlier
+would be speculation against an undecided seam. Policy ~1 hour; echo
+fix ~0.5 day; primitives 0.5–1 day. **Trigger: policy decided before
+D-T1 starts.**
+
+### 20. Raw binary channel on the `Terminal` port
+
+The stack cannot carry a Zmodem frame in either direction:
+`read_line` lossy-decodes to `String` (`telnet_line.rs:63,83,87`),
+`read_key` collapses bytes ≥ 0x80 to `KeyEvent::Other`, `skip_iac`
+silently **drops** escaped data 0xFF (IAC IAC —
+`telnet_line.rs:167-191`), outbound writes never double 0xFF
+(`telnet_listener/mod.rs:160-162` — safe today only because valid
+UTF-8 cannot contain 0xFF), and `ColourTerminal::strip_ansi_sgr` would
+delete ESC-`[`…`m` byte patterns inside a binary payload while colour
+is off. Extend the `Terminal` port (not a separate stream-stealing
+transfer port — the D handler reaches the transport only through the
+port) with a minimal raw pair: `read_bytes(timeout) ->
+RawRead { Bytes(Vec<u8>) | Eof | TimedOut }` — drains the pushback
+slot first, no echo by construction, unescapes IAC IAC, and is
+**cancellation-safe**: the deadline returns whatever is buffered
+rather than dropping already-read payload (the opposite of today's
+timeout-wraps-the-future shape) — and `write_raw` (doubles outbound
+0xFF); `ColourTerminal` forwards both verbatim regardless of the
+colour flag; transfer entry/exit negotiates telnet BINARY (option 0)
+in both directions. Default-method trap: a default `write_raw`
+delegating to `write` would silently skip 0xFF-doubling if a transport
+forgot to override — use inert defaults the transport MUST override,
+gated by a smoke (the `read_key` precedent). 1–3 days, ~5–8 files
+(socket-pair codec tests, a pushback-drain listener test, mutants
+pass). **Trigger: opening sub-slice of D-T1 — wire-neutral and
+technically landable earlier, but dead code until then.**
+
+### 21. Zmodem as a sans-IO engine in `app/` (slice-shaping decision)
+
+D-T1 names `amiexpress/zmodem.e` (3,198 lines of callback-into-serial
+E code) as the reference. Porting that *shape* would couple protocol
+logic to live sockets — untestable without TCP pairs, hostile to the
+per-turn mutants discipline on the largest new code body in Tier D —
+and D-T-wire explicitly requires an embedded test client, which would
+otherwise mean writing the protocol twice. Shape D-T1 as: a pure,
+synchronous Zmodem engine (frame encode/decode, CRC16/32, ZDLE
+escaping, send/receive session state; inputs = received byte chunks +
+elapsed-time ticks; outputs = bytes-to-emit + file-data requests +
+progress/outcome events) in `app/zmodem/` — `adapters/` is the one
+placement that cannot work, since the handler in `app/menu_flow`
+cannot import adapters — plus a thin async pump (~100–200 lines beside
+the D handler) marrying engine outputs to item 20's
+`write_raw`/`read_bytes` (hard dependency). The smoke harness embeds
+the same engine in the opposite role (client-receiver for D-T-wire,
+sender for D-T-wire-up). Parity is at the wire, not the E code's
+structure (style rule 5). Cost now: recording the decision; the engine
+itself is 1–2 weeks spread across D-T1..D-T5. **Trigger: decided
+before D-T1 starts; it shapes that slice rather than preceding it.**
+
+### 22. SQLite schema migrations (`PRAGMA user_version`)
+
+There is no schema-evolution mechanism: both SQLite adapters run
+`CREATE TABLE IF NOT EXISTS` on every open
+(`sqlite_user_repository.rs:96-161`), which never alters an existing
+database, and no `user_version`/migration tooling exists anywhere in
+src. D-T2 adds `bytes_downloaded_total` to users; `load_user`'s
+named-column SELECT (`:350-361`) then fails at statement-prepare on
+any pre-existing users.db — **every login breaks after upgrade**. And
+D5-persist just made users.db durability a user-visible feature (flags
+survive restarts), so existing databases are now expected to survive
+upgrades. Small hand-rolled versioned runner in adapters/ (no new
+dependency): read `PRAGMA user_version`, apply numbered migrations in
+a transaction, bump; wrap the existing DDL as migration 1 so fresh and
+old DBs converge; both `open()` paths run it; the D2s file store
+starts versioned from day one. Fold in uniform connection setup
+(WAL / synchronous / foreign_keys / busy_timeout — currently
+asymmetric between the two adapters). ~0.5–1 day, 3–5 files.
+**Trigger: before the first schema-altering slice — currently D-T2.**
+
+### 23. Pre-commit the transfer-accounting domain shape
+
+Two halves. (a) **`AuthenticatedCall` struct — standalone, cheap.**
+The authenticated-call triple
+`(user, authenticated_at, time_remaining)` is duplicated verbatim
+across `SessionPhase::Onboarded` and `::Menu` and Option-scattered
+across `::LoggingOff`/`::Ended` (`session/mod.rs:188-211` — the latter
+pair encode authenticated-ness by convention via independently
+nullable Options), with two hand-rolled 8-variant salvage matches
+(`:565-601`, `:603-641`) and an 8-variant `time_remaining` accessor
+(`:306-317`); every new per-call field costs ~7 destructure/rebuild
+sites (lockout, lifecycle's enter_menu `mem::replace` dance,
+`tick_minute`, registration). Fold the triple into
+`struct AuthenticatedCall` carried by Onboarded/Menu, with
+LoggingOff/Ended carrying a salvage enum (`Unidentified |
+Identified(User) | Authenticated(AuthenticatedCall)`); accessors keep
+signatures so flows don't change, and a new per-call field becomes a
+single-site addition. 0.5–1 day; fits the tidy cadence. **Trigger: at
+latest before D-T2 adds the first per-call transfer tally.**
+(b) **Design pre-commitments, zero code now** (a note to attach to
+slices/cmds-files-transfer.md): byte accounting lands as a NEW
+`TransferAccounting` value object on `User` (fields typed as `Bytes`),
+not more fields on `UsageAccounting`; per-call transfer state lives as
+a `Session` **field** (the `ConferenceActivity`/`FlaggedFiles`
+sub-mode precedent), never a ninth `SessionPhase` variant; and the
+Begin/Complete rule split is already mandated by specs/files.allium
+(`BeginDownload`:265, `CompleteDownload`:284, `BeginUpload`:313,
+`CompleteUpload`:368), following the messaging rule-module anatomy.
+**Trigger: decided before D-T1; executes inside D-T1..D-T4b (the
+schema-growth rule forbids adding the fields earlier).**
+
+### 24. Replace the `has_access` all-rights stub
+
+`User::has_access` grants every `Right` — including `Download`,
+`Upload`, `OverrideTimeLimit` and `EditFiles` — to any validated
+account (`user/mod.rs:580-586`); the doc comment at `:575-578`
+concedes the per-tier mapping is "not yet modelled". Harmless while
+every gated surface was a messaging command any validated user may
+use; load-bearing the moment a command must REFUSE a validated user —
+per the slice plan that is FM (legacy gates on `ACS_EDIT_FILES`,
+`express.e:24901`) and US (`ACS_SYSOP_COMMANDS`, `express.e:25660`);
+D-T2 deliberately ships baseline download *without* the eligibility
+check. Scope it minimally: a per-variant narrowing inside
+`has_access` (e.g. `EditFiles`/sysop-command rights require
+`is_sysop || access_level >= threshold` per the spec's existing
+disjuncts), keeping every currently-exercised right granted and
+pinning no-behaviour-change over `Right::all()` for landed commands.
+Do NOT build a full level→rights table: express.e has no code-level
+tier map — `checkSecurity` resolves each ACS flag from per-deployment
+icon tooltypes (`express.e:8455-8497`), and specs/core.allium:131-135
+leaves the mapping open — so a faithful table is deployment
+configuration and would need a config surface it is too early to
+design. ~0.5–1 day. **Trigger: with the first refusing slice — the
+D/U eligibility refinement if it lands first, otherwise FM/US; before
+Tier G/H multiplies sysop-gated surfaces.**
+
+### 25. Grow `NodePool` into the who's-online presence registry
+
+Nothing can answer "who is logged on": the only cross-session state is
+`NodePool`'s `Mutex<Vec<Node>>` where `Node` carries
+`{number, status}` (`node_pool.rs:14-62`, `domain/node.rs:28-31`),
+production nodes never leave `Connecting`
+(`NodeStatus::LoggedOn` has zero production references — the
+LoggedOn/LoggingOff arcs are dead vocabulary), everything WHO needs
+(handle, conference, activity, quiet_mode) is task-local in the
+session task, and command handlers cannot even reach the pool
+(`Runtime` owns it at `runtime.rs:30`; it is never threaded into
+`AppServices`). Keep it concrete — no trait port: the pool is already
+app-layer shared state and tests use the real thing. Give each slot an
+`Option<NodePresence>` (`{handle, action, conference, logon_at,
+quiet_mode}`) with `publish`/`update`/`snapshot_all`; add
+`nodes: Arc<NodePool>` to `AppServices`; publish at enter_menu, update
+at join and the `Q` toggle, clear at logoff. Two adjacent fixes ride
+along: the domain transition table REJECTS `LoggedOn → Idle`
+(`node.rs:86-97`) and `release_node_after` discards release errors
+(`telnet_listener/mod.rs:139`) — once nodes really reach LoggedOn, a
+write-error abort (which skips finalise via `?`) would strand the
+node, so add the carrier-loss arc and make `release` clear presence
+and force Idle from any live status. 1–2 days, ~8–12 files.
+**Trigger: immediately before Tier E's WHO slice — E1 (page-sysop
+comment branch) needs none of it, and building it mid-Tier-D would sit
+unconsumed for several slices.**
+
+### 26. Per-session `SessionSignal` channel selected inside the terminal
+
+OLM and the page notification must deliver text into a session parked
+at a prompt, but a blocked session is suspended inside
+`tokio::time::timeout(socket read)` with no other wake source — there
+is no mpsc/broadcast/watch/Notify anywhere in production src, and the
+`TcpStream` is exclusively `&mut`-borrowed by `TelnetTerminal`
+(`telnet_listener/mod.rs:143-146`), so nothing outside the session
+task can write to the socket. Hidden trap in the obvious `select!`
+retrofit: `read_telnet_line`'s input buffer is a function-local
+(`telnet_line.rs:57`) whose per-byte echo has already been emitted, so
+a select arm that cancels and restarts the read future silently
+discards the user's half-typed command while its echo remains on
+screen. Plan: hoist the line buffer (plus an in-progress-read marker)
+from codec locals into `TelnetTerminal` fields beside `pushback`, as a
+separately-tested codec refactor FIRST; then `NodePresence` (item 25)
+carries an `mpsc::UnboundedSender<SessionSignal>`, the per-connection
+task keeps the receiver, and `read_line`/`read_key` become a select
+over {socket byte, signal, deadline}; on `Deliver(bytes)` the terminal
+writes the notification and resumes the same read with buffer and echo
+state intact (what the notification does to the on-screen partial line
+is a slice-level wire decision, captured against the reference). Start
+with exactly one variant, `Deliver(Vec<u8>)`; Tier G later adds `Kick`
+(surfaced as synthetic `Eof` so the existing carrier-loss teardown
+runs), and the select deadline is item 27's future precise-expiry
+hook. ~3 days. **Trigger: opening move of the first delivery slice
+(E2 page notification or E5 OLM, whichever schedules first) — not
+needed by WHO/WHD; resist landing it with item 25.**
+
+### 27. Activate the inert time budget
+
+`budget::tick_minute` — the only code that decrements
+`time_remaining`, accrues `user.time_used_today`, and fires
+`LogoffReason::OutOfTime` (`session/budget.rs:74-98`) — has **zero
+production callers**; the only budget fn wired in is
+`initialise_daily_budget` (from `on_enter_onboarded`,
+`lifecycle.rs:231`). So the menu prompt's "mins. left" is frozen for
+the whole call and time expiry is unreachable — a live legacy-parity
+gap today, and Tier I's daily accounting would otherwise launch on
+data that was never recorded. Fix without a ticker task or channels:
+track a last-tick timestamp beside `last_input_at` and, at each
+menu-loop iteration, apply `tick_minute` once per whole elapsed
+minute; on `TickMinuteOutcome::TimeExpired`, write the expiry notice
+and return through the existing `DispatchOutcome::LogoffComplete`
+path. Every read is already bounded by the 5-minute input timeout, so
+expiry fires at worst one idle-timeout late (time spent inside
+sub-flows accrues retroactively on return) — acceptable until Tier G,
+when precise mid-read expiry can ride item 26's select deadline. The
+expiry notice is a NEW wire surface: FS-UAE capture + type-at-it check
+required, and the `ACS_OVERRIDE_TIMELIMIT` behaviour (`express.e:557`
+— override holders never expire) needs a decision. 1–2 days.
+**Trigger: opportunistic during Tier E, ideally after item 16 so the
+smoke can pin exact minutes; hard deadline before Tier G's time-adjust
+slice (G6).**
+
 ## Refactorings to skip for now
 
 - **Splitting the crate into workspace members.** Module boundaries and
@@ -1035,12 +1500,19 @@ than the work above:
   emitted without changing any of them; `app/wire_text.rs` is left at 36
   lines of cross-cutting primitives. That was a placement policy, not a
   rewrite.)
+- **Moving the flag sub-mode (the `A` loop, `G` confirm + autosave,
+  logon restore) out of `menu_flow/mod.rs` into a sibling module.**
+  Checked by the July 2026 review: a pure ~2–4 h code move with no
+  roadmap blocker. Do it opportunistically when next in the file
+  (item 13's rule), not as a scheduled slice.
 
 ## Suggested order
 
 Refactorings 3, 4, 5, 6, 7, 8 and 9 have **landed** (June 2026), one
 commit each, with the full suite plus a focused `cargo mutants
---in-diff` run per commit. What remains:
+--in-diff` run per commit, and the late-June `tidy:` commits landed
+item 12's crate-side half. The July 2026 forward-looking review
+re-sequenced what remains around the roadmap's tier order (SLICES.md):
 
 0. **Correctness bugs surfaced by the review:**
    - **Fixed (2026-06-23):** the `EH` edit-header abort bug.
@@ -1070,18 +1542,48 @@ commit each, with the full suite plus a focused `cargo mutants
      not-yet-wired `force_password_reset` path and keeps a descriptive
      `panic!` until the password-reset slice handles it. Each landed as
      its own slice with a failing test first.
-1. Apply the placement policy (10) opportunistically whenever a
-   command is touched (9 has landed — wire text is now co-located per
-   command); the declarative command listing (11) when next in
-   `menu_command.rs`.
-2. Test-support consolidation (12) the next time a smoke or handler
-   test is being written; bundle the `Terminal` RPITIT conversion into
-   it. Move the giant inline test modules (13) — `file_list/mod.rs`,
-   `join.rs`, then the adapter trio — one-per-commit when each file is
-   quiet.
-3. Add optimistic or command-style user writes (1) before
-   cross-session sysop/background mutations; finish the
-   port-error-boundary pass (2) — the `std::io::Error` removal +
-   `std::io::` guard ratchet landed June 2026; what's left is moving
-   `ConferenceRepository` out to bootstrap and collapsing
-   `MailStoreError`'s remaining rich variants.
+0b. **Open defects surfaced by the July 2026 review:**
+   - **Flag-identity data loss (item 14):** the same file can occupy
+     two `FlaggedKey`s (real area vs the `A`-prompt/restore `area=0`);
+     the `A` listing duplicates the name in any config, and under
+     `user_storage = sqlite` the logoff flag save hits a PK violation
+     and silently loses the session's flag changes.
+   - **Inert time budget (item 27):** `tick_minute` has no production
+     caller — the menu prompt's "mins. left" is frozen and
+     `OutOfTime` logoff is unreachable (legacy-parity gap).
+   - **Latin-1 echo hole (item 19):** `EchoMode::Visible` echoes any
+     accepted byte ≥ 0x20 raw, so a Latin-1 client typing `©` puts
+     invalid UTF-8 on the wire today, against the AGENTS.md invariant.
+
+1. **Now, before FS:** item 14 (the live flag-identity defect),
+   item 15 (mutation-gate re-scope, 1–2 h), and item 12's
+   smoke-harness half — before the FS smoke becomes helper-copy #7.
+2. **Before N:** item 16 (clock port), then as part of the N slice
+   itself: item 17 (scan-engine extraction, first task of the slice)
+   and item 18's `list_new_since` (the port-prep slice — Result
+   plumbing + `FileAreaRef` — lands just before). Item 10's menu_flow
+   reader merge before N/FM, per its own trigger.
+3. **Between the read-only slices and D/DS:** item 2 (the
+   error-boundary pass, before D2s copies the leaky template), item 1
+   (command-style user writes, before D-T2's ledger deltas — the big
+   one at 4–6 days), item 22 (schema migrations, hard requirement
+   before D-T2), item 23a (`AuthenticatedCall`).
+4. **With D-T1:** item 19's policy decision + echo-hole fix first,
+   item 20 (raw binary channel) as the opening sub-slice, item 21
+   (sans-IO Zmodem engine) as the slice's shape. Item 23b executes
+   inside D-T1..D-T4b.
+5. **With the first refusing slice** (the D/U eligibility refinement
+   or FM/US): item 24 (`has_access` narrowing).
+6. **Tier E:** item 25 (presence registry) immediately before WHO;
+   item 26 (`SessionSignal` channel) as the opening move of the first
+   delivery slice (E2/E5); item 27 (time-budget activation)
+   opportunistically after item 16, hard deadline before Tier G's G6.
+   Item 12's two-session smoke primitives stage with the first Tier E
+   slice.
+
+Still opportunistic, unscheduled: the declarative command listing (11)
+when next in `menu_command.rs`; the remaining file-size moves (13) —
+`session_flow.rs` per-rule split, the `sqlite_user_repository.rs` /
+`file_screen_repository.rs` test promotions — one-per-commit when each
+file is quiet; the `Terminal` RPITIT conversion bundled into whichever
+slice next rewrites the terminal doubles.
