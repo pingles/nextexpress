@@ -10,8 +10,6 @@
 //! first), paginating with the shared [`Pager`] so a long base pauses
 //! with the legacy `(Pause)...More(y/n/ns)? ` prompt.
 
-use std::time::SystemTime;
-
 use crate::app::mail_stores::MailStores;
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::menu_flow::table::{left_field, scan_row_status};
@@ -186,7 +184,7 @@ where
         prompt.extend_from_slice(b"\x1b[33m]\x1b[0m: ");
         match self.read_prompted(&prompt, TerminalEcho::Visible).await? {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     return Ok(Some(lowest));

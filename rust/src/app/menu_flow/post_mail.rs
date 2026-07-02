@@ -352,7 +352,7 @@ where
             .await?
         {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 matches!(line.trim().chars().next(), Some('y' | 'Y'))
             }
             TerminalRead::Eof | TerminalRead::IdleTimedOut => {
@@ -378,7 +378,7 @@ where
                 subject,
                 private,
                 body,
-                posted_at: SystemTime::now(),
+                posted_at: self.services.clock.now(),
             },
         )
         .await;
@@ -414,7 +414,7 @@ where
             CommentToSysopInput {
                 subject,
                 body,
-                posted_at: SystemTime::now(),
+                posted_at: self.services.clock.now(),
             },
         )
         .await;
@@ -500,7 +500,7 @@ where
     ) -> Result<Option<String>, T::Error> {
         match self.read_prompted(prompt, TerminalEcho::Visible).await? {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     self.write_abort_notice(silent).await?;
@@ -534,7 +534,7 @@ where
     ) -> Result<Option<String>, T::Error> {
         match self.read_prompted(prompt, TerminalEcho::Visible).await? {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 Ok(Some(line.trim().to_string()))
             }
             TerminalRead::Eof | TerminalRead::IdleTimedOut => {
@@ -571,7 +571,7 @@ where
                 let prompt = render_editor_line_prompt(lines.len() + 1);
                 match self.read_prompted(&prompt, TerminalEcho::Visible).await? {
                     TerminalRead::Line(line) => {
-                        session.record_input(SystemTime::now());
+                        session.record_input(self.services.clock.now());
                         if line.is_empty() {
                             break;
                         }
@@ -600,7 +600,7 @@ where
                 show_help = false;
                 match self.read_prompted(prompt, TerminalEcho::Visible).await? {
                     TerminalRead::Line(verb) => {
-                        session.record_input(SystemTime::now());
+                        session.record_input(self.services.clock.now());
                         match verb.trim().chars().next().map(|c| c.to_ascii_lowercase()) {
                             // S>ave: return the body assembled so far.
                             Some('s') => return Ok(Some(body)),
@@ -641,7 +641,7 @@ where
             .await?
         {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 Ok(matches!(line.trim().chars().next(), Some('y' | 'Y')))
             }
             TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(true),
@@ -662,7 +662,7 @@ where
         loop {
             match self.read_prompted(b"", TerminalEcho::Visible).await? {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     let trimmed = line.trim();
                     if trimmed.eq_ignore_ascii_case("/A") {
                         self.write_abort_notice(silent).await?;

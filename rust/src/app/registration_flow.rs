@@ -7,7 +7,6 @@
 //! and renders the appropriate wire-message for each outcome.
 
 use std::collections::BTreeSet;
-use std::time::SystemTime;
 
 use crate::app::services::AppServices;
 use crate::app::session_flow::{
@@ -192,7 +191,7 @@ where
                 .await?;
             let typed = match read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 TerminalRead::Eof => {
@@ -213,7 +212,7 @@ where
                 typed.trim(),
                 self.services.new_user_gate.as_ref(),
                 self.services.caller_log.as_ref(),
-                SystemTime::now(),
+                self.services.clock.now(),
             )
             .expect("NewUserRegisteringSession + configured gate guarantees flow ok");
             match transition {
@@ -256,7 +255,7 @@ where
                 .await?;
             let typed = match read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 other => return self.handle_interrupt(session, other).await,
@@ -286,7 +285,7 @@ where
         let read = self.read_prompted(prompt, TerminalEcho::Visible).await?;
         let typed = match read {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 line
             }
             other => return self.handle_interrupt(session, other).await,
@@ -310,7 +309,7 @@ where
                 .await?;
             let password = match read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 other => return self.handle_interrupt(session, other).await,
@@ -323,7 +322,7 @@ where
                 .await?;
             let confirmed = match confirm_read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 other => return self.handle_interrupt(session, other).await,
@@ -345,7 +344,7 @@ where
                 .await?;
             let typed = match read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 other => return self.handle_interrupt(session, other).await,
@@ -374,7 +373,7 @@ where
             .await?;
         let typed = match read {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 line
             }
             other => return self.handle_interrupt(session, other).await,
@@ -417,7 +416,7 @@ where
             self.services.default_ratio,
             self.services.session_policy,
         );
-        match flow.complete(session, profile, SystemTime::now()) {
+        match flow.complete(session, profile, self.services.clock.now()) {
             Ok(NewUserRegistrationResult::Onboarded(onboarded)) => {
                 self.write_and_flush(REGISTRATION_COMPLETE_LINE).await?;
                 Ok(RegistrationOutcome::Onboarded(onboarded))

@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 
+use crate::app::clock::Clock;
 use crate::app::mail_stores::MailStores;
 use crate::app::screens::ScreenRepository;
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
@@ -40,6 +41,8 @@ pub type SharedMailStores = Arc<dyn MailStores + Send + Sync + 'static>;
 pub type SharedFileRepo = Arc<dyn FileRepository + Send + Sync + 'static>;
 /// Shared flagged-file store handle (slice D5-persist).
 pub type SharedFlaggedStore = Arc<dyn FlaggedStore + Send + Sync + 'static>;
+/// Shared clock handle (July 2026 review, item 16).
+pub type SharedClock = Arc<dyn Clock + Send + Sync + 'static>;
 
 /// Container for the trait-object ports and policy values an
 /// interactive BBS session reads. Cheap to clone (one `Arc` bump per
@@ -70,6 +73,9 @@ pub struct AppServices {
     /// Flagged-file store (slice D5-persist): per-slot persistence of the
     /// session flag set.
     pub flagged_store: SharedFlaggedStore,
+    /// Clock port — the application layer's only source of "now", so
+    /// tests can pin the instant (July 2026 review, item 16).
+    pub clock: SharedClock,
     /// Session policy values (`Copy`).
     pub session_policy: SessionPolicy,
     /// Ratio defaults applied to fresh registrations (`Copy`).

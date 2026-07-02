@@ -14,8 +14,6 @@
 //! `tempFlag`, `:12087`); `<CR>` / `L` / `Q` / `?` / `??` are always
 //! live.
 
-use std::time::SystemTime;
-
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::domain::messaging::delete_mail::can_delete;
@@ -102,7 +100,7 @@ where
             else {
                 return Ok(());
             };
-            session.record_input(SystemTime::now());
+            session.record_input(self.services.clock.now());
             let trimmed = line.trim();
 
             // `??` requests the long help, any other `?`-prefixed input

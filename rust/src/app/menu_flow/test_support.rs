@@ -14,6 +14,7 @@ use crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore;
 use crate::adapters::in_memory_mail_stores::InMemoryMailStores;
 use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+use crate::adapters::system_clock::SystemClock;
 use crate::app::services::AppServices;
 use crate::app::session_flow::{DefaultRatio, NewUserGateConfig};
 use crate::domain::session::SessionPolicy;
@@ -33,6 +34,7 @@ pub(crate) fn test_services() -> AppServices {
         mail_stores: Arc::new(InMemoryMailStores::new()),
         file_repo: Arc::new(InMemoryFileRepository::new(Vec::new(), Vec::new())),
         flagged_store: Arc::new(InMemoryFlaggedStore::new()),
+        clock: Arc::new(SystemClock),
         session_policy: SessionPolicy::default(),
         default_ratio: DefaultRatio {
             mode: RatioMode::Disabled,

@@ -34,6 +34,7 @@ use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
 use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::adapters::sqlite_flagged_store::SqliteFlaggedStore;
 use crate::adapters::sqlite_user_repository::SqliteUserRepository;
+use crate::adapters::system_clock::SystemClock;
 use crate::adapters::telnet_listener::TelnetListener;
 use crate::app::config::Config;
 use crate::app::config_loader;
@@ -41,8 +42,8 @@ use crate::app::mail_stores::MailStores;
 use crate::app::runtime::{Runtime, RuntimePorts};
 use crate::app::seed;
 use crate::app::services::{
-    SharedCallerLog, SharedConferences, SharedFileRepo, SharedFlaggedStore, SharedHasher,
-    SharedMailStores, SharedScreens, SharedUserRepo,
+    SharedCallerLog, SharedClock, SharedConferences, SharedFileRepo, SharedFlaggedStore,
+    SharedHasher, SharedMailStores, SharedScreens, SharedUserRepo,
 };
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::{Conference, MessageBaseRef};
@@ -139,6 +140,7 @@ async fn run(args: &[OsString]) -> Result<(), Box<dyn std::error::Error + Send +
             mail_stores,
             file_repo,
             flagged_store,
+            clock: Arc::new(SystemClock),
         },
     );
     let listen_addr = format!("127.0.0.1:{}", config.port);
@@ -269,6 +271,9 @@ pub struct RuntimeAdapters {
     pub file_repo: SharedFileRepo,
     /// Flagged-file store (slice D5-persist).
     pub flagged_store: SharedFlaggedStore,
+    /// Clock port (July 2026 review, item 16) — `SystemClock` in
+    /// production, a manual clock in date-pinning tests.
+    pub clock: SharedClock,
 }
 
 /// Builds a [`Runtime`] from `config` and the supplied driven-port handles.
@@ -294,6 +299,7 @@ pub fn build_runtime(config: &Config, adapters: RuntimeAdapters) -> Runtime {
             mail_stores: adapters.mail_stores,
             file_repo: adapters.file_repo,
             flagged_store: adapters.flagged_store,
+            clock: adapters.clock,
         },
     )
 }
@@ -347,6 +353,7 @@ mod tests {
                 mail_stores,
                 file_repo,
                 flagged_store: Arc::new(InMemoryFlaggedStore::new()),
+                clock: Arc::new(SystemClock),
             },
         );
 

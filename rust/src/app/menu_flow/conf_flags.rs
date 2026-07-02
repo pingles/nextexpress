@@ -11,8 +11,6 @@
 //! keystroke, so the user presses Enter after the mask letter. The wire
 //! echo (`<key>\r\n`) is identical either way.
 
-use std::time::SystemTime;
-
 use crate::app::menu_flow::table::left_field;
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::domain::conference_flags::{
@@ -123,7 +121,7 @@ where
             else {
                 return Ok(());
             };
-            session.record_input(SystemTime::now());
+            session.record_input(self.services.clock.now());
             let Some(flag) = parse_scan_flag_mask(&mask_line) else {
                 return Ok(());
             };
@@ -136,7 +134,7 @@ where
             else {
                 return Ok(());
             };
-            session.record_input(SystemTime::now());
+            session.record_input(self.services.clock.now());
             let Some(selection) = parse_scan_flag_selection(&expr_line) else {
                 return Ok(());
             };

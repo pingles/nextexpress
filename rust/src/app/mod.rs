@@ -15,6 +15,7 @@
 //! `crate::adapters` in production code, and that boundary is
 //! enforced by `tests/architecture.rs`.
 
+pub mod clock;
 pub mod colour_terminal;
 pub mod config;
 pub mod config_loader;

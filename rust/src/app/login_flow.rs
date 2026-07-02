@@ -6,8 +6,6 @@
 //! either dispatch into [`crate::app::registration_flow::RegistrationFlow`],
 //! enter the menu, or finalise the session.
 
-use std::time::SystemTime;
-
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, VerifyPasswordFlowError};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
@@ -113,7 +111,7 @@ where
             .await?
         {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 if matches!(line.trim().chars().next(), Some('n' | 'N')) {
                     self.terminal.set_ansi_colour(false);
                 }
@@ -143,7 +141,7 @@ where
                 .await?;
             let line = match read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 TerminalRead::Eof => {
@@ -165,7 +163,7 @@ where
                 trimmed,
                 self.services.user_repo.as_ref(),
                 self.services.new_user_gate.as_ref(),
-                SystemTime::now(),
+                self.services.clock.now(),
             ) {
                 Ok(transition) => transition,
                 Err(error) => {
@@ -215,7 +213,7 @@ where
                 .await?;
             let password = match read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 TerminalRead::Eof => {
@@ -238,7 +236,7 @@ where
                 self.services.hasher.as_ref(),
                 self.services.caller_log.as_ref(),
                 self.services.session_policy,
-                SystemTime::now(),
+                self.services.clock.now(),
             ) {
                 Ok(transition) => transition,
                 Err(VerifyPasswordFlowError::Save(error)) => {

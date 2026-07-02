@@ -19,8 +19,6 @@
 //! transition becomes unrepresentable at compile time; the driver no
 //! longer needs to assert "session is in X" after every call.
 
-use std::time::SystemTime;
-
 use crate::app::login_flow::{LoginFlow, LoginOutcome};
 use crate::app::menu_flow::MenuFlow;
 use crate::app::password_reset_flow::{
@@ -138,7 +136,7 @@ where
     /// reaches a final logoff path.
     pub(crate) async fn run(&mut self) -> Result<(), T::Error> {
         let connecting =
-            ConnectingSession::accept(self.node_number, self.channel, 0, SystemTime::now())
+            ConnectingSession::accept(self.node_number, self.channel, 0, self.services.clock.now())
                 .expect("freshly allocated node has no existing session");
         let identifying = self.start(connecting).await?;
 
@@ -178,8 +176,10 @@ where
                 // fires here — the legacy auto-rejoin join carries
                 // `FORCE_MAILSCAN_SKIP` because the logon scan already
                 // covered every flagged base.
-                let transition = onboarded
-                    .auto_rejoin_conference(self.services.conferences.as_ref(), SystemTime::now());
+                let transition = onboarded.auto_rejoin_conference(
+                    self.services.conferences.as_ref(),
+                    self.services.clock.now(),
+                );
                 match transition {
                     AutoRejoinTransition::Joined {
                         session,
@@ -351,7 +351,7 @@ where
             onboarded,
             self.services.user_repo.as_ref(),
             self.services.caller_log.as_ref(),
-            SystemTime::now(),
+            self.services.clock.now(),
         ) {
             Ok(outcome) => Ok(outcome),
             Err(session_flow::EnterMenuFlowError::Save(error)) => Err(error),
@@ -372,7 +372,7 @@ where
             logging_off,
             self.services.user_repo.as_ref(),
             self.services.caller_log.as_ref(),
-            SystemTime::now(),
+            self.services.clock.now(),
         ) {
             Ok(_ended) => {}
             Err(session_flow::FinaliseLogoffFlowError::Save(error)) => {
@@ -673,6 +673,7 @@ mod tests {
             flagged_store: Arc::new(
                 crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
+            clock: Arc::new(crate::adapters::system_clock::SystemClock),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
                 mode: RatioMode::ByFiles,
@@ -801,6 +802,7 @@ mod tests {
             flagged_store: Arc::new(
                 crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
+            clock: Arc::new(crate::adapters::system_clock::SystemClock),
             session_policy: SessionPolicy::default(),
             default_ratio: DefaultRatio {
                 mode: RatioMode::ByFiles,
@@ -951,6 +953,7 @@ mod tests {
             flagged_store: Arc::new(
                 crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
+            clock: Arc::new(crate::adapters::system_clock::SystemClock),
             session_policy: SessionPolicy::default(),
             default_ratio: ratio,
             new_user_gate: Arc::new(gate),

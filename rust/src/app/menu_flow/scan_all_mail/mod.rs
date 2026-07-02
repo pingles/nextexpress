@@ -13,8 +13,6 @@ mod core;
 
 pub(super) use self::core::ScanFilter;
 
-use std::time::SystemTime;
-
 use self::core::{scan_all_mail, BaseScanOutcome};
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::menu_flow::table::{left_field, scan_row_status};
@@ -121,7 +119,7 @@ where
             self.services.mail_stores.as_ref(),
             self.services.conferences.as_ref(),
             filter,
-            SystemTime::now(),
+            self.services.clock.now(),
         )
         .await;
 
@@ -189,14 +187,14 @@ where
         session.attach_read_visit(
             coord.conference_number(),
             coord.msgbase_number(),
-            SystemTime::now(),
+            self.services.clock.now(),
         );
         if self.read_and_render(session, start).await? {
             self.run_read_subprompt(session, start + 1, Some(start))
                 .await?;
         }
         if let Some((conference, msgbase)) = home {
-            session.attach_read_visit(conference, msgbase, SystemTime::now());
+            session.attach_read_visit(conference, msgbase, self.services.clock.now());
         }
         Ok(())
     }
@@ -212,7 +210,7 @@ where
             .await?
         {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 self.write_newline().await?;
                 Ok(!matches!(line.trim().chars().next(), Some('n' | 'N')))
             }

@@ -6,8 +6,7 @@
 //! [`crate::app::session_flow::complete_password_reset`]; this module
 //! owns the terminal prompts, retry budget and interrupt handling.
 
-use std::time::SystemTime;
-
+use crate::app::clock::Clock;
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, CompletePasswordResetFlowError};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
@@ -68,6 +67,7 @@ pub(crate) enum PasswordResetOutcome {
 pub(crate) struct PasswordResetServices<'a> {
     user_repo: &'a (dyn UserRepository + Send + Sync),
     hasher: &'a (dyn PasswordHasher + Send + Sync),
+    clock: &'a (dyn Clock + Send + Sync),
     session_policy: SessionPolicy,
 }
 
@@ -76,11 +76,13 @@ impl<'a> PasswordResetServices<'a> {
     pub(crate) fn new(
         user_repo: &'a (dyn UserRepository + Send + Sync),
         hasher: &'a (dyn PasswordHasher + Send + Sync),
+        clock: &'a (dyn Clock + Send + Sync),
         session_policy: SessionPolicy,
     ) -> Self {
         Self {
             user_repo,
             hasher,
+            clock,
             session_policy,
         }
     }
@@ -91,6 +93,7 @@ impl<'a> From<&'a AppServices> for PasswordResetServices<'a> {
         Self::new(
             services.user_repo.as_ref(),
             services.hasher.as_ref(),
+            services.clock.as_ref(),
             services.session_policy,
         )
     }
@@ -157,7 +160,7 @@ where
                 self.services.user_repo,
                 self.services.hasher,
                 self.services.session_policy,
-                SystemTime::now(),
+                self.services.clock.now(),
             ) {
                 Ok(()) => {
                     return Ok(PasswordResetOutcome::Onboarded(
@@ -203,7 +206,7 @@ where
     ) -> Result<PasswordRead, T::Error> {
         match self.read_prompted(prompt, TerminalEcho::Masked).await? {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 if line.trim().is_empty() {
                     Ok(PasswordRead::Got(session, String::new()))
                 } else {
@@ -361,12 +364,13 @@ mod tests {
     struct ResetFixture {
         user_repo: InMemoryUserRepository,
         hasher: Pbkdf2PasswordHasher,
+        clock: crate::adapters::system_clock::SystemClock,
         policy: SessionPolicy,
     }
 
     impl ResetFixture {
         fn services(&self) -> PasswordResetServices<'_> {
-            PasswordResetServices::new(&self.user_repo, &self.hasher, self.policy)
+            PasswordResetServices::new(&self.user_repo, &self.hasher, &self.clock, self.policy)
         }
     }
 
@@ -375,6 +379,7 @@ mod tests {
         let fixture = ResetFixture {
             user_repo: InMemoryUserRepository::new(vec![user.clone()]),
             hasher: Pbkdf2PasswordHasher::new(),
+            clock: crate::adapters::system_clock::SystemClock,
             policy,
         };
         let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);

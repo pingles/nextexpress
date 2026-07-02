@@ -24,8 +24,6 @@
 //! same full join sequence, whose announcement appends ` [<base>]`
 //! on multi-base conferences (`:5077-5084`).
 
-use std::time::SystemTime;
-
 use crate::app::menu_command::{val_prefix, JoinArg, MsgBaseArg};
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::session_presenter::{format_explicit_join_line, render_name_type_promotion};
@@ -405,7 +403,7 @@ where
         else {
             return Ok(None);
         };
-        session.record_input(SystemTime::now());
+        session.record_input(self.services.clock.now());
         if line.is_empty() {
             // Blank aborts silently (`amiexpress/express.e:25228`);
             // the only wire output is `lineInput`'s trailing `\b\n`
@@ -450,7 +448,7 @@ where
         else {
             return Ok(None);
         };
-        session.record_input(SystemTime::now());
+        session.record_input(self.services.clock.now());
         if line.is_empty() {
             // Blank aborts silently (`amiexpress/express.e:25148`);
             // the only wire output is `lineInput`'s trailing `\b\n`
@@ -501,7 +499,7 @@ where
             target_conference_number,
             requested_msgbase_number,
             conferences,
-            SystemTime::now(),
+            self.services.clock.now(),
         ) {
             ExplicitJoinTransition::Joined {
                 mut session,
@@ -558,7 +556,7 @@ where
             visit_msgbase,
             scope,
             0,
-            SystemTime::now(),
+            self.services.clock.now(),
         );
         drop(guard);
         match result {

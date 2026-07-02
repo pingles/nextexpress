@@ -333,6 +333,42 @@ fn app_does_not_depend_on_adapters_in_production_code() {
 }
 
 #[test]
+fn app_resolves_now_through_the_clock_port() {
+    // "Now" enters the application layer only through the `Clock` port
+    // (`services.clock.now()` — July 2026 review, item 16) so tests can
+    // pin the instant. A direct `SystemTime::now()` in app production
+    // code bypasses the port. Test modules are exempt (fixtures may
+    // stamp real time); the one legitimate production caller is the
+    // `SystemClock` adapter, which lives in `adapters/`, outside this
+    // walk. The domain needs no guard: its rules take `now` as a
+    // parameter and `SystemTime::now()` has no callers there.
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let app_dir = Path::new(manifest_dir).join("src").join("app");
+
+    let mut violations: Vec<String> = Vec::new();
+    for path in rust_sources(&app_dir) {
+        if is_sibling_test_module(&path) {
+            continue;
+        }
+        let raw = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
+        let content = strip_cfg_test_modules(&raw);
+        for (idx, line) in content.lines().enumerate() {
+            if source_before_line_comment(line).contains("SystemTime::now()") {
+                violations.push(format!("{}:{} ({})", path.display(), idx + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "app production code must read time via the Clock port \
+         (`services.clock.now()`), not SystemTime::now(); found:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn use_violates_detects_canonical_forms() {
     assert!(use_violates("use crate::adapters;", "adapters"));
     assert!(use_violates("use crate::adapters::Foo;", "adapters"));

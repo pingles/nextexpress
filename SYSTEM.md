@@ -16,7 +16,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 1 | **Unify flag identity to `(conference, name)`** (14) | **Landed** 2026-07-02 | Fixes a live defect: dual `FlaggedKey` identities silently lose flag saves under SQLite and duplicate the `A` listing. D/DS downloads consume this list as the default download set — it must have one identity before anything is pinned against it. | ~10 src/test + 3 docs | 0.5–1 day |
 | 2 | **Mutation gate → diff-vs-main** (15) | **Landed** 2026-07-02 | `make check` documents a 6–9 h full sweep nobody runs; agents execute the checklist literally. Aligning the documented and practiced gate keeps TDD+mutants viable as the crate grows through Tier D. | 2 (Makefile, AGENTS.md) | 1–2 h |
 | 3 | **Smoke-harness builder** (12 remainder) | **Landed** 2026-07-02 (two-session primitives stage with Tier E) | Six smokes each re-roll ~110–155 lines of harness; FS is the next smoke to be written. Every remaining Tier D slice needs a capture-pinned smoke, so this pays out eight more times. | ~8, test-only | ~1 day |
-| 4 | **Clock port in `AppServices`** (16) | Before N | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
+| 4 | **Clock port in `AppServices`** (16) | **Landed** 2026-07-03 | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
 | 5 | **`FileRepository` port prep** (18) | Just before N | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
 | 6 | **Extract the NextScan scan engine** (17) | First task of the N slice | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
 | 7 | **Prompt-reader merge + `line_for` extraction** (10) | Before N/FM | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
@@ -1232,6 +1232,21 @@ sweep to exactly the smoke-killed mutants this project cares about.
 1–2 hours, no production code. **Trigger: now.**
 
 ### 16. Clock port in `AppServices`
+
+**Landed (2026-07-03).** `app::clock::Clock` (`fn now(&self) ->
+SystemTime`) with `adapters::system_clock::{SystemClock, ManualClock}`
+(the latter settable/steppable, public so integration smokes can use
+it); `SharedClock` on `AppServices`, `RuntimePorts` and
+`RuntimeAdapters`; a `.with_clock(...)` knob on the `tests/support`
+builder for the N smoke; all 48 production `SystemTime::now()` sites
+replaced with `services.clock.now()` (the narrow
+`PasswordResetServices` gained a `clock` field). Ratcheted by a new
+architecture guard, `app_resolves_now_through_the_clock_port`, which
+walks `src/app/` production code and rejects direct
+`SystemTime::now()` calls — written first and watched to fail on all
+~47 remaining sites. Kill test:
+`t_command_renders_the_clock_ports_instant_exactly` pins `T`'s exact
+wire bytes under a `ManualClock`. Original problem statement follows.
 
 The domain is already clock-clean (rules take `now: SystemTime`; zero
 `SystemTime::now()` hits in domain/), but the app layer resolves "now"

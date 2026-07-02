@@ -460,10 +460,9 @@ where
         prompt: &[u8],
     ) -> Result<Option<Option<String>>, T::Error> {
         use crate::app::terminal::{TerminalEcho, TerminalRead};
-        use std::time::SystemTime;
         match self.read_prompted(prompt, TerminalEcho::Visible).await? {
             TerminalRead::Line(line) => {
-                session.record_input(SystemTime::now());
+                session.record_input(self.services.clock.now());
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     Ok(Some(None))

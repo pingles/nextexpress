@@ -30,8 +30,6 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 
-use std::time::SystemTime;
-
 use self::scan_all_mail::ScanFilter;
 use crate::app::mail_stores::{MailStoreGuard, MailStores};
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
@@ -330,7 +328,7 @@ where
             let read = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
             let line = match read {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     line
                 }
                 TerminalRead::Eof => return Ok(session.into_active().apply_carrier_loss()),
@@ -658,7 +656,7 @@ where
             MenuCommand::Post(post) => self.handle_post_mail(&mut session, post).await?,
             MenuCommand::CommentToSysop => self.handle_comment_to_sysop(&mut session).await?,
             MenuCommand::ShowTime => {
-                self.write_and_flush(&render_time_line(SystemTime::now()))
+                self.write_and_flush(&render_time_line(self.services.clock.now()))
                     .await?;
             }
             MenuCommand::ShowVersion => self.write_and_flush(VERSION_BANNER).await?,

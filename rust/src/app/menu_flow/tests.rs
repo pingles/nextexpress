@@ -723,6 +723,25 @@ fn version_banner_starts_with_crlf_and_omits_registration_key_line() {
     );
 }
 
+#[tokio::test]
+async fn t_command_renders_the_clock_ports_instant_exactly() {
+    // The `T` handler must resolve "now" through `services.clock`, not
+    // the ambient `SystemTime::now()` — the seam that lets tests (and
+    // the `N` date scan's smoke) pin exact time values. 1970-01-02
+    // 03:04:05 UTC, matching the render_time_line pin below.
+    let mut services = test_services();
+    services.clock = Arc::new(crate::adapters::system_clock::ManualClock::set_to(
+        SystemTime::UNIX_EPOCH + Duration::from_secs(86_400 + 3 * 3600 + 4 * 60 + 5),
+    ));
+    let mut terminal = CaptureTerminal::default();
+    dispatch_line(&services, &mut terminal, menu_session(), "T").await;
+    assert_eq!(
+        terminal.output,
+        b"\r\nIt is 01-02-70 03:04:05\r\n".to_vec(),
+        "T renders the port's instant, not the wall clock"
+    );
+}
+
 #[test]
 fn render_time_line_emits_legacy_it_is_prefix_and_us_format() {
     // Pin the legacy `It is <MM-DD-YY> <HH:MM:SS>` wire format

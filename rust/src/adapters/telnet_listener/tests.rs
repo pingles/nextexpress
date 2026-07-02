@@ -56,6 +56,7 @@ fn test_runtime(
             flagged_store: std::sync::Arc::new(
                 crate::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
+            clock: std::sync::Arc::new(crate::adapters::system_clock::SystemClock),
         },
     )
 }

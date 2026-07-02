@@ -57,6 +57,7 @@ pub struct TestRuntime {
     tune_config: Option<ConfigTune>,
     tune_sysop: Option<SysopTune>,
     extra_users: Vec<UserSeed>,
+    clock: Option<nextexpress::app::services::SharedClock>,
 }
 
 impl TestRuntime {
@@ -75,7 +76,18 @@ impl TestRuntime {
             tune_config: None,
             tune_sysop: None,
             extra_users: Vec::new(),
+            clock: None,
         }
+    }
+
+    /// Installs a specific clock — e.g. a
+    /// [`nextexpress::adapters::system_clock::ManualClock`] so a smoke
+    /// can pin "today" (the `N` date scan's deterministic form).
+    /// Defaults to the production `SystemClock`.
+    #[must_use]
+    pub fn with_clock(mut self, clock: nextexpress::app::services::SharedClock) -> Self {
+        self.clock = Some(clock);
+        self
     }
 
     /// Overrides [`Config`] fields after the fixture defaults are set
@@ -190,6 +202,9 @@ pub async fn spawn_seeded_sysop(fixture: TestRuntime) -> SocketAddr {
             flagged_store: Arc::new(
                 nextexpress::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
             ),
+            clock: fixture
+                .clock
+                .unwrap_or_else(|| Arc::new(nextexpress::adapters::system_clock::SystemClock)),
         },
     );
 

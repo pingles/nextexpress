@@ -14,5 +14,6 @@ pub mod in_memory_user_repository;
 pub mod pbkdf2_password_hasher;
 pub mod sqlite_flagged_store;
 pub mod sqlite_user_repository;
+pub mod system_clock;
 pub(crate) mod telnet_line;
 pub mod telnet_listener;

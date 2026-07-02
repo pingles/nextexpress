@@ -220,7 +220,7 @@ where
                 subject: None, // default `Re: <source.subject>`
                 private: false,
                 reply_keeps_broadcast: false,
-                posted_at: SystemTime::now(),
+                posted_at: self.services.clock.now(),
             },
         )
         .await;
@@ -255,7 +255,7 @@ where
                 source_number,
                 typed_to,
                 additional_note: note,
-                posted_at: SystemTime::now(),
+                posted_at: self.services.clock.now(),
             },
         )
         .await;
@@ -346,7 +346,7 @@ where
             // `Message aborted.` notice.
             match self.read_prompted(b"", TerminalEcho::Visible).await? {
                 TerminalRead::Line(line) => {
-                    session.record_input(SystemTime::now());
+                    session.record_input(self.services.clock.now());
                     let trimmed = line.trim();
                     if trimmed.eq_ignore_ascii_case("/A") {
                         return Ok(None);
