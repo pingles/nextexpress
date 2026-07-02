@@ -3,6 +3,43 @@
 This document captures the current internal design of the Rust implementation
 under `rust/` and the larger refactorings worth considering next.
 
+## Suggested refactorings (ordered)
+
+The July 2026 forward-looking review, sequenced in application order.
+Item numbers refer to the detailed entries under "Large-scale
+refactorings worth considering" and "Forward-looking review additions"
+below; the slice-by-slice rationale is under "Suggested order". Effort
+and file counts are the review verifiers' adjusted estimates.
+
+| # | Refactoring (item) | Land when | Why it improves the design for what's coming | Files touched | Effort |
+|---|---|---|---|---|---|
+| 1 | **Unify flag identity to `(conference, name)`** (14) | Now | Fixes a live defect: dual `FlaggedKey` identities silently lose flag saves under SQLite and duplicate the `A` listing. D/DS downloads consume this list as the default download set — it must have one identity before anything is pinned against it. | ~10 src/test + 3 docs | 0.5–1 day |
+| 2 | **Mutation gate → diff-vs-main** (15) | Now | `make check` documents a 6–9 h full sweep nobody runs; agents execute the checklist literally. Aligning the documented and practiced gate keeps TDD+mutants viable as the crate grows through Tier D. | 2 (Makefile, AGENTS.md) | 1–2 h |
+| 3 | **Smoke-harness builder** (12 remainder) | Before FS's smoke | Six smokes each re-roll ~110–155 lines of harness; FS is the next smoke to be written. Every remaining Tier D slice needs a capture-pinned smoke, so this pays out eight more times. | ~8, test-only | ~1 day |
+| 4 | **Clock port in `AppServices`** (16) | Before N | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
+| 5 | **`FileRepository` port prep** (18) | Just before N | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
+| 6 | **Extract the NextScan scan engine** (17) | First task of the N slice | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
+| 7 | **Prompt-reader merge + `line_for` extraction** (10) | Before N/FM | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
+| 8 | **Error-boundary pass** (2 remainder) | Gap before D/DS | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
+| 9 | **Command-style user writes** (1) | After N, before D-T2 | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
+| 10 | **SQLite schema migrations** (22) | Before D-T2 | No mechanism can alter an existing `users.db`; D-T2's first new column would break every login after upgrade. Versioned migrations make every future schema change (accounting, D2s tables, `row_version`) routine. | 3–5 | 0.5–1 day |
+| 11 | **`AuthenticatedCall` struct** (23a) | Before D-T2 | The per-call triple is duplicated across four phase variants with two 8-arm salvage matches; every new per-call field costs ~7 sites. D/U must add transfer tallies — after this, that's a single-site addition. | ~6–7 | 0.5–1 day |
+| 12 | **UTF-8 policy re-scope + echo-hole fix** (19) | Before D-T1 | The written "wire is UTF-8, always" contract is violated by the first Zmodem frame; deciding the text-mode/transfer-window scoping up front prevents an ad hoc weakening of the gate mid-slice. Also closes today's Latin-1 echo hole. | ~4 (2 docs + codec + test) | ~0.5 day |
+| 13 | **Raw binary channel on `Terminal`** (20) | Opening sub-slice of D-T1 | The stack destroys binary in both directions (lossy decode, dropped `IAC IAC`, no 0xFF doubling, ANSI stripping). `read_bytes`/`write_raw` with BINARY negotiation is the one seam all transfer slices flow through. | ~5–8 | 1–3 days |
+| 14 | **Sans-IO Zmodem engine decision** (21) | Shapes D-T1 | Porting `zmodem.e`'s callback-into-serial shape would weld protocol logic to live sockets — untestable, mutants-hostile — and force writing the protocol twice (the smoke harness needs an embedded client; the sans-IO engine plays both roles). | 1 doc now; engine lands inside D-T1..T5 | decision now; 1–2 wks in-slice |
+| 15 | **Real `has_access` narrowing** (24) | With the first refusing slice (D/U eligibility or FM/US) | The stub grants every right to any validated account; FM/US are the first commands that must refuse a level-2 user. Minimal per-variant narrowing keeps `has_access` the single choke-point instead of scattering level checks. | ~3 | 0.5–1 day |
+| 16 | **`NodePool` → presence registry** (25) | Immediately before WHO | Today nothing can answer "who is online" — no registry, dead `LoggedOn` transitions, pool unreachable from handlers. `NodePresence` + `snapshot_all` is the read-side seam for WHO/WHD, Tier G's node monitor, and the place delivery handles later hang. | ~8–12 | 1–2 days |
+| 17 | **`SessionSignal` channel in the terminal** (26) | Opening move of OLM/page | Sessions are unreachable while blocked on a read; the select-in-terminal design (after hoisting the line buffer so delivery can't drop half-typed input) is the delivery lane OLM, page, and later Tier G kick/suspend all reuse — avoiding a session-actor rewrite. | ~5–7 | ~3 days |
+| 18 | **Activate the time budget** (27) | During Tier E, before Tier G's G6 | `tick_minute` has zero callers — "mins. left" is frozen and `OutOfTime` unreachable (a parity gap now). Tier G's time +/- needs a live budget to adjust, and Tier I's caps need `time_used_today` to have actually accrued. | ~4–6 + FS-UAE capture | 1–2 days |
+
+Dependencies: 13 depends on 12's policy decision; 14 depends on 13; 17
+builds on 16's `NodePresence`; 18 wants 4's clock for a deterministic
+smoke; 9 stays schema-free unless 10 lands first. Rows 1–2 are
+standalone commits, rows 4–7 cluster around the N slice, rows 9–14 are
+the pre-transfer architectural block (~2 weeks), and rows 15–18
+deliberately wait for their first consumer, per the "seam lands with
+the slice that consumes it" rule.
+
 ## Current Shape
 
 The implementation is a hexagonal (ports and adapters) layout split across four
