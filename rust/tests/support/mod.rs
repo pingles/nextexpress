@@ -33,6 +33,18 @@ use tokio::net::TcpStream;
 pub const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Runtime fixture used by in-process telnet integration tests.
+///
+/// The four positional fields cover the common shape (a seeded sysop
+/// on one node); the `with_*` builder knobs cover everything the
+/// per-smoke spawn helpers used to hand-roll — extra users, sysop
+/// adjustments, and `Config` overrides such as `max_nodes`.
+/// Deferred [`Config`] adjustment applied after the fixture defaults.
+type ConfigTune = Box<dyn FnOnce(&mut Config) + Send>;
+/// Deferred adjustment of the seeded sysop.
+type SysopTune = Box<dyn FnOnce(&mut nextexpress::domain::user::User) + Send>;
+/// Deferred construction of an extra user; receives the runtime's hasher.
+type UserSeed = Box<dyn FnOnce(&Pbkdf2PasswordHasher) -> nextexpress::domain::user::User + Send>;
+
 pub struct TestRuntime {
     /// BBS root used by file-screen and file-mail adapters.
     pub bbs_path: PathBuf,
@@ -42,6 +54,9 @@ pub struct TestRuntime {
     pub mail_stores: SharedMailStores,
     /// File catalogue installed in the runtime.
     pub file_repo: SharedFileRepo,
+    tune_config: Option<ConfigTune>,
+    tune_sysop: Option<SysopTune>,
+    extra_users: Vec<UserSeed>,
 }
 
 impl TestRuntime {
@@ -57,7 +72,44 @@ impl TestRuntime {
             conferences,
             mail_stores,
             file_repo,
+            tune_config: None,
+            tune_sysop: None,
+            extra_users: Vec::new(),
         }
+    }
+
+    /// Overrides [`Config`] fields after the fixture defaults are set
+    /// (`max_nodes: 1`, `max_password_failures: 3`, the fixture's
+    /// `bbs_path`) — e.g. `.with_config(|c| c.max_nodes = 2)` for a
+    /// two-session smoke.
+    #[must_use]
+    pub fn with_config(mut self, tune: impl FnOnce(&mut Config) + Send + 'static) -> Self {
+        self.tune_config = Some(Box::new(tune));
+        self
+    }
+
+    /// Adjusts the seeded sysop after its memberships are granted —
+    /// e.g. clearing per-conference scan flags so a smoke skips the
+    /// logon conference scan.
+    #[must_use]
+    pub fn with_sysop(
+        mut self,
+        tune: impl FnOnce(&mut nextexpress::domain::user::User) + Send + 'static,
+    ) -> Self {
+        self.tune_sysop = Some(Box::new(tune));
+        self
+    }
+
+    /// Seeds one additional user. The closure receives the runtime's
+    /// password hasher so the user's credentials verify at the real
+    /// login prompt; sign in with [`sign_in`].
+    #[must_use]
+    pub fn with_user(
+        mut self,
+        make: impl FnOnce(&Pbkdf2PasswordHasher) -> nextexpress::domain::user::User + Send + 'static,
+    ) -> Self {
+        self.extra_users.push(Box::new(make));
+        self
     }
 }
 
@@ -102,20 +154,30 @@ pub async fn spawn_seeded_sysop(fixture: TestRuntime) -> SocketAddr {
     let hasher = Arc::new(Pbkdf2PasswordHasher::new());
     let mut sysop = seed::default_sysop(hasher.as_ref()).expect("seed sysop");
     seed::grant_all_memberships(&mut sysop, &fixture.conferences);
+    if let Some(tune) = fixture.tune_sysop {
+        tune(&mut sysop);
+    }
+    let mut users = vec![sysop];
+    for make in fixture.extra_users {
+        users.push(make(hasher.as_ref()));
+    }
 
     let user_repo: SharedUserRepo =
-        Arc::new(InMemoryUserRepository::new(vec![sysop])) as Arc<dyn UserRepository + Send + Sync>;
+        Arc::new(InMemoryUserRepository::new(users)) as Arc<dyn UserRepository + Send + Sync>;
     let hasher: SharedHasher = hasher as Arc<dyn PasswordHasher + Send + Sync>;
     let caller_log: SharedCallerLog =
         Arc::new(InMemoryCallerLog::new()) as Arc<dyn CallerLogAppender + Send + Sync>;
     let conferences: SharedConferences = Arc::new(fixture.conferences);
 
-    let config = Config {
+    let mut config = Config {
         max_nodes: 1,
         max_password_failures: 3,
         bbs_path: fixture.bbs_path,
         ..Config::default()
     };
+    if let Some(tune) = fixture.tune_config {
+        tune(&mut config);
+    }
     let runtime = bootstrap::build_runtime(
         &config,
         RuntimeAdapters {
@@ -145,6 +207,20 @@ pub async fn spawn_seeded_sysop(fixture: TestRuntime) -> SocketAddr {
 /// menu prompt.
 pub async fn sign_in_seeded_sysop(addr: &SocketAddr) -> TcpStream {
     let (stream, _) = sign_in_seeded_sysop_capturing_menu(addr).await;
+    stream
+}
+
+/// Connects as `handle`/`password` (e.g. a [`TestRuntime::with_user`]
+/// seed) and returns the stream at the menu prompt.
+pub async fn sign_in(addr: &SocketAddr, handle: &[u8], password: &[u8]) -> TcpStream {
+    let mut stream = TcpStream::connect(addr).await.expect("connect");
+    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ").await;
+    write_line(&mut stream, b"Y").await;
+    drain_until(&mut stream, b"Enter your Name: ").await;
+    write_line(&mut stream, handle).await;
+    drain_until(&mut stream, b"PassWord: ").await;
+    write_line(&mut stream, password).await;
+    drain_until(&mut stream, b"mins. left): ").await;
     stream
 }
 
@@ -186,6 +262,15 @@ pub async fn end_session(stream: &mut TcpStream) {
     drain_until(stream, b"Goodbye").await;
 }
 
+/// Forces a logoff with `G Y` (slice D5/Ga): a plain `G` opens the
+/// flagged-file confirm when a test left a file flagged, so teardown
+/// uses the force form — mirroring the FS-UAE reference discipline of
+/// always ending a session with `G Y`.
+pub async fn end_session_forced(stream: &mut TcpStream) {
+    write_line(stream, b"G Y").await;
+    drain_until(stream, b"Goodbye").await;
+}
+
 /// Writes one CRLF-terminated command line.
 pub async fn write_line(stream: &mut TcpStream, body: &[u8]) {
     stream.write_all(body).await.expect("write body");
@@ -193,30 +278,65 @@ pub async fn write_line(stream: &mut TcpStream, body: &[u8]) {
     stream.flush().await.expect("flush");
 }
 
-/// Reads until `needle` appears, returning all consumed bytes.
-pub async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
+/// Sends one bare pager hotkey — no line terminator (slice D2b: the
+/// `More?` prompt acts per keypress, `ae_tierd_aquascan3.txt:321`,
+/// `ae_tierd_aquascan4.txt` U1; a terminated `n\r\n` would instead
+/// mean held-n + Enter = the probe-P1 quit).
+pub async fn write_key(stream: &mut TcpStream, key: &[u8]) {
+    stream.write_all(key).await.expect("write key");
+    stream.flush().await.expect("flush");
+}
+
+/// Reads whatever arrives within `window` of idle — the keystroke-
+/// granular observation primitive (slice D2b: prove a key echoes on
+/// its own keypress, before any terminator is sent).
+pub async fn read_idle(stream: &mut TcpStream, window: Duration) -> Vec<u8> {
     let mut out = Vec::new();
     let mut chunk = [0u8; 256];
-    loop {
-        let n = match tokio::time::timeout(DRAIN_DEADLINE, stream.read(&mut chunk)).await {
-            Ok(Ok(n)) => n,
-            Ok(Err(_)) | Err(_) => 0,
-        };
+    while let Ok(Ok(n)) = tokio::time::timeout(window, stream.read(&mut chunk)).await {
         if n == 0 {
             break;
         }
         out.extend_from_slice(&chunk[..n]);
-        if contains(&out, needle) {
-            break;
+    }
+    out
+}
+
+/// Reads until `needle` appears, returning all consumed bytes.
+///
+/// Panics with a distinct message per failure mode — deadline
+/// expired, connection closed, read error — so a failing smoke says
+/// what actually happened instead of a uniform "needle not found".
+pub async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 256];
+    loop {
+        let Ok(read) = tokio::time::timeout(DRAIN_DEADLINE, stream.read(&mut chunk)).await else {
+            panic!(
+                "needle {:?} not seen within {DRAIN_DEADLINE:?}; got {:?}",
+                std::str::from_utf8(needle).unwrap_or("<bin>"),
+                String::from_utf8_lossy(&out),
+            );
+        };
+        match read {
+            Ok(0) => panic!(
+                "connection closed before needle {:?}; got {:?}",
+                std::str::from_utf8(needle).unwrap_or("<bin>"),
+                String::from_utf8_lossy(&out),
+            ),
+            Ok(n) => {
+                out.extend_from_slice(&chunk[..n]);
+                if contains(&out, needle) {
+                    return out;
+                }
+            }
+            Err(error) => panic!(
+                "read failed ({error}) before needle {:?}; got {:?}",
+                std::str::from_utf8(needle).unwrap_or("<bin>"),
+                String::from_utf8_lossy(&out),
+            ),
         }
     }
-    assert!(
-        contains(&out, needle),
-        "needle {:?} not found within {DRAIN_DEADLINE:?}; got {:?}",
-        std::str::from_utf8(needle).unwrap_or("<bin>"),
-        String::from_utf8_lossy(&out),
-    );
-    out
 }
 
 /// Returns true when `needle` appears in `haystack`.

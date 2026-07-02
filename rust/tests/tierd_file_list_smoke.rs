@@ -9,32 +9,22 @@
 //! literals are restated here independently of the production
 //! constants on purpose: the smoke guards them against drift.
 
+mod support;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use nextexpress::adapters::in_memory_caller_log::InMemoryCallerLog;
 use nextexpress::adapters::in_memory_file_repository::InMemoryFileRepository;
-use nextexpress::adapters::in_memory_mail_stores::InMemoryMailStores;
-use nextexpress::adapters::in_memory_user_repository::InMemoryUserRepository;
-use nextexpress::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
-use nextexpress::adapters::telnet_listener::TelnetListener;
-use nextexpress::app::config::Config;
-use nextexpress::app::mail_stores::MailStores;
 use nextexpress::app::seed;
-use nextexpress::app::services::{
-    SharedCallerLog, SharedConferences, SharedFileRepo, SharedHasher, SharedMailStores,
-    SharedUserRepo,
-};
-use nextexpress::bootstrap;
-use nextexpress::domain::caller_log::CallerLogAppender;
+use nextexpress::app::services::SharedFileRepo;
 use nextexpress::domain::conference::{Conference, MessageBase};
-use nextexpress::domain::password::PasswordHasher;
-use nextexpress::domain::user_repository::UserRepository;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-const DRAIN_DEADLINE: Duration = Duration::from_secs(2);
+use support::{
+    contains, drain_until, end_session_forced, read_idle, sign_in_seeded_sysop, write_key,
+    write_line, TestRuntime,
+};
 
 /// The `NextScan` listing banner (branding per `designs/NEXTSCAN.md` §7).
 const LISTING_BANNER: &[u8] =
@@ -129,7 +119,7 @@ async fn f_1_pages_the_seeded_corpus_and_q_quits() {
         String::from_utf8_lossy(&quit[..quit.len().min(40)]),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -177,7 +167,7 @@ async fn f_2_butt_joins_same_date_files_and_post_end_n_is_erased_by_q() {
         String::from_utf8_lossy(&quit[..quit.len().min(40)]),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -201,7 +191,7 @@ async fn bare_f_opens_the_directories_prompt_and_enter_aborts() {
     write_line(&mut stream, b"").await;
     drain_until(&mut stream, b"mins. left): ").await;
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -225,7 +215,7 @@ async fn fr_1_opens_the_reverse_banner_and_header() {
 
     write_key(&mut stream, b"Q").await;
     drain_until(&mut stream, b"mins. left): ").await;
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -267,7 +257,7 @@ async fn bare_fr_opens_the_directories_prompt_with_the_reverse_banner() {
 
     write_key(&mut stream, b"Q").await;
     drain_until(&mut stream, b"mins. left): ").await;
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -284,7 +274,7 @@ async fn f_99_reports_the_highest_directory() {
         String::from_utf8_lossy(&out),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -301,7 +291,7 @@ async fn f_h_reports_nothing_held() {
         String::from_utf8_lossy(&out),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -322,7 +312,7 @@ async fn f_in_an_unseeded_conference_reports_nothing_found() {
         String::from_utf8_lossy(&out),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -346,7 +336,7 @@ async fn utf8_gate_every_session_byte_decodes() {
         "session stream contains non-UTF-8 bytes: {:?}",
         String::from_utf8_lossy(&all)
     );
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -384,7 +374,7 @@ async fn hotkey_n_echoes_on_keypress_and_enter_quits() {
         String::from_utf8_lossy(&after),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -406,7 +396,7 @@ async fn hotkey_q_acts_on_a_single_keypress_without_enter() {
         String::from_utf8_lossy(&after),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -441,7 +431,7 @@ async fn hotkey_flag_entry_echoes_each_typed_byte() {
     write_key(&mut stream, b"Q").await;
     drain_until(&mut stream, b"mins. left): ").await;
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -551,7 +541,7 @@ async fn a_lists_the_session_flag_set_over_telnet() {
     write_line(&mut stream, b"").await;
     drain_until(&mut stream, b"mins. left): ").await;
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -604,7 +594,7 @@ async fn a_flag_prompt_loop_flags_a_name_then_clears_over_telnet() {
     write_line(&mut stream, b"").await;
     drain_until(&mut stream, b"mins. left): ").await;
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -650,7 +640,7 @@ async fn flags_persist_across_logoff_and_logon_over_telnet() {
     drain_until(&mut s2, PROMPT_TAIL).await;
     write_line(&mut s2, b"").await;
     drain_until(&mut s2, b"mins. left): ").await;
-    end_session(&mut s2).await;
+    end_session_forced(&mut s2).await;
 }
 
 /// Signs in `sysop`/`sysop` and returns the full byte stream from the
@@ -673,7 +663,6 @@ async fn drive_login_capturing(stream: &mut TcpStream) -> Vec<u8> {
 /// demo corpus (landing conference 1: areas 1-2; conference 2: one
 /// empty area) — the same wiring `bootstrap::run` performs.
 async fn spawn_listener_with_demo_files() -> std::net::SocketAddr {
-    let hasher = Arc::new(Pbkdf2PasswordHasher::new());
     let conferences = vec![
         Conference::new(
             1,
@@ -688,129 +677,15 @@ async fn spawn_listener_with_demo_files() -> std::net::SocketAddr {
         )
         .expect("valid conference"),
     ];
-
-    let mut sysop = seed::default_sysop(hasher.as_ref()).expect("seed sysop");
-    seed::grant_all_memberships(&mut sysop, &conferences);
-    let user_repo: SharedUserRepo =
-        Arc::new(InMemoryUserRepository::new(vec![sysop])) as Arc<dyn UserRepository + Send + Sync>;
-    let hasher_shared: SharedHasher = hasher as Arc<dyn PasswordHasher + Send + Sync>;
-    let caller_log: SharedCallerLog =
-        Arc::new(InMemoryCallerLog::new()) as Arc<dyn CallerLogAppender + Send + Sync>;
-    let mail_stores: SharedMailStores =
-        Arc::new(InMemoryMailStores::new()) as Arc<dyn MailStores + Send + Sync>;
     let (areas, files) = seed::demo_file_catalogue(&conferences);
     let file_repo: SharedFileRepo = Arc::new(InMemoryFileRepository::new(areas, files));
-    let conferences_handle: SharedConferences = Arc::new(conferences);
-
-    let config = Config {
-        max_nodes: 1,
-        max_password_failures: 3,
-        bbs_path: std::env::temp_dir(),
-        ..Config::default()
-    };
-    let runtime = bootstrap::build_runtime(
-        &config,
-        bootstrap::RuntimeAdapters {
-            user_repo,
-            hasher: hasher_shared,
-            caller_log,
-            conferences: conferences_handle,
-            mail_stores,
-            file_repo,
-            flagged_store: Arc::new(
-                nextexpress::adapters::in_memory_flagged_store::InMemoryFlaggedStore::new(),
-            ),
-        },
-    );
-
-    let listener = TelnetListener::bind("127.0.0.1:0", runtime)
-        .await
-        .expect("bind listener");
-    let addr = listener.local_addr().expect("local_addr");
-    let listener = Arc::new(listener);
-    let task_listener = listener.clone();
-    tokio::spawn(async move { task_listener.run().await });
-    addr
-}
-
-async fn sign_in_seeded_sysop(addr: &std::net::SocketAddr) -> TcpStream {
-    let mut stream = TcpStream::connect(addr).await.expect("connect");
-    drain_until(&mut stream, b"ANSI Graphics (Y/n)? ").await;
-    write_line(&mut stream, b"Y").await;
-    drain_until(&mut stream, b"Enter your Name: ").await;
-    write_line(&mut stream, b"sysop").await;
-    drain_until(&mut stream, b"PassWord: ").await;
-    write_line(&mut stream, b"sysop").await;
-    drain_until(&mut stream, b"mins. left): ").await;
-    stream
-}
-
-/// Forces a logoff with `G Y` (slice D5/Ga): a plain `G` now opens the
-/// flagged-file confirm when a test left a file flagged, so teardown
-/// uses the force form — mirroring the FS-UAE reference discipline of
-/// always ending a session with `G Y`.
-async fn end_session(stream: &mut TcpStream) {
-    write_line(stream, b"G Y").await;
-    drain_until(stream, b"Goodbye").await;
-}
-
-async fn write_line(stream: &mut TcpStream, body: &[u8]) {
-    stream.write_all(body).await.expect("write body");
-    stream.write_all(b"\r\n").await.expect("write CRLF");
-    stream.flush().await.expect("flush");
-}
-
-/// Sends one bare pager hotkey — no line terminator (slice D2b: the
-/// `More?` prompt acts per keypress, `ae_tierd_aquascan3.txt:321`,
-/// `ae_tierd_aquascan4.txt` U1; a terminated `n\r\n` would now mean
-/// held-n + Enter = the probe-P1 quit).
-async fn write_key(stream: &mut TcpStream, key: &[u8]) {
-    stream.write_all(key).await.expect("write key");
-    stream.flush().await.expect("flush");
-}
-
-/// Reads whatever arrives within `window` of idle — the keystroke-
-/// granular observation primitive (slice D2b: prove a key echoes on
-/// its own keypress, before any terminator is sent).
-async fn read_idle(stream: &mut TcpStream, window: std::time::Duration) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut chunk = [0u8; 256];
-    while let Ok(Ok(n)) = tokio::time::timeout(window, stream.read(&mut chunk)).await {
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&chunk[..n]);
-    }
-    out
-}
-
-async fn drain_until(stream: &mut TcpStream, needle: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    let mut chunk = [0u8; 256];
-    loop {
-        let n = match tokio::time::timeout(DRAIN_DEADLINE, stream.read(&mut chunk)).await {
-            Ok(Ok(n)) => n,
-            Ok(Err(_)) | Err(_) => 0,
-        };
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&chunk[..n]);
-        if contains(&out, needle) {
-            break;
-        }
-    }
-    assert!(
-        contains(&out, needle),
-        "needle {:?} not found within {DRAIN_DEADLINE:?}; got {:?}",
-        String::from_utf8_lossy(needle),
-        String::from_utf8_lossy(&out),
-    );
-    out
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
+    support::spawn_seeded_sysop(TestRuntime::new(
+        std::env::temp_dir(),
+        conferences,
+        support::empty_mail_stores(),
+        file_repo,
+    ))
+    .await
 }
 
 #[tokio::test]
@@ -864,7 +739,7 @@ async fn zippy_inline_search_dumps_the_matching_block_over_telnet() {
         String::from_utf8_lossy(&out),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -887,7 +762,7 @@ async fn bare_zippy_prompts_for_the_search_string_over_telnet() {
         String::from_utf8_lossy(&out),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
 
 #[tokio::test]
@@ -919,5 +794,5 @@ async fn zippy_inline_directory_scans_immediately_without_a_prompt_over_telnet()
         String::from_utf8_lossy(&out),
     );
 
-    end_session(&mut stream).await;
+    end_session_forced(&mut stream).await;
 }
