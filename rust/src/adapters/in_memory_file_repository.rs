@@ -7,9 +7,9 @@
 //! D2s. Read-only port — the adapter holds plain owned `Vec`s with no
 //! interior mutability.
 
-use crate::domain::files::area::FileArea;
+use crate::domain::files::area::{FileArea, FileAreaRef};
 use crate::domain::files::file::File;
-use crate::domain::files::repository::FileRepository;
+use crate::domain::files::repository::{FileRepository, FileRepositoryError};
 
 /// An owned, immutable file catalogue serving the [`FileRepository`]
 /// port from memory.
@@ -46,7 +46,7 @@ impl InMemoryFileRepository {
 }
 
 impl FileRepository for InMemoryFileRepository {
-    fn areas_in_conference(&self, conference: u32) -> Vec<FileArea> {
+    fn areas_in_conference(&self, conference: u32) -> Result<Vec<FileArea>, FileRepositoryError> {
         let mut areas: Vec<FileArea> = self
             .areas
             .iter()
@@ -54,20 +54,22 @@ impl FileRepository for InMemoryFileRepository {
             .cloned()
             .collect();
         areas.sort_by_key(FileArea::number);
-        areas
+        Ok(areas)
     }
 
-    fn find_in_area(&self, conference: u32, area: u32) -> Vec<File> {
-        self.select(|conf, file_area, file| {
-            conf == conference && file_area == area && file.status().is_listing_visible()
-        })
+    fn find_in_area(&self, area: FileAreaRef) -> Result<Vec<File>, FileRepositoryError> {
+        Ok(self.select(|conf, file_area, file| {
+            conf == area.conference() && file_area == area.area() && {
+                file.status().is_listing_visible()
+            }
+        }))
     }
 
-    fn list_held(&self, conference: u32) -> Vec<File> {
+    fn list_held(&self, conference: u32) -> Result<Vec<File>, FileRepositoryError> {
         use crate::domain::files::file::FileStatus;
-        self.select(|conf, _, file| {
+        Ok(self.select(|conf, _, file| {
             conf == conference && file.status() == FileStatus::HeldForReview
-        })
+        }))
     }
 }
 
@@ -116,7 +118,8 @@ mod tests {
     #[test]
     fn find_in_area_returns_only_listing_visible_files_oldest_first() {
         let names: Vec<String> = repo()
-            .find_in_area(2, 1)
+            .find_in_area(FileAreaRef::new(2, 1))
+            .expect("files")
             .into_iter()
             .map(|f| f.name().to_string())
             .collect();
@@ -133,7 +136,8 @@ mod tests {
             ],
         );
         let names: Vec<String> = repo
-            .find_in_area(2, 1)
+            .find_in_area(FileAreaRef::new(2, 1))
+            .expect("files")
             .into_iter()
             .map(|f| f.name().to_string())
             .collect();
@@ -142,14 +146,21 @@ mod tests {
 
     #[test]
     fn find_in_area_unknown_conference_or_area_is_empty() {
-        assert!(repo().find_in_area(9, 1).is_empty());
-        assert!(repo().find_in_area(2, 9).is_empty());
+        assert!(repo()
+            .find_in_area(FileAreaRef::new(9, 1))
+            .expect("files")
+            .is_empty());
+        assert!(repo()
+            .find_in_area(FileAreaRef::new(2, 9))
+            .expect("files")
+            .is_empty());
     }
 
     #[test]
     fn list_held_returns_only_held_files_for_the_conference() {
         let names: Vec<String> = repo()
             .list_held(2)
+            .expect("files")
             .into_iter()
             .map(|f| f.name().to_string())
             .collect();
@@ -160,6 +171,7 @@ mod tests {
     fn areas_in_conference_sorts_ascending_by_number() {
         let numbers: Vec<u32> = repo()
             .areas_in_conference(2)
+            .expect("areas")
             .into_iter()
             .map(|a| a.number())
             .collect();
@@ -168,6 +180,6 @@ mod tests {
 
     #[test]
     fn areas_in_conference_unknown_conference_is_empty() {
-        assert!(repo().areas_in_conference(9).is_empty());
+        assert!(repo().areas_in_conference(9).expect("areas").is_empty());
     }
 }

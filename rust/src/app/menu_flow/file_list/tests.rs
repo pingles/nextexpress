@@ -13,6 +13,7 @@ use crate::app::terminal::{
     KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
 };
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
+use crate::domain::files::area::FileAreaRef;
 use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::password::{PasswordHashKind, PasswordHasher};
 use crate::domain::session::typed::MenuSession;
@@ -400,7 +401,10 @@ fn f_1_emitted_lines(services: &AppServices) -> Vec<Vec<u8>> {
     ];
     lines.extend(
         super::wire::assemble_dir_lines(
-            &services.file_repo.find_in_area(1, 1),
+            &services
+                .file_repo
+                .find_in_area(FileAreaRef::new(1, 1))
+                .expect("files"),
             1,
             &FlaggedFiles::default(),
         )
@@ -1340,7 +1344,10 @@ fn services_with_two_small_areas() -> AppServices {
 
 fn area_lines(services: &AppServices, area: u32) -> Vec<Vec<u8>> {
     super::wire::assemble_dir_lines(
-        &services.file_repo.find_in_area(1, area),
+        &services
+            .file_repo
+            .find_in_area(FileAreaRef::new(1, area))
+            .expect("files"),
         1,
         &FlaggedFiles::default(),
     )
@@ -1579,7 +1586,10 @@ async fn bare_fr_prompt_uses_the_reverse_banner_then_reverse_scans_the_answer() 
         FileListArg::Prompt { reverse: true },
     )
     .await;
-    let mut dir2 = services.file_repo.find_in_area(1, 2);
+    let mut dir2 = services
+        .file_repo
+        .find_in_area(FileAreaRef::new(1, 2))
+        .expect("files");
     dir2.reverse();
     let reversed: Vec<Vec<u8>> =
         super::wire::assemble_dir_lines(&dir2, 1, &FlaggedFiles::default())
@@ -1753,6 +1763,66 @@ async fn empty_dir_reports_nothing_found_with_no_footer() {
     expected.extend_from_slice(b"Scanning dir 1 from top... Nothing found!\r\n");
     expected.extend_from_slice(EXIT_TAIL);
     assert_eq!(terminal.output, expected);
+}
+
+#[tokio::test]
+async fn failing_repository_renders_like_an_empty_catalogue() {
+    // The row-5 error policy (July 2026 review, item 18): a repository
+    // backend failure must never take the listing down — it logs and
+    // renders byte-for-byte what an empty catalogue renders (the
+    // legacy wire for an unreadable DIR file is the empty listing).
+    // Pinned by equivalence so the test needs no knowledge of which
+    // internal path (highest-dir check, Nothing found!) fires.
+    use crate::domain::files::repository::{FileRepository, FileRepositoryError};
+
+    fn backend_failure() -> FileRepositoryError {
+        FileRepositoryError::Backend {
+            source: "backing store unavailable".into(),
+        }
+    }
+
+    struct FailingFileRepository;
+    impl FileRepository for FailingFileRepository {
+        fn areas_in_conference(
+            &self,
+            _: u32,
+        ) -> Result<Vec<crate::domain::files::area::FileArea>, FileRepositoryError> {
+            Err(backend_failure())
+        }
+        fn find_in_area(
+            &self,
+            _: FileAreaRef,
+        ) -> Result<Vec<crate::domain::files::file::File>, FileRepositoryError> {
+            Err(backend_failure())
+        }
+        fn list_held(
+            &self,
+            _: u32,
+        ) -> Result<Vec<crate::domain::files::file::File>, FileRepositoryError> {
+            Err(backend_failure())
+        }
+    }
+
+    let span_arg = || FileListArg::Span {
+        span: FileSpan::Dir(1),
+        non_stop: false,
+        reverse: false,
+    };
+
+    let empty = services_with(InMemoryFileRepository::new(Vec::new(), Vec::new()));
+    let mut empty_terminal = CaptureTerminal::new(Vec::new());
+    run_file_list(&empty, &mut empty_terminal, span_arg()).await;
+
+    let mut failing = test_services();
+    failing.conferences = Arc::new(vec![conference(1)]);
+    failing.file_repo = Arc::new(FailingFileRepository);
+    let mut failing_terminal = CaptureTerminal::new(Vec::new());
+    run_file_list(&failing, &mut failing_terminal, span_arg()).await;
+
+    assert_eq!(
+        failing_terminal.output, empty_terminal.output,
+        "a backend failure renders exactly like an empty catalogue"
+    );
 }
 
 #[tokio::test]

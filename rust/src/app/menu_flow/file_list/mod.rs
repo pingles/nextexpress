@@ -12,8 +12,9 @@ mod wire;
 use crate::app::menu_command::{FileListArg, FileSpan, ZippyArg};
 use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::CRLF;
-use crate::domain::files::area::FileArea;
+use crate::domain::files::area::{FileArea, FileAreaRef};
 use crate::domain::files::file::File;
+use crate::domain::files::repository::FileRepositoryError;
 use crate::domain::session::typed::MenuSession;
 
 /// Whether a paged listing keeps streaming or the user quit out.
@@ -28,10 +29,47 @@ enum ScanFlow {
 /// asymmetry — aborts and argument errors emit one reset only).
 const LISTING_EXIT_TAIL: &[u8] = b"\x1b[0m\r\n\x1b[0m\r\n";
 
+/// Logs a repository failure and renders the catalogue as empty — the
+/// wire the legacy shows for an unreadable DIR file is the empty
+/// listing (headers followed by `Nothing found!`); the sysop learns of
+/// the backend failure from the log. Shared by the three read helpers
+/// below so the policy lives in one place.
+fn empty_on_error<V>(what: &str, error: &FileRepositoryError) -> Vec<V> {
+    eprintln!("file repository: {what} failed: {error}");
+    Vec::new()
+}
+
 impl<T> super::MenuFlow<'_, T>
 where
     T: Terminal,
 {
+    /// The conference's areas under the row-5 error policy
+    /// ([`empty_on_error`]).
+    fn areas_in_conference(&self, conference: u32) -> Vec<FileArea> {
+        self.services
+            .file_repo
+            .areas_in_conference(conference)
+            .unwrap_or_else(|error| empty_on_error("areas_in_conference", &error))
+    }
+
+    /// One area's listing-visible files under the row-5 error policy
+    /// ([`empty_on_error`]).
+    fn files_in_area(&self, area: FileAreaRef) -> Vec<File> {
+        self.services
+            .file_repo
+            .find_in_area(area)
+            .unwrap_or_else(|error| empty_on_error("find_in_area", &error))
+    }
+
+    /// The conference's held files under the row-5 error policy
+    /// ([`empty_on_error`]).
+    fn held_files(&self, conference: u32) -> Vec<File> {
+        self.services
+            .file_repo
+            .list_held(conference)
+            .unwrap_or_else(|error| empty_on_error("list_held", &error))
+    }
+
     /// Drives the `F` menu command — the `NextScan` lister.
     pub(super) async fn handle_file_list(
         &mut self,
@@ -69,7 +107,7 @@ where
         reverse: bool,
     ) -> Result<(), T::Error> {
         let conference = session.current_conference_number().unwrap_or(0);
-        let areas = self.services.file_repo.areas_in_conference(conference);
+        let areas = self.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
         // The renderer reads the flag set immutably to mark rows, but
         // the `F`/`R` pager verbs mutate it — so borrow it mutably for
@@ -146,7 +184,7 @@ where
         // Per-task session isolation: the menu loop guarantees a
         // joined conference before any command dispatches.
         let conference = session.current_conference_number().unwrap_or(0);
-        let areas = self.services.file_repo.areas_in_conference(conference);
+        let areas = self.areas_in_conference(conference);
         // Mutable flag set for the whole span: the renderer reborrows
         // it immutably at the assemble call, the `F`/`R` verbs mutate
         // it. `session` is otherwise untouched from here on.
@@ -193,7 +231,7 @@ where
             FileSpan::All => areas.iter().map(FileArea::number).collect(),
             FileSpan::Upload => vec![max],
             FileSpan::Hold => {
-                let held = self.services.file_repo.list_held(conference);
+                let held = self.held_files(conference);
                 let header = wire::scanning_hold_header(!held.is_empty());
                 if self
                     .emit_scan_line(state, wire::ScanLine::raw(header), flagged)
@@ -222,7 +260,7 @@ where
         }
 
         for (index, dir) in dirs.iter().enumerate() {
-            let mut files = self.services.file_repo.find_in_area(conference, *dir);
+            let mut files = self.files_in_area(FileAreaRef::new(conference, *dir));
             // `FR` lists newest-first — the upload-writer appends rows
             // chronologically, so reversing the area's rows is the
             // reverse-chronological order (`express.e` `fileListReverse`
@@ -622,7 +660,7 @@ where
         };
 
         let conference = session.current_conference_number().unwrap_or(0);
-        let areas = self.services.file_repo.areas_in_conference(conference);
+        let areas = self.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
 
         // The directory span: supplied inline (`getDirSpan(item(1))`,
@@ -660,7 +698,7 @@ where
             ZippySpan::Hold => {
                 self.terminal.write(wire::ZIPPY_SCANNING_HOLD).await?;
                 self.terminal.write(CRLF).await?;
-                let files = self.services.file_repo.list_held(conference);
+                let files = self.held_files(conference);
                 self.zippy_dump_matches(&files, &needle).await?;
             }
             ZippySpan::Dirs(dirs) => {
@@ -669,7 +707,7 @@ where
                         .write(&wire::zippy_scanning_dir_header(dir))
                         .await?;
                     self.terminal.write(CRLF).await?;
-                    let files = self.services.file_repo.find_in_area(conference, dir);
+                    let files = self.files_in_area(FileAreaRef::new(conference, dir));
                     self.zippy_dump_matches(&files, &needle).await?;
                 }
             }

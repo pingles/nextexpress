@@ -410,6 +410,43 @@ that need them (`find_in_area`, `list_new_since`, `search_descriptions`,
 `find_metadata`, `list_by_status`), not generic CRUD. Adapter is free to
 add indexes for the queries the domain actually uses.
 
+### Port prep decisions (July 2026, review item 18 — landed)
+
+Settled ahead of the `N` slice so D2s inherits the right contract:
+
+- **Addressing.** The port takes `FileAreaRef { conference, area }`
+  (`domain/files/area.rs`), the file-world `MessageBaseRef` analogue
+  and the prefix of the natural file key `(conference, area, name)`
+  (`UNIQUE(area_id, name)` above). No more raw `(u32, u32)` pairs, so
+  conference/area transpositions are unrepresentable.
+- **Fallibility + error shape.** The three read methods return
+  `Result<_, FileRepositoryError>` now, while the only adapter is
+  infallible — the signature break is paid once, before N/V/VS add
+  call sites. `FileRepositoryError` is one opaque
+  `Backend { source: Box<dyn Error + Send + Sync> }` variant per the
+  port-error convention (SYSTEM.md item 2); rich diagnostics stay
+  adapter-private.
+- **Error policy at the listing.** A backend failure logs and renders
+  exactly what an empty catalogue renders (the legacy wire for an
+  unreadable DIR file is the empty listing); pinned by the
+  `failing_repository_renders_like_an_empty_catalogue` equivalence
+  test. The policy lives in one place
+  (`file_list/mod.rs::empty_on_error` + the three read helpers).
+- **Write methods land with their consuming slices** (the
+  schema-growth rule): `list_new_since` with the `N` scan,
+  `record_download` with D-T2, `begin`/`complete_upload` with D-T4a,
+  `File::transition_to` + the missing `FileStatus` variants with the
+  first slice that moves a file through them.
+- **Content vs metadata.** File *content* is not this port's concern:
+  a separate `FileContentStore` port (read/write/move/delete of blob
+  bytes — `fs_blob_store.rs` above) arrives with the first transfer
+  slice (D-T1).
+- **Concurrency.** No per-area lock registry until a writer slice
+  demonstrates the need: reads are `&self` snapshots, and the D2s
+  SQLite adapter follows the `users.db` pattern (one connection behind
+  a `Mutex`, WAL) rather than the mail-store per-base lock registry.
+  Revisit when uploads make concurrent same-area writers real.
+
 ## Things to nail down
 
 - ~~**Round-tripping the legacy DIR text format.**~~ Settled 2026-06-10:

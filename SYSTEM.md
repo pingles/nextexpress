@@ -17,7 +17,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 2 | **Mutation gate → diff-vs-main** (15) | **Landed** 2026-07-02 | `make check` documents a 6–9 h full sweep nobody runs; agents execute the checklist literally. Aligning the documented and practiced gate keeps TDD+mutants viable as the crate grows through Tier D. | 2 (Makefile, AGENTS.md) | 1–2 h |
 | 3 | **Smoke-harness builder** (12 remainder) | **Landed** 2026-07-02 (two-session primitives stage with Tier E) | Six smokes each re-roll ~110–155 lines of harness; FS is the next smoke to be written. Every remaining Tier D slice needs a capture-pinned smoke, so this pays out eight more times. | ~8, test-only | ~1 day |
 | 4 | **Clock port in `AppServices`** (16) | **Landed** 2026-07-03 | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
-| 5 | **`FileRepository` port prep** (18) | Just before N | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
+| 5 | **`FileRepository` port prep** (18) | **Landed** 2026-07-03 | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
 | 6 | **Extract the NextScan scan engine** (17) | First task of the N slice | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
 | 7 | **Prompt-reader merge + `line_for` extraction** (10) | Before N/FM | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
 | 8 | **Error-boundary pass** (2 remainder) | Gap before D/DS | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
@@ -1290,6 +1290,23 @@ slice — the second consumer keeps the generalisation honest; do not
 extract earlier.**
 
 ### 18. `FileRepository` port prep: fallibility + file identity
+
+**Landed (2026-07-03).** The three read methods return
+`Result<_, FileRepositoryError>` (one opaque
+`Backend { source: Box<dyn Error + Send + Sync> }` variant, the item-2
+convention); `find_in_area` takes the new
+`FileAreaRef { conference, area }` (`domain/files/area.rs`, with
+`FileArea::area_ref()`); the error policy — a backend failure logs and
+renders exactly like an empty catalogue — lives in one place
+(`file_list`'s three read helpers + `empty_on_error`) and is pinned by
+an equivalence test written first and watched to fail
+(`failing_repository_renders_like_an_empty_catalogue`). The remaining
+decisions (write methods with their consuming slices, the
+`FileContentStore` split at D-T1, no lock registry until a writer
+needs one) are recorded in designs/FILES.md §"Port prep decisions".
+One surviving mutant accepted as equivalent: deleting
+`empty_on_error`'s `eprintln!` is wire-identical (log-only). Original
+problem statement follows.
 
 The port is read-only and infallible by explicit deferral
 (`domain/files/repository.rs:7-9` defers `Result` plumbing to D2s),

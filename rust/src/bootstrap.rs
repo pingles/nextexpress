@@ -307,6 +307,7 @@ pub fn build_runtime(config: &Config, adapters: RuntimeAdapters) -> Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::files::area::FileAreaRef;
 
     #[test]
     fn open_flagged_store_is_in_memory_without_user_storage() {
@@ -358,9 +359,30 @@ mod tests {
         );
 
         let services = runtime.services();
-        assert_eq!(services.file_repo.areas_in_conference(1).len(), 2);
-        assert_eq!(services.file_repo.find_in_area(1, 1).len(), 27);
-        assert_eq!(services.file_repo.find_in_area(1, 2).len(), 3);
+        assert_eq!(
+            services
+                .file_repo
+                .areas_in_conference(1)
+                .expect("areas")
+                .len(),
+            2
+        );
+        assert_eq!(
+            services
+                .file_repo
+                .find_in_area(FileAreaRef::new(1, 1))
+                .expect("files")
+                .len(),
+            27
+        );
+        assert_eq!(
+            services
+                .file_repo
+                .find_in_area(FileAreaRef::new(1, 2))
+                .expect("files")
+                .len(),
+            3
+        );
     }
 
     #[test]
