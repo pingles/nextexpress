@@ -39,6 +39,11 @@ test:
 doctest:
 	cargo test $(MANIFEST) --doc
 
+# The FULL sweep — every mutant in the crate (1,800+ as of July 2026,
+# ~6-9 hours serial). A scheduled/background job, not a commit gate:
+# shard it across parallel runs with MUTANTS_ARGS='--shard k/n'. The
+# tee'd log (target/mutants-run.log) plus cargo-mutants' mutants.out
+# are the baseline artifacts diff runs are compared against.
 mutants:
 	mkdir -p rust/target
 	cd rust && bash -o pipefail -c 'cargo mutants $(MUTANTS_ARGS) 2>&1 | tee $(MUTANTS_LOG)'
@@ -51,14 +56,16 @@ mutants-diff:
 	cd rust && git diff $(DIFF_BASE) --relative > target/mutants.diff && \
 		bash -o pipefail -c 'cargo mutants --in-diff target/mutants.diff $(MUTANTS_ARGS) 2>&1 | tee $(MUTANTS_LOG)'
 
-# Mirrors the "Before Committing" checklist in AGENTS.md.
+# Mirrors the "Before Committing" checklist in AGENTS.md. The mutation
+# step is diff-scoped (uncommitted changes vs DIFF_BASE, default HEAD;
+# use DIFF_BASE=main for a branch) — the full sweep takes hours and
+# runs as a scheduled job via `make mutants`, never as a commit gate.
 check:
 	cargo fmt $(MANIFEST) --check
 	cargo clippy $(MANIFEST) --all-targets -- -D warnings
 	cargo nextest run $(MANIFEST)
 	cargo test $(MANIFEST) --doc
-	mkdir -p rust/target
-	cd rust && bash -o pipefail -c 'cargo mutants $(MUTANTS_ARGS) 2>&1 | tee $(MUTANTS_LOG)'
+	$(MAKE) mutants-diff
 
 fmt:
 	cargo fmt $(MANIFEST)

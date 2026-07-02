@@ -43,27 +43,34 @@ Code is written test-first with test driven development:
 1. Write a failing test
 2. Write the minimum code to pass the test
 3. Run `cargo nextest run` to execute the test suite
-4. Run `cargo mutants` to verify tests catch real bugs
+4. Run `make mutants-diff` to verify the tests for your changes catch real bugs
 5. Refactor to improve the design
 
 ## Mutation Testing
 
 Use `cargo-mutants` to check for insufficient testing on every implementation
 turn. It is configured in `rust/.cargo/mutants.toml` to run tests through
-`cargo-nextest`. Run it from the Rust project directory:
+`cargo-nextest`. The routine gate is **diff-scoped** — mutate only the
+lines you changed:
 
 ```sh
-cd rust
-cargo mutants
+make mutants-diff                 # working-tree changes vs the last commit
+make mutants-diff DIFF_BASE=main  # everything on a branch
 ```
 
-For narrow changes or when a full mutation run is too expensive, run
-`make mutants-diff` to mutate only the lines changed since the last commit
-(use `make mutants-diff DIFF_BASE=main` to cover a whole branch). The target
-generates the diff with crate-relative paths so cargo-mutants actually filters
-to your changes — a repo-root diff reports "No mutants to filter". You can
-still scope to a single file with `cargo mutants --file path/to/file.rs` from
-`rust/`. Treat surviving mutants as test gaps: add or strengthen tests before
+The target generates the diff with crate-relative paths so cargo-mutants
+actually filters to your changes — a repo-root diff reports "No mutants to
+filter". You can still scope to a single file with
+`cargo mutants --file path/to/file.rs` from `rust/`.
+
+The **full sweep** (`make mutants`) covers every mutant in the crate
+(1,800+ as of July 2026, ~6–9 hours serial) and is a scheduled/background
+job, never a per-commit gate — shard it across parallel runs with
+`make mutants MUTANTS_ARGS='--shard k/n'`. Do not shrink it with
+`exclude_globs` on wire-const modules: the smoke-killed mutants there are
+exactly the coverage this project cares about.
+
+Treat surviving mutants as test gaps: add or strengthen tests before
 completing the turn, or explicitly report why a surviving mutant is equivalent
 or intentionally deferred.
 
@@ -108,7 +115,8 @@ enforces this. Rust consts carrying re-encoded glyphs are `&str`.
 1. Ensure all tests pass `cargo nextest run`
 2. No compile warnings `cargo build`
 3. Run doctests with `cargo test --doc`
-4. Check for insufficient tests with `cargo mutants`
+4. Check for insufficient tests on your changes with `make mutants-diff`
+   (the full `make mutants` sweep is a scheduled job, not a commit gate)
 5. Update the SYSTEM.md document to reflect current design. Ensure the diagram reflects the current system.
 6. For any slice that changes user-facing interaction: boot the server
    (`cargo run -- nextexpress.toml`, or the built binary with the config path

@@ -14,7 +14,7 @@ and file counts are the review verifiers' adjusted estimates.
 | # | Refactoring (item) | Land when | Why it improves the design for what's coming | Files touched | Effort |
 |---|---|---|---|---|---|
 | 1 | **Unify flag identity to `(conference, name)`** (14) | **Landed** 2026-07-02 | Fixes a live defect: dual `FlaggedKey` identities silently lose flag saves under SQLite and duplicate the `A` listing. D/DS downloads consume this list as the default download set — it must have one identity before anything is pinned against it. | ~10 src/test + 3 docs | 0.5–1 day |
-| 2 | **Mutation gate → diff-vs-main** (15) | Now | `make check` documents a 6–9 h full sweep nobody runs; agents execute the checklist literally. Aligning the documented and practiced gate keeps TDD+mutants viable as the crate grows through Tier D. | 2 (Makefile, AGENTS.md) | 1–2 h |
+| 2 | **Mutation gate → diff-vs-main** (15) | **Landed** 2026-07-02 | `make check` documents a 6–9 h full sweep nobody runs; agents execute the checklist literally. Aligning the documented and practiced gate keeps TDD+mutants viable as the crate grows through Tier D. | 2 (Makefile, AGENTS.md) | 1–2 h |
 | 3 | **Smoke-harness builder** (12 remainder) | Before FS's smoke | Six smokes each re-roll ~110–155 lines of harness; FS is the next smoke to be written. Every remaining Tier D slice needs a capture-pinned smoke, so this pays out eight more times. | ~8, test-only | ~1 day |
 | 4 | **Clock port in `AppServices`** (16) | Before N | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
 | 5 | **`FileRepository` port prep** (18) | Just before N | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
@@ -1193,6 +1193,15 @@ repaint limitation (SLICES.md, this file, designs/FILES.md).
 as the default download set.**
 
 ### 15. Re-scope the routine mutation gate to diff-vs-main
+
+**Landed (2026-07-02).** `make check`'s final step is now
+`$(MAKE) mutants-diff` (working-tree diff vs `DIFF_BASE`, default
+`HEAD`); AGENTS.md's workflow step 4 and Before-Committing item 4 both
+name `make mutants-diff`; the full sweep is documented on the
+`mutants` target as a scheduled/sharded job
+(`MUTANTS_ARGS='--shard k/n'`) with `mutants-run.log`/`mutants.out` as
+the baseline artifacts. No `exclude_globs` added, per the review's
+warning. Original problem statement follows.
 
 `make check` — the target mirroring AGENTS.md's "Before Committing"
 checklist — still runs the FULL `cargo mutants` sweep (Makefile:61):
