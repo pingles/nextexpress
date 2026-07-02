@@ -5,7 +5,7 @@
 //! Separate from [`crate::adapters::sqlite_user_repository`] so the user
 //! adapter stays focused; two connections to one WAL file are safe at
 //! BBS write concurrency. The persisted row is `(slot, conference,
-//! name)` — `area` is not stored and load returns `area = 0`.
+//! name)` — exactly the domain [`FlaggedKey`] identity.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -101,7 +101,7 @@ impl FlaggedStore for SqliteFlaggedStore {
         let mut flags = FlaggedFiles::default();
         for row in rows {
             let (conference, name) = row?;
-            flags.flag(FlaggedKey::new(conference, 0, &name));
+            flags.flag(FlaggedKey::new(conference, &name));
         }
         Ok(flags)
     }
@@ -130,21 +130,21 @@ mod tests {
     use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
     use crate::domain::files::flagged_store::FlaggedStore;
 
-    fn set_with(area: u32) -> FlaggedFiles {
+    fn two_flag_set() -> FlaggedFiles {
         let mut flags = FlaggedFiles::default();
-        flags.flag(FlaggedKey::new(2, area, "termv48.lha"));
-        flags.flag(FlaggedKey::new(2, area, "mydemo.dms"));
+        flags.flag(FlaggedKey::new(2, "termv48.lha"));
+        flags.flag(FlaggedKey::new(2, "mydemo.dms"));
         flags
     }
 
     #[test]
-    fn save_then_load_round_trips_and_normalises_area_to_zero() {
+    fn save_then_load_round_trips() {
         let store = SqliteFlaggedStore::in_memory().expect("open");
-        store.save(7, &set_with(3)).expect("save");
+        store.save(7, &two_flag_set()).expect("save");
         let loaded = store.load(7).expect("load");
-        assert!(loaded.contains(&FlaggedKey::new(2, 0, "MYDEMO.DMS")));
-        assert!(loaded.contains(&FlaggedKey::new(2, 0, "TERMV48.LHA")));
-        assert!(!loaded.contains(&FlaggedKey::new(2, 3, "MYDEMO.DMS")));
+        assert!(loaded.contains(&FlaggedKey::new(2, "MYDEMO.DMS")));
+        assert!(loaded.contains(&FlaggedKey::new(2, "TERMV48.LHA")));
+        assert!(!loaded.contains(&FlaggedKey::new(3, "MYDEMO.DMS")));
     }
 
     #[test]
@@ -154,17 +154,34 @@ mod tests {
     }
 
     #[test]
+    fn save_survives_the_same_file_flagged_from_listing_and_prompt() {
+        // Regression (July 2026 review, item 14): the same file flagged
+        // from an F listing (real area) and via the A prompt / a restore
+        // (area 0) used to occupy two set entries, so `entries()` emitted
+        // two identical (conference, name) rows and the second INSERT
+        // violated the primary key — rolling back the WHOLE save and
+        // silently losing the session's flags on logoff.
+        let store = SqliteFlaggedStore::in_memory().expect("open");
+        let mut flags = FlaggedFiles::default();
+        flags.flag(FlaggedKey::new(2, "termv48.lha"));
+        flags.flag(FlaggedKey::new(2, "termv48.lha"));
+        store.save(7, &flags).expect("save must not roll back");
+        let loaded = store.load(7).expect("load");
+        assert!(loaded.contains(&FlaggedKey::new(2, "TERMV48.LHA")));
+    }
+
+    #[test]
     fn re_saving_replaces_the_slot_and_empty_save_clears_it() {
         let store = SqliteFlaggedStore::in_memory().expect("open");
-        store.save(1, &set_with(1)).expect("save");
+        store.save(1, &two_flag_set()).expect("save");
         // A smaller set replaces, not merges.
         let mut one = FlaggedFiles::default();
-        one.flag(FlaggedKey::new(2, 0, "mydemo.dms"));
+        one.flag(FlaggedKey::new(2, "mydemo.dms"));
         store.save(1, &one).expect("resave");
         let loaded = store.load(1).expect("load");
-        assert!(loaded.contains(&FlaggedKey::new(2, 0, "MYDEMO.DMS")));
+        assert!(loaded.contains(&FlaggedKey::new(2, "MYDEMO.DMS")));
         assert!(
-            !loaded.contains(&FlaggedKey::new(2, 0, "TERMV48.LHA")),
+            !loaded.contains(&FlaggedKey::new(2, "TERMV48.LHA")),
             "replaced, not merged"
         );
         // Empty save clears.
@@ -175,13 +192,13 @@ mod tests {
     #[test]
     fn save_is_keyed_per_slot() {
         let store = SqliteFlaggedStore::in_memory().expect("open");
-        store.save(1, &set_with(1)).expect("save");
+        store.save(1, &two_flag_set()).expect("save");
         assert!(store.load(2).expect("load").is_empty());
         // A save to one slot must not disturb another slot's rows — the
         // `DELETE ... WHERE slot_number = ?1` is per-slot. Pins the WHERE
         // clause directly (a future `save` refactor that widened the
         // delete would survive the assertion above but fail here).
-        store.save(2, &set_with(1)).expect("save slot 2");
+        store.save(2, &two_flag_set()).expect("save slot 2");
         assert!(
             !store.load(1).expect("load").is_empty(),
             "slot 1 survives a slot-2 save"

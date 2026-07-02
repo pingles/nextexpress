@@ -208,9 +208,11 @@ says the extra content index is worth it.
   - `InMemoryFlaggedStore` (default) — process-lifetime; a restart clears it.
   - `SqliteFlaggedStore` — durable; a `flagged_files (slot_number,
     conference, name)` table in the same `users.db` as the user store.
-- Keying on disk is `(conference, name)`; `area` is dropped on save and
-  restored as `0` (matches the legacy `{confNum} {fileName}` format;
-  `area` is a NextExpress session-local concern the `F`/`R` pager uses).
+- Keying on disk is `(conference, name)` — and since the July 2026
+  identity fix the domain `FlaggedKey` is exactly that pair too (the
+  legacy `{confNum} {fileName}` format / `isInFlaggedList` identity,
+  `express.e:12534`), so persistence is a lossless projection and a
+  restored flag paints the `[X]` marker in listings.
 - Cascade on file delete (per `DeleteFile` rule) is a fan-out across
   active sessions, not a SQL `ON DELETE`.
 

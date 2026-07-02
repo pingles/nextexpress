@@ -2000,7 +2000,7 @@ mod flagging {
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
         let mut menu = MenuSession::from_session(s);
 
-        let key = crate::domain::files::flagged::FlaggedKey::new(2, 1, "TERMV48.LHA");
+        let key = crate::domain::files::flagged::FlaggedKey::new(2, "TERMV48.LHA");
         assert!(menu.flagged_files_mut().flag(key.clone()));
         assert!(menu.flagged_files_mut().contains(&key));
     }

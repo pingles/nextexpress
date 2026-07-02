@@ -202,10 +202,9 @@ where
                 {
                     return self.finish_listing().await;
                 }
-                // Held files key on area 0 (provisional; hold is single-dir, no re-list).
                 if !held.is_empty()
                     && self
-                        .stream_dir_body(state, conference, 0, &held, flagged)
+                        .stream_dir_body(state, conference, &held, flagged)
                         .await?
                         == ScanFlow::Continue
                 {
@@ -246,7 +245,7 @@ where
                 continue;
             }
             if self
-                .stream_dir_body(state, conference, *dir, &files, flagged)
+                .stream_dir_body(state, conference, &files, flagged)
                 .await?
                 == ScanFlow::Quit
             {
@@ -288,7 +287,6 @@ where
         &mut self,
         state: &mut ScanState,
         conference: u32,
-        area: u32,
         files: &[File],
         flagged: &mut crate::domain::files::flagged::FlaggedFiles,
     ) -> Result<ScanFlow, T::Error> {
@@ -302,7 +300,7 @@ where
         // Reborrow `flagged` immutably only for the assemble call: it
         // returns an owned `Vec`, so the immutable borrow ends here and
         // the pager loop below can hand the `&mut` to `emit_scan_line`.
-        let lines = wire::assemble_dir_lines(files, conference, area, flagged);
+        let lines = wire::assemble_dir_lines(files, conference, flagged);
         for line in lines {
             if self.emit_scan_line(state, line, flagged).await? == ScanFlow::Quit {
                 return Ok(ScanFlow::Quit);

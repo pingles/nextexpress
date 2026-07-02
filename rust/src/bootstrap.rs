@@ -311,7 +311,7 @@ mod tests {
         // A fresh in-memory store loads empty for any slot and round-trips.
         assert!(store.load(1).expect("load").is_empty());
         let mut flags = FlaggedFiles::default();
-        flags.flag(FlaggedKey::new(1, 0, "ansipack.lha"));
+        flags.flag(FlaggedKey::new(1, "ansipack.lha"));
         store.save(1, &flags).expect("save");
         assert!(!store.load(1).expect("load").is_empty());
     }

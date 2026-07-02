@@ -243,7 +243,7 @@ fn flag_add(session: &mut MenuSession, name: &str) -> bool {
         return false;
     }
     let conference = session.current_conference_number().unwrap_or(0);
-    let key = crate::domain::files::flagged::FlaggedKey::new(conference, 0, name);
+    let key = crate::domain::files::flagged::FlaggedKey::new(conference, name);
     session.flagged_files_mut().flag(key)
 }
 

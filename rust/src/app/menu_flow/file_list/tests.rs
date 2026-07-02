@@ -306,7 +306,7 @@ async fn f_2_ns_streams_the_trio_without_pausing() {
         .collect();
     let mut expected = listing_preamble();
     expected.extend_from_slice(b"Scanning dir 2 from top... Ok!\r\n\r\n");
-    for line in super::wire::assemble_dir_lines(&trio, 1, 2, &FlaggedFiles::default()) {
+    for line in super::wire::assemble_dir_lines(&trio, 1, &FlaggedFiles::default()) {
         expected.extend_from_slice(&line.bytes);
         expected.extend_from_slice(b"\r\n");
     }
@@ -346,7 +346,7 @@ async fn fr_2_ns_streams_the_trio_newest_first() {
     expected.extend_from_slice(super::wire::listing_banner(true));
     expected.extend_from_slice(b"\r\n\r\n");
     expected.extend_from_slice(b"Reverse-scanning dir 2... Ok!\r\n\r\n");
-    for line in super::wire::assemble_dir_lines(&trio, 1, 2, &FlaggedFiles::default()) {
+    for line in super::wire::assemble_dir_lines(&trio, 1, &FlaggedFiles::default()) {
         expected.extend_from_slice(&line.bytes);
         expected.extend_from_slice(b"\r\n");
     }
@@ -401,7 +401,6 @@ fn f_1_emitted_lines(services: &AppServices) -> Vec<Vec<u8>> {
     lines.extend(
         super::wire::assemble_dir_lines(
             &services.file_repo.find_in_area(1, 1),
-            1,
             1,
             &FlaggedFiles::default(),
         )
@@ -897,12 +896,12 @@ fn apply_flags_matches_names_case_insensitively_and_numbers() {
     use crate::domain::files::flagged::FlaggedKey;
     let listed = vec![
         super::wire::ListedRow {
-            key: FlaggedKey::new(1, 1, "ANSIPACK.LHA"),
+            key: FlaggedKey::new(1, "ANSIPACK.LHA"),
             number: Some(1),
             aligned: true,
         },
         super::wire::ListedRow {
-            key: FlaggedKey::new(1, 1, "THIRTEENCH.LZ"),
+            key: FlaggedKey::new(1, "THIRTEENCH.LZ"),
             number: None,
             aligned: false,
         },
@@ -911,8 +910,8 @@ fn apply_flags_matches_names_case_insensitively_and_numbers() {
     // `F` matches by name, case-insensitively, and reports the new key.
     let mut flagged = FlaggedFiles::default();
     let newly = super::apply_flags("ansipack.lha", false, &listed, &mut flagged);
-    assert_eq!(newly, vec![FlaggedKey::new(1, 1, "ANSIPACK.LHA")]);
-    assert!(flagged.contains(&FlaggedKey::new(1, 1, "ANSIPACK.LHA")));
+    assert_eq!(newly, vec![FlaggedKey::new(1, "ANSIPACK.LHA")]);
+    assert!(flagged.contains(&FlaggedKey::new(1, "ANSIPACK.LHA")));
     // Re-flagging is idempotent: nothing new.
     assert!(super::apply_flags("ANSIPACK.LHA", false, &listed, &mut flagged).is_empty());
     // An unlisted name matches nothing.
@@ -922,7 +921,7 @@ fn apply_flags_matches_names_case_insensitively_and_numbers() {
     let mut by_num = FlaggedFiles::default();
     assert_eq!(
         super::apply_flags("1", true, &listed, &mut by_num),
-        vec![FlaggedKey::new(1, 1, "ANSIPACK.LHA")],
+        vec![FlaggedKey::new(1, "ANSIPACK.LHA")],
     );
     // No such number, and a plain row (number None) is never `R`-matched.
     assert!(super::apply_flags("9", true, &listed, &mut by_num).is_empty());
@@ -1199,7 +1198,6 @@ async fn repaint_is_suppressed_when_ansi_is_off() {
             .flagged_files_mut()
             .contains(&crate::domain::files::flagged::FlaggedKey::new(
                 1,
-                1,
                 "ANSIPACK.LHA",
             )),
         "the flag lands even with ANSI off",
@@ -1255,12 +1253,8 @@ async fn flagging_a_visible_overlong_row_repaints_a_trailing_slot() {
     // The page: 5 preamble lines, the over-long row (index 5), the
     // footer (index 6) — page.len() == 7, so up == 7 - 5 == 2. The
     // unflagged row's visible columns set the trailing-slot column.
-    let unflagged_row = super::wire::assemble_dir_lines(
-        std::slice::from_ref(&file),
-        1,
-        1,
-        &FlaggedFiles::default(),
-    );
+    let unflagged_row =
+        super::wire::assemble_dir_lines(std::slice::from_ref(&file), 1, &FlaggedFiles::default());
     let vis = super::wire::visible_columns(&unflagged_row[0].bytes);
     let mut repaint = b"\r\x1b[2A".to_vec();
     repaint.extend_from_slice(format!("\x1b[{}G [X]", vis + 1).as_bytes());
@@ -1348,7 +1342,6 @@ fn area_lines(services: &AppServices, area: u32) -> Vec<Vec<u8>> {
     super::wire::assemble_dir_lines(
         &services.file_repo.find_in_area(1, area),
         1,
-        area,
         &FlaggedFiles::default(),
     )
     .into_iter()
@@ -1589,7 +1582,7 @@ async fn bare_fr_prompt_uses_the_reverse_banner_then_reverse_scans_the_answer() 
     let mut dir2 = services.file_repo.find_in_area(1, 2);
     dir2.reverse();
     let reversed: Vec<Vec<u8>> =
-        super::wire::assemble_dir_lines(&dir2, 1, 2, &FlaggedFiles::default())
+        super::wire::assemble_dir_lines(&dir2, 1, &FlaggedFiles::default())
             .into_iter()
             .map(|line| line.bytes)
             .collect();

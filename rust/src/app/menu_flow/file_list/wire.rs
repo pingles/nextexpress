@@ -283,7 +283,6 @@ fn frameable(file: &File) -> bool {
 pub(super) fn assemble_dir_lines(
     files: &[File],
     conference: u32,
-    area: u32,
     flagged: &FlaggedFiles,
 ) -> Vec<ScanLine> {
     let mut lines: Vec<ScanLine> = Vec::new();
@@ -291,7 +290,7 @@ pub(super) fn assemble_dir_lines(
     let mut file_number = 0u32;
 
     for file in files {
-        let key = FlaggedKey::new(conference, area, file.name());
+        let key = FlaggedKey::new(conference, file.name());
         let is_flagged = flagged.contains(&key);
         let mut rows = super::dir_row::dir_row_lines(file).into_iter();
         let Some(first_row) = rows.next() else {
@@ -749,7 +748,7 @@ mod tests {
         expected.push(file_number_header(3));
         expected.push(framed_row(&files[2], false));
         expected.push(END_OF_FILE_LIST.to_vec());
-        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, 1, &FlaggedFiles::default())
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default())
             .into_iter()
             .map(|line| line.bytes)
             .collect();
@@ -798,7 +797,7 @@ mod tests {
         expected.push(file_number_header(2));
         expected.push(framed_row(&files[2], false));
         expected.push(END_OF_FILE_LIST.to_vec());
-        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, 1, &FlaggedFiles::default())
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default())
             .into_iter()
             .map(|line| line.bytes)
             .collect();
@@ -819,7 +818,7 @@ mod tests {
             plain_line(b"THIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename"),
             END_OF_FILE_LIST.to_vec(),
         ];
-        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, 1, &FlaggedFiles::default())
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default())
             .into_iter()
             .map(|line| line.bytes)
             .collect();
@@ -828,7 +827,7 @@ mod tests {
 
     #[test]
     fn empty_dir_assembles_no_lines() {
-        assert!(assemble_dir_lines(&[], 1, 1, &FlaggedFiles::default()).is_empty());
+        assert!(assemble_dir_lines(&[], 1, &FlaggedFiles::default()).is_empty());
     }
 
     #[test]
@@ -847,17 +846,17 @@ mod tests {
         );
 
         let unflagged =
-            assemble_dir_lines(std::slice::from_ref(&file), 1, 1, &FlaggedFiles::default());
+            assemble_dir_lines(std::slice::from_ref(&file), 1, &FlaggedFiles::default());
         let row = &unflagged[unflagged.len() - 2];
         assert_eq!(
             row.bytes,
             b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the".to_vec(),
         );
 
-        let key = FlaggedKey::new(1, 1, "ANSIPACK.LHA");
+        let key = FlaggedKey::new(1, "ANSIPACK.LHA");
         let mut flags = FlaggedFiles::default();
         flags.flag(key.clone());
-        let flagged = assemble_dir_lines(&[file], 1, 1, &flags);
+        let flagged = assemble_dir_lines(&[file], 1, &flags);
         let row = &flagged[flagged.len() - 2];
         assert_eq!(
             row.bytes,
@@ -875,6 +874,33 @@ mod tests {
     }
 
     #[test]
+    fn prompt_flagged_files_paint_the_marker_in_listings() {
+        // A file flagged at the A prompt (or restored on logon) carries
+        // no catalogue area, yet it is the same (conference, name) file
+        // the F listing shows — the marker must paint. Before the
+        // July 2026 identity fix the area-0 key never matched the
+        // listing's real-area key and the marker stayed blank.
+        use time::macros::datetime;
+        let file = seeded(
+            "ANSIPACK.LHA",
+            234_567,
+            Some(b'P'),
+            datetime!(2026-01-15 12:00 UTC),
+            "Collection of 40 ANSI screens from the",
+        );
+
+        let mut flags = FlaggedFiles::default();
+        flags.flag(FlaggedKey::new(1, "ansipack.lha"));
+        let lines = assemble_dir_lines(&[file], 1, &flags);
+        let row = &lines[lines.len() - 2];
+        assert_eq!(
+            row.bytes,
+            b"\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m[X] P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the".to_vec(),
+            "a prompt-flagged file paints [X] in the listing"
+        );
+    }
+
+    #[test]
     fn overlong_names_append_the_marker_when_flagged() {
         // Design 2026-06-12 §5: an over-long (unframeable, name >= 13)
         // row has no slot to splice — when flagged it appends a
@@ -889,10 +915,10 @@ mod tests {
             "Exactly thirteen character filename",
         );
 
-        let key = FlaggedKey::new(1, 1, "THIRTEENCH.LZ");
+        let key = FlaggedKey::new(1, "THIRTEENCH.LZ");
         let mut flags = FlaggedFiles::default();
         flags.flag(key.clone());
-        let flagged = assemble_dir_lines(&[file], 1, 1, &flags);
+        let flagged = assemble_dir_lines(&[file], 1, &flags);
         let row = &flagged[0];
         assert_eq!(
             row.bytes,

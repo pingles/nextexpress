@@ -13,7 +13,7 @@ and file counts are the review verifiers' adjusted estimates.
 
 | # | Refactoring (item) | Land when | Why it improves the design for what's coming | Files touched | Effort |
 |---|---|---|---|---|---|
-| 1 | **Unify flag identity to `(conference, name)`** (14) | Now | Fixes a live defect: dual `FlaggedKey` identities silently lose flag saves under SQLite and duplicate the `A` listing. D/DS downloads consume this list as the default download set — it must have one identity before anything is pinned against it. | ~10 src/test + 3 docs | 0.5–1 day |
+| 1 | **Unify flag identity to `(conference, name)`** (14) | **Landed** 2026-07-02 | Fixes a live defect: dual `FlaggedKey` identities silently lose flag saves under SQLite and duplicate the `A` listing. D/DS downloads consume this list as the default download set — it must have one identity before anything is pinned against it. | ~10 src/test + 3 docs | 0.5–1 day |
 | 2 | **Mutation gate → diff-vs-main** (15) | Now | `make check` documents a 6–9 h full sweep nobody runs; agents execute the checklist literally. Aligning the documented and practiced gate keeps TDD+mutants viable as the crate grows through Tier D. | 2 (Makefile, AGENTS.md) | 1–2 h |
 | 3 | **Smoke-harness builder** (12 remainder) | Before FS's smoke | Six smokes each re-roll ~110–155 lines of harness; FS is the next smoke to be written. Every remaining Tier D slice needs a capture-pinned smoke, so this pays out eight more times. | ~8, test-only | ~1 day |
 | 4 | **Clock port in `AppServices`** (16) | Before N | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
@@ -1148,7 +1148,20 @@ exceptions (a live defect and a 1–2 hour chore).
 
 ### 14. Unify flag identity to `(conference, name)` — live defect
 
-`FlaggedFiles` has two competing identities by convention:
+**Landed (2026-07-02).** `FlaggedKey` is now `(conference, name)` —
+`area` deleted from the struct, all five production construction sites
+and both adapters updated; the in-memory store's save-time
+normalisation loop reduced to a plain clone;
+`assemble_dir_lines`/`stream_dir_body` dropped their now-unused `area`
+parameters. Pinned by three new tests (domain identity, the SQLite
+save that used to roll back, prompt-flagged files painting `[X]` in
+listings). The marker-repaint question needed no FS-UAE session: the
+`[X]` marker is a NextExpress-only aid (the AquaScan door has none),
+so the only legacy semantics in play is the flag identity itself,
+which `express.e:12534` (`isInFlaggedList`) settles as
+`(confNum, fileName)`. Original problem statement follows.
+
+`FlaggedFiles` had two competing identities by convention:
 listing-driven flags carry the real dir number
 (`file_list/wire.rs:294`, sourced from `run_span`) while the
 `A`-prompt (`menu_flow/mod.rs:246`), the logon restore
@@ -1580,11 +1593,12 @@ re-sequenced what remains around the roadmap's tier order (SLICES.md):
      `panic!` until the password-reset slice handles it. Each landed as
      its own slice with a failing test first.
 0b. **Open defects surfaced by the July 2026 review:**
-   - **Flag-identity data loss (item 14):** the same file can occupy
-     two `FlaggedKey`s (real area vs the `A`-prompt/restore `area=0`);
-     the `A` listing duplicates the name in any config, and under
-     `user_storage = sqlite` the logoff flag save hits a PK violation
-     and silently loses the session's flag changes.
+   - **Fixed (2026-07-02): flag-identity data loss (item 14).** The
+     same file could occupy two `FlaggedKey`s (real area vs the
+     `A`-prompt/restore `area=0`); the `A` listing duplicated the name
+     in any config, and under `user_storage = sqlite` the logoff flag
+     save hit a PK violation and silently lost the session's flag
+     changes. `FlaggedKey` no longer carries an area.
    - **Inert time budget (item 27):** `tick_minute` has no production
      caller — the menu prompt's "mins. left" is frozen and
      `OutOfTime` logoff is unreachable (legacy-parity gap).

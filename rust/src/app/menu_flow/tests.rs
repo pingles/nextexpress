@@ -203,7 +203,7 @@ fn session_with_flagged_file() -> MenuSession {
     let mut session = menu_session();
     session
         .flagged_files_mut()
-        .flag(FlaggedKey::new(1, 1, "MYDEMO.DMS"));
+        .flag(FlaggedKey::new(1, "MYDEMO.DMS"));
     session
 }
 
@@ -422,10 +422,10 @@ async fn a_lists_flagged_names_uppercased_and_space_joined() {
     let mut session = menu_session();
     session
         .flagged_files_mut()
-        .flag(FlaggedKey::new(1, 1, "termv48.lha"));
+        .flag(FlaggedKey::new(1, "termv48.lha"));
     session
         .flagged_files_mut()
-        .flag(FlaggedKey::new(1, 1, "mydemo.dms"));
+        .flag(FlaggedKey::new(1, "mydemo.dms"));
     let mut terminal = CaptureTerminal::default();
     let outcome = dispatch_line(&services, &mut terminal, session, "A").await;
 
@@ -807,7 +807,7 @@ async fn logon_restores_flags_and_announces_when_non_empty() {
     let spy = Arc::new(SpyFlaggedStore::default());
     {
         let mut flags = FlaggedFiles::default();
-        flags.flag(FlaggedKey::new(1, 0, "ansipack.lha"));
+        flags.flag(FlaggedKey::new(1, "ansipack.lha"));
         spy.seeded.lock().unwrap().insert(2, flags); // slot 2 = test_user
     }
     let services = services_with_flagged_store(spy);
@@ -825,7 +825,7 @@ async fn logon_restores_flags_and_announces_when_non_empty() {
     assert!(
         session
             .flagged_files()
-            .contains(&FlaggedKey::new(1, 0, "ANSIPACK.LHA")),
+            .contains(&FlaggedKey::new(1, "ANSIPACK.LHA")),
         "the saved flag is restored into the session"
     );
     assert_eq!(

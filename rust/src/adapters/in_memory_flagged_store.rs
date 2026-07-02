@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
+use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::files::flagged_store::{FlaggedStore, FlaggedStoreError};
 
 /// In-memory [`FlaggedStore`] keyed by user slot; retains for the
@@ -34,14 +34,10 @@ impl FlaggedStore for InMemoryFlaggedStore {
     }
 
     fn save(&self, slot: u32, flags: &FlaggedFiles) -> Result<(), FlaggedStoreError> {
-        // Persist the (conference, name) projection: rebuild at area 0 so
-        // the in-memory round-trip matches the SQLite one exactly.
-        let mut normalised = FlaggedFiles::default();
-        for (conference, name) in flags.entries() {
-            normalised.flag(FlaggedKey::new(conference, 0, name));
-        }
+        // The set's key IS the persisted (conference, name) projection,
+        // so the clone round-trips identically to the SQLite adapter.
         let mut sets = self.sets.lock().expect("flagged store mutex");
-        sets.insert(slot, normalised);
+        sets.insert(slot, flags.clone());
         Ok(())
     }
 }
@@ -52,24 +48,24 @@ mod tests {
     use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
     use crate::domain::files::flagged_store::FlaggedStore;
 
-    fn set_with(area: u32) -> FlaggedFiles {
+    fn one_flag_set() -> FlaggedFiles {
         let mut flags = FlaggedFiles::default();
-        flags.flag(FlaggedKey::new(2, area, "mydemo.dms"));
+        flags.flag(FlaggedKey::new(2, "mydemo.dms"));
         flags
     }
 
     #[test]
-    fn save_then_load_round_trips_and_normalises_area_to_zero() {
+    fn save_then_load_round_trips() {
         let store = InMemoryFlaggedStore::new();
-        store.save(7, &set_with(3)).expect("save");
+        store.save(7, &one_flag_set()).expect("save");
         let loaded = store.load(7).expect("load");
         assert!(
-            loaded.contains(&FlaggedKey::new(2, 0, "MYDEMO.DMS")),
-            "restored flag is keyed at area 0"
+            loaded.contains(&FlaggedKey::new(2, "MYDEMO.DMS")),
+            "the (conference, name) flag round-trips"
         );
         assert!(
-            !loaded.contains(&FlaggedKey::new(2, 3, "MYDEMO.DMS")),
-            "the original area is not preserved"
+            !loaded.contains(&FlaggedKey::new(3, "MYDEMO.DMS")),
+            "another conference's key does not match"
         );
     }
 
@@ -82,7 +78,7 @@ mod tests {
     #[test]
     fn save_is_keyed_per_slot() {
         let store = InMemoryFlaggedStore::new();
-        store.save(1, &set_with(1)).expect("save");
+        store.save(1, &one_flag_set()).expect("save");
         assert!(
             store.load(2).expect("load").is_empty(),
             "slot 2 is untouched"
@@ -93,7 +89,7 @@ mod tests {
     #[test]
     fn empty_save_clears_a_previously_saved_slot() {
         let store = InMemoryFlaggedStore::new();
-        store.save(1, &set_with(1)).expect("save");
+        store.save(1, &one_flag_set()).expect("save");
         store.save(1, &FlaggedFiles::default()).expect("clear");
         assert!(store.load(1).expect("load").is_empty());
     }
