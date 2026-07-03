@@ -26,8 +26,8 @@ use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::user::{
-    AuthOutcome, NewUserDraft, PasswordChange, PersistedUser, RatioMode, User, UserError, UserFlag,
-    UserPatch,
+    AuthOutcome, DailyBudgetOutcome, MembershipPatch, NewUserDraft, PasswordChange, PersistedUser,
+    RatioMode, User, UserError, UserFlag, UserPatch,
 };
 use crate::domain::user_repository::{
     NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
@@ -195,8 +195,88 @@ impl SqliteUserRepository {
     /// Panics if the connection mutex has been poisoned by an earlier
     /// panicking writer.
     pub fn insert_seed(&self, user: &User) -> rusqlite::Result<()> {
-        let conn = self.conn.lock().expect("user db mutex");
-        Self::upsert_user(&conn, user)
+        let mut conn = self.conn.lock().expect("user db mutex");
+        let tx = conn.transaction()?;
+        Self::upsert_user(&tx, user)?;
+        tx.commit()
+    }
+
+    /// Maps "UPDATE matched zero rows" to the port's `UserNotFound`.
+    fn require_row(changed: usize, slot: u32) -> Result<(), UserRepositoryError> {
+        if changed == 0 {
+            return Err(UserRepositoryError::UserNotFound {
+                handle: format!("slot {slot}"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies one [`MembershipPatch`] inside an open patch
+    /// transaction: optional row creation, field patch, then pointer
+    /// `MAX`-upserts (in that order — the pointer rows' composite
+    /// foreign key requires the membership row to exist first).
+    fn apply_membership_patch(
+        tx: &Connection,
+        slot: u32,
+        membership: &MembershipPatch,
+    ) -> rusqlite::Result<()> {
+        if membership.create_if_missing {
+            tx.execute(
+                "INSERT INTO conference_memberships (
+                     slot_number, conference_number, granted, messages_posted,
+                     mail_scan, mailscan_all, file_scan, zoom_scan
+                 ) VALUES (?1, ?2, ?3, 0, 1, 0, 1, 0)
+                 ON CONFLICT(slot_number, conference_number) DO NOTHING",
+                params![
+                    slot,
+                    membership.conference_number,
+                    i64::from(membership.granted.unwrap_or(true)),
+                ],
+            )?;
+        }
+        let flags = membership.scan_flags;
+        tx.execute(
+            "UPDATE conference_memberships SET
+                 granted = COALESCE(?3, granted),
+                 messages_posted = messages_posted + ?4,
+                 mail_scan = COALESCE(?5, mail_scan),
+                 mailscan_all = COALESCE(?6, mailscan_all),
+                 file_scan = COALESCE(?7, file_scan),
+                 zoom_scan = COALESCE(?8, zoom_scan)
+             WHERE slot_number = ?1 AND conference_number = ?2",
+            params![
+                slot,
+                membership.conference_number,
+                membership.granted.map(i64::from),
+                membership.messages_posted_delta,
+                flags.map(|f| i64::from(f.mail_scan)),
+                flags.map(|f| i64::from(f.mailscan_all)),
+                flags.map(|f| i64::from(f.file_scan)),
+                flags.map(|f| i64::from(f.zoom_scan)),
+            ],
+        )?;
+        for pointer in &membership.pointers {
+            // `new_since` is deliberately absent from the DO UPDATE:
+            // an existing row keeps its own.
+            tx.execute(
+                "INSERT INTO read_pointers (
+                     slot_number, conference_number, msgbase_number,
+                     last_read, last_scanned, new_since
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(slot_number, conference_number, msgbase_number) DO UPDATE SET
+                     last_read = MAX(last_read, excluded.last_read),
+                     last_scanned = MAX(last_scanned, excluded.last_scanned)",
+                params![
+                    slot,
+                    membership.conference_number,
+                    pointer.msgbase_number,
+                    pointer.last_read,
+                    pointer.last_scanned,
+                    system_time_to_secs(pointer.new_since),
+                ],
+            )?;
+        }
+        Ok(())
     }
 
     #[allow(
@@ -515,22 +595,115 @@ impl UserRepository for SqliteUserRepository {
 
     fn record_auth_outcome(
         &self,
-        _slot: u32,
-        _outcome: &AuthOutcome,
+        slot: u32,
+        outcome: &AuthOutcome,
     ) -> Result<(), UserRepositoryError> {
-        todo!("lands with the SQLite command-writes slice")
+        let conn = self.conn.lock().expect("user db mutex");
+        let changed = match outcome {
+            AuthOutcome::Matched {
+                daily,
+                force_password_reset,
+            } => {
+                let daily_sql = match daily {
+                    Some(DailyBudgetOutcome::NewDay) => {
+                        "times_called_today = 0, time_used_today_secs = 0,"
+                    }
+                    Some(DailyBudgetOutcome::SameDay) => {
+                        "times_called_today = times_called_today + 1,"
+                    }
+                    None => "",
+                };
+                let sql = format!(
+                    "UPDATE users SET {daily_sql}
+                         invalid_attempts = 0,
+                         force_password_reset = MAX(force_password_reset, ?2)
+                     WHERE slot_number = ?1"
+                );
+                conn.execute(&sql, params![slot, i64::from(*force_password_reset)])
+            }
+            AuthOutcome::Mismatched { lock_account } => conn.execute(
+                "UPDATE users SET
+                     invalid_attempts = invalid_attempts + 1,
+                     account_locked = MAX(account_locked, ?2)
+                 WHERE slot_number = ?1",
+                params![slot, i64::from(*lock_account)],
+            ),
+        }
+        .map_err(|error| UserRepositoryError::storage("record auth outcome", error))?;
+        Self::require_row(changed, slot)
     }
 
     fn record_password_change(
         &self,
-        _slot: u32,
-        _change: &PasswordChange,
+        slot: u32,
+        change: &PasswordChange,
     ) -> Result<(), UserRepositoryError> {
-        todo!("lands with the SQLite command-writes slice")
+        let conn = self.conn.lock().expect("user db mutex");
+        let changed = conn
+            .execute(
+                "UPDATE users SET
+                     password_hash = ?2,
+                     password_salt = ?3,
+                     password_hash_kind = ?4,
+                     password_last_updated = ?5,
+                     force_password_reset = 0
+                 WHERE slot_number = ?1",
+                params![
+                    slot,
+                    change.hash,
+                    change.salt,
+                    hash_kind_to_str(change.kind),
+                    system_time_to_secs(change.changed_at),
+                ],
+            )
+            .map_err(|error| UserRepositoryError::storage("record password change", error))?;
+        Self::require_row(changed, slot)
     }
 
-    fn apply_user_patch(&self, _slot: u32, _patch: &UserPatch) -> Result<(), UserRepositoryError> {
-        todo!("lands with the SQLite command-writes slice")
+    fn apply_user_patch(&self, slot: u32, patch: &UserPatch) -> Result<(), UserRepositoryError> {
+        let mut conn = self.conn.lock().expect("user db mutex");
+        let tx = conn
+            .transaction()
+            .map_err(|error| UserRepositoryError::storage("apply user patch", error))?;
+        // Always runs, even for all-zero deltas: it doubles as the
+        // existence check.
+        let changed = tx
+            .execute(
+                "UPDATE users SET
+                     times_called = times_called + ?2,
+                     times_called_today = times_called_today + ?3,
+                     time_used_today_secs = time_used_today_secs + ?4,
+                     messages_posted = messages_posted + ?5,
+                     last_call = CASE
+                         WHEN ?6 IS NULL THEN last_call
+                         WHEN last_call IS NULL THEN ?6
+                         ELSE MAX(last_call, ?6) END,
+                     expert_mode = COALESCE(?7, expert_mode),
+                     flags = COALESCE(?8, flags),
+                     last_joined_conference = COALESCE(?9, last_joined_conference),
+                     last_joined_msgbase = COALESCE(?10, last_joined_msgbase)
+                 WHERE slot_number = ?1",
+                params![
+                    slot,
+                    patch.times_called_delta,
+                    patch.times_called_today_delta,
+                    duration_to_secs(patch.time_used_today_delta),
+                    patch.messages_posted_delta,
+                    patch.last_call.map(system_time_to_secs),
+                    patch.expert_mode.map(i64::from),
+                    patch.flags.as_ref().map(flags_to_bitmask),
+                    patch.last_joined.map(|r| r.conference_number()),
+                    patch.last_joined.map(|r| r.msgbase_number()),
+                ],
+            )
+            .map_err(|error| UserRepositoryError::storage("apply user patch", error))?;
+        Self::require_row(changed, slot)?;
+        for membership in &patch.memberships {
+            Self::apply_membership_patch(&tx, slot, membership)
+                .map_err(|error| UserRepositoryError::storage("apply membership patch", error))?;
+        }
+        tx.commit()
+            .map_err(|error| UserRepositoryError::storage("apply user patch", error))
     }
 
     fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
@@ -799,6 +972,133 @@ mod tests {
             ratio_mode: RatioMode::ByFiles,
             ratio_value: 3,
             now: SystemTime::UNIX_EPOCH + Duration::from_secs(1000),
+        }
+    }
+
+    mod command_write_contract {
+        use super::*;
+        use crate::adapters::user_repository_contract as contract;
+        use crate::domain::user::{MembershipPatch, PointerPatch, UserPatch};
+
+        fn make(users: Vec<User>) -> SqliteUserRepository {
+            let repo = SqliteUserRepository::in_memory().expect("open in-memory db");
+            for user in users {
+                repo.insert_seed(&user).expect("seed user");
+            }
+            repo
+        }
+
+        #[test]
+        fn mismatch_bumps_additively() {
+            contract::mismatch_bumps_additively(make);
+        }
+
+        #[test]
+        fn mismatch_lock_is_one_way() {
+            contract::mismatch_lock_is_one_way(make);
+        }
+
+        #[test]
+        fn matched_clears_attempts() {
+            contract::matched_clears_attempts(make);
+        }
+
+        #[test]
+        fn matched_new_day_resets_counters() {
+            contract::matched_new_day_resets_counters(make);
+        }
+
+        #[test]
+        fn matched_same_day_bumps_today() {
+            contract::matched_same_day_bumps_today(make);
+        }
+
+        #[test]
+        fn matched_rejected_path_leaves_daily_counters() {
+            contract::matched_rejected_path_leaves_daily_counters(make);
+        }
+
+        #[test]
+        fn matched_does_not_unset_force_reset() {
+            contract::matched_does_not_unset_force_reset(make);
+        }
+
+        #[test]
+        fn password_change_replaces_credentials_and_clears_flag() {
+            contract::password_change_replaces_credentials_and_clears_flag(make);
+        }
+
+        #[test]
+        fn patch_counters_are_additive() {
+            contract::patch_counters_are_additive(make);
+        }
+
+        #[test]
+        fn patch_last_call_is_monotonic() {
+            contract::patch_last_call_is_monotonic(make);
+        }
+
+        #[test]
+        fn patch_pointer_rows_max_merge_and_keep_new_since() {
+            contract::patch_pointer_rows_max_merge_and_keep_new_since(make);
+        }
+
+        #[test]
+        fn patch_creates_missing_membership_with_pointer_rows() {
+            contract::patch_creates_missing_membership_with_pointer_rows(make);
+        }
+
+        #[test]
+        fn patch_preferences_are_last_writer_wins() {
+            contract::patch_preferences_are_last_writer_wins(make);
+        }
+
+        #[test]
+        fn interleaved_sessions_do_not_lose_updates() {
+            contract::interleaved_sessions_do_not_lose_updates(make);
+        }
+
+        #[test]
+        fn unknown_slot_is_user_not_found() {
+            contract::unknown_slot_is_user_not_found(make);
+        }
+
+        #[test]
+        fn apply_user_patch_rolls_back_wholesale_on_mid_patch_failure() {
+            // A pointer row for a conference with no membership row
+            // violates the composite FK. The users-table counter bump
+            // in the same patch must roll back with it — a partial
+            // (torn) application was exactly the defect of the old
+            // bare-connection save().
+            let repo = make(vec![contract::seeded_user(7, "alice")]);
+            let patch = UserPatch {
+                times_called_delta: 1,
+                memberships: vec![MembershipPatch {
+                    conference_number: 99,
+                    create_if_missing: false, // no membership row -> FK failure
+                    granted: None,
+                    messages_posted_delta: 0,
+                    scan_flags: None,
+                    pointers: vec![PointerPatch {
+                        msgbase_number: 1,
+                        last_read: 1,
+                        last_scanned: 1,
+                        new_since: SystemTime::UNIX_EPOCH,
+                    }],
+                }],
+                ..UserPatch::default()
+            };
+            repo.apply_user_patch(7, &patch)
+                .expect_err("pointer row without membership must fail the FK check");
+            let NameLookupResult::Found(user) = repo.find_by_handle("alice").expect("lookup")
+            else {
+                panic!("seeded user must exist");
+            };
+            assert_eq!(
+                user.to_persisted().times_called,
+                10,
+                "counter bump must roll back with the failed pointer insert"
+            );
         }
     }
 
