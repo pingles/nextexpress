@@ -20,6 +20,7 @@ use crate::domain::password::PasswordHashKind;
 pub const MAX_LINE_LENGTH: u32 = 255;
 
 mod account_status;
+mod commands;
 mod conference_access;
 mod credentials;
 mod draft;
@@ -35,6 +36,10 @@ use profile::Profile;
 use ratio_policy::RatioPolicy;
 use usage_accounting::UsageAccounting;
 
+pub use commands::{
+    AuthOutcome, DailyBudgetOutcome, MembershipPatch, PasswordChange, PointerPatch,
+    ScanFlagSettings, UserPatch,
+};
 pub use draft::NewUserDraft;
 pub use persisted::PersistedUser;
 

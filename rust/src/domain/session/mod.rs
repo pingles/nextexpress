@@ -30,7 +30,7 @@ mod tests;
 use conference_activity::ConferenceActivity;
 
 pub use crate::domain::session_policy::{PasswordFailureDecision, SessionPolicy};
-pub use budget::{initialise_daily_budget, tick_minute};
+pub use budget::{daily_budget_outcome, initialise_daily_budget, tick_minute};
 pub use errors::{
     AcceptConnectionError, AutoRejoinError, CarrierLostError, CompleteNewUserRegistrationError,
     CompletePasswordResetError, EnterMenuError, ForcePasswordResetError, IdleTimeoutError,

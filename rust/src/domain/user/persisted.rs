@@ -18,7 +18,7 @@ use crate::domain::user::{RatioMode, UserFlag};
 /// reads its columns into a [`PersistedUser`] and constructs a
 /// [`crate::domain::user::User`] via
 /// [`crate::domain::user::User::from_persisted`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "this struct mirrors a row of boolean columns persisted in the user store; \

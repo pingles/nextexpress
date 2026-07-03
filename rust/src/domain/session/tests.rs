@@ -896,6 +896,44 @@ mod time_budget {
     }
 
     #[test]
+    fn daily_budget_outcome_matches_the_budget_rule_at_the_boundaries() {
+        use crate::domain::user::DailyBudgetOutcome;
+        let day_zero = UNIX_EPOCH + Duration::from_hours(6);
+        // No previous call: always a new day.
+        assert_eq!(
+            daily_budget_outcome(None, day_zero, DAILY_RESET_OFFSET),
+            DailyBudgetOutcome::NewDay
+        );
+        // Same accounting day, hours apart.
+        assert_eq!(
+            daily_budget_outcome(
+                Some(day_zero + Duration::from_hours(1)),
+                day_zero + Duration::from_hours(20),
+                DAILY_RESET_OFFSET
+            ),
+            DailyBudgetOutcome::SameDay
+        );
+        // One second before the offset boundary vs after it.
+        assert_eq!(
+            daily_budget_outcome(
+                Some(day_zero - Duration::from_secs(1)),
+                day_zero,
+                DAILY_RESET_OFFSET
+            ),
+            DailyBudgetOutcome::NewDay
+        );
+        // Across a full day.
+        assert_eq!(
+            daily_budget_outcome(
+                Some(day_zero + Duration::from_hours(10)),
+                day_zero + Duration::from_hours(34),
+                DAILY_RESET_OFFSET
+            ),
+            DailyBudgetOutcome::NewDay
+        );
+    }
+
+    #[test]
     fn initialise_daily_budget_first_call_treats_as_new_day() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
             Duration::from_mins(30),

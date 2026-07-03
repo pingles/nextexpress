@@ -10,11 +10,46 @@
 
 use std::time::{Duration, SystemTime};
 
+use crate::domain::user::DailyBudgetOutcome;
+
 use super::log_format::floor_to_day;
 use super::{
     InitialiseDailyBudgetError, LogoffReason, Session, SessionPhase, TickMinuteError,
     TickMinuteOutcome,
 };
+
+/// Decides whether a logon at `now` falls in a new accounting day
+/// relative to the user's previous `last_call`.
+///
+/// This is the single day-boundary decision shared by
+/// [`initialise_daily_budget`] (which mutates the in-session user) and
+/// the `record_auth_outcome` persistence command (which must carry the
+/// same decision to storage) — one function so the two cannot drift.
+///
+/// # Parameters
+/// - `last_call`: the user's previous completed-logon timestamp, if
+///   any (`None` counts as a new day).
+/// - `now`: the current logon time.
+/// - `daily_reset_offset`: how far past midnight UTC the accounting
+///   day rolls over (legacy default: six hours).
+///
+/// # Returns
+/// [`DailyBudgetOutcome::NewDay`] when the boundary was crossed,
+/// otherwise [`DailyBudgetOutcome::SameDay`].
+#[must_use]
+pub fn daily_budget_outcome(
+    last_call: Option<SystemTime>,
+    now: SystemTime,
+    daily_reset_offset: Duration,
+) -> DailyBudgetOutcome {
+    let today = floor_to_day(now, daily_reset_offset);
+    let last_call_day = last_call.map(|t| floor_to_day(t, daily_reset_offset));
+    if last_call_day.is_none_or(|d| d != today) {
+        DailyBudgetOutcome::NewDay
+    } else {
+        DailyBudgetOutcome::SameDay
+    }
+}
 
 /// `session.allium:InitialiseDailyBudget` rule (Slice 14).
 ///
@@ -45,16 +80,9 @@ pub fn initialise_daily_budget(
         return Err(InitialiseDailyBudgetError::WrongState(session.state()));
     };
 
-    let today = floor_to_day(now, daily_reset_offset);
-    let last_call_day = user
-        .last_call()
-        .map(|t| floor_to_day(t, daily_reset_offset));
-    let is_new_day = last_call_day.is_none_or(|d| d != today);
-
-    if is_new_day {
-        user.reset_daily_counters();
-    } else {
-        user.bump_times_called_today();
+    match daily_budget_outcome(user.last_call(), now, daily_reset_offset) {
+        DailyBudgetOutcome::NewDay => user.reset_daily_counters(),
+        DailyBudgetOutcome::SameDay => user.bump_times_called_today(),
     }
     *time_remaining = user.time_limit_per_call();
     Ok(())
