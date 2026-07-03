@@ -67,6 +67,18 @@ build it speculatively.
 
 ### Multiple sessions per user are supported
 
+> **Landed (2026-07-03), SYSTEM.md item 1.** The command-style writes
+> below exist: `record_auth_outcome` (verify-password),
+> `record_password_change` (forced reset), and `apply_user_patch`
+> (menu entry + logoff — additive counters, `MAX`-merged
+> `last_call`/read pointers, last-writer-wins preference patches,
+> each command one SQL transaction). The whole-aggregate
+> `UserRepository::save` is deleted. Still future work from this
+> design: the session-end flush queue and the per-field
+> immediate/deferred split (no consumer yet — sessions flush at their
+> three natural persist points), and the transfer-byte
+> reservation/delta columns (land with D-T2).
+
 Future FTPD support makes same-user concurrency a normal case: a user may
 have an interactive BBS session and one or more FTP transfer sessions
 open at the same time. Storage must therefore treat the session's `User`

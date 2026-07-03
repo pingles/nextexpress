@@ -21,7 +21,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 6 | **Extract the NextScan scan engine** (17) | First task of the N slice | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
 | 7 | **Prompt-reader merge + `line_for` extraction** (10) | **Landed** 2026-07-03 | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
 | 8 | **Error-boundary pass** (2 remainder) | **Landed** 2026-07-03 (`UserRepositoryError` folds into row 9) | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
-| 9 | **Command-style user writes** (1) | After N, before D-T2 | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
+| 9 | **Command-style user writes** (1) | **Landed** 2026-07-03 (pulled ahead of N — disjoint file sets, and two of its fixes were live defects: the bare-save tear and same-account lost updates) | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
 | 10 | **SQLite schema migrations** (22) | Before D-T2 | No mechanism can alter an existing `users.db`; D-T2's first new column would break every login after upgrade. Versioned migrations make every future schema change (accounting, D2s tables, `row_version`) routine. | 3–5 | 0.5–1 day |
 | 11 | **`AuthenticatedCall` struct** (23a) | Before D-T2 | The per-call triple is duplicated across four phase variants with two 8-arm salvage matches; every new per-call field costs ~7 sites. D/U must add transfer tallies — after this, that's a single-site addition. | ~6–7 | 0.5–1 day |
 | 12 | **UTF-8 policy re-scope + echo-hole fix** (19) | Before D-T1 | The written "wire is UTF-8, always" contract is violated by the first Zmodem frame; deciding the text-mode/transfer-window scoping up front prevents an ad hoc weakening of the gate mid-slice. Also closes today's Latin-1 echo hole. | ~4 (2 docs + codec + test) | ~0.5 day |
@@ -34,11 +34,11 @@ and file counts are the review verifiers' adjusted estimates.
 
 Dependencies: 13 depends on 12's policy decision; 14 depends on 13; 17
 builds on 16's `NodePresence`; 18 wants 4's clock for a deterministic
-smoke; 9 stays schema-free unless 10 lands first. Rows 1–2 are
-standalone commits, rows 4–7 cluster around the N slice, rows 9–14 are
-the pre-transfer architectural block (~2 weeks), and rows 15–18
-deliberately wait for their first consumer, per the "seam lands with
-the slice that consumes it" rule.
+smoke; 9 landed schema-free as its dependency note required (10 had
+not landed first). Rows 1–2 are standalone commits, rows 4–7 cluster
+around the N slice, rows 9–14 are the pre-transfer architectural block
+(~2 weeks), and rows 15–18 deliberately wait for their first consumer,
+per the "seam lands with the slice that consumes it" rule.
 
 ## Current Shape
 
@@ -497,6 +497,15 @@ The composition root picks the user-repository adapter from
   `designs/USERS.md`. Round-trips through the domain's
   `PersistedUser` snapshot.
 
+Writes are command-style (item 1, landed 2026-07-03): flows persist
+through `record_auth_outcome` (verify-password), `apply_user_patch`
+(menu entry + logoff, a baseline-diff of additive deltas and monotonic
+merges), and `record_password_change` (forced reset) — there is no
+whole-aggregate `save`. Full-row writes happen only when a row is born
+(`create_user`, `insert_seed`), each inside a transaction. The merge
+semantics are defined once in `domain/user/commands.rs` and pinned
+across both adapters by the shared contract suite.
+
 Seeding the default sysop runs only when the chosen store is empty
 (`SqliteUserRepository::is_empty`), so restarting against an existing
 database preserves on-disk state. `tests/sqlite_user_storage_smoke.rs`
@@ -713,6 +722,57 @@ on the connection while `create_user` gets a transaction
 mid-save tears the aggregate. Verified size: 4–6 days, ~10–14 files —
 `apply_logoff_patch` needs the domain to yield per-call deltas rather
 than absolutes, plus dual-adapter parity tests.
+
+**Landed (2026-07-03), pulled ahead of N** — the "after N" sequencing
+was pure scheduling (disjoint file sets), while two of the item's
+fixes were live defects: the non-transactional save tear, and
+same-account lost updates (no double-logon guard exists, so two
+sessions could already interleave). What landed differs from the
+sketch above in three deliberate ways:
+
+- **Two patch commands collapsed into one.** `record_logon` and
+  `apply_logoff_patch` were the same mechanism — a baseline-diff patch
+  — so one port method `apply_user_patch(slot, &UserPatch)` serves
+  both call sites (`enter_menu`, `finalise_logoff`). `UserPatch`
+  carries additive deltas (times_called, times_called_today,
+  time_used_today, messages_posted, per-membership posted), monotonic
+  `MAX` merges (`last_call`, pointer rows, preserving
+  `last_read <= last_scanned` pairwise), and set-iff-changed
+  last-writer-wins fields (expert_mode, flags, last_joined pair,
+  scan flags), plus membership create-if-missing via true UPSERT.
+  `last_call` rides the finalise patch (where the code writes it), not
+  `record_logon` as sketched.
+- **A fourth save site the sketch missed.** `complete_password_reset`
+  gets `record_password_change` (authoritative credential overwrite +
+  flag clear), per designs/USERS.md's "security fields are immediate
+  authoritative writes".
+- **The domain yields deltas by baseline-diff, not accumulators.**
+  `Session.persist_baseline` (a `Box<PersistedUser>` beside the other
+  phase-surviving fields) snapshots stored state at bind
+  (identify/registration) and after every persist;
+  `Session::pending_user_patch()` diffs the live user against it
+  (`UserPatch::between`). Zero mutation sites re-routed.
+
+`record_auth_outcome(slot, &AuthOutcome)` landed as sketched: additive
+`invalid_attempts` bump / absolute clear, one-way lock and force-reset
+flags, and the daily-counter decision (`DailyBudgetOutcome`, computed
+by the shared `budget::daily_budget_outcome` so the command and the
+in-session rule cannot disagree; suppressed on the rejected-logon
+path). The merge semantics live once in the domain
+(`domain/user/commands.rs` `apply_to` fns); the in-memory adapter
+applies them directly, the SQLite adapter implements them
+statement-by-statement (each command one transaction), and the shared
+contract suite (`adapters/user_repository_contract.rs`, instantiated
+by both adapters) pins the two together with sentinel-value tests —
+the load cargo-mutants can't carry for SQL strings. `save()` is
+deleted from the port and both adapters, taking the tear-prone bare
+DELETE+reinsert with it; full-row writes remain only where a row is
+born (`create_user`, `insert_seed`), both transactional, with a
+rollback pin proving a failing pointer row takes the whole patch down
+with it. Verified by the flow-level two-session test, the contract
+interleaving test, and `tests/two_session_logons_smoke.rs` (S screen
+`# Times On : 3` after the stale session logs off last). Optimistic
+versioning stays rejected/in reserve as documented above.
 
 ### 2. Rebalance port error boundaries
 
@@ -1732,9 +1792,9 @@ re-sequenced what remains around the roadmap's tier order (SLICES.md):
    plumbing + `FileAreaRef` — lands just before). Item 10's menu_flow
    reader merge before N/FM, per its own trigger.
 3. **Between the read-only slices and D/DS:** item 2 (the
-   error-boundary pass, before D2s copies the leaky template), item 1
-   (command-style user writes, before D-T2's ledger deltas — the big
-   one at 4–6 days), item 22 (schema migrations, hard requirement
+   error-boundary pass, **landed** 2026-07-03), item 1 (command-style
+   user writes, **landed** 2026-07-03, pulled ahead of N — see the
+   item's landed note), item 22 (schema migrations, hard requirement
    before D-T2), item 23a (`AuthenticatedCall`).
 4. **With D-T1:** item 19's policy decision + echo-hole fix first,
    item 20 (raw binary channel) as the opening sub-slice, item 21
