@@ -29,7 +29,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 
 **Key caveat — data vs. behaviour.** The two installs carry **different seeded data**: different conference names and numbers (Rust auto-rejoins `Conference 1: Main`, AE `Conference 2: Amiga`), different user records, different clocks, different message bases, and a different configured BBS name (the AE fixture's board name is `"NextExpress Reference"`, which is *not* the software — it is the genuine AmiExpress binary with that board name configured). Consequently this comparison is about **behaviour and wire format**, not data values. Wherever a difference reduces to a seeded name, number, clock, or build string, it is tagged **COSMETIC** and explicitly attributed to seed data.
 
-**Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference and message-base navigation (`J` with its interactive prompt, `JM`, `<` / `>`, `<<` / `>>` — Tier C), conference scan flags (`CF`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), file listings (`F` — the NextScan lister, Tier D), zippy search (`Z`), alter-flags (`A` — the `alterFlags` listing + `flagFiles` add/clear prompt loop, slices D6a/D6b, byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`), and logoff (`G`). AmiExpress carries many more top-level commands (new-files scan `N`/AquaScan, `ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
+**Scope of commands.** NextExpress implements a focused subset of the much larger AmiExpress command set: login/menu flow, session info (`VER`, `T`, `S`), session toggles (`Q`, `M`, `X`), help (`?`, `H`, `^`), conference and message-base navigation (`J` with its interactive prompt, `JM`, `<` / `>`, `<<` / `>>` — Tier C), conference scan flags (`CF`), message read (`R` + its read sub-prompt), mail scan (`MS`), mail entry (`E`, `C`), file listings (`F` — the NextScan lister, Tier D), the new-files scan (`N` — the AquaScan date-scan experience, slice D9, byte-pinned to `comparison/transcripts/ae_tierd_newfiles.txt`), zippy search (`Z`), alter-flags (`A` — the `alterFlags` listing + `flagFiles` add/clear prompt loop, slices D6a/D6b, byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`), and logoff (`G`). AmiExpress carries many more top-level commands (`ZOOM`, file transfer, door/utility commands, and the full read-sub-prompt verb set) that NextExpress has not yet ported or has deliberately retired.
 
 **Tag legend.** Each finding is tagged **MATCH** (byte-for-byte or behaviourally identical), **COSMETIC** (differs only in wording, spacing, ANSI byte-encoding, or seed data), or **BEHAVIOURAL** (a difference in control flow, an output line present in one and absent in the other, or an interactive step missing on one side). Encoding and interaction divergences are at minimum **BEHAVIOURAL**, never COSMETIC — a byte-encoding difference that survives at the wire level is never a pure presentation choice.
 
@@ -61,7 +61,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `E`/`C` (blank subject) | Writes `Message aborted.` | Aborts silently (bare newline) |
 | `C` (recipient display) | Straight to `Subject:`; never shows it is addressed to sysop | Prints decoration box + `To: (Enter)='ALL'? SYSOP` |
 | `E` (body editor/save) | Ruler / `Msg. Options: A,C,D,E,L,S,?` editor matches structurally, but skips the `FullScreen Editor (y/N)?` fork and the `F`/`X` file-attach verbs, and prints `Message #N saved.` (not `Saving...Message Number N...done!`); `D`/`E` deferred. Reply/forward keep the `.`/`/A` editor | `FullScreen Editor (y/N)?` fork → ruler/line-number editor + `Msg. Options: A,C,D,E,F,L,S,X,?` save menu; `Saving...Message Number N...done!` |
-| `N` | `MenuCommand::Unknown` (new-files binding removed, deferred to Tier D) | Real command — `ACS_FILE_LISTINGS`-gated new-files scan / `AquaScan v1.0` |
+| `N` | ~~`MenuCommand::Unknown` (new-files binding removed, deferred to Tier D)~~ **Resolved (slice D9):** the AquaScan new-files scan, byte-pinned to the dedicated capture `ae_tierd_newfiles.txt` — see [N — new-files scan](#n--new-files-scan-aquascan-door-slice-d9). Access is ungated, consistent with the ungated `F` (the internal gates `ACS_FILE_LISTINGS`; `ACS_NEW_FILES_SINCE` exists but is unused, `axcommon.e:12`) | Real command — `ACS_FILE_LISTINGS`-gated new-files scan / `AquaScan v1.0` |
 | `RP`/`FW`/`K`/`MV`/`EH` (top-level) | Menu **still advertises** all five, but every one is rejected as Unknown (internal inconsistency) | Never top-level; menu and dispatcher agree (they live in the `R` sub-prompt) |
 | `G` (plain) | ~~Always logs off immediately~~ **Resolved (slice D5/Ga):** plain `G` runs `checkFlagged()` — with files flagged it prints the live-captured confirm `You have flagged files still not downloaded.` / `Do you leave without them? (y/N)?` (`yesNo(2)`, single-key, default N); `N` returns to the menu, `Y` / `G Y` / an empty flag set log off. Byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt`. | Plain `G` runs `checkFlagged()`: with files flagged, confirms (default N → return to menu); with nothing flagged, logs off |
 | `G` (side effects) | Emits `saveFlagged()`'s `** AutoSaving File Flags **` banner + `<BEL>` on every `G` logoff, even with nothing flagged (slice D5-banner); persists/clears the per-slot flag set on logoff via the `FlaggedStore` port (slice D5-persist, durable under SQLite); `saveHistory()` + the `dump` partial-downloads file still deferred to the file-transfer slice | Runs `saveFlagged()` (banner + persist) + `saveHistory()` on logoff |
@@ -829,6 +829,93 @@ command, not specific to `Z`.
 
 ---
 
+## N — new-files scan (AquaScan door, slice D9)
+
+**Parity target.** Like `F`/`FR`, `N` is AquaScan-shadowed on the
+stock board (`BBS:Commands/BBSCmd/` icons dispatch before internals,
+`express.e:28229-28256`), so the reference experience is the door's
+date-scan mode, captured live in the dedicated two-pass transcript
+[`comparison/transcripts/ae_tierd_newfiles.txt`](comparison/transcripts/ae_tierd_newfiles.txt)
+(sections N1–N9, ~30 probes; harness
+`comparison/harness/ae_tierd_newfiles.py`). The shadowed
+`internalCommandN` (`express.e:25275`, the *looping*
+`Date as (mm-dd-yy) to search from (Enter)=: ` prompt) is the stock
+diff record only. Design brief:
+`designs/2026-07-03-n-newfiles-scan-design.md`.
+
+**MATCH (byte-for-byte against the captures, branding aside).** The
+entry preamble (reset line, banner, blank); the
+`Date: (MM-DD-YY), (-X) Days, (R)everse, (Enter)=<mm-dd-yy> ?` prompt
+with the full captured SGR runs and trailing space; the Enter default =
+**day of the previous call** (capture-proven: pass 1 advertised
+`06-25-26` while today was 07-03); the door's `Directories:` prompt
+byte-identical to bare `F`'s, **current conference only** (N9: `(1-1)`
+in a one-area conference); `Scanning dir {n} for {mm-dd-yy}... Ok! /
+Nothing found!` headers (plain, uncoloured);
+`Scanning dir {n} for the last {x} files... ` for `!x`; the filtered
+body renumbered from `[ File #1 ]` (N3: `-30` → PROTRACK is #1) with
+the full F frame/separator/pager machinery (base `More?` — zero
+`(S)kip Conf` anywhere); BADUPLD.LHA (check `F`, Available) **listed**
+when in range (N2 File #19); `R` (and `R <date>` — date discarded,
+N4b) runs exactly the FR full-reverse mode; empty dirs run
+header-into-header; Enter=None aborts with F's single-reset tail;
+`Error in date!` (N5) and out-of-range-dir (N8b) envelopes; the `N ?`
+help screen skeleton (N6); inline grammar
+`N [S|mm-dd[-yy]|T|Y|-x|!x|R] [dir] [Q] [NS]` (N7a–N7r: Upload-dir
+default, `-30` month underflow → `06-03-26`, `T`/`Y`/`S`, bare digit =
+dir, `!2` newest-pair ascending, `Q` drops description continuations,
+`NS` suppresses every `More?`); `N R -1` → the Copyright banner +
+`Argument error! Type 'n ?' for help.`; every listing-shaped exit =
+the two-reset tail. Two page-1 models, both capture-pinned: the
+prompt path counts 29 lines **from the post-answer blank** (the door
+resets its counter at interactive prompts, N2); the inline path counts
+29 **from the reset line** (F's span-path model, N7c).
+
+**BEHAVIOURAL / COSMETIC (deliberate, documented).**
+
+| Divergence | Detail |
+|---|---|
+| NextScan branding | The N banner centre label `AquaScan v1.0 by Aquarius/Outlaws ` (34 visible) → `NextScan ` (9), dash run 15→40, 77 visible cols preserved; right label `'n ?' for options ` is `'f ?'`-width so the landed F banner geometry holds. Help screen reuses the landed Copyright `NextScan` banner byte-for-byte and swaps `Configure AquaScan` → `Configure NextScan`. Width parity asserted against the kept AquaScan originals (`wire.rs` tests; `designs/NEXTSCAN.md` §7) |
+| Single-shot `Error in date!` | The door errors once and exits to the menu (N5, captured) — NextExpress matches the door. The *internal* command's looping length-only prompt (`MiscFuncs.e:388-401` accepts any 8 chars) is diff-record only |
+| Default date source | NextExpress derives the Enter default from `user.last_call()` (mutates only at session finalise). The internal models a separate `newSinceDate` bumped by a `newSinceFlag` at logoff (`express.e:27855`, `:27902`, `:8197`) — not modelled; the capture proves the door's default equals the previous-call day, which `last_call` reproduces. First-time caller (no prior call) → today (a NextExpress choice, TO-CONFIRM #12) |
+| UTC day boundary | Cutoffs are UTC midnight of the target day, filter `uploaded_at >= cutoff` — **inclusive**, `express.e:27976-27986` `ddt>=day` (the `dir_row` UTC rendering precedent). The Amiga board's day boundary is its local clock |
+| Uniform 29-line paging | Pages 2+ drift on the door (N2 segments 30/27/29/29/13); NextScan pages uniformly at 29 — the documented F COSMETIC divergence inherited |
+| Per-file filtering | The internal dumps the rest of the DIR file after the first match (`express.e:27991-28013`); NextExpress filters per file. Equivalent under a chronologically-sorted repository (the upload writer appends in order) — unobservable on the wire |
+| ACS gating | NextExpress gates neither `F` nor `N` (consistent); the internal gates `ACS_FILE_LISTINGS` (never the unused `ACS_NEW_FILES_SINCE`, `axcommon.e:12`) |
+| `N W` not ported | The (rebranded) help screen advertises `N W - Configure NextScan`, but the door's self-configuration is not ported — `N W` takes the Argument-error envelope (the `F W` precedent; NextExpress config is TOML) |
+| Art/© byte encoding | Same UTF-8 policy as `F` (AGENTS.md "Wire encoding") |
+| Menu advert | `Conf02/Menu5.txt` gains an `N [date]` row — the `?` menu wire now differs from the shipped AquaScan board's menu (which advertises no N row) |
+
+**PLAUSIBLE (uncaptured; shipped provisionally, each quarantined
+behind its own const/test — one-line fix on re-probe).** Numbered
+after the design brief's §1.2 TO-CONFIRM list:
+
+| # | Surface | Shipped behaviour |
+|---|---|---|
+| 1 | `H` at N's `Directories:` prompt / inline `N <date> H` | Date-/newest-filtered **held** rows under the dir→HOLD header substitution (`Scanning HOLD dir for <label>...`). The prompt advertises `(H)old`, so a defined, non-panicking behaviour ships; header wording unprobed |
+| 2 | `T`/`Y`/`S`/`!x` typed at the Date prompt | `Error in date!` (only date/`-x`/`R`/Enter/junk were probed there) |
+| 3 | Junk at N's `Directories:` prompt | F's `Error in input!` envelope (same door machinery, byte-identical prompt) |
+| 4 | Inline letter spans `N <date> A` / `U` | Resolved via the shared span-token resolver (inferred from the help diagram; only numeric dirs and the Upload default were captured) |
+| 5 | Bare `N <dir>` date source | SinceLastCall per the help grammar `N [S] [dir]` (pass-2's last call = today, so the capture cannot distinguish it from Today); pinned by a diverging-clock test as a NextExpress choice |
+| 6 | `N mm-dd` (year omitted) | Current year from the Clock port |
+| 7 | Calendar-invalid but date-shaped input (`13-40-26`) | Rejected — `Error in date!` at the prompt / Argument error inline (the internal accepts any 8 chars) |
+| 8 | `!x` edges (`!1` wording, `!x` > dir size, `!x` on empty dir, `Q`+`R` combos) | Header pluralisation unchanged (`the last 1 files`); overshoot saturates to the whole dir; empty dir → Nothing found |
+| 9 | Pager verbs beyond `Y`/`Q` at an N `More?` | Engine-shared with F (same machine on the real door too), never exercised inside an N scan on the reference |
+| 10 | Inline out-of-range dir (`N 9`) | F's highest-dir envelope (the prompt-path variant N8b was captured byte-identical) |
+| 11 | Trailing junk after a valid date at the prompt | Rejected (`Error in date!`); `R <date>` shows extra tokens tolerated in that one captured form only |
+| 12 | First-time caller default (`last_call == None`) | Today (not capturable — the reference sysop always has a prior call) |
+| 13 | Date-prompt echo discipline (per-keystroke echo, backspace, the trailing-space final byte) | The AGENTS.md step-6 type-at-a-real-terminal item + the like-for-like FS-UAE pass own this |
+
+The `specs/core.allium:277-286` `file_scan` flag comment overstates
+that flag's reach: capture + `express.e:591-608`/`:28066-28115` show
+`checkFileConfScan` gates **only** the logon `confScan` (which runs
+`runSysCommand('N','S U')` per flagged conference) — menu `N` never
+consults it. The multi-conference `SCAN`/`NSU` siblings and the logon
+file-scan remain future slices over the deferred section-layer seam
+(SYSTEM.md item 17).
+
+---
+
 ## Notable findings
 
 The most important behavioural gaps, in rough order of user impact:
@@ -839,7 +926,7 @@ The most important behavioural gaps, in rough order of user impact:
 
 3. **Unknown-command handling is a NOTICE on both sides — not silent-vs-notice.** Correcting the earlier source-derived parity note (which described AE as silent): AE emits `No such command!!  Use '?' for command list.` (blank-line framed); Rust emits `Unknown command. Type G to log off.`. The difference is wording and framing (COSMETIC), not presence-vs-absence.
 
-4. **`N` is a real new-files scan (AquaScan) in AE, but `Unknown` in Rust.** AE drops into the interactive `--[ AquaScan v1.0 ]` new-files flow; Rust rejects `N`. This is the intentional Tier B removal of the old `N`→mail-scan binding, with the legacy new-files scan deferred to Tier D.
+4. **~~`N` is a real new-files scan (AquaScan) in AE, but `Unknown` in Rust~~ Resolved (slice D9).** `N` now runs the NextScan new-files scan — the AquaScan door experience, byte-pinned to the dedicated two-pass capture `comparison/transcripts/ae_tierd_newfiles.txt` (see [N — new-files scan](#n--new-files-scan-aquascan-door-slice-d9)). The interim "Tier B removed the mail binding, scan deferred" state this finding described is over.
 
 5. **The Rust menu advertises retired commands it then rejects.** `RP`/`FW`/`K`/`MV`/`EH` are still listed in the Rust main menu (MESSAGES and MAIL ADMIN sections) but every one now returns `Unknown command.`. The menu text was not updated when Tier B B8 retired them — an internal menu/dispatcher inconsistency with no equivalent in AE.
 

@@ -71,6 +71,19 @@ impl FileRepository for InMemoryFileRepository {
             conf == conference && file.status() == FileStatus::HeldForReview
         }))
     }
+
+    fn list_new_since(
+        &self,
+        area: FileAreaRef,
+        since: std::time::SystemTime,
+    ) -> Result<Vec<File>, FileRepositoryError> {
+        Ok(self.select(|conf, file_area, file| {
+            conf == area.conference()
+                && file_area == area.area()
+                && file.status().is_listing_visible()
+                && file.uploaded_at() >= since
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -165,6 +178,80 @@ mod tests {
             .map(|f| f.name().to_string())
             .collect();
         assert_eq!(names, vec!["HELDFILE.LHA"]);
+    }
+
+    #[test]
+    fn list_new_since_is_inclusive_of_the_boundary_instant() {
+        // The N filter is inclusive (`express.e:27976-27986` `ddt>=day`,
+        // confirmed by the SCAN sibling capture): a file uploaded
+        // exactly at the cutoff is listed.
+        let repo = InMemoryFileRepository::new(
+            vec![FileArea::new(1, 1, "Main".to_string())],
+            vec![
+                (1, 1, file("OLDER.LHA", FileStatus::Available, 100)),
+                (1, 1, file("ONCUT.LHA", FileStatus::Available, 200)),
+                (1, 1, file("NEWER.LHA", FileStatus::Available, 300)),
+            ],
+        );
+        let names = |since: u64| -> Vec<String> {
+            repo.list_new_since(FileAreaRef::new(1, 1), t(since))
+                .expect("files")
+                .into_iter()
+                .map(|f| f.name().to_string())
+                .collect()
+        };
+        assert_eq!(names(200), vec!["ONCUT.LHA", "NEWER.LHA"]);
+        assert_eq!(names(201), vec!["NEWER.LHA"]);
+        assert_eq!(names(301), Vec::<String>::new());
+        // Ordering contract: uploaded_at ascending, like find_in_area.
+        assert_eq!(names(0), vec!["OLDER.LHA", "ONCUT.LHA", "NEWER.LHA"]);
+    }
+
+    #[test]
+    fn list_new_since_keeps_the_listing_visibility_contract() {
+        // Same visibility filter as find_in_area: HeldForReview rows
+        // never list; a failed-check Available row (BADUPLD's shape —
+        // check char 'F', status Available, seed.rs) DOES list, exactly
+        // as the live door listed it (ae_tierd_newfiles.txt N2 pass 2,
+        // File #19).
+        let badupld = File::new(
+            "BADUPLD.LHA".to_string(),
+            Bytes::new(11_111),
+            FileStatus::Available,
+            Some(b'F'),
+            "Upload aborted at 80 percent".to_string(),
+            t(150),
+        );
+        let repo = InMemoryFileRepository::new(
+            vec![FileArea::new(1, 1, "Main".to_string())],
+            vec![
+                (1, 1, badupld),
+                (1, 1, file("HELD.LHA", FileStatus::HeldForReview, 160)),
+                (1, 1, file("VISIBLE.LHA", FileStatus::Available, 170)),
+            ],
+        );
+        let names: Vec<String> = repo
+            .list_new_since(FileAreaRef::new(1, 1), t(0))
+            .expect("files")
+            .into_iter()
+            .map(|f| f.name().to_string())
+            .collect();
+        assert_eq!(names, vec!["BADUPLD.LHA", "VISIBLE.LHA"]);
+    }
+
+    #[test]
+    fn list_new_since_scopes_to_the_requested_area() {
+        let names: Vec<String> = repo()
+            .list_new_since(FileAreaRef::new(2, 1), t(0))
+            .expect("files")
+            .into_iter()
+            .map(|f| f.name().to_string())
+            .collect();
+        assert_eq!(names, vec!["OLDEST.LHA", "MIDDLE.LHA", "NEWEST.LHA"]);
+        assert!(repo()
+            .list_new_since(FileAreaRef::new(2, 9), t(0))
+            .expect("files")
+            .is_empty());
     }
 
     #[test]

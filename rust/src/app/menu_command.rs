@@ -8,6 +8,8 @@ mod files;
 mod join;
 mod mail;
 
+pub(crate) use files::{parse_date_token, parse_days_back};
+
 use std::str::SplitAsciiWhitespace;
 
 /// Parsed menu command.
@@ -117,6 +119,16 @@ pub(crate) enum MenuCommand {
     /// target is the genuine internal command — captured live in
     /// `comparison/transcripts/ae_tierd_zippy.txt`.
     ZippySearch(ZippyArg),
+    /// `N …`: the new-files scan via the `NextScan` lister (slice D9).
+    /// The parity target is the `AquaScan` v1.0 door the stock
+    /// deployment installs over `N`
+    /// (`comparison/transcripts/ae_tierd_newfiles.txt`); the shadowed
+    /// internal is `internalCommandN` (`amiexpress/express.e:25275`,
+    /// the looping date prompt), kept for the stock diff record. Menu
+    /// `N` scans the current conference only and never consults the
+    /// `CF` file-scan flag (capture + `express.e:591-608` — that flag
+    /// gates only the logon `confScan`).
+    NewFilesScan(NewFilesArg),
     /// `A` (bare): list the session's flagged-file set (slice D6a).
     /// Runs the genuine internal `internalCommandA` -> `alterFlags`
     /// (`amiexpress/express.e:24601`, `:12648`); D6a ships the read-only
@@ -211,6 +223,75 @@ pub(crate) enum FileSpan {
     Upload,
     /// `F H` — the hold directory (held-for-review files).
     Hold,
+}
+
+/// Parsed argument shape of the `N` command, mirroring the captured
+/// `AquaScan` grammar (`N ?` help, `ae_tierd_newfiles.txt` N6):
+/// `N [S|mm-dd[-yy]|T|Y|-x|!x|R] [dir] [Q] [NS]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NewFilesArg {
+    /// Bare `N`: the door's own `Date: …` prompt, then the
+    /// `Directories: …` prompt (N1a).
+    Prompt,
+    /// `N ?`: show the `NextScan` new-files help screen (N6). Extra
+    /// tokens take the Invalid path (the `F ?` precedent).
+    Help,
+    /// An inline scan form (N7a–N7r) — skips both prompts.
+    Scan(NewFilesSpec),
+    /// Any other argument form — the captured
+    /// `Argument error! Type 'n ?' for help.` envelope (N7e). Includes
+    /// `N W` (door self-configuration — `NextExpress` config is TOML,
+    /// a permanent departure mirroring `F W`).
+    Invalid,
+}
+
+/// One inline `N` scan: the date request, the directory span (`None`
+/// defaults to the Upload dir — capture N7a) and the `Q`/`NS` flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NewFilesSpec {
+    /// What to scan for.
+    pub(crate) request: ScanRequest,
+    /// Which directories; `None` = the Upload (highest) dir.
+    pub(crate) span: Option<FileSpan>,
+    /// `Q`: quick scan — first description line only (N7q).
+    pub(crate) quick: bool,
+    /// `NS`: non-stop scrolling, no pager (N7ns).
+    pub(crate) non_stop: bool,
+}
+
+/// The date request of an `N` scan — the first-token grammar of the
+/// captured help screen (`ae_tierd_newfiles.txt` N6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScanRequest {
+    /// Explicit `N S` (N7s) and the bare-dir form `N <dir>` (N7d —
+    /// provisionally `SinceLastCall` per the help grammar `N [S] [dir]`;
+    /// the capture could not tell it from Today): since the day of the
+    /// previous call.
+    SinceLastCall,
+    /// `N T` (N7t): today's files.
+    Today,
+    /// `N Y` (N7y): since yesterday.
+    Yesterday,
+    /// `N -x` (N7b): since x days back.
+    DaysBack(u32),
+    /// `N mm-dd[-yy]` (N7a): since the given date. `year: None` is the
+    /// help-advertised year-omitted form (current year — a provisional
+    /// `NextExpress` reading of the unprobed shape).
+    Date {
+        /// 1–2 digit month token, calendar-validated at resolution.
+        month: u8,
+        /// 1–2 digit day token, calendar-validated at resolution.
+        day: u8,
+        /// 2-digit year token, pivoted `yy > 77 → 19yy` at resolution
+        /// (`axconsts.e:41`); `None` = current year.
+        year: Option<u16>,
+    },
+    /// `N !x` (N7n): the x newest files, ascending.
+    NewestLast(u32),
+    /// `N R` (N7r): the full listing, newest-first, date-less —
+    /// exactly the `FR` mode (the prompt's `R` answer discards any
+    /// date, N4b).
+    Reverse,
 }
 
 /// Parsed numeric argument of the `R` command.
@@ -419,6 +500,9 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if let Some(arg) = files::parse_zippy_command(trimmed) {
         return MenuCommand::ZippySearch(arg);
+    }
+    if let Some(arg) = files::parse_new_files_command(trimmed) {
+        return MenuCommand::NewFilesScan(arg);
     }
     MenuCommand::Unknown
 }
@@ -807,18 +891,254 @@ mod tests {
     }
 
     #[test]
-    fn n_is_not_recognized_pending_the_tier_d_new_files_scan() {
-        // Tier B B2: `N`'s mail-scan binding (a NextExpress drift —
-        // legacy `N` is the new-files scan) is removed. Until Tier D
-        // ships the new-files scan, `N` is an unknown command.
-        assert_eq!(parse_menu_command("N"), MenuCommand::Unknown);
-        assert_eq!(parse_menu_command("n"), MenuCommand::Unknown);
+    fn n_is_the_new_files_scan() {
+        // Slice D9: `N` is the AquaScan new-files scan
+        // (`ae_tierd_newfiles.txt`). Bare `N` opens the door's own
+        // Date/Directories prompts (N1a); `N 7` is a bare dir token
+        // (N7d — SinceLastCall, range-checked at dispatch).
+        assert_eq!(
+            parse_menu_command("N"),
+            MenuCommand::NewFilesScan(NewFilesArg::Prompt)
+        );
+        assert_eq!(
+            parse_menu_command("n"),
+            MenuCommand::NewFilesScan(NewFilesArg::Prompt)
+        );
+        assert_eq!(
+            parse_menu_command("N 7"),
+            MenuCommand::NewFilesScan(NewFilesArg::Scan(NewFilesSpec {
+                request: ScanRequest::SinceLastCall,
+                span: Some(FileSpan::Dir(7)),
+                quick: false,
+                non_stop: false,
+            }))
+        );
     }
 
     #[test]
     fn scan_commands_reject_extra_tokens() {
         assert_eq!(parse_menu_command("MS 1"), MenuCommand::Unknown);
-        assert_eq!(parse_menu_command("N 7"), MenuCommand::Unknown);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)] // Cohesive: one row per captured N7 grammar form.
+    fn n_command_parses_the_captured_inline_grammar() {
+        // The full captured N7 surface (`ae_tierd_newfiles.txt` pass 2)
+        // plus the `N ?` help form (N6). Grammar:
+        // `N [S|mm-dd[-yy]|T|Y|-x|!x|R] [dir] [Q] [NS]`.
+        let scan = |request, span, quick, non_stop| {
+            MenuCommand::NewFilesScan(NewFilesArg::Scan(NewFilesSpec {
+                request,
+                span,
+                quick,
+                non_stop,
+            }))
+        };
+        assert_eq!(
+            parse_menu_command("N ?"),
+            MenuCommand::NewFilesScan(NewFilesArg::Help)
+        );
+        // N7a: inline date, dir defaults to Upload.
+        assert_eq!(
+            parse_menu_command("N 01-01-26"),
+            scan(
+                ScanRequest::Date {
+                    month: 1,
+                    day: 1,
+                    year: Some(26),
+                },
+                None,
+                false,
+                false,
+            )
+        );
+        // Help-advertised year-omitted form (TO-CONFIRM #6).
+        assert_eq!(
+            parse_menu_command("N 12-30"),
+            scan(
+                ScanRequest::Date {
+                    month: 12,
+                    day: 30,
+                    year: None,
+                },
+                None,
+                false,
+                false,
+            )
+        );
+        // N7b: days back.
+        assert_eq!(
+            parse_menu_command("N -30"),
+            scan(ScanRequest::DaysBack(30), None, false, false)
+        );
+        // N7c: date + dir.
+        assert_eq!(
+            parse_menu_command("N 01-01-26 1"),
+            scan(
+                ScanRequest::Date {
+                    month: 1,
+                    day: 1,
+                    year: Some(26),
+                },
+                Some(FileSpan::Dir(1)),
+                false,
+                false,
+            )
+        );
+        // N7q / N7ns: the Q and NS flags, in help order.
+        assert_eq!(
+            parse_menu_command("N 01-01-26 2 Q"),
+            scan(
+                ScanRequest::Date {
+                    month: 1,
+                    day: 1,
+                    year: Some(26),
+                },
+                Some(FileSpan::Dir(2)),
+                true,
+                false,
+            )
+        );
+        assert_eq!(
+            parse_menu_command("N 01-01-26 2 NS"),
+            scan(
+                ScanRequest::Date {
+                    month: 1,
+                    day: 1,
+                    year: Some(26),
+                },
+                Some(FileSpan::Dir(2)),
+                false,
+                true,
+            )
+        );
+        assert_eq!(
+            parse_menu_command("N 01-01-26 2 Q NS"),
+            scan(
+                ScanRequest::Date {
+                    month: 1,
+                    day: 1,
+                    year: Some(26),
+                },
+                Some(FileSpan::Dir(2)),
+                true,
+                true,
+            )
+        );
+        // Help-grammar forms with the dir omitted: `Q`/`NS` bind as
+        // flags, never as the dir token (dir defaults to Upload) —
+        // kills a weakened Q-and-NS exclusion in the dir slot.
+        assert_eq!(
+            parse_menu_command("N T Q"),
+            scan(ScanRequest::Today, None, true, false)
+        );
+        assert_eq!(
+            parse_menu_command("N 01-01-26 NS"),
+            scan(
+                ScanRequest::Date {
+                    month: 1,
+                    day: 1,
+                    year: Some(26),
+                },
+                None,
+                false,
+                true,
+            )
+        );
+        // N7n: the x newest files.
+        assert_eq!(
+            parse_menu_command("N !2"),
+            scan(ScanRequest::NewestLast(2), None, false, false)
+        );
+        // N7t / N7y / N7s: today / yesterday / since-last-call.
+        assert_eq!(
+            parse_menu_command("N T"),
+            scan(ScanRequest::Today, None, false, false)
+        );
+        assert_eq!(
+            parse_menu_command("N Y"),
+            scan(ScanRequest::Yesterday, None, false, false)
+        );
+        assert_eq!(
+            parse_menu_command("N S"),
+            scan(ScanRequest::SinceLastCall, None, false, false)
+        );
+        // The logon-scan form `N S U` (express.e:28089 runs it per
+        // flagged conference) parses through the shared span resolver.
+        assert_eq!(
+            parse_menu_command("N S U"),
+            scan(
+                ScanRequest::SinceLastCall,
+                Some(FileSpan::Upload),
+                false,
+                false
+            )
+        );
+        // N7d: a bare digit is a dir token, not a date.
+        assert_eq!(
+            parse_menu_command("N 2"),
+            scan(
+                ScanRequest::SinceLastCall,
+                Some(FileSpan::Dir(2)),
+                false,
+                false
+            )
+        );
+        // N7r: inline reverse over a dir.
+        assert_eq!(
+            parse_menu_command("N R 2"),
+            scan(ScanRequest::Reverse, Some(FileSpan::Dir(2)), false, false)
+        );
+        // Lowercase forms bind identically.
+        assert_eq!(
+            parse_menu_command("n t"),
+            scan(ScanRequest::Today, None, false, false)
+        );
+        assert_eq!(
+            parse_menu_command("n r 2 q ns"),
+            scan(ScanRequest::Reverse, Some(FileSpan::Dir(2)), true, true)
+        );
+    }
+
+    #[test]
+    fn n_command_rejects_unsupported_argument_forms() {
+        // Each takes the captured `Argument error! Type 'n ?' for
+        // help.` envelope (N7e). `N W` (door self-configuration) is
+        // deliberately not ported — config is TOML (the F W precedent).
+        for line in [
+            "N R -1", // captured: N7e
+            "N W",
+            "N XYZ",
+            "N ? extra",
+            "N 01-01-26 XYZ",
+            "N 2 Q junk",
+            "N T NS Q", // out of help order
+            "N -",
+            "N !",
+            // `parse::<u32>` tolerates a leading `+`, so the digit
+            // guards must stay strict — a weakened guard would read
+            // these as DaysBack(3) / NewestLast(5).
+            "N -+3",
+            "N !+5",
+            "N 01-011-26",
+            "N 1-2-3-4",
+        ] {
+            assert_eq!(
+                parse_menu_command(line),
+                MenuCommand::NewFilesScan(NewFilesArg::Invalid),
+                "line {line:?} must parse as Invalid",
+            );
+        }
+    }
+
+    #[test]
+    fn n_does_not_swallow_the_ns_and_nsu_door_siblings() {
+        // Exact-head dispatch: `NS`/`NSU` are distinct AquaScan door
+        // tokens (future slices) and must stay Unknown.
+        assert_eq!(parse_menu_command("NS"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("ns"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("NSU"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("NS U"), MenuCommand::Unknown);
     }
 
     #[test]
@@ -1375,6 +1695,7 @@ mod tests {
             MenuCommand::NextMsgBase => Some(">>"),
             MenuCommand::FileList(_) => Some("F"),
             MenuCommand::ZippySearch(_) => Some("Z"),
+            MenuCommand::NewFilesScan(_) => Some("N"),
             MenuCommand::AlterFlags => Some("A"),
             MenuCommand::Unknown => None,
         }
@@ -1408,6 +1729,7 @@ mod tests {
             MenuCommand::NextMsgBase,
             MenuCommand::FileList(FileListArg::Prompt { reverse: false }),
             MenuCommand::ZippySearch(ZippyArg::Prompt),
+            MenuCommand::NewFilesScan(NewFilesArg::Prompt),
             MenuCommand::AlterFlags,
             MenuCommand::Unknown,
         ]

@@ -41,10 +41,10 @@ The canonical record of what each shipped slice covers is the
 
 `M` was rebound to its legacy ANSI-toggle meaning in Tier A (A8); the
 scan-all it used to carry now lives on `MS`. `N`'s mail-scan binding
-(a NextExpress drift) was removed in Tier B (B2) — `N` is now an
-unknown command until Tier D ships the new-files scan (the
-board-as-shipped AquaScan date-scan experience; the internal scan at
-`express.e:25275` is door-shadowed — see
+(a NextExpress drift) was removed in Tier B (B2), and Tier D's D9
+slice rebound `N` to the new-files scan (the board-as-shipped
+AquaScan date-scan experience; the internal scan at `express.e:25275`
+is door-shadowed — see
 [cmds-files-list.md](slices/cmds-files-list.md)).
 
 ## Login-sequence fixes
@@ -81,7 +81,7 @@ done.
 | `NS` non-stop pagination | `express.e:24627, 24644, 26170` | [cmds-quickwins.md](slices/cmds-quickwins.md) | A | Todo (A12 — runtime `ns` keystroke + pause suppression already done in `pager.rs`; the `NS` argument-token plumbing and a paginated consumer remain) |
 | **B. Mail UI completion** ||||
 | `MS` | `express.e:25250` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (folded B3's listing table in) |
-| `N` (mail) | NextExpress-only drift — no legacy `N`→mail (legacy `N` = new-files, `express.e:25275`, see Tier D) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (`N` → unknown; new-files scan deferred to Tier D) |
+| `N` (mail) | NextExpress-only drift — no legacy `N`→mail (legacy `N` = new-files, `express.e:25275`, see Tier D) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B2 removed the drift binding; the "`N` → unknown" interim ended when Tier D's D9 rebound `N` to the new-files scan) |
 | `R` sub-prompt | `express.e:11972` (`readMSG`) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B4–B6: the `A`/`F`/`R`/`D`/`M`/`EH`/`L`/`?`/`??`/`<CR>`/`Q` loop, gated, 20 telnet smokes) |
 | `R` no-arg entry + legacy `readMSG` loop | `express.e:11984, 12008-12230` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B10 — prompt-first bare `R` at the read-pointer; next-to-read range + `( QUIT )` exhausted prompt; reshaped the shared loop, so `R <num>` matches too) |
 | Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B3, shipped with B1's `MS`) |
@@ -99,7 +99,7 @@ done.
 | `A` list flagged set | `express.e:24601` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D6a — bare `A` runs the genuine internal `alterFlags` -> `showFlags`: empty prints `No file flags`, else the upper-cased flagged names space-joined, each framed by a blank line. The `Filename(s) to flag:` prompt loop now follows (slice D6b). Byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`; parser + handler unit tests + telnet smokes, live-verified against both the AE reference and the Rust server) |
 | `A` add/remove flagged | `express.e:24604` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D6b — the `A` `alterFlags` -> `flagFiles` REPEAT loop: the `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` main prompt + the `Filename(s) to Clear: (*)All, ...` clear sub-prompt. A typed name flags (upper-cased, current conf, area 0) and exits to the menu with no trailing line (`RESULT_FAILURE`); `C` -> `*` clears all and re-prompts; `<CR>`=none ends the loop. Byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`; 6 handler unit tests + 2 telnet smokes; mutation-clean. Deferred: `F`-from (`flagFrom`), clear-by-name (`removeFlagFromList`), the `ACS_DOWNLOAD` gate) |
 | `FS` (file status) | `express.e:24872` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo |
-| `N` (new files scan) | AquaScan door (shadows `express.e:25275`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Todo (after the mail-`N` semantic fix) |
+| `N` (new files scan) | AquaScan door (shadows `express.e:25275`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D9 — the AquaScan date-scan experience over the item-17 engine, byte-pinned to the dedicated live capture `comparison/transcripts/ae_tierd_newfiles.txt` (two passes, N1–N9): bare `N` opens the door's `Date:` prompt (Enter default = day of previous call via `last_call`; single-shot `Error in date!`) then `F`'s `Directories:` prompt, **current conference only, no `CF` gating** (the old multi-conf slice text was refuted by the capture); full inline grammar `N [S|mm-dd[-yy]|T|Y|-x|!x|R] [dir] [Q] [NS]`; inclusive `uploaded_at >= cutoff` via `FileRepository::list_new_since`, filtered sets renumbered from `#1`; `R` runs the FR mode; `Q` quick-scan drops continuations; dates through the `Clock` port (yy>77 → 19yy pivot); two capture-pinned page-1 models (prompt path counts from the post-answer blank, inline from the reset); `N W` unported → Argument error; seven-scenario telnet smoke `tierd_newfiles_smoke.rs` incl. the two-session last-call default and the UTF-8 gate; TO-CONFIRM edges shipped provisionally as PLAUSIBLE rows in COMMAND_PARITY.md) |
 | `D` / `DS` (download) | `express.e:24853` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
 | `U` (upload, baseline) | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4a) |
 | `U` upload accounting refinements | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4b) |

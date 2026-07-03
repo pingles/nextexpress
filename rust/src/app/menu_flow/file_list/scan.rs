@@ -73,6 +73,21 @@ pub(super) enum ScanKind {
         /// (`express.e:27654`).
         reverse: bool,
     },
+    /// `N`: files uploaded on/after `cutoff` — **inclusive**
+    /// (`express.e:27976-27986` `ddt>=day`; slice D9).
+    NewSince {
+        /// The UTC-midnight boundary instant.
+        cutoff: std::time::SystemTime,
+        /// The `MM-DD-YY` the headers echo — derived once from the
+        /// same date via `dir_row::format_dir_date`, never recomputed.
+        label: String,
+    },
+    /// `N !x`: the x newest files, ascending
+    /// (`ae_tierd_newfiles.txt` N7n: MYDEMO then TOOLPACK).
+    NewestLast {
+        /// How many files from the tail of the dir.
+        count: u32,
+    },
 }
 
 /// A scan's mode: what each directory lists ([`ScanKind`]) plus `N`'s
@@ -250,6 +265,17 @@ where
                 }
                 files
             }
+            ScanKind::NewSince { cutoff, .. } => {
+                self.new_files_in_area(FileAreaRef::new(conference, dir), *cutoff)
+            }
+            // `!x`: the x newest = the ascending tail. Saturating so
+            // `N !999` over a smaller dir lists the whole dir instead
+            // of panicking (an unprobed edge — TO-CONFIRM #8).
+            ScanKind::NewestLast { count } => {
+                let mut files = self.files_in_area(FileAreaRef::new(conference, dir));
+                let keep = files.len().saturating_sub(*count as usize);
+                files.split_off(keep)
+            }
         }
     }
 
@@ -259,6 +285,22 @@ where
     fn hold_rows(&self, conference: u32, mode: &ScanMode) -> Vec<File> {
         match &mode.kind {
             ScanKind::Full { .. } => self.held_files(conference),
+            // `H` under a date/newest scan is UNCAPTURED (TO-CONFIRM
+            // #1): the interim behaviour filters the held rows the way
+            // the mode filters a dir — defined and non-panicking for a
+            // prompt-advertised answer; PLAUSIBLE in COMMAND_PARITY.md.
+            ScanKind::NewSince { cutoff, .. } => {
+                let cutoff = *cutoff;
+                self.held_files(conference)
+                    .into_iter()
+                    .filter(|file| file.uploaded_at() >= cutoff)
+                    .collect()
+            }
+            ScanKind::NewestLast { count } => {
+                let mut held = self.held_files(conference);
+                let keep = held.len().saturating_sub(*count as usize);
+                held.split_off(keep)
+            }
         }
     }
 
@@ -593,6 +635,8 @@ fn flag_overprint_clear() -> Vec<u8> {
 fn dir_header(dir: u32, found: bool, mode: &ScanMode) -> Vec<u8> {
     match &mode.kind {
         ScanKind::Full { reverse } => wire::scanning_dir_header(dir, found, *reverse),
+        ScanKind::NewSince { label, .. } => wire::scanning_new_header(dir, label, found),
+        ScanKind::NewestLast { count } => wire::scanning_newest_header(dir, *count, found),
     }
 }
 
@@ -601,6 +645,8 @@ fn dir_header(dir: u32, found: bool, mode: &ScanMode) -> Vec<u8> {
 fn hold_header(found: bool, mode: &ScanMode) -> Vec<u8> {
     match &mode.kind {
         ScanKind::Full { .. } => wire::scanning_hold_header(found),
+        ScanKind::NewSince { label, .. } => wire::scanning_new_hold_header(label, found),
+        ScanKind::NewestLast { count } => wire::scanning_newest_hold_header(*count, found),
     }
 }
 

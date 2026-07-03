@@ -22,6 +22,7 @@
 
   FILES
     F [n]    List files (<n>=dir, A=all, U=upload, ?=help)
+    N [date] Scan for new files since <date>
     Z <str>  Zippy search file descriptions for <str>
     A        List your flagged files
 

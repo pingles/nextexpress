@@ -397,6 +397,108 @@ pub(super) fn directories_prompt(max: u32) -> Vec<u8> {
     .into_bytes()
 }
 
+// --- Slice D9: the `N` (new-files scan) door wire ----------------------
+//
+// `N` runs the same AquaScan door as `F`/`FR`, in date-scan mode. Every
+// byte below is pinned to `comparison/transcripts/ae_tierd_newfiles.txt`
+// (pass 2 unless noted), with the NextScan branding swaps of
+// `designs/NEXTSCAN.md` §7. The shadowed `internalCommandN`
+// (`amiexpress/express.e:25275`) is the stock diff record only.
+
+/// The `N` listing banner (N1a): byte-identical to [`LISTING_BANNER`]
+/// except the right label reads `'n ?'` — same 18 visible columns as
+/// `'f ?'`, so the dash run stays at 40 and the frame at 77 visible
+/// columns (the captured `AquaScan` original has the same 15-dash run as
+/// F's).
+pub(super) const NEW_FILES_BANNER: &[u8] =
+    b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'n ?' for options \x1b[34m]--\x1b[0m";
+
+/// The door's `Date:` prompt (N1a), `default` being the mm-dd-yy the
+/// Enter answer scans from (the day of the caller's previous call —
+/// capture-proven: pass 1 showed `06-25-26` while "today" was 07-03).
+/// Trailing space included (the capture harness's sentinel matched
+/// `?\x1b[0m `); no line terminator.
+pub(super) fn date_prompt(default: &str) -> Vec<u8> {
+    format!(
+        "\x1b[36mDate: \x1b[32m(\x1b[33mMM-DD-YY\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33m-X\x1b[32m) \x1b[36mDays, \x1b[32m(\x1b[33mR\x1b[32m)\x1b[36meverse, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m={default} ?\x1b[0m "
+    )
+    .into_bytes()
+}
+
+/// Bad answer at the date prompt (N5) — single-shot: the handler frames
+/// it and returns to the menu (the internal command's looping prompt is
+/// the shadowed stock path).
+pub(super) const ERROR_IN_DATE: &[u8] = b"Error in date!";
+
+/// The dated scan header (N1b/N2/N3/N8):
+/// `Scanning dir {n} for {label}... Ok! / Nothing found!` — plain,
+/// uncoloured, `label` in `MM-DD-YY`.
+pub(super) fn scanning_new_header(n: u32, label: &str, found: bool) -> Vec<u8> {
+    let outcome = if found { "Ok!" } else { "Nothing found!" };
+    format!("Scanning dir {n} for {label}... {outcome}").into_bytes()
+}
+
+/// The `!x` newest-files header (N7n):
+/// `Scanning dir {n} for the last {count} files... Ok! / Nothing found!`.
+pub(super) fn scanning_newest_header(n: u32, count: u32, found: bool) -> Vec<u8> {
+    let outcome = if found { "Ok!" } else { "Nothing found!" };
+    format!("Scanning dir {n} for the last {count} files... {outcome}").into_bytes()
+}
+
+/// The dated HOLD header — F's dir→HOLD substitution applied to
+/// [`scanning_new_header`]. UNCAPTURED (`H` under a date scan was never
+/// probed — PLAUSIBLE row in `COMMAND_PARITY.md`); shipped so the
+/// prompt-advertised `(H)old` answer has defined behaviour.
+pub(super) fn scanning_new_hold_header(label: &str, found: bool) -> Vec<u8> {
+    let outcome = if found { "Ok!" } else { "Nothing found!" };
+    format!("Scanning HOLD dir for {label}... {outcome}").into_bytes()
+}
+
+/// The `!x` HOLD header — same substitution, same PLAUSIBLE status as
+/// [`scanning_new_hold_header`].
+pub(super) fn scanning_newest_hold_header(count: u32, found: bool) -> Vec<u8> {
+    let outcome = if found { "Ok!" } else { "Nothing found!" };
+    format!("Scanning HOLD dir for the last {count} files... {outcome}").into_bytes()
+}
+
+/// Unsupported `N` argument forms (N7e) — F's argument-error envelope
+/// with the `'n ?'` help pointer.
+pub(super) const NEW_FILES_ARGUMENT_ERROR: &[u8] = b"Argument error! Type 'n ?' for help.";
+
+/// The `N ?` help screen — byte-exact from N6 with the `NextScan`
+/// branding swaps: the Copyright help banner ([`HELP_BANNER`],
+/// byte-reused) and `Configure AquaScan` → `Configure NextScan`; every
+/// other line verbatim, including the captured epilogue. `N W` itself
+/// is advertised but not ported (→ the Argument-error envelope, the
+/// `F W` precedent — config is TOML).
+pub(super) const NEW_FILES_HELP_SCREEN: &str = "\x1b[0m\x0c\r\n\
+\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \u{a9} 2026 NextScan \x1b[34m]--\x1b[0m\r\n\
+\r\n\
+\r\n\
+\x1b[0m  N                           \x1b[36m- Prompt for date and dir\r\n\
+\x1b[0m  N ?                         \x1b[36m- Show this help text\r\n\
+\x1b[0m  N W                         \x1b[36m- Configure NextScan\r\n\
+\x1b[0m  N [S] [dir] [Q] [NS]        \x1b[36m- Scan since day of last call\r\n\
+\x1b[0m  N mm-dd[-yy] [dir] [Q] [NS] \x1b[36m- Scan since the specified date\r\n\
+\x1b[0m  N T [dir] [Q] [NS]          \x1b[36m- Scan today's files\r\n\
+\x1b[0m  N Y [dir] [Q] [NS]          \x1b[36m- Scan since yesterday\r\n\
+\x1b[0m  N -x [dir] [Q] [NS]         \x1b[36m- Scan since x days back\r\n\
+\x1b[0m  N !x [dir] [Q] [NS]         \x1b[36m- Scan the x newest files\r\n\
+\x1b[0m  N R [dir] [Q] [NS]          \x1b[36m- Scan the dir in reverse chronological order\r\n\
+       ^     ^   ^\r\n\
+       |     |   |\r\n\
+       |     |   `-- Non-stop scrolling\r\n\
+       |     `--- Quick scan = Show only first line of every description\r\n\
+       |\r\n\
+       +-- U -- Upload dir (default)\r\n\
+       +-- A -- All dirs\r\n\
+       +-- x -- Dir number x\r\n\
+       `-- H -- Hold dir\r\n\
+\x1b[0m\r\n\
+\x1b[0m\x1b[0m\r\n\
+\x1b[0m\r\n\
+";
+
 // --- Slice D4: the internal `Z` (zippy text search) wire ---------------
 //
 // `Z` runs `internalCommandZ` (`amiexpress/express.e:26123`), *not* the
@@ -967,6 +1069,114 @@ mod tests {
                 aligned: false,
             }),
         );
+    }
+
+    /// The captured `AquaScan` `N` originals (`ae_tierd_newfiles.txt`
+    /// N1a / N6) the `NextScan` swaps must match in visible width.
+    const AQUASCAN_NEW_FILES_BANNER: &[u8] =
+        b"\x1b[0m\x1b[34m--[ \x1b[36mAquaScan v1.0 by Aquarius/Outlaws \x1b[34m]---------------[ \x1b[36m'n ?' for options \x1b[34m]--\x1b[0m";
+
+    #[test]
+    fn new_files_banner_swaps_the_brand_and_holds_the_frame_width() {
+        // N1a: the N banner is the listing banner with the `'n ?'`
+        // label — same label width as `'f ?'`, so the dash run stays 40
+        // and the frame at 77 visible columns.
+        assert_eq!(
+            NEW_FILES_BANNER,
+            &b"\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'n ?' for options \x1b[34m]--\x1b[0m"[..],
+        );
+        assert_eq!(visible_width(NEW_FILES_BANNER), 77);
+        assert_eq!(
+            visible_width(NEW_FILES_BANNER),
+            visible_width(AQUASCAN_NEW_FILES_BANNER),
+        );
+    }
+
+    #[test]
+    fn date_prompt_matches_the_capture() {
+        // N1a (pass 2): the full SGR sequence with the default date
+        // spliced after `=`, ending `?\x1b[0m ` (trailing space —
+        // the harness sentinel matched it).
+        assert_eq!(
+            date_prompt("07-03-26"),
+            b"\x1b[36mDate: \x1b[32m(\x1b[33mMM-DD-YY\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33m-X\x1b[32m) \x1b[36mDays, \x1b[32m(\x1b[33mR\x1b[32m)\x1b[36meverse, \x1b[32m(\x1b[33mEnter\x1b[32m)\x1b[36m=07-03-26 ?\x1b[0m ".to_vec(),
+        );
+    }
+
+    #[test]
+    fn new_files_headers_match_the_captures() {
+        // N1b / N2 / N7n; the HOLD variants are the uncaptured
+        // dir→HOLD substitution (PLAUSIBLE).
+        assert_eq!(
+            scanning_new_header(2, "01-01-26", true),
+            b"Scanning dir 2 for 01-01-26... Ok!".to_vec(),
+        );
+        assert_eq!(
+            scanning_new_header(1, "07-03-26", false),
+            b"Scanning dir 1 for 07-03-26... Nothing found!".to_vec(),
+        );
+        assert_eq!(
+            scanning_newest_header(2, 2, true),
+            b"Scanning dir 2 for the last 2 files... Ok!".to_vec(),
+        );
+        assert_eq!(
+            scanning_newest_header(1, 99, false),
+            b"Scanning dir 1 for the last 99 files... Nothing found!".to_vec(),
+        );
+        assert_eq!(
+            scanning_new_hold_header("01-01-26", false),
+            b"Scanning HOLD dir for 01-01-26... Nothing found!".to_vec(),
+        );
+        assert_eq!(
+            scanning_new_hold_header("01-01-26", true),
+            b"Scanning HOLD dir for 01-01-26... Ok!".to_vec(),
+        );
+        assert_eq!(
+            scanning_newest_hold_header(2, false),
+            b"Scanning HOLD dir for the last 2 files... Nothing found!".to_vec(),
+        );
+        assert_eq!(
+            scanning_newest_hold_header(3, true),
+            b"Scanning HOLD dir for the last 3 files... Ok!".to_vec(),
+        );
+        assert_eq!(ERROR_IN_DATE, &b"Error in date!"[..]);
+        assert_eq!(
+            NEW_FILES_ARGUMENT_ERROR,
+            &b"Argument error! Type 'n ?' for help."[..],
+        );
+    }
+
+    #[test]
+    fn new_files_help_screen_matches_the_rebranded_capture() {
+        // N6, byte-exact with the two branding swaps (Copyright banner
+        // + `Configure NextScan`); the epilogue is the captured
+        // reset/doubled-reset/reset triple.
+        let expected = format!(
+            "\x1b[0m\x0c\r\n{HELP_BANNER}\r\n\r\n\r\n\
+\x1b[0m  N                           \x1b[36m- Prompt for date and dir\r\n\
+\x1b[0m  N ?                         \x1b[36m- Show this help text\r\n\
+\x1b[0m  N W                         \x1b[36m- Configure NextScan\r\n\
+\x1b[0m  N [S] [dir] [Q] [NS]        \x1b[36m- Scan since day of last call\r\n\
+\x1b[0m  N mm-dd[-yy] [dir] [Q] [NS] \x1b[36m- Scan since the specified date\r\n\
+\x1b[0m  N T [dir] [Q] [NS]          \x1b[36m- Scan today's files\r\n\
+\x1b[0m  N Y [dir] [Q] [NS]          \x1b[36m- Scan since yesterday\r\n\
+\x1b[0m  N -x [dir] [Q] [NS]         \x1b[36m- Scan since x days back\r\n\
+\x1b[0m  N !x [dir] [Q] [NS]         \x1b[36m- Scan the x newest files\r\n\
+\x1b[0m  N R [dir] [Q] [NS]          \x1b[36m- Scan the dir in reverse chronological order\r\n\
+       ^     ^   ^\r\n\
+       |     |   |\r\n\
+       |     |   `-- Non-stop scrolling\r\n\
+       |     `--- Quick scan = Show only first line of every description\r\n\
+       |\r\n\
+       +-- U -- Upload dir (default)\r\n\
+       +-- A -- All dirs\r\n\
+       +-- x -- Dir number x\r\n\
+       `-- H -- Hold dir\r\n\
+\x1b[0m\r\n\x1b[0m\x1b[0m\r\n\x1b[0m\r\n"
+        );
+        assert_eq!(NEW_FILES_HELP_SCREEN, expected);
+        assert!(NEW_FILES_HELP_SCREEN.contains("- Configure NextScan\r\n"));
+        assert!(!NEW_FILES_HELP_SCREEN.contains("AquaScan"));
     }
 
     #[test]

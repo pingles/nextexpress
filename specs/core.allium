@@ -282,7 +282,12 @@ entity ConferenceMembership {
     -- — see docs/superpowers/specs/2026-06-03-cf-conference-flags-design.md, D2.
     mail_scan: Boolean = true           -- include in the new-mail scan (M; CS/MS)
     mailscan_all: Boolean = false       -- scan all messages, not just addressed (A)
-    file_scan: Boolean = true           -- include in the new-files scan (F; N)
+    -- file_scan gates ONLY the logon confScan file pass (checkFileConfScan,
+    -- express.e:591-608, :28066-28115 — runs `N S U` per flagged conference);
+    -- the menu N command scans the current conference unconditionally
+    -- (capture ae_tierd_newfiles.txt, slice D9). The earlier "(F; N)" note
+    -- overstated its reach.
+    file_scan: Boolean = true           -- include in the logon new-files scan (F)
     zoom_scan: Boolean = false          -- include in the ZOOM/QWK gather (Z)
 
     -- Read pointers. Per (user, msgbase), updated as the user reads messages.

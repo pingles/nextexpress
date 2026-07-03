@@ -198,11 +198,11 @@ async fn ms_offers_to_read_found_mail_now_and_drops_into_the_read_subprompt() {
 }
 
 #[tokio::test]
-async fn n_is_an_unknown_command_and_no_longer_scans_mail_over_telnet() {
-    // Tier B B2: `N`'s mail-scan binding (a drift) is removed; the real
-    // new-files scan lands in Tier D. Until then `N` is unrecognized.
-    // Conference 2 carries unread mail — if `N` still scanned, it would
-    // surface here.
+async fn n_opens_the_new_files_scan_and_no_longer_scans_mail_over_telnet() {
+    // Tier B B2 removed `N`'s mail-scan binding (a drift); Tier D D9 gave
+    // the token its legacy meaning — the new-files scan's date prompt.
+    // Conference 2 carries unread mail — if `N` still scanned mail, it
+    // would surface here.
     let dir = tempfile::tempdir().expect("tempdir");
     let conf1_msgbase = dir.path().join("conf1_msgbase");
     let conf2_msgbase = dir.path().join("conf2_msgbase");
@@ -220,22 +220,38 @@ async fn n_is_an_unknown_command_and_no_longer_scans_mail_over_telnet() {
     let mut stream = sign_in_seeded_sysop(&addr).await;
 
     write_line(&mut stream, b"N").await;
-    let out = drain_until(&mut stream, b"mins. left): ").await;
+    let prompt = drain_until(&mut stream, b"MM-DD-YY").await;
 
     assert!(
-        contains(&out, b"Unknown command. Type G to log off.\r\n"),
-        "N must now be an unknown command, got {:?}",
+        contains(&prompt, b"'n ?' for options"),
+        "N must open the NextScan new-files banner, got {:?}",
+        String::from_utf8_lossy(&prompt)
+    );
+    assert!(
+        !contains(&prompt, b"Unknown command."),
+        "N must no longer be an unknown command, got {:?}",
+        String::from_utf8_lossy(&prompt)
+    );
+
+    // A junk answer exits the single-shot date prompt straight to the
+    // menu (ae_tierd_newfiles.txt N5) — no pager to drive in this
+    // area-less fixture.
+    write_line(&mut stream, b"XYZ").await;
+    let out = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&out, b"Error in date!"),
+        "junk date must exit with the captured error, got {:?}",
         String::from_utf8_lossy(&out)
     );
     // `N` must run no mail scan at all: no summary for the (empty)
     // current conference, and conference 2's mail stays unsurfaced.
     assert!(
-        !contains(&out, b"No new mail."),
+        !contains(&prompt, b"No new mail.") && !contains(&out, b"No new mail."),
         "N must not scan the current conference, got {:?}",
         String::from_utf8_lossy(&out)
     );
     assert!(
-        !contains(&out, b"You have ") && !contains(&out, b"Tier B Greetings"),
+        !contains(&prompt, b"Tier B Greetings") && !contains(&out, b"Tier B Greetings"),
         "N must not surface any mail, got {:?}",
         String::from_utf8_lossy(&out)
     );

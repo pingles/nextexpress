@@ -794,6 +794,9 @@ where
             // Slice D4 (`Z`): the internal zippy text search — see
             // `file_list::handle_zippy_search` for the parity record.
             MenuCommand::ZippySearch(arg) => self.handle_zippy_search(&mut session, arg).await?,
+            // Slice D9 (`N`): the NextScan new-files scan — the AquaScan
+            // door surface (`comparison/transcripts/ae_tierd_newfiles.txt`).
+            MenuCommand::NewFilesScan(arg) => self.handle_new_files(&mut session, arg).await?,
             // Slices D6a/D6b (`A`): the `alterFlags` flag listing +
             // `Filename(s) to flag:` prompt loop (`amiexpress/express.e:12648`).
             MenuCommand::AlterFlags => self.handle_alter_flags(&mut session).await?,

@@ -110,12 +110,13 @@ binding to the legacy multi-conference scan.
 
 `N`'s mail-scan binding (a NextExpress drift — legacy `N` is the
 new-files scan, `express.e:25275`) is removed. Rather than a silent
-no-op, `N` is now an **unknown command** (it falls through to
-`MenuCommand::Unknown` and emits the standard unknown-command notice),
-and its line is dropped from `Conf02/Menu5.txt`. `N` and its menu entry
-return in Tier D (`cmds-files-list.md`) as the new-files scan — the
-board-as-shipped AquaScan date-scan experience, since the stock
-deployment's door icons shadow the internal `N` (see
+no-op, `N` became an **unknown command** (falling through to
+`MenuCommand::Unknown` with the standard unknown-command notice),
+and its line was dropped from `Conf02/Menu5.txt`. *That interim ended
+2026-07-03*: Tier D's D9 slice (`cmds-files-list.md`) rebound `N` and
+its menu entry to the new-files scan — the board-as-shipped AquaScan
+date-scan experience, since the stock deployment's door icons shadow
+the internal `N` (see
 `comparison/evidence-tierD/live-observations.md`).
 
 - **What was removed:** since `N` was the only consumer of

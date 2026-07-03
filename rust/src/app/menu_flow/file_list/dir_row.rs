@@ -72,7 +72,15 @@ fn size_column(count: u64) -> String {
 }
 
 fn date_column(file: &File) -> String {
-    time::OffsetDateTime::from(file.uploaded_at())
+    format_dir_date(file.uploaded_at())
+}
+
+/// `at` rendered as the legacy `MM-DD-YY` (UTC) — the one source of
+/// the date shape, shared by DIR rows, the separator blocks and the
+/// `N` scan's headers and prompt default (slice D9), so a header can
+/// never disagree with the rows it titles.
+pub(super) fn format_dir_date(at: std::time::SystemTime) -> String {
+    time::OffsetDateTime::from(at)
         .format(DIR_DATE)
         .expect("MM-DD-YY format cannot fail for in-range timestamps")
 }

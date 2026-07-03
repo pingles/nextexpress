@@ -1285,6 +1285,13 @@ async fn failing_repository_renders_like_an_empty_catalogue() {
         ) -> Result<Vec<crate::domain::files::file::File>, FileRepositoryError> {
             Err(backend_failure())
         }
+        fn list_new_since(
+            &self,
+            _: FileAreaRef,
+            _: SystemTime,
+        ) -> Result<Vec<crate::domain::files::file::File>, FileRepositoryError> {
+            Err(backend_failure())
+        }
     }
 
     let span_arg = || FileListArg::Span {

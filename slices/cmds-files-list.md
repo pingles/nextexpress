@@ -438,29 +438,68 @@ visible divergence. Captured live in
 - **Out of Scope**
   - Per-area drive quotas — not modelled in the spec.
 
-## Slice D9 — `N` (new files scan, file semantic)
+## Slice D9 — `N` (new files scan, file semantic) — DONE 2026-07-03
 
-- **In Scope**
-  - Parser: `MenuCommand::NewFilesScan(params)` — replaces the
+> The original slice text (git history) planned a multi-conference
+> walk gated by the `CF` file-scan flag, captured only via the door's
+> `SCAN`/`NSU` siblings. The dedicated live capture
+> (`comparison/transcripts/ae_tierd_newfiles.txt`, two full passes,
+> sections N1–N9) **refuted both claims**: menu `N` scans the
+> **current conference only** (N9 shows `(1-1)` in a one-area
+> conference) and never consults the `CF` flag
+> (`express.e:591-608`/`:28089` gate only the logon `confScan`). The
+> text below is corrected to what landed; design brief:
+> `designs/2026-07-03-n-newfiles-scan-design.md`.
+
+- **In Scope (landed)**
+  - Parser: `MenuCommand::NewFilesScan(NewFilesArg)` — replaces the
     placeholder no-op slot left by [cmds-mail-finish.md](cmds-mail-finish.md)'s
-    B2 slice.
-  - UX per the captured AquaScan flow: the
-    `Date: (MM-DD-YY), (-X) Days, (R)everse, (Enter)…` prompt,
-    `Error in date!` on bad input, then date-filtered scan headers
-    `Scanning dir N for <mm-dd-yy>... Ok! / Nothing found!`
-    (captured via the door's `SCAN`/`NSU` siblings, which share the
-    engine — `ae_tierd_aquascan3.txt` S12, `ae_tierd_aquascan.txt`
-    P2/P4).
-  - Walks every area in the current conference (or every area
-    flagged for file-scan if `F` was set in `CF`), listing files
-    whose `uploaded_at` is newer than the requested date.
+    B2 slice. Full captured grammar
+    `N [S|mm-dd[-yy]|T|Y|-x|!x|R] [dir] [Q] [NS]` (N6/N7): `T` today,
+    `Y` yesterday, `S`/bare-dir since-last-call, `-x` days back,
+    `!x` newest-x (ascending tail), `R` full reverse (the FR mode,
+    date-less), `Q` quick (first description line only), `NS`
+    non-stop. Exact-head dispatch so the `NS`/`NSU` door siblings
+    never bind; `N W` (door self-config) deliberately unported →
+    `Argument error! Type 'n ?' for help.` (the `F W` precedent).
+  - Prompt path (bare `N`): the NextScan banner (label `'n ?'`), the
+    `Date: (MM-DD-YY), (-X) Days, (R)everse, (Enter)=<mm-dd-yy> ?`
+    prompt (Enter default = **day of the previous call** via
+    `user.last_call()`; a first-time caller gets today), single-shot
+    `Error in date!` on a bad answer (the internal's looping prompt is
+    diff-record only), then the door's own
+    `Directories: (1-N), (A)ll, (U)pload, (H)old, (Enter)=None ?`
+    prompt — byte-identical to bare `F`'s, current conference only.
+  - Engine: `ScanKind::NewSince { cutoff, label }` (inclusive
+    `uploaded_at >= cutoff`, `express.e:27976-27986` `ddt>=day`; UTC
+    day boundary) and `ScanKind::NewestLast { count }` over the
+    item-17 engine; filtered sets renumber from `[ File #1 ]`; the
+    port method is `FileRepository::list_new_since`. Dates resolve
+    through the `Clock` port only (`ManualClock` in tests); two-digit
+    years pivot at 77 (`axconsts.e:41`).
+  - Two page-counting models, both capture-pinned: the prompt path
+    counts from the post-answer blank (the door resets its counter at
+    each interactive prompt — N2's 29-line pin); the inline path
+    counts its preamble (N7c's 29-from-reset pin, F's span-path
+    model).
+  - Wire: `wire.rs` "Slice D9" section; `N ?` help screen byte-exact
+    from N6 with the NextScan branding swaps; menu advert row in
+    `Conf02/Menu5.txt`; smoke
+    `rust/tests/tierd_newfiles_smoke.rs` (two-session last-call
+    default, page-1 pin, hotkey Q, UTF-8 gate).
   - The internal `N`'s looping
     `Date as (mm-dd-yy) to search from (Enter)=: ` prompt is the
     shadowed stock path — diff record only (and a harness hazard:
     it consumes every line until a valid date).
 - **Out of Scope**
-  - File-scan-all-conferences (legacy doesn't have a `NS`
-    convention; defer if asked).
+  - Multi-conference scanning (the `SCAN`/`NSU` door siblings and the
+    logon `confScan`'s `runSysCommand('N','S U')`) — the deferred
+    section-layer seam recorded in SYSTEM.md item 17.
+  - The TO-CONFIRM behaviours shipped provisionally (each a PLAUSIBLE
+    row in COMMAND_PARITY.md): `H` under a date scan, inline-only
+    verbs at the date prompt, junk at N's Directories prompt, bare
+    `N <dir>`'s date source, `mm-dd` year default, calendar-strict
+    date validation, `!x` edges.
 
 ## Slice D-wire — Tier D (browse) wire-and-smoke
 

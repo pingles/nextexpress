@@ -57,14 +57,6 @@ async fn listener_walks_phase6_mail_read_flow_over_telnet() {
     write_line(&mut stream, b"Q").await;
     drain_until(&mut stream, b"mins. left): ").await;
 
-    write_line(&mut stream, b"N").await;
-    let post_n = drain_until(&mut stream, b"mins. left): ").await;
-    assert!(
-        contains(&post_n, b"Unknown command. Type G to log off."),
-        "expected `N` to be an unknown command after the B2 rebind, got {:?}",
-        String::from_utf8_lossy(&post_n)
-    );
-
     write_line(&mut stream, b"J 1").await;
     let post_j = drain_until(&mut stream, b"mins. left): ").await;
     assert!(

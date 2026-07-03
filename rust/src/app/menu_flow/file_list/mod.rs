@@ -7,6 +7,7 @@
 //! (`amiexpress/express.e:24877`) is the stock diff record only.
 
 mod dir_row;
+mod new_files;
 mod scan;
 #[cfg(test)]
 mod test_support;
@@ -60,6 +61,16 @@ where
             .file_repo
             .list_held(conference)
             .unwrap_or_else(|error| empty_on_error("list_held", &error))
+    }
+
+    /// One area's listing-visible files uploaded on/after `since`
+    /// (inclusive — the `N` date filter), under the row-5 error policy
+    /// ([`empty_on_error`]).
+    fn new_files_in_area(&self, area: FileAreaRef, since: std::time::SystemTime) -> Vec<File> {
+        self.services
+            .file_repo
+            .list_new_since(area, since)
+            .unwrap_or_else(|error| empty_on_error("list_new_since", &error))
     }
 
     /// Drives the `F` menu command — the `NextScan` lister.

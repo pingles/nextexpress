@@ -15,6 +15,7 @@
 //! slice (D-T1).
 
 use std::error::Error;
+use std::time::SystemTime;
 
 use crate::domain::files::area::{FileArea, FileAreaRef};
 use crate::domain::files::file::File;
@@ -64,4 +65,19 @@ pub trait FileRepository {
     /// # Errors
     /// [`FileRepositoryError::Backend`] when the backing store fails.
     fn list_held(&self, conference: u32) -> Result<Vec<File>, FileRepositoryError>;
+
+    /// Listing-visible files of `area` uploaded at or after `since`
+    /// (**inclusive** — the `N` date filter, `express.e:27976-27986`
+    /// `ddt>=day`), under the same visibility filter and ordering
+    /// contract as [`find_in_area`](Self::find_in_area) (`uploaded_at`
+    /// ascending, insertion-order tiebreak). Day-boundary conversion is
+    /// the caller's concern; the port compares raw instants.
+    ///
+    /// # Errors
+    /// [`FileRepositoryError::Backend`] when the backing store fails.
+    fn list_new_since(
+        &self,
+        area: FileAreaRef,
+        since: SystemTime,
+    ) -> Result<Vec<File>, FileRepositoryError>;
 }

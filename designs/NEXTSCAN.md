@@ -189,8 +189,9 @@ Deferred methods, first reader named: `list_new_since` (D9/N), `search_descripti
 | 1 | banner centre `AquaScan v1.0 by Aquarius/Outlaws ` (34) | `NextScan ` (9) | dash run +25 |
 | 2 | help banner right `Copyright \xa9 1994 Aquarius ` (26) | `Copyright \xa9 2026 NextScan ` (26) | unchanged |
 | 3 | help line `- Configure AquaScan` (20) | `- Configure NextScan` (20) | unchanged |
+| 4 | `N` banner right `'n ?' for options ` (18, D9 — `ae_tierd_newfiles.txt` N1a) | unchanged label; centre swap per row 1 | dash run +25 (15→40; `'n ?'` is `'f ?'`-width, so the landed F banner geometry holds at 77) |
 
-Dash-run stretch per banner (centre flex +25): listing `'f ?'` 15→40; help 9→34; D3's `'fr ?'` 14→39; D9's date-scan variants when they land (door `'scan ?'` 12, `'nsu ?'` 13 — +25 likewise). Visible totals preserved: listing banner 77, help banner 79. Unit tests assert visible-width equality with the captured AquaScan originals (count bytes excluding `ESC[..m`). ~~The `\xa9` stays a Latin-1 byte inside `&[u8]` consts.~~ **Superseded by wire-encoding policy (AGENTS.md "Wire encoding", 2026-06-12)** — `\xa9` and all high-bit art bytes are now emitted as UTF-8 (`\u{a9}` etc.) inside `&str` constants.
+Dash-run stretch per banner (centre flex +25): listing `'f ?'` 15→40; help 9→34; D3's `'fr ?'` 14→39; **D9's `'n ?'` 15→40 (landed 2026-07-03 — the N banner and the rebranded `N ?` help screen reuse rows 2–3 byte-for-byte)**; the remaining door siblings when they land (`'scan ?'` 12, `'nsu ?'` 13 — +25 likewise). Visible totals preserved: listing banner 77, help banner 79. Unit tests assert visible-width equality with the captured AquaScan originals (count bytes excluding `ESC[..m`). ~~The `\xa9` stays a Latin-1 byte inside `&[u8]` consts.~~ **Superseded by wire-encoding policy (AGENTS.md "Wire encoding", 2026-06-12)** — `\xa9` and all high-bit art bytes are now emitted as UTF-8 (`\u{a9}` etc.) inside `&str` constants.
 
 ## 8. Parser, dispatch, composition
 
