@@ -143,6 +143,47 @@ struct CommentToSysopInput {
     posted_at: SystemTime,
 }
 
+/// The wire line for a static post outcome — a pure mapping so a plain
+/// `#[test]` pins each byte choice without a capture terminal or async
+/// runtime (SYSTEM.md item 10). `Posted` renders a dynamic success
+/// line and maps to `None`; the two log side effects (`LookupFailed`,
+/// `Rejected(Store)`) stay in the async handler.
+fn post_outcome_line(outcome: &PostMailOutcome) -> Option<&'static [u8]> {
+    match outcome {
+        PostMailOutcome::NoMailBase => Some(NO_MAIL_BASE_LINE),
+        PostMailOutcome::UnknownUser => Some(POST_UNKNOWN_USER_LINE),
+        PostMailOutcome::RecipientNoAccess => Some(POST_RECIPIENT_NO_ACCESS_LINE),
+        PostMailOutcome::NoSysop => Some(NO_SYSOP_LINE),
+        // Both store-shaped failures share the fixed notify-the-sysop
+        // surface; their distinct log lines live in the handler.
+        PostMailOutcome::LookupFailed(_) | PostMailOutcome::Rejected(PostMailError::Store(_)) => {
+            Some(MAIL_STORE_ERROR_LINE)
+        }
+        PostMailOutcome::Posted(_) => None,
+        PostMailOutcome::Rejected(PostMailError::AccessDenied) => Some(POST_ACCESS_DENIED_LINE),
+        // The poster's own membership is missing. The auto-rejoin would
+        // normally have caught this on logon, so reaching it here means
+        // the sysop revoked mid-session — same wire surface as
+        // POST_RECIPIENT_NO_ACCESS_LINE keeps the listener honest about
+        // why the post failed.
+        PostMailOutcome::Rejected(PostMailError::NoMembership) => {
+            Some(POST_RECIPIENT_NO_ACCESS_LINE)
+        }
+        // Defensive: the editor gates empty recipients and oversized
+        // input upstream. The rule's gates fire only if a future
+        // refactor lets an invalid draft slip past.
+        PostMailOutcome::Rejected(
+            PostMailError::EmptyAddressee
+            | PostMailError::AddresseeMismatch
+            | PostMailError::SubjectTooLong
+            | PostMailError::BodyTooLong,
+        ) => Some(POST_ABORTED_LINE),
+        PostMailOutcome::Rejected(PostMailError::AddressingNotAllowed) => {
+            Some(POST_ADDRESSING_NOT_ALLOWED_LINE)
+        }
+    }
+}
+
 /// Outcome of a terminal-free post command.
 enum PostMailOutcome {
     /// The session has no usable message base.
@@ -430,60 +471,23 @@ where
         outcome: PostMailOutcome,
         command_label: &str,
     ) -> Result<(), T::Error> {
-        match outcome {
-            PostMailOutcome::NoMailBase => {
-                self.write_and_flush(NO_MAIL_BASE_LINE).await?;
-            }
-            PostMailOutcome::UnknownUser => {
-                self.write_and_flush(POST_UNKNOWN_USER_LINE).await?;
-            }
-            PostMailOutcome::RecipientNoAccess => {
-                self.write_and_flush(POST_RECIPIENT_NO_ACCESS_LINE).await?;
-            }
-            PostMailOutcome::NoSysop => {
-                self.write_and_flush(NO_SYSOP_LINE).await?;
-            }
+        match &outcome {
             PostMailOutcome::LookupFailed(error) => {
                 eprintln!("{command_label} command: failed to resolve user: {error}");
-                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
             }
-            PostMailOutcome::Posted(mail) => {
-                let line = render_post_success(mail.number());
-                self.write_and_flush(&line).await?;
+            PostMailOutcome::Rejected(PostMailError::Store(error)) => {
+                eprintln!("{command_label} command: failed to persist mail: {error}");
             }
-            PostMailOutcome::Rejected(PostMailError::AccessDenied) => {
-                self.write_and_flush(POST_ACCESS_DENIED_LINE).await?;
-            }
-            PostMailOutcome::Rejected(PostMailError::NoMembership) => {
-                // The poster's own membership is missing. The
-                // auto-rejoin would normally have caught this on
-                // logon, so reaching it here means the sysop revoked
-                // mid-session — same wire surface as
-                // POST_RECIPIENT_NO_ACCESS_LINE keeps the listener
-                // honest about why the post failed.
-                self.write_and_flush(POST_RECIPIENT_NO_ACCESS_LINE).await?;
-            }
-            PostMailOutcome::Rejected(
-                PostMailError::EmptyAddressee
-                | PostMailError::AddresseeMismatch
-                | PostMailError::SubjectTooLong
-                | PostMailError::BodyTooLong,
-            ) => {
-                // Defensive: the editor gates empty recipients and
-                // oversized input upstream. The rule's gates fire only
-                // if a future refactor lets an invalid draft slip past.
-                self.write_and_flush(POST_ABORTED_LINE).await?;
-            }
-            PostMailOutcome::Rejected(PostMailError::AddressingNotAllowed) => {
-                self.write_and_flush(POST_ADDRESSING_NOT_ALLOWED_LINE)
-                    .await?;
-            }
-            PostMailOutcome::Rejected(PostMailError::Store(err)) => {
-                eprintln!("{command_label} command: failed to persist mail: {err}");
-                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
-            }
+            _ => {}
         }
-        Ok(())
+        if let Some(line) = post_outcome_line(&outcome) {
+            return self.write_and_flush(line).await;
+        }
+        let PostMailOutcome::Posted(mail) = outcome else {
+            unreachable!("only Posted renders a dynamic line");
+        };
+        let line = render_post_success(mail.number());
+        self.write_and_flush(&line).await
     }
 
     /// Reads a single non-empty trimmed line in response to `prompt`,
@@ -498,29 +502,19 @@ where
         prompt: &[u8],
         silent: bool,
     ) -> Result<Option<String>, T::Error> {
-        match self.read_prompted(prompt, TerminalEcho::Visible).await? {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    self.write_abort_notice(silent).await?;
-                    return Ok(None);
-                }
-                Ok(Some(trimmed.to_string()))
-            }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                self.write_abort_notice(silent).await?;
-                Ok(None)
-            }
+        let notice = if silent {
+            super::AbortNotice::Silent
+        } else {
+            super::AbortNotice::MessageAborted
+        };
+        match self
+            .prompt_line(session, prompt, super::EmptyMeaning::Abort, notice)
+            .await?
+        {
+            super::PromptLine::Entered(line) => Ok(Some(line)),
+            super::PromptLine::Aborted => Ok(None),
+            super::PromptLine::Kept => unreachable!("Abort prompts have no keep branch"),
         }
-    }
-
-    /// Writes the `Message aborted.` notice unless `silent`.
-    async fn write_abort_notice(&mut self, silent: bool) -> Result<(), T::Error> {
-        if !silent {
-            self.write_and_flush(POST_ABORTED_LINE).await?;
-        }
-        Ok(())
     }
 
     /// Reads a single trimmed line in response to `prompt`, returning
@@ -532,15 +526,18 @@ where
         session: &mut MenuSession,
         prompt: &[u8],
     ) -> Result<Option<String>, T::Error> {
-        match self.read_prompted(prompt, TerminalEcho::Visible).await? {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                Ok(Some(line.trim().to_string()))
-            }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                self.write_and_flush(POST_ABORTED_LINE).await?;
-                Ok(None)
-            }
+        match self
+            .prompt_line(
+                session,
+                prompt,
+                super::EmptyMeaning::Verbatim,
+                super::AbortNotice::MessageAborted,
+            )
+            .await?
+        {
+            super::PromptLine::Entered(line) => Ok(Some(line)),
+            super::PromptLine::Aborted => Ok(None),
+            super::PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
         }
     }
 
@@ -665,19 +662,34 @@ where
                     session.record_input(self.services.clock.now());
                     let trimmed = line.trim();
                     if trimmed.eq_ignore_ascii_case("/A") {
-                        self.write_abort_notice(silent).await?;
+                        self.abort_notice(if silent {
+                            super::AbortNotice::Silent
+                        } else {
+                            super::AbortNotice::MessageAborted
+                        })
+                        .await?;
                         return Ok(None);
                     }
                     if trimmed == "." {
                         return Ok(Some(body));
                     }
                     if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
-                        self.write_abort_notice(silent).await?;
+                        self.abort_notice(if silent {
+                            super::AbortNotice::Silent
+                        } else {
+                            super::AbortNotice::MessageAborted
+                        })
+                        .await?;
                         return Ok(None);
                     }
                 }
                 TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                    self.write_abort_notice(silent).await?;
+                    self.abort_notice(if silent {
+                        super::AbortNotice::Silent
+                    } else {
+                        super::AbortNotice::MessageAborted
+                    })
+                    .await?;
                     return Ok(None);
                 }
             }
@@ -688,6 +700,77 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_post_outcome_lines_pin_the_wire_bytes() {
+        // Item 10's line_for extraction: every static outcome arm is a
+        // pure mapping, pinned with plain byte asserts (no capture
+        // terminal, no async runtime). `Posted` renders a dynamic
+        // success line and maps to `None` — covered by the handler
+        // tests.
+        fn store_error() -> crate::domain::messaging::mail_store::MailStoreError {
+            crate::domain::messaging::mail_store::MailStoreError::Backend {
+                source: "backing store unavailable".into(),
+            }
+        }
+
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::NoMailBase),
+            Some(NO_MAIL_BASE_LINE)
+        );
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::UnknownUser),
+            Some(POST_UNKNOWN_USER_LINE)
+        );
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::RecipientNoAccess),
+            Some(POST_RECIPIENT_NO_ACCESS_LINE)
+        );
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::NoSysop),
+            Some(NO_SYSOP_LINE)
+        );
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::LookupFailed(
+                UserRepositoryError::Storage {
+                    context: "test",
+                    message: "down".to_string(),
+                }
+            )),
+            Some(MAIL_STORE_ERROR_LINE)
+        );
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::Rejected(PostMailError::AccessDenied)),
+            Some(POST_ACCESS_DENIED_LINE)
+        );
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::Rejected(PostMailError::NoMembership)),
+            Some(POST_RECIPIENT_NO_ACCESS_LINE)
+        );
+        for defensive in [
+            PostMailError::EmptyAddressee,
+            PostMailError::AddresseeMismatch,
+            PostMailError::SubjectTooLong,
+            PostMailError::BodyTooLong,
+        ] {
+            assert_eq!(
+                post_outcome_line(&PostMailOutcome::Rejected(defensive)),
+                Some(POST_ABORTED_LINE)
+            );
+        }
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::Rejected(
+                PostMailError::AddressingNotAllowed
+            )),
+            Some(POST_ADDRESSING_NOT_ALLOWED_LINE)
+        );
+        assert_eq!(
+            post_outcome_line(&PostMailOutcome::Rejected(PostMailError::Store(
+                store_error()
+            ))),
+            Some(MAIL_STORE_ERROR_LINE)
+        );
+    }
 
     fn assert_all(result: Recipient, context: &str) {
         if let Recipient::Broadcast(BroadcastTo::All, label) = result {

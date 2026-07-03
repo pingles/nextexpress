@@ -724,6 +724,28 @@ fn version_banner_starts_with_crlf_and_omits_registration_key_line() {
 }
 
 #[tokio::test]
+async fn flag_prompt_stamps_the_idle_clock() {
+    // Item 10's fraying-stamp finding: the `A` loop's FLAG_PROMPT read
+    // skipped `record_input`, so a caller actively typing at the flag
+    // prompt still looked idle to the menu loop's timeout accounting.
+    // Every accepted prompt line must stamp the idle clock — the merged
+    // reader owns the stamp so a new prompt cannot forget it.
+    let mut services = test_services();
+    let stamp = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+    services.clock = Arc::new(crate::adapters::system_clock::ManualClock::set_to(stamp));
+    let mut terminal = CaptureTerminal::with_lines(vec![TerminalRead::Line(String::new())]);
+    let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
+    let DispatchOutcome::Continue(session) = outcome else {
+        panic!("a blank flag-prompt line returns to the menu");
+    };
+    assert_eq!(
+        session.into_inner().last_input_at(),
+        stamp,
+        "the accepted flag-prompt line stamps the idle clock"
+    );
+}
+
+#[tokio::test]
 async fn t_command_renders_the_clock_ports_instant_exactly() {
     // The `T` handler must resolve "now" through `services.clock`, not
     // the ambient `SystemTime::now()` — the seam that lets tests (and

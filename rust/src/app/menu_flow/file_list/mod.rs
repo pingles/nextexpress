@@ -10,7 +10,7 @@ mod dir_row;
 mod wire;
 
 use crate::app::menu_command::{FileListArg, FileSpan, ZippyArg};
-use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{KeyEvent, KeyRead, Terminal};
 use crate::app::wire_text::CRLF;
 use crate::domain::files::area::{FileArea, FileAreaRef};
 use crate::domain::files::file::File;
@@ -109,29 +109,36 @@ where
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
-        // The renderer reads the flag set immutably to mark rows, but
-        // the `F`/`R` pager verbs mutate it — so borrow it mutably for
-        // the whole span and reborrow immutably only at the assemble
-        // call. `session` is otherwise untouched after this point.
-        let flagged = session.flagged_files_mut();
         let mut state = ScanState::new(false);
 
-        for line in [&b"\x1b[0m"[..], wire::listing_banner(reverse), b""] {
-            if self
-                .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()), flagged)
-                .await?
-                == ScanFlow::Quit
-            {
-                return self.finish_listing().await;
+        // The banner emits borrow the flag set only within this block,
+        // so the prompt read below can take `session` mutably (the
+        // merged reader stamps the idle clock on it).
+        {
+            let flagged = session.flagged_files_mut();
+            for line in [&b"\x1b[0m"[..], wire::listing_banner(reverse), b""] {
+                if self
+                    .emit_scan_line(&mut state, wire::ScanLine::raw(line.to_vec()), flagged)
+                    .await?
+                    == ScanFlow::Quit
+                {
+                    return self.finish_listing().await;
+                }
             }
         }
-        let read = self
-            .read_prompted(&wire::directories_prompt(max), TerminalEcho::Visible)
-            .await?;
-        let TerminalRead::Line(answer) = read else {
-            return self.terminal.flush().await;
+        let answer = match self
+            .prompt_line(
+                session,
+                &wire::directories_prompt(max),
+                super::EmptyMeaning::Verbatim,
+                super::AbortNotice::Silent,
+            )
+            .await?
+        {
+            super::PromptLine::Entered(answer) => answer,
+            super::PromptLine::Aborted => return self.terminal.flush().await,
+            super::PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
         };
-        let answer = answer.trim();
         if answer.is_empty() {
             // Enter = None: blank + a single reset (S3 — the abort
             // tail, not the listing tail).
@@ -145,7 +152,7 @@ where
         } else if answer.eq_ignore_ascii_case("H") {
             FileSpan::Hold
         } else if answer.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            FileSpan::Dir(crate::app::menu_command::val_prefix(answer))
+            FileSpan::Dir(crate::app::menu_command::val_prefix(&answer))
         } else {
             self.terminal.write(CRLF).await?;
             self.terminal.write(wire::ERROR_IN_INPUT).await?;
@@ -156,6 +163,9 @@ where
         // The chosen span runs forward for bare `F`, reverse for bare
         // `FR` (`express.e` `displayFileList` passes the `reverse` flag
         // straight through the prompt path).
+        // Reborrow the flag set for the span walk (the renderer reads
+        // it to mark rows; the `F`/`R` pager verbs mutate it).
+        let flagged = session.flagged_files_mut();
         self.run_span(&mut state, conference, span, &areas, flagged, reverse)
             .await
     }
@@ -642,20 +652,28 @@ where
             ZippyArg::Query(query) => (query, None),
             ZippyArg::QueryInDir { query, span } => (query, Some(span)),
             ZippyArg::Prompt => {
-                let read = self
-                    .read_prompted(wire::ZIPPY_SEARCH_PROMPT, TerminalEcho::Visible)
-                    .await?;
-                let TerminalRead::Line(answer) = read else {
-                    return self.terminal.flush().await;
+                let answer = match self
+                    .prompt_line(
+                        session,
+                        wire::ZIPPY_SEARCH_PROMPT,
+                        super::EmptyMeaning::Verbatim,
+                        super::AbortNotice::Silent,
+                    )
+                    .await?
+                {
+                    super::PromptLine::Entered(answer) => answer,
+                    super::PromptLine::Aborted => return self.terminal.flush().await,
+                    super::PromptLine::Kept => {
+                        unreachable!("Verbatim prompts have no keep branch")
+                    }
                 };
                 // express.e:26154 — blank after the search-string read.
                 self.terminal.write(CRLF).await?;
-                let answer = answer.trim();
                 if answer.is_empty() {
                     // express.e:26155-26156 — StrLen=0 returns to the menu.
                     return self.terminal.flush().await;
                 }
-                (answer.to_string(), None)
+                (answer, None)
             }
         };
 
@@ -670,18 +688,23 @@ where
         let answer = if let Some(span) = inline_span {
             span
         } else {
-            let read = self
-                .read_prompted(&wire::zippy_directories_prompt(max), TerminalEcho::Visible)
-                .await?;
-            let TerminalRead::Line(answer) = read else {
-                return self.terminal.flush().await;
-            };
-            let answer = answer.trim();
-            if answer.is_empty() {
-                self.terminal.write(CRLF).await?;
-                return self.terminal.flush().await;
+            match self
+                .prompt_line(
+                    session,
+                    &wire::zippy_directories_prompt(max),
+                    super::EmptyMeaning::Verbatim,
+                    super::AbortNotice::Silent,
+                )
+                .await?
+            {
+                super::PromptLine::Entered(answer) if answer.is_empty() => {
+                    self.terminal.write(CRLF).await?;
+                    return self.terminal.flush().await;
+                }
+                super::PromptLine::Entered(answer) => answer,
+                super::PromptLine::Aborted => return self.terminal.flush().await,
+                super::PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
             }
-            answer.to_string()
         };
 
         // Resolve the answer to a span (getDirSpan, express.e:26881-26908);

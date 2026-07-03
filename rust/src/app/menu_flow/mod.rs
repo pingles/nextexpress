@@ -254,6 +254,45 @@ enum DispatchOutcome {
     LogoffComplete(LoggingOffSession),
 }
 
+/// What a blank submission means at a single-line prompt — one of the
+/// two axes the old hand-rolled readers differed on (SYSTEM.md
+/// item 10; the other is [`AbortNotice`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmptyMeaning {
+    /// Blank aborts, exactly like EOF / idle (the composer's
+    /// `read_required_line` semantics).
+    Abort,
+    /// Blank means "keep the current value" (`EH`'s keep branch).
+    Keep,
+    /// Blank is a legitimate answer, returned as an empty entry (the
+    /// `To:` reroute-to-ALL and the `A` flag loop's `<CR>`=none rely
+    /// on blank being distinguishable from EOF / idle).
+    Verbatim,
+}
+
+/// Whether the aborted path of [`MenuFlow::prompt_line`] writes a
+/// notice. The legacy is split: the `E`/`C` composer prints
+/// `Message aborted.`; `editHeader` and the `R` sub-prompt family
+/// abort silently (`express.e:11602`, B6).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AbortNotice {
+    /// Write nothing on abort.
+    Silent,
+    /// Write [`mail_text::POST_ABORTED_LINE`] on abort.
+    MessageAborted,
+}
+
+/// Outcome of [`MenuFlow::prompt_line`].
+enum PromptLine {
+    /// A trimmed submission — empty only under
+    /// [`EmptyMeaning::Verbatim`].
+    Entered(String),
+    /// Blank under [`EmptyMeaning::Keep`].
+    Kept,
+    /// EOF / idle timeout — or blank under [`EmptyMeaning::Abort`].
+    Aborted,
+}
+
 /// Outcome of the plain-`G` flagged-file leave confirm
 /// (`amiexpress/express.e:12667` `checkFlagged` + `:2129` `yesNo`).
 enum LeaveFlagged {
@@ -430,15 +469,21 @@ where
         // `\b\n` already opened the frame.
         let listing = render_flag_listing(session);
         self.write_and_flush(&listing).await?;
-        let TerminalRead::Line(answer) = self
-            .read_prompted(FLAG_PROMPT, TerminalEcho::Visible)
+        let answer = match self
+            .prompt_line(
+                session,
+                FLAG_PROMPT,
+                EmptyMeaning::Verbatim,
+                AbortNotice::Silent,
+            )
             .await?
-        else {
+        {
+            PromptLine::Entered(answer) => answer,
             // lineInput < 0 (timeout / carrier loss): RETURN stat — the
             // menu loop's next read applies the idle/carrier outcome.
-            return Ok(FlagLoop::Exit);
+            PromptLine::Aborted => return Ok(FlagLoop::Exit),
+            PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
         };
-        let answer = answer.trim();
 
         // `<CR>` (=none): StrLen 0 falls through to RESULT_SUCCESS,
         // ending the loop (express.e:12646).
@@ -449,8 +494,8 @@ where
         // (express.e:12609). Inline `C <arg>` and the sub-prompt resolve
         // a target; `*` clears all, a name (removeFlagFromList) is
         // deferred for slice D6b.
-        if is_clear_family(answer) {
-            return self.flag_clear(session, answer).await;
+        if is_clear_family(&answer) {
+            return self.flag_clear(session, &answer).await;
         }
         // (`F`-from, express.e:12625, is deferred for slice D6b.)
         //
@@ -458,7 +503,7 @@ where
         // flagged file returns RESULT_FAILURE (stat=2 -> -1), exiting the
         // loop with no trailing line; a no-op (too short, or already
         // flagged) falls through to RESULT_SUCCESS.
-        if flag_add(session, answer) {
+        if flag_add(session, &answer) {
             Ok(FlagLoop::Exit)
         } else {
             Ok(FlagLoop::Done)
@@ -482,13 +527,19 @@ where
             token[1..].trim().to_ascii_uppercase()
         } else {
             // Bare `C`: the clear sub-prompt + lineInput (express.e:12614).
-            let TerminalRead::Line(answer) = self
-                .read_prompted(CLEAR_PROMPT, TerminalEcho::Visible)
+            let answer = match self
+                .prompt_line(
+                    session,
+                    CLEAR_PROMPT,
+                    EmptyMeaning::Verbatim,
+                    AbortNotice::Silent,
+                )
                 .await?
-            else {
-                return Ok(FlagLoop::Exit);
+            {
+                PromptLine::Entered(answer) => answer,
+                PromptLine::Aborted => return Ok(FlagLoop::Exit),
+                PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
             };
-            let answer = answer.trim();
             // Empty -> RESULT_SUCCESS, no clear, end the loop (:12618).
             if answer.is_empty() {
                 return Ok(FlagLoop::Done);
@@ -758,6 +809,52 @@ where
     ) -> Result<TerminalRead, T::Error> {
         let timeout = self.services.session_policy.input_timeout();
         crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
+    }
+
+    /// The single line-prompt reader (SYSTEM.md item 10): writes
+    /// `prompt`, reads one visible-echo line under the session input
+    /// timeout, and — the invariant the hand-rolled copies kept
+    /// fraying — stamps the idle clock on every accepted line, so a
+    /// new prompt cannot forget `record_input`. Blank-line meaning and
+    /// abort-notice policy are the two axes the old readers differed
+    /// on; everything else is shared.
+    async fn prompt_line(
+        &mut self,
+        session: &mut MenuSession,
+        prompt: &[u8],
+        empty: EmptyMeaning,
+        notice: AbortNotice,
+    ) -> Result<PromptLine, T::Error> {
+        match self.read_prompted(prompt, TerminalEcho::Visible).await? {
+            TerminalRead::Line(line) => {
+                session.record_input(self.services.clock.now());
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    match empty {
+                        EmptyMeaning::Abort => {
+                            self.abort_notice(notice).await?;
+                            Ok(PromptLine::Aborted)
+                        }
+                        EmptyMeaning::Keep => Ok(PromptLine::Kept),
+                        EmptyMeaning::Verbatim => Ok(PromptLine::Entered(String::new())),
+                    }
+                } else {
+                    Ok(PromptLine::Entered(trimmed.to_string()))
+                }
+            }
+            TerminalRead::Eof | TerminalRead::IdleTimedOut => {
+                self.abort_notice(notice).await?;
+                Ok(PromptLine::Aborted)
+            }
+        }
+    }
+
+    /// Writes the abort notice [`AbortNotice`] selects, if any.
+    async fn abort_notice(&mut self, notice: AbortNotice) -> Result<(), T::Error> {
+        match notice {
+            AbortNotice::Silent => Ok(()),
+            AbortNotice::MessageAborted => self.write_and_flush(mail_text::POST_ABORTED_LINE).await,
+        }
     }
 
     /// Flushes pending output, then reads one keystroke in hot-key

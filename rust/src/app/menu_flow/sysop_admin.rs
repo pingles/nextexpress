@@ -60,6 +60,42 @@ const MOVE_DONE_PREFIX: &[u8] = b"\r\nMessage moved. New number ";
 /// Confirmation line printed after a successful `EH <num>` edit.
 const EDIT_HEADER_DONE_LINE: &[u8] = b"\r\nHeader updated.\r\n";
 
+/// The wire line for a `K` (delete) failure — a pure total mapping so
+/// a plain `#[test]` pins each byte choice without a capture terminal
+/// or async runtime (SYSTEM.md item 10). The `Store` arm's log side
+/// effect stays in the async handler.
+fn delete_error_line(err: &DeleteMailError) -> &'static [u8] {
+    match err {
+        DeleteMailError::NotFound(_) => SOURCE_NOT_FOUND_LINE,
+        // Mirror SOURCE_DELETED_LINE-ish surface: the user tried to
+        // delete a deleted mail. Re-using POST_ABORTED for now;
+        // bespoke wording can land later.
+        DeleteMailError::AlreadyDeleted => POST_ABORTED_LINE,
+        DeleteMailError::NotPermitted => SYSOP_ONLY_LINE,
+        DeleteMailError::Store(_) => MAIL_STORE_ERROR_LINE,
+    }
+}
+
+/// The wire line for an `MV` (move) failure — see [`delete_error_line`].
+fn move_error_line(err: &MoveMailError) -> &'static [u8] {
+    match err {
+        MoveMailError::NotFound(_) => SOURCE_NOT_FOUND_LINE,
+        MoveMailError::NotPermitted => SYSOP_ONLY_LINE,
+        MoveMailError::SameMsgbase => MOVE_UNKNOWN_TARGET_LINE,
+        MoveMailError::Store(_) => MAIL_STORE_ERROR_LINE,
+    }
+}
+
+/// The wire line for an `EH` (edit-header) failure — see
+/// [`delete_error_line`].
+fn edit_header_error_line(err: &EditMailHeaderError) -> &'static [u8] {
+    match err {
+        EditMailHeaderError::NotFound(_) => SOURCE_NOT_FOUND_LINE,
+        EditMailHeaderError::NotPermitted => SYSOP_ONLY_LINE,
+        EditMailHeaderError::Store(_) => MAIL_STORE_ERROR_LINE,
+    }
+}
+
 /// Prompt for the new subject during an `EH <num>` header edit.
 /// Empty input keeps the current subject.
 const EDIT_HEADER_SUBJECT_PROMPT: &[u8] = b"New subject (blank = unchanged): ";
@@ -380,61 +416,24 @@ where
     }
 
     async fn render_delete_error(&mut self, err: DeleteMailError) -> Result<(), T::Error> {
-        match err {
-            DeleteMailError::NotFound(_) => {
-                self.write_and_flush(SOURCE_NOT_FOUND_LINE).await?;
-            }
-            DeleteMailError::AlreadyDeleted => {
-                // Mirror SOURCE_DELETED_LINE-ish surface: the user
-                // tried to delete a deleted mail. Re-using
-                // POST_ABORTED for now; bespoke wording can land
-                // later.
-                self.write_and_flush(POST_ABORTED_LINE).await?;
-            }
-            DeleteMailError::NotPermitted => {
-                self.write_and_flush(SYSOP_ONLY_LINE).await?;
-            }
-            DeleteMailError::Store(err) => {
-                eprintln!("K command: store error: {err}");
-                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
-            }
+        if let DeleteMailError::Store(store) = &err {
+            eprintln!("K command: store error: {store}");
         }
-        Ok(())
+        self.write_and_flush(delete_error_line(&err)).await
     }
 
     async fn render_move_error(&mut self, err: MoveMailError) -> Result<(), T::Error> {
-        match err {
-            MoveMailError::NotFound(_) => {
-                self.write_and_flush(SOURCE_NOT_FOUND_LINE).await?;
-            }
-            MoveMailError::NotPermitted => {
-                self.write_and_flush(SYSOP_ONLY_LINE).await?;
-            }
-            MoveMailError::SameMsgbase => {
-                self.write_and_flush(MOVE_UNKNOWN_TARGET_LINE).await?;
-            }
-            MoveMailError::Store(err) => {
-                eprintln!("MV command: store error: {err}");
-                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
-            }
+        if let MoveMailError::Store(store) = &err {
+            eprintln!("MV command: store error: {store}");
         }
-        Ok(())
+        self.write_and_flush(move_error_line(&err)).await
     }
 
     async fn render_edit_header_error(&mut self, err: EditMailHeaderError) -> Result<(), T::Error> {
-        match err {
-            EditMailHeaderError::NotFound(_) => {
-                self.write_and_flush(SOURCE_NOT_FOUND_LINE).await?;
-            }
-            EditMailHeaderError::NotPermitted => {
-                self.write_and_flush(SYSOP_ONLY_LINE).await?;
-            }
-            EditMailHeaderError::Store(err) => {
-                eprintln!("EH command: store error: {err}");
-                self.write_and_flush(MAIL_STORE_ERROR_LINE).await?;
-            }
+        if let EditMailHeaderError::Store(store) = &err {
+            eprintln!("EH command: store error: {store}");
         }
-        Ok(())
+        self.write_and_flush(edit_header_error_line(&err)).await
     }
 
     /// Reads a single trimmed line for an `EH` header field that may be
@@ -459,18 +458,18 @@ where
         session: &mut MenuSession,
         prompt: &[u8],
     ) -> Result<Option<Option<String>>, T::Error> {
-        use crate::app::terminal::{TerminalEcho, TerminalRead};
-        match self.read_prompted(prompt, TerminalEcho::Visible).await? {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    Ok(Some(None))
-                } else {
-                    Ok(Some(Some(trimmed.to_string())))
-                }
-            }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(None),
+        match self
+            .prompt_line(
+                session,
+                prompt,
+                super::EmptyMeaning::Keep,
+                super::AbortNotice::Silent,
+            )
+            .await?
+        {
+            super::PromptLine::Entered(line) => Ok(Some(Some(line))),
+            super::PromptLine::Kept => Ok(Some(None)),
+            super::PromptLine::Aborted => Ok(None),
         }
     }
 }
@@ -489,6 +488,110 @@ mod tests {
     use crate::domain::user::{NewUserDraft, RatioMode, User};
 
     use super::{EDIT_HEADER_SUBJECT_PROMPT, EDIT_HEADER_TO_PROMPT, NO_MAIL_BASE_LINE};
+
+    #[tokio::test]
+    async fn error_renderers_write_the_mapped_line() {
+        // Pins that the handlers actually WRITE the mapped line — the
+        // pure `*_error_line` fns choose the bytes, but a handler
+        // reduced to `Ok(())` must not slip through (the row-7
+        // mutants-diff run caught exactly that gap).
+        use crate::domain::messaging::delete_mail::DeleteMailError;
+        use crate::domain::messaging::edit_mail_header::EditMailHeaderError;
+        use crate::domain::messaging::move_mail::MoveMailError;
+
+        use super::{MOVE_UNKNOWN_TARGET_LINE, SOURCE_NOT_FOUND_LINE, SYSOP_ONLY_LINE};
+
+        let services = test_services();
+        let mut terminal = ScriptedTerminal::default();
+        {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.render_delete_error(DeleteMailError::NotPermitted)
+                .await
+                .expect("render delete error");
+            flow.render_move_error(MoveMailError::SameMsgbase)
+                .await
+                .expect("render move error");
+            flow.render_edit_header_error(EditMailHeaderError::NotFound(9))
+                .await
+                .expect("render edit-header error");
+        }
+        let mut expected = Vec::new();
+        expected.extend_from_slice(SYSOP_ONLY_LINE);
+        expected.extend_from_slice(MOVE_UNKNOWN_TARGET_LINE);
+        expected.extend_from_slice(SOURCE_NOT_FOUND_LINE);
+        assert_eq!(terminal.output, expected);
+    }
+
+    #[test]
+    fn static_error_lines_pin_the_wire_bytes() {
+        // Item 10's line_for extraction: each static error arm is a
+        // pure total mapping, pinned here with plain byte asserts — no
+        // capture terminal, no async runtime, mutant-friendly.
+        use super::{
+            delete_error_line, edit_header_error_line, move_error_line, MAIL_STORE_ERROR_LINE,
+            MOVE_UNKNOWN_TARGET_LINE, POST_ABORTED_LINE, SOURCE_NOT_FOUND_LINE, SYSOP_ONLY_LINE,
+        };
+        use crate::domain::messaging::delete_mail::DeleteMailError;
+        use crate::domain::messaging::edit_mail_header::EditMailHeaderError;
+        use crate::domain::messaging::mail_store::MailStoreError;
+        use crate::domain::messaging::move_mail::MoveMailError;
+
+        fn store_error() -> MailStoreError {
+            MailStoreError::Backend {
+                source: "backing store unavailable".into(),
+            }
+        }
+
+        assert_eq!(
+            delete_error_line(&DeleteMailError::NotFound(9)),
+            SOURCE_NOT_FOUND_LINE
+        );
+        assert_eq!(
+            delete_error_line(&DeleteMailError::AlreadyDeleted),
+            POST_ABORTED_LINE
+        );
+        assert_eq!(
+            delete_error_line(&DeleteMailError::NotPermitted),
+            SYSOP_ONLY_LINE
+        );
+        assert_eq!(
+            delete_error_line(&DeleteMailError::Store(store_error())),
+            MAIL_STORE_ERROR_LINE
+        );
+
+        assert_eq!(
+            move_error_line(&MoveMailError::NotFound(9)),
+            SOURCE_NOT_FOUND_LINE
+        );
+        assert_eq!(
+            move_error_line(&MoveMailError::NotPermitted),
+            SYSOP_ONLY_LINE
+        );
+        assert_eq!(
+            move_error_line(&MoveMailError::SameMsgbase),
+            MOVE_UNKNOWN_TARGET_LINE
+        );
+        assert_eq!(
+            move_error_line(&MoveMailError::Store(store_error())),
+            MAIL_STORE_ERROR_LINE
+        );
+
+        assert_eq!(
+            edit_header_error_line(&EditMailHeaderError::NotFound(9)),
+            SOURCE_NOT_FOUND_LINE
+        );
+        assert_eq!(
+            edit_header_error_line(&EditMailHeaderError::NotPermitted),
+            SYSOP_ONLY_LINE
+        );
+        assert_eq!(
+            edit_header_error_line(&EditMailHeaderError::Store(store_error())),
+            MAIL_STORE_ERROR_LINE
+        );
+    }
 
     /// A terminal double that replays a scripted sequence of line reads
     /// (defaulting to `Eof` once exhausted) and records every written byte.

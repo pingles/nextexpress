@@ -19,7 +19,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 4 | **Clock port in `AppServices`** (16) | **Landed** 2026-07-03 | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
 | 5 | **`FileRepository` port prep** (18) | **Landed** 2026-07-03 | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
 | 6 | **Extract the NextScan scan engine** (17) | First task of the N slice | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
-| 7 | **Prompt-reader merge + `line_for` extraction** (10) | Before N/FM | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
+| 7 | **Prompt-reader merge + `line_for` extraction** (10) | **Landed** 2026-07-03 | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
 | 8 | **Error-boundary pass** (2 remainder) | Gap before D/DS | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
 | 9 | **Command-style user writes** (1) | After N, before D-T2 | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
 | 10 | **SQLite schema migrations** (22) | Before D-T2 | No mechanism can alter an existing `users.db`; D-T2's first new column would break every login after upgrade. Versioned migrations make every future schema change (accounting, D2s tables, `row_version`) routine. | 3–5 | 0.5–1 day |
@@ -985,6 +985,27 @@ slice on the bug fix and mutant-resistance, not the line count. Land
 the error-arm `line_for` extraction + asserts as a standalone TDD move;
 fold the reader merge into the next slice that touches `post_mail.rs` or
 `sysop_admin.rs`.
+
+**Landed (2026-07-03), menu_flow scope.** `MenuFlow::prompt_line(
+session, prompt, EmptyMeaning, AbortNotice) -> PromptLine` is the one
+line-prompt reader: it stamps `record_input` on every accepted line
+(pinned by `flag_prompt_stamps_the_idle_clock`, written first and
+watched to fail), with `EmptyMeaning::{Abort, Keep, Verbatim}` and
+`AbortNotice::{Silent, MessageAborted}` as the two axes the old copies
+differed on. The three named readers (`read_required_line`,
+`read_optional_line`, `read_optional_unchanged_line`) are thin
+wrappers; the previously UNSTAMPED prompts — the `A` flag loop and its
+clear sub-prompt, the `F` `Directories:` prompt, both `Z` zippy
+prompts — now route through it (wire bytes unchanged, suite-pinned).
+The join/number prompts keep their bespoke no-trim semantics and
+already stamped. Item 10's second half landed too: pure
+`delete/move/edit_header_error_line` fns (sysop_admin) and
+`post_outcome_line` (post_mail) with plain byte-assert pins, plus a
+handler-level test after mutants-diff caught the render-nothing gap.
+Two accepted equivalent survivors: deleting the handler log arms
+(`LookupFailed`/`Rejected(Store)` `eprintln!`s) is wire-identical.
+The cross-flow outcome-mapping consolidation stays cut, as decided.
+Original notes follow.
 
 **Sharpened (July 2026): land the menu_flow scope before the N and FM
 slices.** Two updates. (a) The duplication is six near-identical
