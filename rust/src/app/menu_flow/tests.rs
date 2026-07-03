@@ -46,7 +46,9 @@ struct SpyFlaggedStore {
 impl FlaggedStore for SpyFlaggedStore {
     fn load(&self, slot: u32) -> Result<FlaggedFiles, FlaggedStoreError> {
         if self.fail {
-            return Err(FlaggedStoreError::Backend("boom".into()));
+            return Err(FlaggedStoreError::Backend {
+                source: "boom".into(),
+            });
         }
         Ok(self
             .seeded
@@ -59,7 +61,9 @@ impl FlaggedStore for SpyFlaggedStore {
 
     fn save(&self, slot: u32, flags: &FlaggedFiles) -> Result<(), FlaggedStoreError> {
         if self.fail {
-            return Err(FlaggedStoreError::Backend("boom".into()));
+            return Err(FlaggedStoreError::Backend {
+                source: "boom".into(),
+            });
         }
         let names: Vec<String> = flags.names().map(str::to_owned).collect();
         self.saved.lock().unwrap().push((slot, names));

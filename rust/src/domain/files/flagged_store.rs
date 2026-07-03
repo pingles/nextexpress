@@ -4,23 +4,38 @@
 //! in memory; this port persists it per user slot so the next logon can
 //! restore it (the legacy `saveFlagged`/`loadFlagged`,
 //! `amiexpress/express.e:2806`/`:2757`). The persisted identity is
-//! `(conference, name)` — `area` is normalised to `0` on load, uniformly
-//! across adapters (see the design's Decision ①).
+//! `(conference, name)` — exactly the domain `FlaggedKey` since the
+//! July 2026 identity fix, so persistence is a lossless projection.
+
+use std::error::Error;
 
 use crate::domain::files::flagged::FlaggedFiles;
 
+/// Adapter-originated source error attached to
+/// [`FlaggedStoreError`] values.
+pub type FlaggedStoreSourceError = Box<dyn Error + Send + Sync + 'static>;
+
 /// Error from a [`FlaggedStore`] backend.
+///
+/// One opaque variant, per the port-error convention (July 2026
+/// review, item 2): the adapter boxes its native error as the
+/// `source`, preserving the diagnostic chain the old stringly
+/// `Backend(String)` shape discarded.
 #[derive(Debug, thiserror::Error)]
 pub enum FlaggedStoreError {
     /// The backing store could not be read or written.
-    #[error("flagged-file store backend error: {0}")]
-    Backend(String),
+    #[error("flagged-file store backend error: {source}")]
+    Backend {
+        /// Underlying adapter error.
+        #[source]
+        source: FlaggedStoreSourceError,
+    },
 }
 
 /// Durable home of a user's flagged-file set, keyed by user slot.
 pub trait FlaggedStore {
     /// Loads the flag set saved for `slot`, or an empty set when none is
-    /// stored. Restored keys carry `area = 0`.
+    /// stored.
     ///
     /// # Errors
     /// Returns [`FlaggedStoreError`] when the backing store cannot be read.

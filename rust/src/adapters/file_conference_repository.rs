@@ -53,13 +53,72 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::domain::conference::{
-    AllScanScope, AllowedAddressing, Conference, MessageBase, NameType,
+    AllScanScope, AllowedAddressing, Conference, ConferenceError, MessageBase, NameType,
 };
-use crate::domain::conference_repository::{ConferenceRepository, ConferenceRepositoryError};
 
 /// Filename of the per-conference TOML configuration inside each
 /// `Conf<NN>` directory.
 const CONFERENCE_FILENAME: &str = "conference.toml";
+
+/// Source error attached to [`ConferenceRepositoryError`] values.
+pub type ConferenceRepositorySourceError = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+/// Errors returned by [`FileConferenceRepository::load_all`].
+///
+/// Lives adapter-side (July 2026 review, item 2): conference loading
+/// is a startup/configuration concern — runtime code consumes an
+/// already-loaded `Vec<Conference>`, never a repository — so the
+/// TOML/path vocabulary below has no business in `domain/`.
+#[derive(Debug, thiserror::Error)]
+pub enum ConferenceRepositoryError {
+    /// A storage backend operation (enumerating or reading the on-disk
+    /// layout) failed.
+    #[error("conference repository backend error: {source}")]
+    Backend {
+        /// Underlying adapter error.
+        #[source]
+        source: ConferenceRepositorySourceError,
+    },
+    /// A conference TOML payload could not be parsed.
+    #[error("malformed conference file at {path}: {source}")]
+    MalformedConference {
+        /// Path of the offending TOML file.
+        path: String,
+        /// Underlying TOML parser error.
+        #[source]
+        source: ConferenceRepositorySourceError,
+    },
+    /// A conference's TOML data violates a domain invariant from
+    /// [`ConferenceError`] (e.g. `AtLeastOneMessageBase`).
+    #[error("conference {path} is invalid: {source}")]
+    InvalidConference {
+        /// Path of the offending TOML file.
+        path: String,
+        /// Underlying domain error.
+        #[source]
+        source: ConferenceError,
+    },
+    /// A conference directory carries a `number` field that disagrees
+    /// with the number embedded in its directory name.
+    #[error(
+        "conference at {path} declares number {declared} but its \
+         directory name encodes {expected}"
+    )]
+    ConferenceNumberMismatch {
+        /// Path of the offending TOML file.
+        path: String,
+        /// Number recorded inside the file.
+        declared: u32,
+        /// Number derived from the enclosing directory name.
+        expected: u32,
+    },
+    /// Two conferences share the same `number`.
+    #[error("duplicate conference number {number}")]
+    DuplicateConferenceNumber {
+        /// The clashing conference number.
+        number: u32,
+    },
+}
 
 /// File-backed conference repository rooted at a BBS installation
 /// path.
@@ -89,8 +148,16 @@ impl From<std::io::Error> for ConferenceRepositoryError {
     }
 }
 
-impl ConferenceRepository for FileConferenceRepository {
-    fn load_all(&self) -> Result<Vec<Conference>, ConferenceRepositoryError> {
+impl FileConferenceRepository {
+    /// Loads every conference under the BBS path, in ascending
+    /// conference-number order — callers rely on
+    /// `result[i].number() < result[i + 1].number()` without
+    /// re-sorting. An absent `bbs_path` loads an empty catalogue.
+    ///
+    /// # Errors
+    /// Returns [`ConferenceRepositoryError`] when storage cannot be
+    /// read or the on-disk data violates a domain invariant.
+    pub fn load_all(&self) -> Result<Vec<Conference>, ConferenceRepositoryError> {
         let entries = match fs::read_dir(&self.bbs_path) {
             Ok(it) => it,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

@@ -34,7 +34,9 @@ pub enum SqliteFlaggedStoreError {
 
 impl From<rusqlite::Error> for FlaggedStoreError {
     fn from(error: rusqlite::Error) -> Self {
-        FlaggedStoreError::Backend(error.to_string())
+        FlaggedStoreError::Backend {
+            source: Box::new(error),
+        }
     }
 }
 

@@ -47,7 +47,6 @@ use crate::app::services::{
 };
 use crate::domain::caller_log::CallerLogAppender;
 use crate::domain::conference::{Conference, MessageBaseRef};
-use crate::domain::conference_repository::ConferenceRepository;
 use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::password::PasswordHasher;
 

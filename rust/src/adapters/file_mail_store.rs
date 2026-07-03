@@ -22,7 +22,7 @@ use crate::domain::messaging::limits::{
 use crate::domain::messaging::mail::{
     BroadcastTo, Mail, MailAttachment, MailDraft, MailVisibility, NewMail,
 };
-use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
+use crate::domain::messaging::mail_store::{MailStore, MailStoreError, StoreSourceError};
 
 /// Width of the zero-padded number used as a message's on-disk
 /// filename. Chosen so the lexicographic `ls` order matches numeric
@@ -66,6 +66,80 @@ impl From<std::io::Error> for MailStoreError {
     }
 }
 
+/// Adapter-private diagnostics for a mail file the store cannot
+/// trust. These are properties of the file backend (paths, on-disk
+/// JSON, filename encoding), not of the [`MailStore`] caller contract,
+/// so they surface through [`MailStoreError::Backend`] with the
+/// diagnostic detail preserved in the boxed source.
+#[derive(Debug, thiserror::Error)]
+enum MailFileError {
+    /// A persisted message could not be parsed.
+    #[error("malformed mail at {path}: {source}")]
+    Malformed {
+        /// Path of the offending message file.
+        path: String,
+        /// Underlying parse error.
+        #[source]
+        source: StoreSourceError,
+    },
+    /// A mail could not be serialised to JSON. The in-memory writers
+    /// used by [`MailStore`] implementations cannot themselves fail, so
+    /// reaching this variant indicates a bug in the encoder rather than
+    /// a deployment problem — it's modelled explicitly anyway so the
+    /// adapter doesn't have to panic.
+    #[error("failed to serialise mail at number {number}: {source}")]
+    Serialise {
+        /// Message number that failed to serialise.
+        number: u32,
+        /// Underlying serde error.
+        #[source]
+        source: StoreSourceError,
+    },
+    /// A persisted message's recorded number disagrees with the number
+    /// encoded in its filename. Catches manual edits that would
+    /// otherwise let `MessageNumbersUniquePerBase` silently drift.
+    #[error(
+        "mail file {path} encodes number {filename_number} but its \
+         payload declares number {payload_number}"
+    )]
+    NumberMismatch {
+        /// Path of the offending message file.
+        path: String,
+        /// Number derived from the filename.
+        filename_number: u32,
+        /// Number declared in the JSON payload.
+        payload_number: u32,
+    },
+    /// A persisted message's recorded `msgbase` disagrees with the
+    /// store's configured [`MessageBaseRef`]. Catches a message that
+    /// has been copied into the wrong msgbase directory.
+    #[error(
+        "mail file {path} belongs to msgbase \
+         ({payload_conference},{payload_msgbase}) but store is bound to \
+         ({store_conference},{store_msgbase})"
+    )]
+    WrongMsgbase {
+        /// Path of the offending message file.
+        path: String,
+        /// Conference number declared in the JSON payload.
+        payload_conference: u32,
+        /// Msgbase number declared in the JSON payload.
+        payload_msgbase: u32,
+        /// Conference number the store was opened against.
+        store_conference: u32,
+        /// Msgbase number the store was opened against.
+        store_msgbase: u32,
+    },
+}
+
+impl From<MailFileError> for MailStoreError {
+    fn from(err: MailFileError) -> Self {
+        MailStoreError::Backend {
+            source: Box::new(err),
+        }
+    }
+}
+
 impl FileMailStore {
     /// Opens (or creates, if missing) a [`FileMailStore`] rooted at
     /// `dir` for the supplied [`MessageBaseRef`].
@@ -76,10 +150,10 @@ impl FileMailStore {
     ///
     /// # Errors
     /// Returns [`MailStoreError::Backend`] when the directory cannot be
-    /// created or read, [`MailStoreError::Malformed`] when an entry
-    /// is unreadable JSON, and [`MailStoreError::NumberMismatch`] /
-    /// [`MailStoreError::MsgbaseMismatch`] when a file's payload
-    /// disagrees with its filename or the store's binding.
+    /// created or read, or when an entry fails the integrity scan
+    /// (unreadable JSON, or a payload disagreeing with its filename or
+    /// the store's binding — the diagnostic travels in the boxed
+    /// source as an adapter-private `MailFileError`).
     pub fn open(dir: PathBuf, msgbase: MessageBaseRef) -> Result<Self, MailStoreError> {
         fs::create_dir_all(&dir)?;
         let highest_message = scan_dir_for_highest(&dir, msgbase)?;
@@ -120,7 +194,7 @@ impl FileMailStore {
         let payload = MailPayload::from(mail);
         let path = self.path_for(mail.number());
         let json =
-            serde_json::to_string_pretty(&payload).map_err(|source| MailStoreError::Serialise {
+            serde_json::to_string_pretty(&payload).map_err(|source| MailFileError::Serialise {
                 number: mail.number(),
                 source: Box::new(source),
             })?;
@@ -151,7 +225,7 @@ impl MailStore for FileMailStore {
             return Ok(None);
         };
         let payload: MailPayload =
-            serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
+            serde_json::from_str(&text).map_err(|source| MailFileError::Malformed {
                 path: path.display().to_string(),
                 source: Box::new(source),
             })?;
@@ -163,7 +237,6 @@ impl MailStore for FileMailStore {
     fn save(&mut self, mail: &Mail) -> Result<(), MailStoreError> {
         if mail.msgbase() != self.msgbase {
             return Err(MailStoreError::MsgbaseMismatch {
-                path: self.path_for(mail.number()).display().to_string(),
                 payload_conference: mail.msgbase().conference_number(),
                 payload_msgbase: mail.msgbase().msgbase_number(),
                 store_conference: self.msgbase.conference_number(),
@@ -212,7 +285,7 @@ fn scan_dir_for_highest(dir: &Path, msgbase: MessageBaseRef) -> Result<u32, Mail
             continue;
         };
         let payload: MailPayload =
-            serde_json::from_str(&text).map_err(|source| MailStoreError::Malformed {
+            serde_json::from_str(&text).map_err(|source| MailFileError::Malformed {
                 path: path.display().to_string(),
                 source: Box::new(source),
             })?;
@@ -249,13 +322,14 @@ fn read_mail_payload_text(path: &Path) -> Result<Option<String>, MailStoreError>
 }
 
 fn malformed_payload(path: &Path, message: String) -> MailStoreError {
-    MailStoreError::Malformed {
+    MailFileError::Malformed {
         path: path.display().to_string(),
         source: Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             message,
         )),
     }
+    .into()
 }
 
 fn parse_message_filename(name: &str) -> Option<u32> {
@@ -320,22 +394,24 @@ impl MailPayload {
         path: &Path,
     ) -> Result<(), MailStoreError> {
         if self.number != filename_number {
-            return Err(MailStoreError::NumberMismatch {
+            return Err(MailFileError::NumberMismatch {
                 path: path.display().to_string(),
                 filename_number,
                 payload_number: self.number,
-            });
+            }
+            .into());
         }
         if self.conference_number != msgbase.conference_number()
             || self.msgbase_number != msgbase.msgbase_number()
         {
-            return Err(MailStoreError::MsgbaseMismatch {
+            return Err(MailFileError::WrongMsgbase {
                 path: path.display().to_string(),
                 payload_conference: self.conference_number,
                 payload_msgbase: self.msgbase_number,
                 store_conference: msgbase.conference_number(),
                 store_msgbase: msgbase.msgbase_number(),
-            });
+            }
+            .into());
         }
         Ok(())
     }
@@ -393,7 +469,7 @@ impl MailPayload {
             // message. A corrupt payload that violates the invariant
             // surfaces here as a parse error.
             mail.mark_received(when)
-                .map_err(|source| MailStoreError::Malformed {
+                .map_err(|source| MailFileError::Malformed {
                     path: path.display().to_string(),
                     source: Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -502,6 +578,7 @@ impl From<BroadcastWire> for BroadcastTo {
 mod tests {
     use std::time::{Duration, SystemTime};
 
+    use super::MailFileError;
     use crate::adapters::file_mail_store::FileMailStore;
     use crate::domain::conference::MessageBaseRef;
     use crate::domain::messaging::limits::{
@@ -512,6 +589,19 @@ mod tests {
 
     fn t(secs: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    /// Unwraps the adapter-private [`MailFileError`] diagnostic boxed
+    /// inside [`MailStoreError::Backend`]. Panics when `err` is a
+    /// different variant or carries a different source type, so the
+    /// integrity tests keep pinning the exact diagnostic.
+    fn backend_file_error(err: &MailStoreError) -> &MailFileError {
+        let MailStoreError::Backend { source } = err else {
+            panic!("expected Backend, got {err:?}");
+        };
+        source
+            .downcast_ref::<MailFileError>()
+            .unwrap_or_else(|| panic!("expected a MailFileError source, got {source:?}"))
     }
 
     fn sample_draft() -> MailDraft {
@@ -716,14 +806,14 @@ mod tests {
         .unwrap();
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("number mismatch must be rejected");
-        match err {
-            MailStoreError::NumberMismatch {
+        match backend_file_error(&err) {
+            MailFileError::NumberMismatch {
                 filename_number,
                 payload_number,
                 ..
             } => {
-                assert_eq!(filename_number, 1);
-                assert_eq!(payload_number, 7);
+                assert_eq!(*filename_number, 1);
+                assert_eq!(*payload_number, 7);
             }
             other => panic!("expected NumberMismatch, got {other:?}"),
         }
@@ -757,7 +847,10 @@ mod tests {
         .unwrap();
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("msgbase mismatch must be rejected");
-        assert!(matches!(err, MailStoreError::MsgbaseMismatch { .. }));
+        assert!(matches!(
+            backend_file_error(&err),
+            MailFileError::WrongMsgbase { .. }
+        ));
     }
 
     #[test]
@@ -767,7 +860,10 @@ mod tests {
         std::fs::write(dir.path().join("0000001.json"), b"not json").unwrap();
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("malformed JSON must be rejected");
-        assert!(matches!(err, MailStoreError::Malformed { .. }));
+        assert!(matches!(
+            backend_file_error(&err),
+            MailFileError::Malformed { .. }
+        ));
     }
 
     #[test]
@@ -794,7 +890,10 @@ mod tests {
 
         let err = super::read_mail_payload_text(&path).expect_err("oversized file must fail");
 
-        assert!(matches!(err, MailStoreError::Malformed { .. }));
+        assert!(matches!(
+            backend_file_error(&err),
+            MailFileError::Malformed { .. }
+        ));
     }
 
     #[test]
@@ -849,7 +948,10 @@ mod tests {
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("oversized subject must be rejected");
 
-        assert!(matches!(err, MailStoreError::Malformed { .. }));
+        assert!(matches!(
+            backend_file_error(&err),
+            MailFileError::Malformed { .. }
+        ));
     }
 
     #[test]
@@ -866,7 +968,10 @@ mod tests {
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("oversized body must be rejected");
 
-        assert!(matches!(err, MailStoreError::Malformed { .. }));
+        assert!(matches!(
+            backend_file_error(&err),
+            MailFileError::Malformed { .. }
+        ));
     }
 
     #[test]
@@ -881,7 +986,10 @@ mod tests {
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("oversized mail file must be rejected before parsing");
 
-        assert!(matches!(err, MailStoreError::Malformed { .. }));
+        assert!(matches!(
+            backend_file_error(&err),
+            MailFileError::Malformed { .. }
+        ));
     }
 
     #[test]
@@ -998,20 +1106,20 @@ mod tests {
         .unwrap();
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("msgbase number mismatch must be rejected");
-        match err {
-            MailStoreError::MsgbaseMismatch {
+        match backend_file_error(&err) {
+            MailFileError::WrongMsgbase {
                 payload_conference,
                 payload_msgbase,
                 store_conference,
                 store_msgbase,
                 ..
             } => {
-                assert_eq!(payload_conference, 2);
-                assert_eq!(payload_msgbase, 7);
-                assert_eq!(store_conference, 2);
-                assert_eq!(store_msgbase, 1);
+                assert_eq!(*payload_conference, 2);
+                assert_eq!(*payload_msgbase, 7);
+                assert_eq!(*store_conference, 2);
+                assert_eq!(*store_msgbase, 1);
             }
-            other => panic!("expected MsgbaseMismatch, got {other:?}"),
+            other => panic!("expected WrongMsgbase, got {other:?}"),
         }
     }
 
@@ -1042,7 +1150,10 @@ mod tests {
         .unwrap();
         let err = FileMailStore::open(dir.path().to_path_buf(), msgbase)
             .expect_err("conference number mismatch must be rejected");
-        assert!(matches!(err, MailStoreError::MsgbaseMismatch { .. }));
+        assert!(matches!(
+            backend_file_error(&err),
+            MailFileError::WrongMsgbase { .. }
+        ));
     }
 
     #[test]

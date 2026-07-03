@@ -20,7 +20,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 5 | **`FileRepository` port prep** (18) | **Landed** 2026-07-03 | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
 | 6 | **Extract the NextScan scan engine** (17) | First task of the N slice | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
 | 7 | **Prompt-reader merge + `line_for` extraction** (10) | **Landed** 2026-07-03 | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
-| 8 | **Error-boundary pass** (2 remainder) | Gap before D/DS | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
+| 8 | **Error-boundary pass** (2 remainder) | **Landed** 2026-07-03 (`UserRepositoryError` folds into row 9) | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
 | 9 | **Command-style user writes** (1) | After N, before D-T2 | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
 | 10 | **SQLite schema migrations** (22) | Before D-T2 | No mechanism can alter an existing `users.db`; D-T2's first new column would break every login after upgrade. Versioned migrations make every future schema change (accounting, D2s tables, `row_version`) routine. | 3–5 | 0.5–1 day |
 | 11 | **`AuthenticatedCall` struct** (23a) | Before D-T2 | The per-call triple is duplicated across four phase variants with two 8-arm salvage matches; every new per-call field costs ~7 sites. D/U must add transfer tallies — after this, that's a single-site addition. | ~6–7 | 0.5–1 day |
@@ -764,8 +764,27 @@ Verified June 2026 (both are real but LOC-modest, not LOC-wins):
   adapter-side, so it is hygiene, not reduction. Best done as one
   error-boundary pass alongside the `ConferenceRepository` move.
 
+**Landed (2026-07-03).** The pass shipped in three moves: (1) the
+`ConferenceRepository` trait is gone — `load_all` is an inherent
+method on `FileConferenceRepository`, the TOML/path error enum lives
+adapter-side, and the domain doc comments now state the
+ascending-order loader contract without naming a repository type;
+(2) `MailStoreError` collapsed to `Backend { source }` +
+`MessageMissing` + a path-less caller-contract `MsgbaseMismatch`,
+with the rich file diagnostics reborn as the adapter-private
+`MailFileError` (verbatim fields and format strings) boxed into
+`Backend` — adapter tests downcast through the source chain;
+(3) `FlaggedStoreError::Backend(String)` became the boxed-source
+`Backend { source }` shape, restoring the diagnostic chain. The
+convention D2s inherits: one opaque `Backend` + only contractual
+variants. **Explicitly deferred:** `UserRepositoryError::Storage
+{ context, message }` is also stringly, but it leaks no adapter
+vocabulary and converting it touches every construction site in both
+user-repo adapters — fold it into item 1's command-style-writes pass,
+which rewrites those adapters anyway. Original notes follow.
+
 **Re-verified + scope widened (July 2026): do the pass before D2s.**
-Still open — nothing has landed. The convention actually diverges four
+Status before landing: nothing had landed. The convention actually diverges four
 ways, not two: `FlaggedStoreError::Backend(String)`
 (`domain/files/flagged_store.rs`) is stringly and discards the source
 chain, and `UserRepositoryError::Storage { context, message }`

@@ -231,7 +231,7 @@ pub fn prev_accessible_conference_before<'a>(
     before_number: u32,
 ) -> Option<&'a Conference> {
     // The catalogue is in ascending number order per the
-    // `ConferenceRepository::load_all` contract, so a reverse scan
+    // ascending-order loader contract, so a reverse scan
     // visits candidates nearest-first.
     conferences
         .iter()

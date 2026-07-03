@@ -57,8 +57,7 @@ impl Session {
     ///
     /// # Parameters
     /// - `conferences`: catalogue loaded by the
-    ///   [`crate::domain::conference_repository::ConferenceRepository`],
-    ///   in ascending `number` order.
+    ///   catalogue loader, in ascending `number` order.
     /// - `now`: timestamp recorded as `joined_at` on the new visit
     ///   (and `left_at` on any prior open visit).
     ///

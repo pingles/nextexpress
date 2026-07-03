@@ -60,10 +60,9 @@ pub struct AppServices {
     pub caller_log: SharedCallerLog,
     /// Screen repository port.
     pub screens: SharedScreens,
-    /// Conference catalogue (Slice 34a), sorted by conference number
-    /// per the
-    /// [`crate::domain::conference_repository::ConferenceRepository`]
-    /// contract.
+    /// Conference catalogue (Slice 34a), sorted by conference number —
+    /// the loader contract (`FileConferenceRepository::load_all` returns
+    /// ascending order).
     pub conferences: SharedConferences,
     /// Mail-store registry (Slice 39 / 41a).
     pub mail_stores: SharedMailStores,

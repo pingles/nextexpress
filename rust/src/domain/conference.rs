@@ -506,9 +506,8 @@ impl ConferenceMembership {
 /// `conferences.allium:first_accessible_conference(user)`).
 ///
 /// `conferences` is expected to be sorted in ascending number order
-/// — that is the contract
-/// [`crate::domain::conference_repository::ConferenceRepository::load_all`]
-/// already enforces.
+/// — the loader contract every catalogue source upholds (the file
+/// loader returns ascending order; tests construct sorted fixtures).
 #[must_use]
 pub fn first_accessible_conference<'a>(
     memberships: &[ConferenceMembership],

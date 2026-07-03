@@ -579,8 +579,7 @@ where
 /// The highest conference number in the catalogue — the legacy
 /// `cmds.numConf` bound the prompt advertises and clamps into
 /// (`amiexpress/express.e:25144`, `:25154`). The catalogue is in
-/// ascending number order per the `ConferenceRepository::load_all`
-/// contract, so the last entry carries the highest number. Zero on
+/// ascending number order per the loader contract, so the last entry carries the highest number. Zero on
 /// an empty catalogue, where every join request is denied.
 fn highest_conference_number(conferences: &[Conference]) -> u32 {
     conferences.last().map_or(0, Conference::number)

@@ -31,57 +31,18 @@ pub enum MailStoreError {
         #[source]
         source: StoreSourceError,
     },
-    /// A persisted message could not be parsed.
-    #[error("malformed mail at {path}: {source}")]
-    Malformed {
-        /// Path of the offending message file.
-        path: String,
-        /// Underlying parse error.
-        #[source]
-        source: StoreSourceError,
-    },
-    /// A mail could not be serialised to JSON. The in-memory writers
-    /// used by [`MailStore`] implementations cannot themselves fail, so
-    /// reaching this variant indicates a bug in the encoder rather than
-    /// a deployment problem — it's modelled explicitly anyway so the
-    /// adapter doesn't have to panic.
-    #[error("failed to serialise mail at number {number}: {source}")]
-    Serialise {
-        /// Message number that failed to serialise.
-        number: u32,
-        /// Underlying serde error.
-        #[source]
-        source: StoreSourceError,
-    },
-    /// A persisted message's recorded number disagrees with the number
-    /// encoded in its filename. Catches manual edits that would
-    /// otherwise let `MessageNumbersUniquePerBase` silently drift.
+    /// The caller handed [`MailStore::save`] / [`MailStore::insert`] a
+    /// mail bound to a different msgbase than this store. Writing it
+    /// here would silently break the mail's [`MessageBaseRef`]
+    /// coordinate, so the store refuses.
     #[error(
-        "mail file {path} encodes number {filename_number} but its \
-         payload declares number {payload_number}"
-    )]
-    NumberMismatch {
-        /// Path of the offending message file.
-        path: String,
-        /// Number derived from the filename.
-        filename_number: u32,
-        /// Number declared in the JSON payload.
-        payload_number: u32,
-    },
-    /// A persisted message's recorded `msgbase` disagrees with the
-    /// store's configured [`MessageBaseRef`]. Catches a message that
-    /// has been copied into the wrong msgbase directory.
-    #[error(
-        "mail file {path} belongs to msgbase \
-         ({payload_conference},{payload_msgbase}) but store is bound to \
-         ({store_conference},{store_msgbase})"
+        "mail belongs to msgbase ({payload_conference},{payload_msgbase}) \
+         but store is bound to ({store_conference},{store_msgbase})"
     )]
     MsgbaseMismatch {
-        /// Path of the offending message file.
-        path: String,
-        /// Conference number declared in the JSON payload.
+        /// Conference number the mail is bound to.
         payload_conference: u32,
-        /// Msgbase number declared in the JSON payload.
+        /// Msgbase number the mail is bound to.
         payload_msgbase: u32,
         /// Conference number the store was opened against.
         store_conference: u32,
@@ -126,9 +87,9 @@ pub trait MailStore {
     /// such message exists.
     ///
     /// # Errors
-    /// Returns [`MailStoreError::Backend`] for read failures and
-    /// [`MailStoreError::Malformed`] / [`MailStoreError::NumberMismatch`]
-    /// / [`MailStoreError::MsgbaseMismatch`] for corrupted data.
+    /// Returns [`MailStoreError::Backend`] for read failures and for
+    /// persisted data the adapter diagnoses as corrupt or inconsistent;
+    /// the adapter-specific diagnostic travels in the boxed source.
     fn load(&self, number: u32) -> Result<Option<Mail>, MailStoreError>;
 
     /// Overwrites the persisted message at `mail.number()` with the
