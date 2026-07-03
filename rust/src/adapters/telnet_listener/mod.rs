@@ -22,8 +22,12 @@ use crate::app::node_pool::NodePool;
 use crate::app::runtime::Runtime;
 use crate::app::services::AppServices;
 use crate::app::session_driver::SessionDriver;
-use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead};
+use crate::app::terminal::{
+    KeyRead, SessionSignal, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
+};
 use crate::domain::session::LogonChannel;
+
+use tokio::sync::mpsc;
 
 use super::telnet_line::{read_telnet_key, read_telnet_line, EchoMode};
 
@@ -111,6 +115,14 @@ async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Resul
         return Ok(());
     };
 
+    // The session's signal lane (July 2026 review, item 26): the
+    // sender lives in the pool so other tasks can address this node;
+    // the receiver rides inside the terminal, raced against the
+    // socket. `release_node_after` clears the pool slot on the way
+    // out, dropping the last sender.
+    let (signal_tx, signal_rx) = mpsc::unbounded_channel();
+    pool.attach_signal_sender(node_number, signal_tx).await;
+
     // Boxed for the same `large_futures` reason as the spawn site:
     // the driver future carries every sub-flow's locals inline.
     release_node_after(
@@ -121,7 +133,8 @@ async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Resul
             // Wrap the transport terminal so the `M` command (Tier A
             // quickwin A8) can strip ANSI colour from output; a fresh
             // connection starts with colour on.
-            let terminal = ColourTerminal::new(TelnetTerminal::new(&mut stream), true);
+            let terminal =
+                ColourTerminal::new(TelnetTerminal::new(&mut stream, Some(signal_rx)), true);
             let services: AppServices = runtime.services().clone();
             let mut driver =
                 SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
@@ -143,13 +156,27 @@ where
 struct TelnetTerminal<'a> {
     stream: &'a mut TcpStream,
     pushback: Option<u8>,
+    /// The in-progress line, hoisted out of the codec future (July
+    /// 2026 review, item 26) so an interrupted `read_line` — raced
+    /// against a session signal and dropped — resumes with the
+    /// half-typed bytes (and their already-written echo) intact.
+    line_buf: Vec<u8>,
+    /// The session's signal lane: reads race the socket against this
+    /// receiver so another task can deliver into the parked prompt.
+    /// `None` once the channel closes (or for signal-less fixtures).
+    signals: Option<mpsc::UnboundedReceiver<SessionSignal>>,
 }
 
 impl<'a> TelnetTerminal<'a> {
-    fn new(stream: &'a mut TcpStream) -> Self {
+    fn new(
+        stream: &'a mut TcpStream,
+        signals: Option<mpsc::UnboundedReceiver<SessionSignal>>,
+    ) -> Self {
         Self {
             stream,
             pushback: None,
+            line_buf: Vec::new(),
+            signals,
         }
     }
 }
@@ -171,33 +198,121 @@ impl Terminal for TelnetTerminal<'_> {
         timeout: Duration,
     ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
         Box::pin(async move {
-            match tokio::time::timeout(
-                timeout,
-                read_telnet_line(self.stream, &mut self.pushback, echo.into()),
-            )
-            .await
-            {
-                Ok(result) => match result? {
-                    Some(line) => Ok(TerminalRead::Line(line)),
-                    None => Ok(TerminalRead::Eof),
-                },
-                Err(_elapsed) => Ok(TerminalRead::IdleTimedOut),
+            let deadline = tokio::time::sleep(timeout);
+            tokio::pin!(deadline);
+            loop {
+                // Race the codec against the signal lane and the idle
+                // deadline. Cancelling the codec future is safe: the
+                // half-typed line and the CR-trailer pushback both live
+                // on `self` (the item-26 hoist), so the next iteration
+                // resumes exactly where the cancelled read stopped. A
+                // signal landing mid-IAC-negotiation or mid-echo can
+                // clip that exchange — negotiations happen at connect
+                // and a lost echo byte is cosmetic, both accepted.
+                let raced = {
+                    let Self {
+                        stream,
+                        pushback,
+                        line_buf,
+                        signals,
+                    } = &mut *self;
+                    tokio::select! {
+                        result = read_telnet_line(stream, pushback, line_buf, echo.into()) => {
+                            Raced::Line(result)
+                        }
+                        signal = next_signal(signals) => Raced::Signal(signal),
+                        () = &mut deadline => Raced::TimedOut,
+                    }
+                };
+                match raced {
+                    Raced::Line(result) => {
+                        return match result? {
+                            Some(line) => Ok(TerminalRead::Line(line)),
+                            None => Ok(TerminalRead::Eof),
+                        };
+                    }
+                    Raced::Key(_) => unreachable!("read_line races the line codec"),
+                    Raced::Signal(Some(SessionSignal::Deliver(bytes))) => {
+                        self.stream.write_all(&bytes).await?;
+                        self.stream.flush().await?;
+                    }
+                    Raced::Signal(None) => {
+                        // Channel closed (sender dropped): stop polling
+                        // it — recv() on a closed channel returns
+                        // immediately and would busy-loop the select.
+                        self.signals = None;
+                    }
+                    Raced::TimedOut => {
+                        // The idle timeout ends the session; drop the
+                        // half-typed line so it cannot spill into a
+                        // later read.
+                        self.line_buf.clear();
+                        return Ok(TerminalRead::IdleTimedOut);
+                    }
+                }
             }
         })
     }
 
     fn read_key(&mut self, timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
         Box::pin(async move {
-            match tokio::time::timeout(timeout, read_telnet_key(self.stream, &mut self.pushback))
-                .await
-            {
-                Ok(result) => match result? {
-                    Some(key) => Ok(KeyRead::Key(key)),
-                    None => Ok(KeyRead::Eof),
-                },
-                Err(_elapsed) => Ok(KeyRead::IdleTimedOut),
+            let deadline = tokio::time::sleep(timeout);
+            tokio::pin!(deadline);
+            loop {
+                let raced = {
+                    let Self {
+                        stream,
+                        pushback,
+                        signals,
+                        ..
+                    } = &mut *self;
+                    tokio::select! {
+                        result = read_telnet_key(stream, pushback) => Raced::Key(result),
+                        signal = next_signal(signals) => Raced::Signal(signal),
+                        () = &mut deadline => Raced::TimedOut,
+                    }
+                };
+                match raced {
+                    Raced::Key(result) => {
+                        return match result? {
+                            Some(key) => Ok(KeyRead::Key(key)),
+                            None => Ok(KeyRead::Eof),
+                        };
+                    }
+                    Raced::Line(_) => unreachable!("read_key races the key codec"),
+                    Raced::Signal(Some(SessionSignal::Deliver(bytes))) => {
+                        self.stream.write_all(&bytes).await?;
+                        self.stream.flush().await?;
+                    }
+                    Raced::Signal(None) => {
+                        self.signals = None;
+                    }
+                    Raced::TimedOut => return Ok(KeyRead::IdleTimedOut),
+                }
             }
         })
+    }
+}
+
+/// Outcome of racing a codec read against the session-signal lane and
+/// the idle deadline. Extracted from the `select!` arms so the arm
+/// bodies run after the codec future (and its `&mut` borrows of the
+/// terminal's fields) has been dropped.
+enum Raced {
+    Line(io::Result<Option<String>>),
+    Key(io::Result<Option<crate::app::terminal::KeyEvent>>),
+    Signal(Option<SessionSignal>),
+    TimedOut,
+}
+
+/// Resolves the next session signal, or never if the session has no
+/// signal lane (`None` — signal-less fixtures, or a closed channel).
+async fn next_signal(
+    signals: &mut Option<mpsc::UnboundedReceiver<SessionSignal>>,
+) -> Option<SessionSignal> {
+    match signals {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
     }
 }
 

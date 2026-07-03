@@ -161,8 +161,25 @@ pub fn empty_file_repo() -> SharedFileRepo {
 }
 
 /// Binds a [`TelnetListener`] for a seeded-sysop fixture and returns
+/// the bound address plus the runtime's node pool — the handle a test
+/// uses to reach a live session's signal lane
+/// (`NodePool::signal_sender`, July 2026 review item 26).
+pub async fn spawn_seeded_sysop_with_pool(
+    fixture: TestRuntime,
+) -> (SocketAddr, Arc<nextexpress::app::node_pool::NodePool>) {
+    let addr = spawn_seeded_sysop_inner(fixture).await;
+    (addr.0, addr.1)
+}
+
+/// Binds a [`TelnetListener`] for a seeded-sysop fixture and returns
 /// the bound address.
 pub async fn spawn_seeded_sysop(fixture: TestRuntime) -> SocketAddr {
+    spawn_seeded_sysop_inner(fixture).await.0
+}
+
+async fn spawn_seeded_sysop_inner(
+    fixture: TestRuntime,
+) -> (SocketAddr, Arc<nextexpress::app::node_pool::NodePool>) {
     let hasher = Arc::new(Pbkdf2PasswordHasher::new());
     let mut sysop = seed::default_sysop(hasher.as_ref()).expect("seed sysop");
     seed::grant_all_memberships(&mut sysop, &fixture.conferences);
@@ -212,10 +229,11 @@ pub async fn spawn_seeded_sysop(fixture: TestRuntime) -> SocketAddr {
         .await
         .expect("bind listener");
     let addr = listener.local_addr().expect("local_addr");
+    let pool = listener.pool();
     let listener = Arc::new(listener);
     let task_listener = listener.clone();
     tokio::spawn(async move { task_listener.run().await });
-    addr
+    (addr, pool)
 }
 
 /// Connects as the seeded `sysop` user and returns the stream at the

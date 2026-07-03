@@ -5,23 +5,63 @@
 //! it protects domain [`Node`] values with an async-aware lock so
 //! transports can safely allocate nodes concurrently.
 
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
+use crate::app::terminal::SessionSignal;
 use crate::domain::node::{Node, NodeStatus, TransitionError};
 
 /// A fixed-size pool of [`Node`]s sitting behind an async-aware lock.
+///
+/// Besides allocation, the pool carries each live node's
+/// [`SessionSignal`] sender — the minimal cross-session seam (July
+/// 2026 review, item 26) another task uses to reach a session parked
+/// at a prompt. The fuller who's-online presence registry (item 25)
+/// grows here with Tier E's `WHO` slice.
 #[derive(Debug)]
 pub struct NodePool {
     nodes: Mutex<Vec<Node>>,
+    signals: Mutex<Vec<Option<mpsc::UnboundedSender<SessionSignal>>>>,
 }
 
 impl NodePool {
     /// Constructs a pool of `max_nodes` idle nodes, numbered `1..=max_nodes`.
     pub fn new(max_nodes: u32) -> Self {
         let nodes = (1..=max_nodes).map(Node::new).collect();
+        let signals = (1..=max_nodes).map(|_| None).collect();
         Self {
             nodes: Mutex::new(nodes),
+            signals: Mutex::new(signals),
         }
+    }
+
+    /// Installs `sender` as node `number`'s session-signal lane. The
+    /// transport calls this once per accepted connection, right after
+    /// [`allocate`](Self::allocate); [`release`](Self::release) clears
+    /// it. Out-of-range numbers are ignored.
+    pub async fn attach_signal_sender(
+        &self,
+        number: u32,
+        sender: mpsc::UnboundedSender<SessionSignal>,
+    ) {
+        let mut signals = self.signals.lock().await;
+        if let Some(slot) = number
+            .checked_sub(1)
+            .and_then(|index| signals.get_mut(index as usize))
+        {
+            *slot = Some(sender);
+        }
+    }
+
+    /// The session-signal sender for node `number`, if a session is
+    /// live on it. Cloning the sender is how another task addresses
+    /// that session (e.g. delivering an OLM line into its prompt).
+    pub async fn signal_sender(&self, number: u32) -> Option<mpsc::UnboundedSender<SessionSignal>> {
+        let signals = self.signals.lock().await;
+        number
+            .checked_sub(1)
+            .and_then(|index| signals.get(index as usize))
+            .and_then(Clone::clone)
     }
 
     /// Atomically claims an idle node by transitioning it to
@@ -42,6 +82,15 @@ impl NodePool {
     /// or [`ReleaseError::InvalidTransition`] if the node's current
     /// status does not permit returning to idle.
     pub async fn release(&self, number: u32) -> Result<(), ReleaseError> {
+        {
+            let mut signals = self.signals.lock().await;
+            if let Some(slot) = number
+                .checked_sub(1)
+                .and_then(|index| signals.get_mut(index as usize))
+            {
+                *slot = None;
+            }
+        }
         let mut nodes = self.nodes.lock().await;
         let node = nodes
             .iter_mut()

@@ -47,20 +47,27 @@ pub(crate) enum EchoMode {
 /// Without this, a SyncTerm-style client that sends a bare CR for
 /// `<Enter>` would force the user to press Enter twice.
 ///
+/// `buf` is the in-progress line, also caller-owned (July 2026 review,
+/// item 26): because this future can be raced against a session-signal
+/// delivery and dropped mid-line, the half-typed bytes must live
+/// outside it — a resumed call picks up exactly where the cancelled
+/// one stopped (the per-byte echo has already been written). The
+/// buffer is drained (`mem::take`) whenever a line is returned.
+///
 /// Returns `Ok(Some(line))` on success, `Ok(None)` on EOF before any
 /// terminator was seen.
 pub(crate) async fn read_telnet_line(
     stream: &mut TcpStream,
     pushback: &mut Option<u8>,
+    buf: &mut Vec<u8>,
     echo: EchoMode,
 ) -> io::Result<Option<String>> {
-    let mut buf = Vec::with_capacity(64);
     loop {
         let Some(b) = read_one(stream, pushback).await? else {
             return if buf.is_empty() {
                 Ok(None)
             } else {
-                Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+                Ok(Some(take_line(buf)))
             };
         };
         match b {
@@ -80,11 +87,11 @@ pub(crate) async fn read_telnet_line(
                 // next prompt's `read_telnet_line` sees it.
                 try_consume_cr_trailer(stream, pushback)?;
                 stream.write_all(b"\r\n").await?;
-                return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+                return Ok(Some(take_line(buf)));
             }
             b'\n' => {
                 stream.write_all(b"\r\n").await?;
-                return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+                return Ok(Some(take_line(buf)));
             }
             0x08 | 0x7F
                 // Backspace / DEL: drop the previous byte if any and
@@ -113,6 +120,11 @@ pub(crate) async fn read_telnet_line(
             _ => {}
         }
     }
+}
+
+/// Drains the caller-owned line buffer into the returned line.
+fn take_line(buf: &mut Vec<u8>) -> String {
+    String::from_utf8_lossy(&std::mem::take(buf)).into_owned()
 }
 
 /// Returns one byte from `pushback` if any, otherwise blocks reading
@@ -325,8 +337,9 @@ mod tests {
         client.write_all(&input).await.unwrap();
         client.write_all(b"\r").await.unwrap();
         let mut pushback = None;
+        let mut buf = Vec::new();
 
-        let line = read_telnet_line(&mut server, &mut pushback, EchoMode::Visible)
+        let line = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible)
             .await
             .unwrap()
             .expect("line");
@@ -341,8 +354,9 @@ mod tests {
         let input = vec![b'a'; MAX_TERMINAL_LINE_BYTES + 1];
         client.write_all(&input).await.unwrap();
         let mut pushback = None;
+        let mut buf = Vec::new();
 
-        let err = read_telnet_line(&mut server, &mut pushback, EchoMode::Visible)
+        let err = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible)
             .await
             .expect_err("overlong line must fail");
 

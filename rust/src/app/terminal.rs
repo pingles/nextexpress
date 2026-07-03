@@ -14,6 +14,20 @@ use std::time::Duration;
 /// Future returned by [`Terminal`] operations.
 pub(crate) type TerminalFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 
+/// A cross-task signal delivered into a live session's terminal (July
+/// 2026 review, item 26). A session parked at a prompt is suspended
+/// inside its terminal read; the transport races that read against its
+/// per-session signal channel so another task — Tier E's `OLM`/page
+/// senders, later Tier G's kick/suspend — can reach it. Starts with
+/// exactly one variant; Tier G adds `Kick` (surfaced as a synthetic
+/// EOF so the existing carrier-loss teardown runs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionSignal {
+    /// Write these bytes to the session's terminal, then resume the
+    /// interrupted read with its input buffer and echo state intact.
+    Deliver(Vec<u8>),
+}
+
 /// Echo policy requested by the BBS workflow when reading a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TerminalEcho {

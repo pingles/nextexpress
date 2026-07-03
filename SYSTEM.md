@@ -29,7 +29,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 14 | **Sans-IO Zmodem engine decision** (21) | Shapes D-T1 | Porting `zmodem.e`'s callback-into-serial shape would weld protocol logic to live sockets — untestable, mutants-hostile — and force writing the protocol twice (the smoke harness needs an embedded client; the sans-IO engine plays both roles). | 1 doc now; engine lands inside D-T1..T5 | decision now; 1–2 wks in-slice |
 | 15 | **Real `has_access` narrowing** (24) | With the first refusing slice (D/U eligibility or FM/US) | The stub grants every right to any validated account; FM/US are the first commands that must refuse a level-2 user. Minimal per-variant narrowing keeps `has_access` the single choke-point instead of scattering level checks. | ~3 | 0.5–1 day |
 | 16 | **`NodePool` → presence registry** (25) | Immediately before WHO | Today nothing can answer "who is online" — no registry, dead `LoggedOn` transitions, pool unreachable from handlers. `NodePresence` + `snapshot_all` is the read-side seam for WHO/WHD, Tier G's node monitor, and the place delivery handles later hang. | ~8–12 | 1–2 days |
-| 17 | **`SessionSignal` channel in the terminal** (26) | Opening move of OLM/page | Sessions are unreachable while blocked on a read; the select-in-terminal design (after hoisting the line buffer so delivery can't drop half-typed input) is the delivery lane OLM, page, and later Tier G kick/suspend all reuse — avoiding a session-actor rewrite. | ~5–7 | ~3 days |
+| 17 | **`SessionSignal` channel in the terminal** (26) | **Landed** 2026-07-03 (pulled forward; OLM/page add the send side) | Sessions are unreachable while blocked on a read; the select-in-terminal design (after hoisting the line buffer so delivery can't drop half-typed input) is the delivery lane OLM, page, and later Tier G kick/suspend all reuse — avoiding a session-actor rewrite. | ~5–7 | ~3 days |
 | 18 | **Activate the time budget** (27) | During Tier E, before Tier G's G6 | `tick_minute` has zero callers — "mins. left" is frozen and `OutOfTime` unreachable (a parity gap now). Tier G's time +/- needs a live budget to adjust, and Tier I's caps need `time_used_today` to have actually accrued. | ~4–6 + FS-UAE capture | 1–2 days |
 
 Dependencies: 13 depends on 12's policy decision; 14 depends on 13; 17
@@ -1549,6 +1549,28 @@ comment branch) needs none of it, and building it mid-Tier-D would sit
 unconsumed for several slices.**
 
 ### 26. Per-session `SessionSignal` channel selected inside the terminal
+
+**Landed (2026-07-03), pulled forward by user decision (ahead of its
+Tier E trigger).** Two stages, exactly as planned: (1) the codec
+state-hoist — `read_telnet_line`'s line buffer moved from a
+function-local into `TelnetTerminal::line_buf` (with the CR-trailer
+`pushback` already there), so cancelling the read future mid-line
+loses nothing; pure refactor, suite-pinned. (2)
+`app::terminal::SessionSignal` (one variant, `Deliver(Vec<u8>)`);
+`NodePool` carries a per-node
+`mpsc::UnboundedSender<SessionSignal>` slot (`attach_signal_sender` /
+`signal_sender`, cleared by `release`) — the minimal cross-session
+seam item 25's presence registry will grow around; the receiver rides
+inside `TelnetTerminal`, and `read_line`/`read_key` are a
+`tokio::select!` over {codec, signal, idle deadline} that writes a
+delivery and resumes the same read with buffer and echo intact.
+Pinned by an adapter-level race test
+(`delivery_mid_line_writes_payload_and_preserves_the_typed_prefix`,
+written first and watched to fail) and the `session_signal_smoke`
+(delivery into a parked menu prompt; the next command still works;
+release clears the lane). Tier E's OLM/page slices now only write the
+send side; Tier G adds the `Kick` variant. Original problem statement
+follows.
 
 OLM and the page notification must deliver text into a session parked
 at a prompt, but a blocked session is suspended inside

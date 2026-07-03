@@ -26,6 +26,53 @@ use crate::domain::password::{PasswordHashKind, PasswordHasher};
 use crate::domain::user::User;
 use crate::domain::user_repository::NameLookupResult;
 
+#[tokio::test]
+async fn delivery_mid_line_writes_payload_and_preserves_the_typed_prefix() {
+    // July 2026 review, item 26: a SessionSignal::Deliver arriving
+    // while the session is parked mid-line must (a) write its payload
+    // to the client and (b) resume the read with the half-typed bytes
+    // intact — the naive cancel-and-restart would silently discard
+    // "AB" while its echo stayed on the user's screen.
+    use crate::app::terminal::{SessionSignal, Terminal, TerminalEcho, TerminalRead};
+    use std::time::Duration;
+    use tokio::net::{TcpListener as TokioListener, TcpStream};
+
+    let listener = TokioListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let mut client = TcpStream::connect(addr).await.expect("connect");
+    let (mut server, _) = listener.accept().await.expect("accept");
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut terminal = TelnetTerminal::new(&mut server, Some(rx));
+
+    let reader = terminal.read_line(TerminalEcho::Visible, Duration::from_secs(5));
+    let driver = async {
+        client.write_all(b"AB").await.expect("write prefix");
+        client.flush().await.expect("flush");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tx.send(SessionSignal::Deliver(b"\r\n*OLM*\r\n".to_vec()))
+            .expect("send signal");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        client.write_all(b"C\r\n").await.expect("write suffix");
+        client.flush().await.expect("flush");
+    };
+    let (read, ()) = tokio::join!(reader, driver);
+    assert_eq!(
+        read.expect("read"),
+        TerminalRead::Line("ABC".to_string()),
+        "the half-typed prefix survives the delivery"
+    );
+
+    drop(server);
+    let mut received = Vec::new();
+    client.read_to_end(&mut received).await.expect("drain");
+    assert_eq!(
+        received,
+        b"AB\r\n*OLM*\r\nC\r\n".to_vec(),
+        "echoes, then the delivered payload mid-line, then the rest"
+    );
+}
+
 /// Wires a [`Runtime`] from the test inputs. Tests stay close to
 /// the previous `bind(addr, config, repo, hasher, log, confs)`
 /// shape but the composition now flows through the same entry
