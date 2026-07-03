@@ -1,4 +1,4 @@
-use super::{val_prefix, FileListArg, FileSpan, ZippyArg};
+use super::{parse_span_token, FileListArg, ZippyArg};
 
 /// Parses the `Z` command line into a [`ZippyArg`]. Exact-token dispatch
 /// (`StrCmp(cmdcode,'Z')`, `amiexpress/express.e:28388`): the command
@@ -45,15 +45,7 @@ pub(super) fn parse_file_list_command(line: &str) -> Option<FileListArg> {
         });
     }
 
-    let span = if first.eq_ignore_ascii_case("A") {
-        FileSpan::All
-    } else if first.eq_ignore_ascii_case("U") {
-        FileSpan::Upload
-    } else if first.eq_ignore_ascii_case("H") {
-        FileSpan::Hold
-    } else if first.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-        FileSpan::Dir(val_prefix(first))
-    } else {
+    let Some(span) = parse_span_token(first) else {
         return Some(FileListArg::Invalid);
     };
 

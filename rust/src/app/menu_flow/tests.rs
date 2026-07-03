@@ -6,24 +6,18 @@
 //! (`amiexpress/express.e:25045`, `:12667`, `:2129`), captured live in
 //! `comparison/transcripts/ae_tierd_g_confirm.txt`.
 
-use std::collections::VecDeque;
-use std::convert::Infallible;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime};
 
-use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
 use crate::app::menu_command::parse_menu_command;
-use crate::app::menu_flow::test_support::test_services;
+use crate::app::menu_flow::test_support::{menu_session, test_services, CaptureTerminal};
 use crate::app::services::AppServices;
-use crate::app::terminal::{
-    KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
-};
+use crate::app::terminal::{KeyEvent, KeyRead, TerminalRead};
 use crate::app::wire_text::IDLE_TIMEOUT_LINE;
-use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
 use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::files::flagged::FlaggedKey;
 use crate::domain::files::flagged_store::{FlaggedStore, FlaggedStoreError};
-use crate::domain::password::{PasswordHashKind, PasswordHasher};
+use crate::domain::password::PasswordHashKind;
 use crate::domain::session::typed::MenuSession;
 use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
 use crate::domain::user::User;
@@ -77,68 +71,6 @@ fn services_with_flagged_store(store: Arc<dyn FlaggedStore + Send + Sync>) -> Ap
     services
 }
 
-/// Write-capturing terminal with a scripted key-read queue. The adapter
-/// echoes NOTHING in hot-key mode (the caller owns every visible byte),
-/// so `output` is the pure server-generated wire — the parity surface.
-#[derive(Default)]
-struct CaptureTerminal {
-    output: Vec<u8>,
-    keys: VecDeque<KeyRead>,
-    lines: VecDeque<TerminalRead>,
-}
-
-impl CaptureTerminal {
-    fn with_keys(keys: Vec<KeyRead>) -> Self {
-        Self {
-            output: Vec::new(),
-            keys: keys.into(),
-            lines: VecDeque::new(),
-        }
-    }
-
-    /// Scripts the `read_line` (`lineInput`) queue for line-prompt loops
-    /// like `A`'s `flagFiles` (slice D6b). Like the real adapter in
-    /// hot-key parity, the test terminal echoes NOTHING, so `output`
-    /// stays the pure server-generated wire. A drained queue reads as
-    /// `Eof` (carrier loss), matching the default terminal.
-    fn with_lines(lines: Vec<TerminalRead>) -> Self {
-        Self {
-            output: Vec::new(),
-            keys: VecDeque::new(),
-            lines: lines.into(),
-        }
-    }
-}
-
-impl Terminal for CaptureTerminal {
-    type Error = Infallible;
-
-    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
-        Box::pin(async move {
-            self.output.extend_from_slice(bytes);
-            Ok(())
-        })
-    }
-
-    fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn read_line(
-        &mut self,
-        _echo: TerminalEcho,
-        _timeout: Duration,
-    ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
-        let read = self.lines.pop_front().unwrap_or(TerminalRead::Eof);
-        Box::pin(async move { Ok(read) })
-    }
-
-    fn read_key(&mut self, _timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
-        let key = self.keys.pop_front().unwrap_or(KeyRead::Eof);
-        Box::pin(async move { Ok(key) })
-    }
-}
-
 fn char_key(c: u8) -> KeyRead {
     KeyRead::Key(KeyEvent::Char(c))
 }
@@ -151,54 +83,6 @@ fn enter_key() -> KeyRead {
 /// returning a typed line). An empty `text` is the `<CR>`/none answer.
 fn line(text: &str) -> TerminalRead {
     TerminalRead::Line(text.to_string())
-}
-
-fn conference(number: u32) -> Conference {
-    Conference::new(
-        number,
-        format!("Conf {number}"),
-        vec![MessageBase::new(number, 1, "main".to_string())],
-    )
-    .expect("valid conference")
-}
-
-fn test_user() -> User {
-    let hasher = Pbkdf2PasswordHasher::new();
-    let computed = hasher
-        .compute_password_hash("pw", PasswordHashKind::Pbkdf210000)
-        .expect("hash");
-    let mut user = User::new(
-        2,
-        "alice".to_string(),
-        PasswordHashKind::Pbkdf210000,
-        computed.hash,
-        computed.salt,
-        SystemTime::UNIX_EPOCH,
-        255,
-    )
-    .expect("valid user");
-    user.upsert_membership(ConferenceMembership::new(1, true));
-    user
-}
-
-fn menu_session() -> MenuSession {
-    let conferences = vec![conference(1)];
-    let mut session = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
-    session.prompt_for_name().expect("prompt");
-    session
-        .record_identified_user("alice", test_user())
-        .expect("identify");
-    apply_password_match(
-        &mut session,
-        SessionPolicy::default(),
-        SystemTime::UNIX_EPOCH,
-    )
-    .expect("password match");
-    session
-        .auto_rejoin_conference(&conferences, SystemTime::UNIX_EPOCH)
-        .expect("rejoin");
-    session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
-    MenuSession::from_session(session)
 }
 
 /// A menu-phase session carrying one flagged file, so plain `G` reaches

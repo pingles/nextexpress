@@ -10,37 +10,9 @@
 //! U+00A4 ¤, U+00B0 °, U+00AC ¬, U+00AF ¯, U+00A9 ©), recorded
 //! in `COMMAND_PARITY.md`.
 
+use super::scan::{ListedRow, ScanLine};
 use crate::domain::files::file::File;
 use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
-
-/// One assembled listing line plus, on a file's first row, its
-/// catalogue identity — the pager records these for flag matching
-/// and in-place repaint (slice D2f). Non-file lines carry `None`.
-#[derive(Clone)]
-pub(super) struct ScanLine {
-    pub(super) bytes: Vec<u8>,
-    pub(super) listed: Option<ListedRow>,
-}
-
-impl ScanLine {
-    /// A non-file line (banner, header, separator, blank, footer).
-    pub(super) fn raw(bytes: Vec<u8>) -> Self {
-        Self {
-            bytes,
-            listed: None,
-        }
-    }
-}
-
-/// A listed file: its flag key, its `[ File #N ]` number (framed rows
-/// only; plain rows consume no number), and whether it carries the
-/// aligned marker slot (name < 13) vs a trailing ` [X]` (over-long).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ListedRow {
-    pub(super) key: FlaggedKey,
-    pub(super) number: Option<u32>,
-    pub(super) aligned: bool,
-}
 
 /// The 4-column marker slot spliced between the name field and the
 /// check byte on aligned rows (design 2026-06-12 §5; a deliberate
@@ -257,7 +229,7 @@ pub(super) const HELP_SCREEN: &str = "\x1b[0m\x0c\r\n\
 /// (≥ 13 chars) and sizes past the 7-column field — both leave the
 /// colour boundaries nowhere fixed to land.
 fn frameable(file: &File) -> bool {
-    file.name().len() < 13 && file.size().count() <= 9_999_999
+    file.name().len() < 13 && file.size().count() <= super::dir_row::MAX_ALIGNED_SIZE
 }
 
 /// Assembles one directory's listing body — everything between the
@@ -280,10 +252,16 @@ fn frameable(file: &File) -> bool {
 /// over-long (plain) row appends a trailing ` [X]` when flagged. The
 /// `ScanLine` of a file's first row carries its [`ListedRow`]; every
 /// other line (separators, headers, continuations, footer) is raw.
+///
+/// `quick` (`N`'s `Q` token, capture N7q) truncates every file to the
+/// first line of its description — no continuation rows. `F` passes
+/// `false` unconditionally (the door supports `F <dir> Q`, but landed
+/// `F` swallows `Q` as Invalid — a recorded follow-up).
 pub(super) fn assemble_dir_lines(
     files: &[File],
     conference: u32,
     flagged: &FlaggedFiles,
+    quick: bool,
 ) -> Vec<ScanLine> {
     let mut lines: Vec<ScanLine> = Vec::new();
     let mut previous_framed_date: Option<String> = None;
@@ -331,9 +309,13 @@ pub(super) fn assemble_dir_lines(
             // Plain continuations keep the legacy 33-space indent.
             33
         };
-        lines.extend(
-            rows.map(|continuation| ScanLine::raw(plain_line(&reindent(&continuation, indent)))),
-        );
+        if !quick {
+            lines.extend(
+                rows.map(|continuation| {
+                    ScanLine::raw(plain_line(&reindent(&continuation, indent)))
+                }),
+            );
+        }
     }
 
     if !lines.is_empty() {
@@ -748,7 +730,56 @@ mod tests {
         expected.push(file_number_header(3));
         expected.push(framed_row(&files[2], false));
         expected.push(END_OF_FILE_LIST.to_vec());
-        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default())
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default(), false)
+            .into_iter()
+            .map(|line| line.bytes)
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn quick_scan_drops_description_continuations() {
+        // Capture N7q (`ae_tierd_newfiles.txt` pass 2, `N 01-01-26 2 Q`):
+        // with the quick flag each file shows only the first line of its
+        // description — MYDEMO's continuation is absent and File #3's
+        // header follows the framed row directly; everything else
+        // (separators, frames, footer) is unchanged.
+        use time::macros::datetime;
+        let files = vec![
+            seeded(
+                "FRESHUPL.LHA",
+                43_210,
+                Some(b'P'),
+                datetime!(2026-06-09 12:00 UTC),
+                "Uploaded last night, awaiting sort",
+            ),
+            seeded(
+                "MYDEMO.DMS",
+                567_890,
+                Some(b'P'),
+                datetime!(2026-06-10 12:00 UTC),
+                "My first demo - feedback welcome!\nGreets to everyone on node 1.",
+            ),
+            seeded(
+                "TOOLPACK.LHA",
+                234_567,
+                Some(b'P'),
+                datetime!(2026-06-10 12:00 UTC),
+                "Misc CLI tools collection",
+            ),
+        ];
+        let mut expected: Vec<Vec<u8>> = Vec::new();
+        expected.extend(separator_block("06-09-26"));
+        expected.push(file_number_header(1));
+        expected.push(framed_row(&files[0], false));
+        expected.extend(separator_block("06-10-26"));
+        expected.push(file_number_header(2));
+        expected.push(framed_row(&files[1], false));
+        // Quick: NO continuation line — File #3 butt-joins directly.
+        expected.push(file_number_header(3));
+        expected.push(framed_row(&files[2], false));
+        expected.push(END_OF_FILE_LIST.to_vec());
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default(), true)
             .into_iter()
             .map(|line| line.bytes)
             .collect();
@@ -797,7 +828,7 @@ mod tests {
         expected.push(file_number_header(2));
         expected.push(framed_row(&files[2], false));
         expected.push(END_OF_FILE_LIST.to_vec());
-        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default())
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default(), false)
             .into_iter()
             .map(|line| line.bytes)
             .collect();
@@ -818,7 +849,7 @@ mod tests {
             plain_line(b"THIRTEENCH.LZ   66666  05-20-26  Exactly thirteen character filename"),
             END_OF_FILE_LIST.to_vec(),
         ];
-        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default())
+        let actual: Vec<Vec<u8>> = assemble_dir_lines(&files, 1, &FlaggedFiles::default(), false)
             .into_iter()
             .map(|line| line.bytes)
             .collect();
@@ -827,7 +858,7 @@ mod tests {
 
     #[test]
     fn empty_dir_assembles_no_lines() {
-        assert!(assemble_dir_lines(&[], 1, &FlaggedFiles::default()).is_empty());
+        assert!(assemble_dir_lines(&[], 1, &FlaggedFiles::default(), false).is_empty());
     }
 
     #[test]
@@ -845,8 +876,12 @@ mod tests {
             "Collection of 40 ANSI screens from the",
         );
 
-        let unflagged =
-            assemble_dir_lines(std::slice::from_ref(&file), 1, &FlaggedFiles::default());
+        let unflagged = assemble_dir_lines(
+            std::slice::from_ref(&file),
+            1,
+            &FlaggedFiles::default(),
+            false,
+        );
         let row = &unflagged[unflagged.len() - 2];
         assert_eq!(
             row.bytes,
@@ -856,7 +891,7 @@ mod tests {
         let key = FlaggedKey::new(1, "ANSIPACK.LHA");
         let mut flags = FlaggedFiles::default();
         flags.flag(key.clone());
-        let flagged = assemble_dir_lines(&[file], 1, &flags);
+        let flagged = assemble_dir_lines(&[file], 1, &flags, false);
         let row = &flagged[flagged.len() - 2];
         assert_eq!(
             row.bytes,
@@ -891,7 +926,7 @@ mod tests {
 
         let mut flags = FlaggedFiles::default();
         flags.flag(FlaggedKey::new(1, "ansipack.lha"));
-        let lines = assemble_dir_lines(&[file], 1, &flags);
+        let lines = assemble_dir_lines(&[file], 1, &flags, false);
         let row = &lines[lines.len() - 2];
         assert_eq!(
             row.bytes,
@@ -918,7 +953,7 @@ mod tests {
         let key = FlaggedKey::new(1, "THIRTEENCH.LZ");
         let mut flags = FlaggedFiles::default();
         flags.flag(key.clone());
-        let flagged = assemble_dir_lines(&[file], 1, &flags);
+        let flagged = assemble_dir_lines(&[file], 1, &flags, false);
         let row = &flagged[0];
         assert_eq!(
             row.bytes,

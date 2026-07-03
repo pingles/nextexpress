@@ -52,12 +52,19 @@ pub(super) fn dir_row_lines(file: &File) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// The largest size that fits the 7-column DIR field. Shared with the
+/// framer's frameability rule (`wire::frameable`): a size past this
+/// drifts the columns, so the row falls through plain in both places
+/// — one const keeps the two rules from disagreeing.
+pub(super) const MAX_ALIGNED_SIZE: u64 = 9_999_999;
+
 /// `formatFileSizeForDirList` (`express.e:18918-18942`), untoggled
-/// branch: right-justified width 7 up to 9,999,999 octets, unpadded
-/// past it (the authentic column drift; `CREDITBYKB` / `CONVERT_TO_MB`
-/// variants are unconfigured on the reference board and unported).
+/// branch: right-justified width 7 up to [`MAX_ALIGNED_SIZE`] octets,
+/// unpadded past it (the authentic column drift; `CREDITBYKB` /
+/// `CONVERT_TO_MB` variants are unconfigured on the reference board
+/// and unported).
 fn size_column(count: u64) -> String {
-    if count <= 9_999_999 {
+    if count <= MAX_ALIGNED_SIZE {
         format!("{count:>7}")
     } else {
         count.to_string()

@@ -300,6 +300,30 @@ pub(crate) fn val_prefix(token: &str) -> i64 {
     }
 }
 
+/// Resolves one `AquaScan` directory-span token — an argument token or
+/// a `Directories:` prompt answer — to a [`FileSpan`] (SYSTEM.md
+/// item 17: the resolver the `F`/`N` parsers, the door's `Directories:`
+/// prompt and the zippy `getDirSpan` share). Whole-token
+/// case-insensitive `A`/`U`/`H`; a leading ASCII digit takes the raw
+/// [`val_prefix`] as [`FileSpan::Dir`] (range checks stay with the
+/// callers, as does each caller's pinned error envelope for `None` —
+/// the divergent `Error in input!` / `No such directory.` /
+/// `Argument error!` wires are legacy parity, not accidents).
+#[must_use]
+pub(crate) fn parse_span_token(token: &str) -> Option<FileSpan> {
+    if token.eq_ignore_ascii_case("A") {
+        Some(FileSpan::All)
+    } else if token.eq_ignore_ascii_case("U") {
+        Some(FileSpan::Upload)
+    } else if token.eq_ignore_ascii_case("H") {
+        Some(FileSpan::Hold)
+    } else if token.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        Some(FileSpan::Dir(val_prefix(token)))
+    } else {
+        None
+    }
+}
+
 /// Parsed shape of an `E` / `E <to>` command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PostArg {
@@ -629,6 +653,32 @@ mod tests {
     fn val_prefix_saturates_instead_of_overflowing() {
         assert_eq!(val_prefix("99999999999999999999999"), i64::MAX);
         assert_eq!(val_prefix("-99999999999999999999999"), i64::MIN);
+    }
+
+    #[test]
+    fn parse_span_token_resolves_the_shared_aquascan_dir_grammar() {
+        // SYSTEM.md item 17: one A/U/H/digit resolver shared by the F
+        // parser, the Directories prompts and the zippy span — each
+        // caller keeps its own pinned error envelope for the None case.
+        assert_eq!(parse_span_token("A"), Some(FileSpan::All));
+        assert_eq!(parse_span_token("a"), Some(FileSpan::All));
+        assert_eq!(parse_span_token("U"), Some(FileSpan::Upload));
+        assert_eq!(parse_span_token("u"), Some(FileSpan::Upload));
+        assert_eq!(parse_span_token("H"), Some(FileSpan::Hold));
+        assert_eq!(parse_span_token("h"), Some(FileSpan::Hold));
+        // Digit tokens carry the raw `Val` prefix; range checks stay
+        // with the callers.
+        assert_eq!(parse_span_token("2"), Some(FileSpan::Dir(2)));
+        assert_eq!(parse_span_token("0"), Some(FileSpan::Dir(0)));
+        assert_eq!(parse_span_token("2abc"), Some(FileSpan::Dir(2)));
+        assert_eq!(parse_span_token("99"), Some(FileSpan::Dir(99)));
+        // A leading `-` is not a digit (E's Val sign handling never
+        // reaches here — the AquaScan grammar has no negative dirs).
+        assert_eq!(parse_span_token("-1"), None);
+        // Whole-token letters only: `Apple` is not `A`.
+        assert_eq!(parse_span_token("Apple"), None);
+        assert_eq!(parse_span_token("xyz"), None);
+        assert_eq!(parse_span_token(""), None);
     }
 
     #[test]
@@ -1006,8 +1056,6 @@ mod tests {
         assert_eq!(parse_menu_command("VS"), MenuCommand::Unknown);
     }
 
-    /// The checked-in main menu (`Conf02/Menu5.txt`) must advertise
-    /// **exactly** the set of menu commands the parser implements. The
     #[test]
     fn f_command_parses_the_nextscan_grammar() {
         // The captured AquaScan syntax (`F ?` help, aquascan3.txt S1):
@@ -1237,6 +1285,8 @@ mod tests {
         }
     }
 
+    /// The checked-in main menu (`Conf02/Menu5.txt`) must advertise
+    /// **exactly** the set of menu commands the parser implements. The
     /// expected set is derived from [`advertised_token`] applied to
     /// every `MenuCommand` variant ([`every_menu_command`]), so adding
     /// a command fails this test — first to *compile*, because

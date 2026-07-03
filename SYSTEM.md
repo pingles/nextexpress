@@ -18,7 +18,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 3 | **Smoke-harness builder** (12 remainder) | **Landed** 2026-07-02 (two-session primitives stage with Tier E) | Six smokes each re-roll ~110–155 lines of harness; FS is the next smoke to be written. Every remaining Tier D slice needs a capture-pinned smoke, so this pays out eight more times. | ~8, test-only | ~1 day |
 | 4 | **Clock port in `AppServices`** (16) | **Landed** 2026-07-03 | 48 hardwired `SystemTime::now()` sites mean no test can control the date. N's "-X Days" scan, transfer timestamps, and Tier I daily caps/rollover are all untestable deterministically without it. | ~20 (mechanical one-liners) | ~1 day |
 | 5 | **`FileRepository` port prep** (18) | **Landed** 2026-07-03 | Result-ifies the port while the blast radius is 8 call sites, and gives files an identity (`FileAreaRef`). N's date query lands as a since-bounded port method — the contract the D2s SQLite store inherits, instead of client-side filtering. | ~6–9 | 0.5–1 day |
-| 6 | **Extract the NextScan scan engine** (17) | First task of the N slice | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
+| 6 | **Extract the NextScan scan engine** (17) | **Landed** 2026-07-03 (first task of the N slice) | The pager/dir-walk machine is private to the 862-line `file_list` and welded to F's row source; N is pinned to the same engine. The extraction makes N a thin entry point and serves every later lister (download preflight, FM). | 4–5 | 1–1.5 days |
 | 7 | **Prompt-reader merge + `line_for` extraction** (10) | **Landed** 2026-07-03 | Six hand-rolled readers, and the `record_input` idle-stamp is already inconsistent. One reader that stamps internally makes every upcoming prompt (N's date, FM's loops, W, account editor) a one-liner that can't forget the idle clock. | ~6 | 1–1.5 days |
 | 8 | **Error-boundary pass** (2 remainder) | **Landed** 2026-07-03 (`UserRepositoryError` folds into row 9) | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
 | 9 | **Command-style user writes** (1) | **Landed** 2026-07-03 (pulled ahead of N — disjoint file sets, and two of its fixes were live defects: the bare-save tear and same-account lost updates) | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
@@ -233,7 +233,8 @@ flowchart LR
     MenuFlowHandlers --> MailText["menu_flow::mail_text\n(shared mail-family text:\nno-mail / store-error / post-* lines,\nrender_post_success)"]
     MenuFlowHandlers --> Table["menu_flow::table\n(shared column helpers:\nleft_field, scan_row_status)"]
     BaseHelpers --> MailRegistryPort
-    MenuFlowHandlers --> FileList["file_list\n(NextScan F lister: dir_row + wire\n+ 29-line ScanState pager;\nplus the internal Z zippy search, slice D4)"]
+    MenuFlowHandlers --> FileList["file_list\n(NextScan F/FR entry points + dir_row + wire;\nplus the internal Z zippy search, slice D4)"]
+    FileList --> ScanEngine["file_list/scan\n(the NextScan engine, item 17:\nScanMode dir walk + 29-line\nScanState More? pager + flag verbs)"]
     FileList --> FilePort["FileRepository (port)"]
     FileCatalogue -.implements.-> FilePort
     MenuFlowHandlers --> Rules["domain::messaging::*\n(post / read / scan / reply / forward /\nkill / move / edit_header / comment / attach_file)"]
@@ -519,15 +520,16 @@ migration — refactoring 9 below). The largest files are
 now **test** modules: the inline test blocks of `file_list`, `join` and
 `telnet_listener` were carved out to sibling `tests.rs` files
 (refactoring 13), so each command/adapter's production `mod.rs` is small
-(`file_list/mod.rs` 626, `join/mod.rs` 605, `telnet_listener/mod.rs`
-214) while its co-located test sibling rises to the top. `app/wire_text.rs`
+(`file_list/mod.rs` 434 after the item-17 engine extraction,
+`join/mod.rs` 605, `telnet_listener/mod.rs` 214) while its co-located
+test sibling rises to the top. `app/wire_text.rs`
 no longer appears: the per-command text it once accumulated now lives
 beside each command (refactoring 9 below), leaving it at 36 lines of
 shared cross-cutting primitives.
 
 | File | Lines | Notes |
 |---|---|---|
-| `app/menu_flow/file_list/tests.rs` | 2285 | NextScan lister tests, carved out as a sibling of `file_list/mod.rs` (626 production lines) by refactoring 13. |
+| `app/menu_flow/file_list/scan/tests.rs` | ~1420 | The NextScan engine's capture-replay tests (pager verbs, page boundaries, flag/repaint suite), moved with the item-17 extraction; they still drive `handle_file_list`. `file_list/tests.rs` keeps the F-entry + zippy tests (~770). |
 | `domain/session/tests.rs` | 2062 | Cross-capability session tests in 14 nested mods, internally grouped but monolithic. |
 | `app/menu_flow/join/tests.rs` | 1615 | `J`/`JM`/`<`/`>`/`<<`/`>>` family tests, sibling of `join/mod.rs` (605 production lines + the inlined `scan_mail_on_join`); refactoring 13. |
 | `adapters/telnet_listener/tests.rs` | 1574 | In-process integration tests (44 fns) for `TelnetListener`/`TelnetTerminal`, sibling of `telnet_listener/mod.rs` (214 production lines); refactoring 13. |
@@ -539,7 +541,7 @@ shared cross-cutting primitives.
 | `adapters/sqlite_user_repository.rs` | 1205 | Schema init + row codec + queries + ~30 tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
 | `adapters/file_screen_repository.rs` | 1019 | File-backed screen assets with caching + tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
 | `domain/messaging/scan_mail.rs` | 941 | Scan rule + extensive test fixtures. |
-| `app/menu_flow/file_list/wire.rs` | 920 | Capture-pinned `F`-family wire constants + the date-group frame assembler (refactoring 9 colocation). |
+| `app/menu_flow/file_list/wire.rs` | ~980 | Capture-pinned `F`-family wire constants + the date-group frame assembler (refactoring 9 colocation); `ScanLine`/`ListedRow` moved out to `file_list/scan.rs` (item 17). |
 | `domain/conference.rs` | 896 | `Conference`, `MessageBase`, `ConferenceMembership` (incl. the M/A/F/Z `ScanFlag` accessors), `NameType`, `AllowedAddressing`, `AllScanScope`. The `CF` edit semantics live in the focused `domain/conference_flags.rs`. |
 | `domain/messaging/post_mail.rs` | 886 | Post rule + helpers + tests. |
 | `app/menu_flow/post_mail.rs` | 789 | The `E`/`C` editor command module (core fns + editor handlers + co-located mail-entry/editor wire text + tests). |
@@ -1367,27 +1369,59 @@ date-stamping slice built first adds migration sites.**
 
 ### 17. Extract the NextScan scan engine from `file_list`
 
-The entire NextScan machine — `ScanState`, `run_span` (6 non-self
-params, `file_list/mod.rs:174-266`), `stream_dir_body`,
-`emit_scan_line`, `scan_more_prompt` (the held-`n`/Q/C/F/R/`?` verb
-machine, `:368-485`), the flag repaint/overprint helpers — is private
-to the 862-line `file_list/mod.rs` and hard-wired to `F`'s row source.
-`N` is pinned to the same door engine (date prompt, then per-dir
-`Scanning dir N for <mm-dd-yy>...` headers through the same `More?`
-pager). Split the engine into a sibling module — note
-`menu_flow/pager.rs` already names the *message* pager, so use e.g.
-`file_list/scan.rs` or `menu_flow/nextscan.rs` — generalising
-`run_span` so the caller supplies the per-dir row set and header
-bytes; `N` then lands as a thin entry point plus its date-prompt wire
-consts. Fold in one shared A/U/H/digit span-token resolver: the logic
-is currently tripled (`menu_command/files.rs:48-58`,
-`file_list/mod.rs:103-116`, `resolve_zippy_span` at `:799-818`), each
-caller keeping its own pinned error envelope (the divergent
-`Error in input!` vs `No such directory.` wires are legacy parity, not
-accidents). 1–1.5 days including moving the pager tests out of the
-2,265-line `file_list/tests.rs`. **Trigger: first task of the N
-slice — the second consumer keeps the generalisation honest; do not
-extract earlier.**
+**Landed (2026-07-03, first task of slice D9).** Final shape:
+
+- **`file_list/scan.rs`** is the engine — `ScanState`, `ScanFlow`,
+  `ScanLine`/`ListedRow` (moved from `wire.rs`; machinery, not bytes),
+  `begin_listing` (the deduplicated counted preamble), `run_span` (the
+  one wrapper that appends the two-reset exit tail) over an inner
+  `walk_span`/`walk_hold` pair, `stream_dir_body`, `emit_scan_line`,
+  `scan_more_prompt` (the held-`n`/Q/C/F/R/`?` verb machine),
+  `apply_flags`, the repaint helpers and one parameterised
+  `overprint_clear(width)` behind the two named 69/79 wrappers. Engine
+  methods stay on `MenuFlow<'_, T>` in a second `impl` block —
+  deliberately **not** a standalone engine struct: the flows interleave
+  engine emits with `prompt_line` (which needs `&mut self` + the
+  session), so a struct borrowing the terminal out of `MenuFlow` would
+  deadlock the interleaving.
+- **The generalisation is a mode enum owned by the engine**
+  (`ScanMode { kind: ScanKind, quick }`), not the caller-supplied
+  rows/headers this item originally sketched: closure suppliers fight
+  the borrow checker and eager pre-fetch loses quit-stops-fetching.
+  The caller picks the kind (`Full { reverse }` for `F`/`FR`/`N R`;
+  `NewSince`/`NewestLast` land with `N`); the engine keeps lazy per-dir
+  acquisition (`dir_rows`/`hold_rows`) and per-mode headers. The inner
+  walk fns return `()` — the wrapper emits the tail on every exit, so a
+  surfaced flow value would only breed ignored-value mutants.
+- **One shared A/U/H/digit span-token resolver** —
+  `menu_command::parse_span_token` — replaces the tripled logic in the
+  `F` parser (`menu_command/files.rs:37-48`), the door's
+  `Directories:` prompt (`file_list/mod.rs:138-143`) and
+  `resolve_zippy_span` (`file_list/mod.rs:397-421`); each caller keeps
+  its own pinned error envelope and span expansion (the divergent
+  `Error in input!` / `No such directory.` / `Argument error!` wires
+  are legacy parity, not accidents).
+- **Test moves, byte pins frozen**: the ~30 engine capture-replay
+  tests moved to `scan/tests.rs` with assertions verbatim (they keep
+  driving `handle_file_list`); the shared `CaptureTerminal` /
+  session/user/services fixtures hoisted to `menu_flow/test_support.rs`
+  (superseding the near-duplicate in `menu_flow/tests.rs`); the
+  wire-dependent expectation builders live in
+  `file_list/test_support.rs` (visibility is subtree-closed — no
+  `pub(super)` widening was needed anywhere). `file_list/mod.rs` is
+  down to ~434 lines (F entry points + zippy), `file_list/tests.rs` to
+  ~770.
+
+**Deferred, recorded here:** the multi-conference section layer
+(SCAN/NSU `Conference: [ … ]` banners, `(S)kip Conf` verb, the logon
+`confScan`'s plainer pager, non-interactive `N S U` entry) is a future
+`run_walk`-per-conference wrapper plus a `ScanFlow::SkipGroup`
+extension — not built, because the live capture proves menu `N` is
+single-conference. Also deferred: moving zippy to `file_list/zippy.rs`
+(cheap, but doubles same-slice test churn); crate-wide fake-terminal
+consolidation (8 variants — bigger blast radius); `F <dir> Q`
+quick-scan for F (the door supports it; landed `F` swallows `Q` as
+Invalid — the engine's `quick` flag is ready when a capture pins it).
 
 ### 18. `FileRepository` port prep: fallibility + file identity
 
