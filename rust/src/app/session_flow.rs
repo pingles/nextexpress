@@ -25,12 +25,12 @@ use crate::domain::session::typed::{
     VerifyPasswordTransition,
 };
 use crate::domain::session::{
-    apply_password_change, apply_password_match, apply_password_mismatch,
+    apply_password_change, apply_password_match, apply_password_mismatch, daily_budget_outcome,
     CompleteNewUserRegistrationError, CompletePasswordResetError, EnterMenuError, NameTypedOutcome,
     NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPolicy, SessionState,
     SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError, VerifyPasswordOutcome,
 };
-use crate::domain::user::{NewUserDraft, RatioMode, UserFlag};
+use crate::domain::user::{AuthOutcome, NewUserDraft, PasswordChange, RatioMode, UserFlag};
 use crate::domain::user_repository::{
     NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
 };
@@ -308,14 +308,31 @@ where
 
     let outcome = if matches {
         let (outcome, rejection) = apply_password_match(&mut inner, policy, now)?;
-        save_bound_user(&inner, user_repo)?;
+        let auth = {
+            let user = inner.user().expect("password match leaves the user bound");
+            // `last_call` only mutates at finalise, so this is still
+            // the stored pre-session value — the same input
+            // `initialise_daily_budget` used inside the match rule.
+            // On the rejected path the budget rule never ran, so the
+            // command must leave the daily counters alone.
+            let daily = (!matches!(outcome, VerifyPasswordOutcome::LogonRejected))
+                .then(|| daily_budget_outcome(user.last_call(), now, policy.daily_reset_offset()));
+            AuthOutcome::Matched {
+                daily,
+                force_password_reset: user.force_password_reset(),
+            }
+        };
+        record_auth_and_rebaseline(&mut inner, user_repo, &auth)?;
         if let Some(entry) = rejection {
             caller_log.append(entry);
         }
         outcome
     } else {
         let (outcome, entry) = apply_password_mismatch(&mut inner, policy, now)?;
-        save_bound_user(&inner, user_repo)?;
+        let auth = AuthOutcome::Mismatched {
+            lock_account: matches!(outcome, VerifyPasswordOutcome::AccountLocked),
+        };
+        record_auth_and_rebaseline(&mut inner, user_repo, &auth)?;
         caller_log.append(entry);
         outcome
     };
@@ -373,7 +390,7 @@ where
         }
         Err(error) => return Err(EnterMenuFlowError::Session(error)),
     };
-    save_bound_user(&inner, user_repo)?;
+    apply_patch_and_rebaseline(&mut inner, user_repo)?;
     caller_log.append(entry);
     Ok(EnterMenuFlowOutcome::Menu(MenuSession::from_session(inner)))
 }
@@ -399,20 +416,46 @@ where
 {
     let mut inner = session.into_inner();
     let entry = inner.finalise_logoff(now)?;
-    save_bound_user(&inner, user_repo)?;
+    apply_patch_and_rebaseline(&mut inner, user_repo)?;
     caller_log.append(entry);
     Ok(EndedSession::from_session(inner))
 }
 
-fn save_bound_user<R>(session: &Session, user_repo: &R) -> Result<(), UserRepositoryError>
+/// Persists an [`AuthOutcome`] for the bound user and refreshes the
+/// session's persist baseline so later patches carry only newer
+/// changes.
+fn record_auth_and_rebaseline<R>(
+    session: &mut Session,
+    user_repo: &R,
+    outcome: &AuthOutcome,
+) -> Result<(), UserRepositoryError>
 where
     R: UserRepository + ?Sized,
 {
-    if let Some(user) = session.user() {
-        user_repo.save(user.clone())
-    } else {
-        Ok(())
+    let slot = session
+        .user()
+        .expect("verify_password runs with a bound user")
+        .slot_number();
+    user_repo.record_auth_outcome(slot, outcome)?;
+    session.rebaseline_persisted();
+    Ok(())
+}
+
+/// Persists the session's pending [`crate::domain::user::UserPatch`]
+/// (if a user is bound) and refreshes the baseline. No-op for
+/// userless sessions, mirroring the old save helper.
+fn apply_patch_and_rebaseline<R>(
+    session: &mut Session,
+    user_repo: &R,
+) -> Result<(), UserRepositoryError>
+where
+    R: UserRepository + ?Sized,
+{
+    if let Some((slot, patch)) = session.pending_user_patch() {
+        user_repo.apply_user_patch(slot, &patch)?;
+        session.rebaseline_persisted();
     }
+    Ok(())
 }
 
 /// Profile collected from a user during the new-user registration
@@ -673,6 +716,7 @@ where
     let user = session
         .user()
         .ok_or(CompletePasswordResetError::UserMissing)?;
+    let slot = user.slot_number();
     if !user.force_password_reset() {
         return Err(CompletePasswordResetError::ResetNotPending.into());
     }
@@ -694,8 +738,15 @@ where
     let kind = crate::domain::password::PasswordHashKind::Pbkdf210000;
     let computed = hasher.compute_password_hash(candidate, kind)?;
 
+    let change = PasswordChange {
+        hash: computed.hash.clone(),
+        salt: computed.salt.clone(),
+        kind,
+        changed_at: now,
+    };
     apply_password_change(session, computed.hash, computed.salt, kind, now)?;
-    save_bound_user(session, user_repo)?;
+    user_repo.record_password_change(slot, &change)?;
+    session.rebaseline_persisted();
     Ok(())
 }
 
@@ -1501,6 +1552,127 @@ mod tests {
         assert_eq!(
             session.into_inner().state(),
             SessionState::NewUserRegistering
+        );
+    }
+
+    #[test]
+    fn verify_password_persists_the_daily_budget_outcome_only_when_accepted() {
+        use crate::adapters::user_repository_contract as contract;
+        // `seeded_user` carries last_call = EPOCH+1_000_000s and
+        // times_called_today = 7; verifying at the same instant is a
+        // same-day re-logon.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let drive = |repo: &TestRepo| {
+            let NameLookupResult::Found(user) = repo.find_by_handle("alice").expect("lookup")
+            else {
+                panic!("alice must exist");
+            };
+            let mut session = session_identifying();
+            session
+                .record_identified_user("alice", *user)
+                .expect("identified");
+            verify_password(
+                AuthenticatingSession::from_session(session),
+                "secret",
+                repo,
+                &good_hasher(),
+                &TestLog::default(),
+                SessionPolicy::new(3),
+                now,
+            )
+            .expect("verify")
+        };
+
+        // Accepted same-day logon: the times_called_today bump must
+        // reach storage alongside the attempts clear.
+        let repo = TestRepo::new(vec![contract::seeded_user(2, "alice")]);
+        assert!(matches!(
+            drive(&repo),
+            VerifyPasswordTransition::Onboarded(_)
+        ));
+        let stored = repo.find_saved("alice");
+        assert_eq!(stored.times_called_today(), 8);
+        assert_eq!(stored.invalid_attempts(), 0);
+
+        // Rejected (locked) logon: the budget rule never ran, so the
+        // stored daily counters stay untouched — only the attempts
+        // clear persists.
+        let repo = TestRepo::new(vec![contract::seeded_user_with(2, "alice", |s| {
+            s.account_locked = true;
+        })]);
+        assert!(matches!(
+            drive(&repo),
+            VerifyPasswordTransition::LoggingOff { .. }
+        ));
+        let stored = repo.find_saved("alice");
+        assert_eq!(stored.times_called_today(), 7);
+        assert_eq!(stored.invalid_attempts(), 0);
+    }
+
+    #[test]
+    fn a_stale_sessions_logoff_does_not_revert_another_sessions_logon() {
+        // Two sessions bind the same account; the second finishes its
+        // logon after the first, then the FIRST logs off holding a
+        // stale aggregate. A whole-aggregate save at logoff clobbers
+        // the second session's times_called bump; command-style writes
+        // compose.
+        let repo = TestRepo::new(vec![alice()]);
+        let log = TestLog::default();
+
+        let bind = |repo: &TestRepo| -> AuthenticatingSession {
+            let NameLookupResult::Found(user) = repo.find_by_handle("alice").expect("lookup")
+            else {
+                panic!("alice must exist");
+            };
+            let mut session = session_identifying();
+            session
+                .record_identified_user("alice", *user)
+                .expect("identified");
+            AuthenticatingSession::from_session(session)
+        };
+        let logon = |session: AuthenticatingSession| -> MenuSession {
+            let VerifyPasswordTransition::Onboarded(onboarded) = verify_password(
+                session,
+                "secret",
+                &repo,
+                &good_hasher(),
+                &log,
+                SessionPolicy::new(3),
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect("verify") else {
+                panic!("expected Onboarded transition");
+            };
+            match enter_menu(onboarded, &repo, &log, SystemTime::UNIX_EPOCH).expect("enter menu") {
+                EnterMenuFlowOutcome::Menu(menu) => menu,
+                EnterMenuFlowOutcome::PasswordResetRequired(_) => {
+                    panic!("reset should not be required")
+                }
+            }
+        };
+
+        let menu_a = logon(bind(&repo));
+        let menu_b = logon(bind(&repo));
+        // B logs off first, so A's stale write lands last.
+        finalise_logoff(
+            menu_b.user_requests_logoff(),
+            &repo,
+            &log,
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("B logoff");
+        finalise_logoff(
+            menu_a.user_requests_logoff(),
+            &repo,
+            &log,
+            SystemTime::UNIX_EPOCH,
+        )
+        .expect("A logoff");
+
+        assert_eq!(
+            repo.find_saved("alice").times_called(),
+            2,
+            "both logons must survive session A's stale logoff"
         );
     }
 

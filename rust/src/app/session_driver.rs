@@ -548,14 +548,17 @@ mod tests {
         .expect("valid user")
     }
 
-    /// A [`UserRepository`] whose `save` starts failing once it has been
-    /// called `fail_from` times (0 = every save fails); reads delegate to
-    /// an inner [`InMemoryUserRepository`]. Used to prove the sign-in
-    /// flow survives a persistence failure at each point that used to
-    /// `.expect()` the save: after the password match (`verify_password`,
-    /// call 0), on menu entry (`enter_menu`, call 1 for a granted user),
-    /// and on logoff (`finalise_logoff`, call 1 for an ungranted user
-    /// that reaches `NoConferenceAccess`).
+    /// A [`UserRepository`] whose persist calls (`record_auth_outcome`,
+    /// `record_password_change`, `apply_user_patch`, and the legacy
+    /// `save`) start failing once `fail_from` of them have run
+    /// (0 = every persist fails); reads delegate to an inner
+    /// [`InMemoryUserRepository`]. Used to prove the sign-in flow
+    /// survives a persistence failure at each point that used to
+    /// `.expect()` the save: after the password match
+    /// (`verify_password`, call 0), on menu entry (`enter_menu`,
+    /// call 1 for a granted user), and on logoff (`finalise_logoff`,
+    /// call 1 for an ungranted user that reaches
+    /// `NoConferenceAccess`).
     struct SaveFailingRepo {
         inner: InMemoryUserRepository,
         fail_from: usize,
