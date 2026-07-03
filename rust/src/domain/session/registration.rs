@@ -151,6 +151,10 @@ impl Session {
         if !password_verified {
             return Err(CompleteNewUserRegistrationError::GateNotVerified);
         }
+        // The created user was just persisted verbatim by
+        // `create_user`: baseline the persist diff before the
+        // post-onboarded rules mutate the aggregate.
+        self.persist_baseline = Some(Box::new(user.to_persisted()));
         self.phase = SessionPhase::Onboarded {
             user,
             authenticated_at: now,

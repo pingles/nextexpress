@@ -792,6 +792,91 @@ mod authentication {
     }
 }
 
+mod persist_baseline {
+    use std::time::{Duration, SystemTime};
+
+    use super::super::*;
+    use super::fixtures::{authenticated_session, new_session, session_at_menu};
+    use crate::domain::user::UserPatch;
+
+    #[test]
+    fn pending_user_patch_is_none_before_a_user_binds() {
+        let s = new_session(LogonChannel::Remote);
+        assert!(s.pending_user_patch().is_none());
+    }
+
+    #[test]
+    fn bind_baselines_so_the_first_patch_is_empty() {
+        let s = authenticated_session();
+        let (slot, patch) = s.pending_user_patch().expect("user bound");
+        assert_eq!(slot, 2);
+        assert_eq!(patch, UserPatch::default());
+    }
+
+    #[test]
+    fn enter_menu_shows_up_as_a_times_called_delta() {
+        let mut s = authenticated_session();
+        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        // The flow persists the auth outcome and rebaselines here.
+        s.rebaseline_persisted();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        let (_, patch) = s.pending_user_patch().expect("user bound");
+        assert_eq!(patch.times_called_delta, 1);
+    }
+
+    #[test]
+    fn rebaseline_clears_the_pending_patch() {
+        let mut s = session_at_menu();
+        s.rebaseline_persisted();
+        let (_, patch) = s.pending_user_patch().expect("user bound");
+        assert_eq!(patch, UserPatch::default());
+    }
+
+    #[test]
+    fn finalise_logoff_patch_carries_last_call() {
+        let mut s = session_at_menu();
+        s.rebaseline_persisted();
+        s.user_requests_logoff().unwrap();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_mins(5);
+        s.finalise_logoff(now).unwrap();
+        // The `Ended` phase retains the user, so the patch is still
+        // computable after finalise.
+        let (_, patch) = s.pending_user_patch().expect("user retained");
+        assert_eq!(patch.last_call, Some(now));
+        assert_eq!(patch.times_called_delta, 0);
+    }
+
+    #[test]
+    fn registration_bind_baselines_the_created_user() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        s.complete_new_user_registration(
+            super::fixtures::fresh_new_user(now),
+            SessionPolicy::default(),
+            now,
+        )
+        .expect("registration completes");
+        let (slot, patch) = s.pending_user_patch().expect("user bound");
+        assert_eq!(slot, 7);
+        // The post-onboarded rules ran between bind and now:
+        // `register_new` stamps `last_call = now`, so the budget rule
+        // sees the same accounting day and bumps `times_called_today`
+        // to 1 — the one delta the enter-menu patch must carry for a
+        // fresh registration (exactly what the whole-aggregate save
+        // used to persist).
+        assert_eq!(
+            patch,
+            UserPatch {
+                times_called_today_delta: 1,
+                ..UserPatch::default()
+            }
+        );
+    }
+}
+
 mod lifecycle {
     use std::time::{Duration, SystemTime};
 

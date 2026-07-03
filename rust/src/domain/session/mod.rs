@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::domain::conference::NameType;
 use crate::domain::files::flagged::FlaggedFiles;
-use crate::domain::user::User;
+use crate::domain::user::{PersistedUser, User, UserPatch};
 
 mod budget;
 mod conference_activity;
@@ -135,6 +135,12 @@ pub struct Session {
     /// [`SessionPhase`] so it survives transitions. Slice D5 will
     /// persist it.
     flagged_files: FlaggedFiles,
+    /// Bound user's state as last persisted: set when a user binds,
+    /// refreshed by [`Session::rebaseline_persisted`] after every
+    /// repository command-write. [`Session::pending_user_patch`] diffs
+    /// the live user against it. Held outside [`SessionPhase`] so it
+    /// survives transitions.
+    persist_baseline: Option<Box<PersistedUser>>,
 }
 
 /// Session fields that are valid for every lifecycle phase.
@@ -366,6 +372,7 @@ impl Session {
             phase: SessionPhase::Connecting,
             activity: ConferenceActivity::new(),
             flagged_files: FlaggedFiles::default(),
+            persist_baseline: None,
         }
     }
 
@@ -442,6 +449,35 @@ impl Session {
     #[must_use]
     pub fn user(&self) -> Option<&User> {
         self.phase.user()
+    }
+
+    /// Refreshes the persisted-state baseline to the bound user's
+    /// current state. The application layer calls this after every
+    /// successful repository write so [`Session::pending_user_patch`]
+    /// yields only not-yet-persisted changes. No-op when no user is
+    /// bound.
+    pub fn rebaseline_persisted(&mut self) {
+        self.persist_baseline = self.phase.user().map(|u| Box::new(u.to_persisted()));
+    }
+
+    /// Returns the bound user's slot number and the [`UserPatch`] of
+    /// changes since the last (re)baseline, or `None` when no user is
+    /// bound.
+    ///
+    /// Binding a user (identify or registration) establishes the
+    /// baseline, so a bound user always has one on production paths —
+    /// a bound user without a baseline is a programmer error (caught
+    /// by a debug assertion).
+    #[must_use]
+    pub fn pending_user_patch(&self) -> Option<(u32, UserPatch)> {
+        let user = self.phase.user()?;
+        debug_assert!(
+            self.persist_baseline.is_some(),
+            "user bound without a persist baseline"
+        );
+        let baseline = self.persist_baseline.as_ref()?;
+        let current = user.to_persisted();
+        Some((current.slot_number, UserPatch::between(baseline, &current)))
     }
 
     /// Returns the handle the user typed at the identify prompt, if any.

@@ -53,6 +53,10 @@ impl Session {
         if self.state() != SessionState::Identifying {
             return Err(NameTypedError::WrongState(self.state()));
         }
+        // The freshly loaded user IS the stored state: baseline the
+        // persist diff here so `pending_user_patch` carries only
+        // changes made after the bind.
+        self.persist_baseline = Some(Box::new(user.to_persisted()));
         self.phase = SessionPhase::Authenticating {
             typed_name: typed.to_string(),
             user,
