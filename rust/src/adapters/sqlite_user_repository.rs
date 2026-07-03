@@ -220,41 +220,54 @@ impl SqliteUserRepository {
         slot: u32,
         membership: &MembershipPatch,
     ) -> rusqlite::Result<()> {
+        let flags = membership.scan_flags;
+        let params = params![
+            slot,
+            membership.conference_number,
+            membership.granted.map(i64::from),
+            membership.messages_posted_delta,
+            flags.map(|f| i64::from(f.mail_scan)),
+            flags.map(|f| i64::from(f.mailscan_all)),
+            flags.map(|f| i64::from(f.file_scan)),
+            flags.map(|f| i64::from(f.zoom_scan)),
+        ];
         if membership.create_if_missing {
+            // True UPSERT: the insert arm takes the patch values
+            // (falling back to the row defaults), the conflict arm
+            // applies the same COALESCE/additive patch an existing row
+            // gets.
             tx.execute(
                 "INSERT INTO conference_memberships (
                      slot_number, conference_number, granted, messages_posted,
                      mail_scan, mailscan_all, file_scan, zoom_scan
-                 ) VALUES (?1, ?2, ?3, 0, 1, 0, 1, 0)
-                 ON CONFLICT(slot_number, conference_number) DO NOTHING",
-                params![
-                    slot,
-                    membership.conference_number,
-                    i64::from(membership.granted.unwrap_or(true)),
-                ],
+                 ) VALUES (?1, ?2, COALESCE(?3, 1), ?4,
+                           COALESCE(?5, 1), COALESCE(?6, 0), COALESCE(?7, 1), COALESCE(?8, 0))
+                 ON CONFLICT(slot_number, conference_number) DO UPDATE SET
+                     granted = COALESCE(?3, granted),
+                     messages_posted = messages_posted + ?4,
+                     mail_scan = COALESCE(?5, mail_scan),
+                     mailscan_all = COALESCE(?6, mailscan_all),
+                     file_scan = COALESCE(?7, file_scan),
+                     zoom_scan = COALESCE(?8, zoom_scan)",
+                params,
+            )?;
+        } else {
+            // Deliberately NOT an upsert: a patch that never joined
+            // this conference must not create its row — the missing
+            // row is what makes a malformed pointer patch fail the FK
+            // check and roll the whole patch back.
+            tx.execute(
+                "UPDATE conference_memberships SET
+                     granted = COALESCE(?3, granted),
+                     messages_posted = messages_posted + ?4,
+                     mail_scan = COALESCE(?5, mail_scan),
+                     mailscan_all = COALESCE(?6, mailscan_all),
+                     file_scan = COALESCE(?7, file_scan),
+                     zoom_scan = COALESCE(?8, zoom_scan)
+                 WHERE slot_number = ?1 AND conference_number = ?2",
+                params,
             )?;
         }
-        let flags = membership.scan_flags;
-        tx.execute(
-            "UPDATE conference_memberships SET
-                 granted = COALESCE(?3, granted),
-                 messages_posted = messages_posted + ?4,
-                 mail_scan = COALESCE(?5, mail_scan),
-                 mailscan_all = COALESCE(?6, mailscan_all),
-                 file_scan = COALESCE(?7, file_scan),
-                 zoom_scan = COALESCE(?8, zoom_scan)
-             WHERE slot_number = ?1 AND conference_number = ?2",
-            params![
-                slot,
-                membership.conference_number,
-                membership.granted.map(i64::from),
-                membership.messages_posted_delta,
-                flags.map(|f| i64::from(f.mail_scan)),
-                flags.map(|f| i64::from(f.mailscan_all)),
-                flags.map(|f| i64::from(f.file_scan)),
-                flags.map(|f| i64::from(f.zoom_scan)),
-            ],
-        )?;
         for pointer in &membership.pointers {
             // `new_since` is deliberately absent from the DO UPDATE:
             // an existing row keeps its own.
@@ -1046,6 +1059,11 @@ mod tests {
         #[test]
         fn patch_creates_missing_membership_with_pointer_rows() {
             contract::patch_creates_missing_membership_with_pointer_rows(make);
+        }
+
+        #[test]
+        fn patch_creates_membership_with_defaults_when_fields_unset() {
+            contract::patch_creates_membership_with_defaults_when_fields_unset(make);
         }
 
         #[test]

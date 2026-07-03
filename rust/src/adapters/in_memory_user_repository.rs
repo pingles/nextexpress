@@ -349,6 +349,11 @@ mod tests {
         }
 
         #[test]
+        fn patch_creates_membership_with_defaults_when_fields_unset() {
+            contract::patch_creates_membership_with_defaults_when_fields_unset(make);
+        }
+
+        #[test]
         fn patch_preferences_are_last_writer_wins() {
             contract::patch_preferences_are_last_writer_wins(make);
         }

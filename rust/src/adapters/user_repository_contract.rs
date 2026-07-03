@@ -331,6 +331,43 @@ pub(crate) fn patch_creates_missing_membership_with_pointer_rows<R: UserReposito
     assert_eq!(row.new_since(), at(900));
 }
 
+/// `between` always carries `granted`/`scan_flags` for a new
+/// membership, but the adapters must agree on the defaults when a
+/// hand-built patch omits them: granted, mail-scan and file-scan on,
+/// the rest off (the `ConferenceMembership::new` / schema defaults).
+pub(crate) fn patch_creates_membership_with_defaults_when_fields_unset<R: UserRepository>(
+    make: impl Fn(Vec<User>) -> R,
+) {
+    let repo = make(vec![seeded_user(7, "alice")]);
+    repo.apply_user_patch(
+        7,
+        &UserPatch {
+            memberships: vec![MembershipPatch {
+                conference_number: 4,
+                create_if_missing: true,
+                granted: None,
+                messages_posted_delta: 0,
+                scan_flags: None,
+                pointers: Vec::new(),
+            }],
+            ..UserPatch::default()
+        },
+    )
+    .expect("patch with defaulted new membership");
+    let after = stored(&repo, "alice");
+    let membership = after
+        .memberships
+        .iter()
+        .find(|m| m.conference_number() == 4)
+        .expect("membership created");
+    assert!(membership.is_granted());
+    assert_eq!(membership.messages_posted(), 0);
+    assert!(membership.scan_flag(ScanFlag::MailScan));
+    assert!(!membership.scan_flag(ScanFlag::MailScanAll));
+    assert!(membership.scan_flag(ScanFlag::FileScan));
+    assert!(!membership.scan_flag(ScanFlag::Zoom));
+}
+
 pub(crate) fn patch_preferences_are_last_writer_wins<R: UserRepository>(
     make: impl Fn(Vec<User>) -> R,
 ) {
