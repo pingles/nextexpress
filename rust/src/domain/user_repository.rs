@@ -26,7 +26,7 @@ pub enum NameLookupResult {
     NotFound,
 }
 
-/// Errors returned by [`UserRepository::save`].
+/// Errors returned by the [`UserRepository`] write commands.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UserRepositoryError {
     /// The caller tried to save a user the repository does not know.
@@ -141,12 +141,6 @@ pub trait UserRepository {
     /// Returns [`UserRepositoryError`] when the backing store cannot be
     /// queried or the stored row cannot be decoded into a [`User`].
     fn find_sysop(&self) -> Result<NameLookupResult, UserRepositoryError>;
-
-    /// Persists a changed [`User`] record.
-    ///
-    /// # Errors
-    /// Returns [`UserRepositoryError`] when the record cannot be saved.
-    fn save(&self, user: User) -> Result<(), UserRepositoryError>;
 
     /// Applies the persistent consequences of one password-verification
     /// attempt (spec: `session.allium:VerifyPassword` plus the

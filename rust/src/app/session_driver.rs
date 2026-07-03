@@ -549,8 +549,8 @@ mod tests {
     }
 
     /// A [`UserRepository`] whose persist calls (`record_auth_outcome`,
-    /// `record_password_change`, `apply_user_patch`, and the legacy
-    /// `save`) start failing once `fail_from` of them have run
+    /// `record_password_change`, `apply_user_patch`) start failing
+    /// once `fail_from` of them have run
     /// (0 = every persist fails); reads delegate to an inner
     /// [`InMemoryUserRepository`]. Used to prove the sign-in flow
     /// survives a persistence failure at each point that used to
@@ -595,10 +595,6 @@ mod tests {
         }
         fn find_sysop(&self) -> Result<NameLookupResult, UserRepositoryError> {
             self.inner.find_sysop()
-        }
-        fn save(&self, user: User) -> Result<(), UserRepositoryError> {
-            self.gate()?;
-            self.inner.save(user)
         }
         fn record_auth_outcome(
             &self,

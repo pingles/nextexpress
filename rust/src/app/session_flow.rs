@@ -822,17 +822,6 @@ mod tests {
             }
         }
 
-        fn save(&self, user: User) -> Result<(), UserRepositoryError> {
-            let mut users = self.users.lock().unwrap();
-            let Some(existing) = users.iter_mut().find(|u| u.handle() == user.handle()) else {
-                return Err(UserRepositoryError::UserNotFound {
-                    handle: user.handle().to_string(),
-                });
-            };
-            *existing = user;
-            Ok(())
-        }
-
         fn record_auth_outcome(
             &self,
             slot: u32,

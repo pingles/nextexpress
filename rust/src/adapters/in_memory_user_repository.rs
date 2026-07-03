@@ -70,17 +70,6 @@ impl UserRepository for InMemoryUserRepository {
         }
     }
 
-    fn save(&self, user: User) -> Result<(), UserRepositoryError> {
-        let mut users = self.users.lock().expect("user repository mutex");
-        let Some(existing) = users.iter_mut().find(|u| u.handle() == user.handle()) else {
-            return Err(UserRepositoryError::UserNotFound {
-                handle: user.handle().to_string(),
-            });
-        };
-        *existing = user;
-        Ok(())
-    }
-
     fn record_auth_outcome(
         &self,
         slot: u32,
@@ -204,33 +193,6 @@ mod tests {
             repo.find_by_handle("a*"),
             Ok(NameLookupResult::NotFound)
         ));
-    }
-
-    #[test]
-    fn save_updates_matching_user() {
-        let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        let mut user = user_with_handle(2, "alice");
-        user.bump_times_called();
-        repo.save(user).expect("save");
-
-        match repo.find_by_handle("alice").expect("lookup") {
-            NameLookupResult::Found(user) => assert_eq!(user.times_called(), 1),
-            NameLookupResult::NotFound => panic!("expected found, got not-found"),
-        }
-    }
-
-    #[test]
-    fn save_unknown_user_errors() {
-        let repo = InMemoryUserRepository::new(vec![user_with_handle(2, "alice")]);
-        let error = repo
-            .save(user_with_handle(3, "bob"))
-            .expect_err("unknown user should error");
-        assert_eq!(
-            error,
-            UserRepositoryError::UserNotFound {
-                handle: "bob".to_string()
-            }
-        );
     }
 
     #[test]

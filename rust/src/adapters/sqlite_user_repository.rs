@@ -6,11 +6,11 @@
 //! so they don't need the file system or `rusqlite` to set up a
 //! fixture.
 //!
-//! v1 implements the existing [`UserRepository`] port shape
-//! (`save(User)`, `create_user`, lookups). The
-//! design's eventual command-style writes (deltas, patches,
-//! reservations) are out of scope here — they enter the picture when
-//! the port itself grows them.
+//! Writes follow the design's command-style shape: narrow additive /
+//! monotonic / patch statements per command (`record_auth_outcome`,
+//! `record_password_change`, `apply_user_patch`), with full-row writes
+//! only when a row is born (`create_user`, `insert_seed`), each inside
+//! a transaction.
 //!
 //! [`designs/USERS.md`]: ../../../../designs/USERS.md
 //! [`UserRepository`]: crate::domain::user_repository::UserRepository
@@ -395,10 +395,11 @@ impl SqliteUserRepository {
             ],
         )?;
 
-        // Replace membership and pointer rows from scratch. v1 takes the
-        // simple approach — `save(User)` is the only entry point and
-        // hands us the full record, so a clean overwrite mirrors what
-        // the in-memory adapter does without trying to diff.
+        // Replace membership and pointer rows from scratch. Full-row
+        // writes happen only when a row is born (`create_user`,
+        // `insert_seed`), both transactional, so a clean rebuild is
+        // safe; incremental session writes go through the command
+        // methods, which never delete rows.
         conn.execute(
             "DELETE FROM conference_memberships WHERE slot_number = ?1",
             params![snapshot.slot_number],
@@ -585,25 +586,6 @@ impl UserRepository for SqliteUserRepository {
             Ok(None) => Ok(NameLookupResult::NotFound),
             Err(error) => Err(UserRepositoryError::storage("lookup sysop", error)),
         }
-    }
-
-    fn save(&self, user: User) -> Result<(), UserRepositoryError> {
-        let conn = self.conn.lock().expect("user db mutex");
-        let exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM users WHERE slot_number = ?1",
-                params![user.slot_number()],
-                |_| Ok(true),
-            )
-            .optional()
-            .map_err(|error| UserRepositoryError::storage("save lookup", error))?
-            .unwrap_or(false);
-        if !exists {
-            return Err(UserRepositoryError::UserNotFound {
-                handle: user.handle().to_string(),
-            });
-        }
-        Self::upsert_user(&conn, &user).map_err(|error| UserRepositoryError::storage("save", error))
     }
 
     fn record_auth_outcome(
@@ -1146,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn save_round_trips_a_full_user_record() {
+    fn seed_round_trips_a_full_user_record() {
         let repo = SqliteUserRepository::in_memory().expect("open");
         let mut alice = repo.create_user(draft_with("alice")).expect("create");
         alice.bump_invalid_attempts();
@@ -1164,7 +1146,7 @@ mod tests {
                 .expect("valid"),
             1,
         );
-        repo.save(alice.clone()).expect("save");
+        repo.insert_seed(&alice).expect("seed");
 
         match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
@@ -1203,8 +1185,8 @@ mod tests {
 
     #[test]
     fn scan_flags_round_trip_through_sqlite() {
-        // C5: the per-conference M/A/F/Z scan flags must survive the
-        // on-logoff save (legacy "** AutoSaving File Flags **"). Every flag
+        // C5: the per-conference M/A/F/Z scan flags must survive
+        // persistence (legacy "** AutoSaving File Flags **"). Every flag
         // is inverted away from its default (mail/file on, all/zoom off) so
         // a missing column surfaces as the wrong value on reload, not a
         // coincidental match.
@@ -1217,7 +1199,7 @@ mod tests {
         membership.set_scan_flag(ScanFlag::MailScanAll, true);
         membership.set_scan_flag(ScanFlag::Zoom, true);
         alice.upsert_membership(membership);
-        repo.save(alice.clone()).expect("save");
+        repo.insert_seed(&alice).expect("seed");
 
         match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
@@ -1236,20 +1218,6 @@ mod tests {
             }
             NameLookupResult::NotFound => panic!("expected to find alice"),
         }
-    }
-
-    #[test]
-    fn save_unknown_user_returns_user_not_found() {
-        let repo = SqliteUserRepository::in_memory().expect("open");
-        let alien =
-            User::register_new(999, draft_with("unknown")).expect("valid registration record");
-        let err = repo.save(alien).expect_err("save should fail");
-        assert_eq!(
-            err,
-            UserRepositoryError::UserNotFound {
-                handle: "unknown".to_string()
-            }
-        );
     }
 
     #[test]
@@ -1349,22 +1317,22 @@ mod tests {
     }
 
     #[test]
-    fn save_returns_storage_error_when_lookup_query_fails() {
+    fn command_write_returns_storage_error_when_the_backend_fails() {
         let repo = SqliteUserRepository::in_memory().expect("open");
-        let alice = repo.create_user(draft_with("alice")).expect("create");
+        repo.create_user(draft_with("alice")).expect("create");
         {
             let conn = repo.conn.lock().expect("db mutex");
             conn.execute_batch("DROP TABLE users").expect("drop users");
         }
 
         let err = repo
-            .save(alice)
+            .apply_user_patch(1, &UserPatch::default())
             .expect_err("storage failure must not become user-not-found");
         assert!(
             matches!(
                 err,
                 UserRepositoryError::Storage {
-                    context: "save lookup",
+                    context: "apply user patch",
                     ref message
                 } if message.contains("no such table")
             ),
@@ -1426,7 +1394,7 @@ mod tests {
     }
 
     #[test]
-    fn save_round_trips_account_locked_and_specific_timestamps() {
+    fn seed_round_trips_account_locked_and_specific_timestamps() {
         // The round-trip test above asserts boolean / counter
         // fields. This test pins specific SystemTime values so that
         // an encoder/decoder that always returned 0 (or shifted the
@@ -1435,7 +1403,7 @@ mod tests {
         let mut alice = repo.create_user(draft_with("alice")).expect("create");
         alice.lock_account();
         alice.record_last_call(SystemTime::UNIX_EPOCH + Duration::from_secs(123_456));
-        repo.save(alice.clone()).expect("save");
+        repo.insert_seed(&alice).expect("seed");
 
         match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
@@ -1455,7 +1423,7 @@ mod tests {
     }
 
     #[test]
-    fn save_round_trips_last_joined_with_both_coordinates() {
+    fn seed_round_trips_last_joined_with_both_coordinates() {
         // The row-decoder's match arm on `(Some, Some)` is the only
         // path that produces a populated last_joined value. Without
         // a positive test, deleting that arm passes mutation testing.
@@ -1471,7 +1439,7 @@ mod tests {
         .expect("conf");
         alice.upsert_membership(ConferenceMembership::new(7, true));
         alice.record_join(&conf, &conf.msgbases()[0]);
-        repo.save(alice).expect("save");
+        repo.insert_seed(&alice).expect("seed");
 
         match repo.find_by_handle("alice").expect("lookup") {
             NameLookupResult::Found(loaded) => {
