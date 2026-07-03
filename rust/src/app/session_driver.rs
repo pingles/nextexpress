@@ -570,6 +570,20 @@ mod tests {
                 calls: std::sync::atomic::AtomicUsize::new(0),
             }
         }
+
+        /// Ordinal gate shared by every persist entry point: the
+        /// `fail_from`-th persist call (of any kind) fails.
+        fn gate(&self) -> Result<(), UserRepositoryError> {
+            use std::sync::atomic::Ordering;
+            let nth = self.calls.fetch_add(1, Ordering::SeqCst);
+            if nth >= self.fail_from {
+                Err(UserRepositoryError::UserNotFound {
+                    handle: "save failed".to_string(),
+                })
+            } else {
+                Ok(())
+            }
+        }
     }
 
     impl UserRepository for SaveFailingRepo {
@@ -580,15 +594,32 @@ mod tests {
             self.inner.find_sysop()
         }
         fn save(&self, user: User) -> Result<(), UserRepositoryError> {
-            use std::sync::atomic::Ordering;
-            let nth = self.calls.fetch_add(1, Ordering::SeqCst);
-            if nth >= self.fail_from {
-                Err(UserRepositoryError::UserNotFound {
-                    handle: "save failed".to_string(),
-                })
-            } else {
-                self.inner.save(user)
-            }
+            self.gate()?;
+            self.inner.save(user)
+        }
+        fn record_auth_outcome(
+            &self,
+            slot: u32,
+            outcome: &crate::domain::user::AuthOutcome,
+        ) -> Result<(), UserRepositoryError> {
+            self.gate()?;
+            self.inner.record_auth_outcome(slot, outcome)
+        }
+        fn record_password_change(
+            &self,
+            slot: u32,
+            change: &crate::domain::user::PasswordChange,
+        ) -> Result<(), UserRepositoryError> {
+            self.gate()?;
+            self.inner.record_password_change(slot, change)
+        }
+        fn apply_user_patch(
+            &self,
+            slot: u32,
+            patch: &crate::domain::user::UserPatch,
+        ) -> Result<(), UserRepositoryError> {
+            self.gate()?;
+            self.inner.apply_user_patch(slot, patch)
         }
         fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
             self.inner.create_user(draft)

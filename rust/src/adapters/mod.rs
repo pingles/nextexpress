@@ -17,3 +17,5 @@ pub mod sqlite_user_repository;
 pub mod system_clock;
 pub(crate) mod telnet_line;
 pub mod telnet_listener;
+#[cfg(test)]
+pub(crate) mod user_repository_contract;

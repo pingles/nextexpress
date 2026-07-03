@@ -4,7 +4,7 @@
 //! The port is a domain-side abstraction; concrete implementations live
 //! in [`crate::adapters`].
 
-use crate::domain::user::{NewUserDraft, User, UserError};
+use crate::domain::user::{AuthOutcome, NewUserDraft, PasswordChange, User, UserError, UserPatch};
 
 /// Outcome of looking a typed handle up in the user database.
 ///
@@ -147,6 +147,79 @@ pub trait UserRepository {
     /// # Errors
     /// Returns [`UserRepositoryError`] when the record cannot be saved.
     fn save(&self, user: User) -> Result<(), UserRepositoryError>;
+
+    /// Applies the persistent consequences of one password-verification
+    /// attempt (spec: `session.allium:VerifyPassword` plus the
+    /// post-onboarded rule cluster).
+    ///
+    /// Merge semantics are defined by
+    /// [`AuthOutcome::apply_to`]: additive
+    /// `invalid_attempts` bumps on a mismatch, an absolute clear on a
+    /// match, one-way `account_locked` / `force_password_reset` flag
+    /// sets, and the daily-counter reset/bump carried by the
+    /// [`AuthOutcome::Matched`] `daily` field. Implementations must
+    /// apply the whole outcome atomically.
+    ///
+    /// # Parameters
+    /// - `slot`: stable account id of the user the attempt targeted.
+    /// - `outcome`: which verification branch ran and what it decided.
+    ///
+    /// # Errors
+    /// [`UserRepositoryError::UserNotFound`] when no user occupies
+    /// `slot` (the handle is reported as `"slot N"`);
+    /// [`UserRepositoryError::Storage`] when the backing store fails.
+    fn record_auth_outcome(
+        &self,
+        slot: u32,
+        outcome: &AuthOutcome,
+    ) -> Result<(), UserRepositoryError>;
+
+    /// Replaces the stored credential triple
+    /// (spec: `session.allium:CompletePasswordReset`).
+    ///
+    /// Security fields are immediate authoritative writes
+    /// (designs/USERS.md): the hash/salt/kind triple and
+    /// `password_last_updated` overwrite, and `force_password_reset`
+    /// clears. Merge semantics are defined by
+    /// [`PasswordChange::apply_to`].
+    ///
+    /// # Parameters
+    /// - `slot`: stable account id of the user changing password.
+    /// - `change`: the freshly computed credential triple.
+    ///
+    /// # Errors
+    /// [`UserRepositoryError::UserNotFound`] when no user occupies
+    /// `slot`; [`UserRepositoryError::Storage`] when the backing store
+    /// fails.
+    fn record_password_change(
+        &self,
+        slot: u32,
+        change: &PasswordChange,
+    ) -> Result<(), UserRepositoryError>;
+
+    /// Applies a delta/patch write covering the session-mutable state
+    /// families (counters, read pointers, scan flags, conference
+    /// position, display preferences, `last_call`).
+    ///
+    /// Merge semantics are defined by [`UserPatch::apply_to`]:
+    /// additive counters, monotonic `MAX` merges for `last_call` and
+    /// pointer rows, last-writer-wins preference overwrites. The
+    /// command shape makes concurrent same-account sessions compose
+    /// instead of silently reverting each other — broad whole-row
+    /// session saves are forbidden (designs/USERS.md).
+    /// Implementations must apply the whole patch atomically: a patch
+    /// that fails partway (e.g. a pointer row referencing a missing
+    /// membership) must leave the store unchanged.
+    ///
+    /// # Parameters
+    /// - `slot`: stable account id of the patched user.
+    /// - `patch`: the not-yet-persisted changes of one session window.
+    ///
+    /// # Errors
+    /// [`UserRepositoryError::UserNotFound`] when no user occupies
+    /// `slot`; [`UserRepositoryError::Storage`] when the backing store
+    /// fails or rejects part of the patch.
+    fn apply_user_patch(&self, slot: u32, patch: &UserPatch) -> Result<(), UserRepositoryError>;
 
     /// Atomically allocates the next unused slot number, constructs a
     /// [`User`] from `draft` via

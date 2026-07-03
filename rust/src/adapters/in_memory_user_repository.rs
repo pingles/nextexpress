@@ -6,7 +6,9 @@
 
 use std::sync::Mutex;
 
-use crate::domain::user::{NewUserDraft, User};
+use crate::domain::user::{
+    AuthOutcome, NewUserDraft, PasswordChange, PersistedUser, User, UserPatch,
+};
 use crate::domain::user_repository::{
     NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
 };
@@ -24,6 +26,28 @@ impl InMemoryUserRepository {
         Self {
             users: Mutex::new(users),
         }
+    }
+
+    /// Runs a command against the stored record for `slot` by
+    /// snapshotting it, applying the domain merge, and rebuilding the
+    /// aggregate — the same semantics the `SQLite` adapter implements
+    /// statement-by-statement.
+    fn apply_command(
+        &self,
+        slot: u32,
+        apply: impl FnOnce(&mut PersistedUser),
+    ) -> Result<(), UserRepositoryError> {
+        let mut users = self.users.lock().expect("user repository mutex");
+        let Some(existing) = users.iter_mut().find(|u| u.slot_number() == slot) else {
+            return Err(UserRepositoryError::UserNotFound {
+                handle: format!("slot {slot}"),
+            });
+        };
+        let mut snapshot = existing.to_persisted();
+        apply(&mut snapshot);
+        *existing = User::from_persisted(snapshot)
+            .map_err(|error| UserRepositoryError::storage("apply command", error))?;
+        Ok(())
     }
 }
 
@@ -55,6 +79,26 @@ impl UserRepository for InMemoryUserRepository {
         };
         *existing = user;
         Ok(())
+    }
+
+    fn record_auth_outcome(
+        &self,
+        slot: u32,
+        outcome: &AuthOutcome,
+    ) -> Result<(), UserRepositoryError> {
+        self.apply_command(slot, |snapshot| outcome.apply_to(snapshot))
+    }
+
+    fn record_password_change(
+        &self,
+        slot: u32,
+        change: &PasswordChange,
+    ) -> Result<(), UserRepositoryError> {
+        self.apply_command(slot, |snapshot| change.apply_to(snapshot))
+    }
+
+    fn apply_user_patch(&self, slot: u32, patch: &UserPatch) -> Result<(), UserRepositoryError> {
+        self.apply_command(slot, |snapshot| patch.apply_to(snapshot))
     }
 
     fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
@@ -234,6 +278,90 @@ mod tests {
                 handle: "alice".to_string()
             }
         );
+    }
+
+    mod command_write_contract {
+        use super::*;
+        use crate::adapters::user_repository_contract as contract;
+
+        fn make(users: Vec<User>) -> InMemoryUserRepository {
+            InMemoryUserRepository::new(users)
+        }
+
+        #[test]
+        fn mismatch_bumps_additively() {
+            contract::mismatch_bumps_additively(make);
+        }
+
+        #[test]
+        fn mismatch_lock_is_one_way() {
+            contract::mismatch_lock_is_one_way(make);
+        }
+
+        #[test]
+        fn matched_clears_attempts() {
+            contract::matched_clears_attempts(make);
+        }
+
+        #[test]
+        fn matched_new_day_resets_counters() {
+            contract::matched_new_day_resets_counters(make);
+        }
+
+        #[test]
+        fn matched_same_day_bumps_today() {
+            contract::matched_same_day_bumps_today(make);
+        }
+
+        #[test]
+        fn matched_rejected_path_leaves_daily_counters() {
+            contract::matched_rejected_path_leaves_daily_counters(make);
+        }
+
+        #[test]
+        fn matched_does_not_unset_force_reset() {
+            contract::matched_does_not_unset_force_reset(make);
+        }
+
+        #[test]
+        fn password_change_replaces_credentials_and_clears_flag() {
+            contract::password_change_replaces_credentials_and_clears_flag(make);
+        }
+
+        #[test]
+        fn patch_counters_are_additive() {
+            contract::patch_counters_are_additive(make);
+        }
+
+        #[test]
+        fn patch_last_call_is_monotonic() {
+            contract::patch_last_call_is_monotonic(make);
+        }
+
+        #[test]
+        fn patch_pointer_rows_max_merge_and_keep_new_since() {
+            contract::patch_pointer_rows_max_merge_and_keep_new_since(make);
+        }
+
+        #[test]
+        fn patch_creates_missing_membership_with_pointer_rows() {
+            contract::patch_creates_missing_membership_with_pointer_rows(make);
+        }
+
+        #[test]
+        fn patch_preferences_are_last_writer_wins() {
+            contract::patch_preferences_are_last_writer_wins(make);
+        }
+
+        #[test]
+        fn interleaved_sessions_do_not_lose_updates() {
+            contract::interleaved_sessions_do_not_lose_updates(make);
+        }
+
+        #[test]
+        fn unknown_slot_is_user_not_found() {
+            contract::unknown_slot_is_user_not_found(make);
+        }
     }
 
     #[test]

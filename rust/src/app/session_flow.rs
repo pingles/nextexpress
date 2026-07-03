@@ -782,6 +782,30 @@ mod tests {
             Ok(())
         }
 
+        fn record_auth_outcome(
+            &self,
+            slot: u32,
+            outcome: &crate::domain::user::AuthOutcome,
+        ) -> Result<(), UserRepositoryError> {
+            self.apply_command(slot, |snapshot| outcome.apply_to(snapshot))
+        }
+
+        fn record_password_change(
+            &self,
+            slot: u32,
+            change: &crate::domain::user::PasswordChange,
+        ) -> Result<(), UserRepositoryError> {
+            self.apply_command(slot, |snapshot| change.apply_to(snapshot))
+        }
+
+        fn apply_user_patch(
+            &self,
+            slot: u32,
+            patch: &crate::domain::user::UserPatch,
+        ) -> Result<(), UserRepositoryError> {
+            self.apply_command(slot, |snapshot| patch.apply_to(snapshot))
+        }
+
         fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
             let mut users = self.users.lock().unwrap();
             if users.iter().any(|u| u.handle() == draft.handle) {
@@ -810,6 +834,26 @@ mod tests {
                 .find(|u| u.handle() == handle)
                 .expect("saved user")
                 .clone()
+        }
+
+        /// Mirrors the in-memory adapter: snapshot, apply the domain
+        /// merge, rebuild.
+        fn apply_command(
+            &self,
+            slot: u32,
+            apply: impl FnOnce(&mut crate::domain::user::PersistedUser),
+        ) -> Result<(), UserRepositoryError> {
+            let mut users = self.users.lock().unwrap();
+            let Some(existing) = users.iter_mut().find(|u| u.slot_number() == slot) else {
+                return Err(UserRepositoryError::UserNotFound {
+                    handle: format!("slot {slot}"),
+                });
+            };
+            let mut snapshot = existing.to_persisted();
+            apply(&mut snapshot);
+            *existing = User::from_persisted(snapshot)
+                .map_err(|error| UserRepositoryError::storage("apply command", error))?;
+            Ok(())
         }
     }
 

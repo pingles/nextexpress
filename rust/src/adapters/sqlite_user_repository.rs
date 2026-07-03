@@ -25,7 +25,10 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
-use crate::domain::user::{NewUserDraft, PersistedUser, RatioMode, User, UserError, UserFlag};
+use crate::domain::user::{
+    AuthOutcome, NewUserDraft, PasswordChange, PersistedUser, RatioMode, User, UserError, UserFlag,
+    UserPatch,
+};
 use crate::domain::user_repository::{
     NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
 };
@@ -508,6 +511,26 @@ impl UserRepository for SqliteUserRepository {
             });
         }
         Self::upsert_user(&conn, &user).map_err(|error| UserRepositoryError::storage("save", error))
+    }
+
+    fn record_auth_outcome(
+        &self,
+        _slot: u32,
+        _outcome: &AuthOutcome,
+    ) -> Result<(), UserRepositoryError> {
+        todo!("lands with the SQLite command-writes slice")
+    }
+
+    fn record_password_change(
+        &self,
+        _slot: u32,
+        _change: &PasswordChange,
+    ) -> Result<(), UserRepositoryError> {
+        todo!("lands with the SQLite command-writes slice")
+    }
+
+    fn apply_user_patch(&self, _slot: u32, _patch: &UserPatch) -> Result<(), UserRepositoryError> {
+        todo!("lands with the SQLite command-writes slice")
     }
 
     fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
