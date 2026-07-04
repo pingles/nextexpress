@@ -40,6 +40,8 @@ async fn f_2_ns_streams_the_trio_without_pausing() {
             span: FileSpan::Dir(2),
             non_stop: true,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -77,6 +79,8 @@ async fn fr_2_ns_streams_the_trio_newest_first() {
             span: FileSpan::Dir(2),
             non_stop: true,
             reverse: true,
+            quick: false,
+            fr_banner: true,
         },
     )
     .await;
@@ -117,6 +121,8 @@ async fn fr_a_ns_descends_dirs_highest_first() {
             span: FileSpan::All,
             non_stop: true,
             reverse: true,
+            quick: false,
+            fr_banner: true,
         },
     )
     .await;
@@ -150,6 +156,8 @@ async fn q_at_more_quits_on_a_single_keypress() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -178,6 +186,8 @@ async fn y_at_more_clears_the_prompt_and_streams_a_fresh_page() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -209,6 +219,8 @@ async fn c_at_more_form_feeds_and_resumes_without_reprompt() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -245,6 +257,8 @@ async fn n_then_s_opens_the_nonstop_confirm_and_y_goes_nonstop() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -277,6 +291,8 @@ async fn declining_the_ns_confirm_redraws_more_and_stays_paged() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -311,6 +327,8 @@ async fn held_n_then_other_key_erases_and_runs_the_verb() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -342,6 +360,8 @@ async fn lone_n_echoes_holds_then_enter_quits() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -371,6 +391,8 @@ async fn f_2_more_output(keys: Vec<KeyRead>) -> (Vec<u8>, Vec<u8>) {
             span: FileSpan::Dir(2),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -442,6 +464,8 @@ async fn f_at_more_flag_prompt_emits_no_confirmation_bytes() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -486,6 +510,8 @@ async fn flag_entry_backspace_erases_with_bs_sp_bs_and_skips_an_empty_entry() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -524,6 +550,8 @@ async fn flag_entry_stops_echoing_at_the_terminal_line_byte_limit() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -567,6 +595,8 @@ async fn r_at_more_opens_the_distinct_flag_by_number_prompt() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -650,6 +680,8 @@ async fn flagging_a_file_makes_it_render_with_the_marker_on_re_list() {
                 span: FileSpan::Dir(1),
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             },
         )
         .await
@@ -677,6 +709,8 @@ async fn flagging_a_file_makes_it_render_with_the_marker_on_re_list() {
                 span: FileSpan::Dir(1),
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             },
         )
         .await
@@ -733,6 +767,8 @@ async fn flagging_a_visible_aligned_row_repaints_the_marker_in_place() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -788,6 +824,8 @@ async fn flagging_by_number_repaints_the_row() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -830,6 +868,8 @@ async fn flagging_an_unlisted_name_emits_no_repaint() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -881,6 +921,8 @@ async fn repaint_is_suppressed_when_ansi_is_off() {
                 span: FileSpan::Dir(1),
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             },
         )
         .await
@@ -941,6 +983,8 @@ async fn flagging_a_visible_overlong_row_repaints_a_trailing_slot() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -995,6 +1039,8 @@ async fn question_mark_at_more_shows_the_pause_help_and_redraws_the_page() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -1028,6 +1074,8 @@ async fn paged_listing_shows_the_post_end_more_and_held_n_then_q_exits() {
             span: FileSpan::Dir(2),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -1066,6 +1114,8 @@ async fn f_a_transitions_between_dirs_through_the_post_end_more() {
             span: FileSpan::All,
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -1131,6 +1181,8 @@ async fn f_a_with_an_empty_first_dir_runs_its_headers_back_to_back() {
             span: FileSpan::All,
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -1194,6 +1246,8 @@ async fn paged_hold_listing_quits_cleanly_at_the_mid_list_more() {
             span: FileSpan::Hold,
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -1240,6 +1294,8 @@ async fn empty_dir_reports_nothing_found_with_no_footer() {
             span: FileSpan::Dir(1),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -1298,6 +1354,8 @@ async fn failing_repository_renders_like_an_empty_catalogue() {
         span: FileSpan::Dir(1),
         non_stop: false,
         reverse: false,
+        quick: false,
+        fr_banner: false,
     };
 
     let empty = services_with(InMemoryFileRepository::new(Vec::new(), Vec::new()));
@@ -1328,6 +1386,8 @@ async fn hold_span_reports_nothing_found_when_no_files_are_held() {
             span: FileSpan::Hold,
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;

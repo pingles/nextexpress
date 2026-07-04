@@ -61,6 +61,8 @@ async fn f_99_emits_the_highest_dir_error() {
             span: FileSpan::Dir(99),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -83,6 +85,8 @@ async fn f_0_takes_the_highest_dir_error_unverified() {
             span: FileSpan::Dir(0),
             non_stop: false,
             reverse: false,
+            quick: false,
+            fr_banner: false,
         },
     )
     .await;
@@ -120,7 +124,10 @@ async fn bare_f_prompts_and_enter_aborts_with_a_single_reset() {
     run_file_list(
         &services,
         &mut terminal,
-        FileListArg::Prompt { reverse: false },
+        FileListArg::Prompt {
+            reverse: false,
+            fr_banner: false,
+        },
     )
     .await;
     let mut expected = listing_preamble();
@@ -142,7 +149,10 @@ async fn bare_f_junk_answer_errors_in_input() {
     run_file_list(
         &services,
         &mut terminal,
-        FileListArg::Prompt { reverse: false },
+        FileListArg::Prompt {
+            reverse: false,
+            fr_banner: false,
+        },
     )
     .await;
     let mut expected = listing_preamble();
@@ -168,7 +178,10 @@ async fn bare_f_numeric_answer_scans_that_dir() {
     run_file_list(
         &services,
         &mut terminal,
-        FileListArg::Prompt { reverse: false },
+        FileListArg::Prompt {
+            reverse: false,
+            fr_banner: false,
+        },
     )
     .await;
     let mut expected = listing_preamble();
@@ -201,7 +214,10 @@ async fn bare_fr_prompt_uses_the_reverse_banner_then_reverse_scans_the_answer() 
     run_file_list(
         &services,
         &mut terminal,
-        FileListArg::Prompt { reverse: true },
+        FileListArg::Prompt {
+            reverse: true,
+            fr_banner: true,
+        },
     )
     .await;
     let mut dir2 = services
@@ -234,6 +250,84 @@ async fn bare_fr_prompt_uses_the_reverse_banner_then_reverse_scans_the_answer() 
 }
 
 #[tokio::test]
+async fn f_spaced_r_prompt_keeps_the_f_banner_and_reverse_scans() {
+    // `F R` (ae_tierd_fr_probe.txt FR1): the banner right label
+    // follows the typed head — `'f ?' for options`, NOT the `FR`
+    // variant — while the chosen span runs the reverse scan.
+    let services = services_with_demo_catalogue();
+    let mut terminal = CaptureTerminal::with_lines_and_keys(
+        vec![TerminalRead::Line("2".to_string())],
+        vec![key(b'Q')],
+    );
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Prompt {
+            reverse: true,
+            fr_banner: false,
+        },
+    )
+    .await;
+    let mut dir2 = services
+        .file_repo
+        .find_in_area(FileAreaRef::new(1, 2))
+        .expect("files");
+    dir2.reverse();
+    let reversed: Vec<Vec<u8>> =
+        super::wire::assemble_dir_lines(&dir2, 1, &FlaggedFiles::default(), false)
+            .into_iter()
+            .map(|line| line.bytes)
+            .collect();
+    let mut expected = b"\x1b[0m\r\n".to_vec();
+    expected.extend_from_slice(super::wire::listing_banner(false));
+    expected.extend_from_slice(b"\r\n\r\n");
+    expected.extend_from_slice(&super::wire::directories_prompt(2));
+    expected.extend_from_slice(b"\r\n");
+    expected.extend_from_slice(&joined(&[
+        b"Reverse-scanning dir 2... Ok!".to_vec(),
+        Vec::new(),
+    ]));
+    expected.extend_from_slice(&joined(&reversed));
+    expected.extend_from_slice(super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"Quit\r\n");
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&terminal.output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
+async fn f_dir_q_quick_scan_drops_description_continuations() {
+    // `F 1 Q` (ae_tierd_fr_probe.txt FR3): quick mode keeps each
+    // file's first description line and drops the continuations —
+    // the same engine flag `N`'s `Q` token exercises (N7q).
+    let services = services_with_demo_catalogue();
+    let mut terminal = CaptureTerminal::with_lines_and_keys(Vec::new(), vec![key(b'Q')]);
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Span {
+            span: FileSpan::Dir(1),
+            non_stop: false,
+            reverse: false,
+            quick: true,
+            fr_banner: false,
+        },
+    )
+    .await;
+    let out = String::from_utf8_lossy(&terminal.output);
+    assert!(
+        out.contains("Collection of 40 ANSI screens from the"),
+        "the first description line stays",
+    );
+    assert!(
+        !out.contains("Mirage art crew"),
+        "quick drops description continuations (FR3)",
+    );
+}
+
+#[tokio::test]
 async fn bare_f_u_answer_scans_the_upload_dir() {
     // ae_tierd_aquascan4.txt U6: `U` at the prompt (a Visible
     // LINE read, unchanged by D2b) resolves to the
@@ -247,7 +341,10 @@ async fn bare_f_u_answer_scans_the_upload_dir() {
     run_file_list(
         &services,
         &mut terminal,
-        FileListArg::Prompt { reverse: false },
+        FileListArg::Prompt {
+            reverse: false,
+            fr_banner: false,
+        },
     )
     .await;
     let mut expected = listing_preamble();

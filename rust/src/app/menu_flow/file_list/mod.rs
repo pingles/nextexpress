@@ -85,8 +85,19 @@ where
                 span,
                 non_stop,
                 reverse,
-            } => self.file_list_span(session, span, non_stop, reverse).await,
-            FileListArg::Prompt { reverse } => self.file_list_prompt(session, reverse).await,
+                quick,
+                fr_banner,
+            } => {
+                let mode = ScanMode {
+                    kind: ScanKind::Full { reverse },
+                    quick,
+                };
+                self.file_list_span(session, span, &mode, non_stop, fr_banner)
+                    .await
+            }
+            FileListArg::Prompt { reverse, fr_banner } => {
+                self.file_list_prompt(session, reverse, fr_banner).await
+            }
             FileListArg::Help => {
                 // `F ?` (`ae_tierd_aquascan3.txt` S1).
                 self.terminal.write(wire::HELP_SCREEN.as_bytes()).await?;
@@ -95,19 +106,22 @@ where
         }
     }
 
-    /// Bare `F` / bare `FR`: the door's own
+    /// Bare `F` / bare `FR` / spaced `F R`: the door's own
     /// `Directories: (1-N), (A)ll, (U)pload, (H)old, (Enter)=None ? `
     /// line prompt (`ae_tierd_aquascan3.txt:163`; Visible read — the
     /// answer echo is the adapter's). Enter aborts silently; junk
     /// answers `Error in input!`; valid answers run the same spans as
-    /// arguments. `reverse` (bare `FR`) flexes the banner to `'fr ?'`
-    /// and reverse-walks the chosen span — following `express.e`'s
-    /// `getDirSpan('')` over the `AquaScan` capture, which skips the
-    /// prompt for `FR` (S2/S3, A2, U5–U7).
+    /// arguments. `reverse` (`FR`, or the spaced `R` marker — captured
+    /// `ae_tierd_fr_probe.txt` FR1) reverse-walks the chosen span;
+    /// `fr_banner` follows the typed head (the door keeps `'f ?'` for
+    /// `F R`). Bare-`FR`-prompts follows `express.e`'s `getDirSpan('')`
+    /// over the `AquaScan` capture, which skips the prompt for `FR`
+    /// (S2/S3, A2, U5–U7).
     async fn file_list_prompt(
         &mut self,
         session: &mut MenuSession,
         reverse: bool,
+        fr_banner: bool,
     ) -> Result<(), T::Error> {
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.areas_in_conference(conference);
@@ -120,7 +134,7 @@ where
         {
             let flagged = session.flagged_files_mut();
             if self
-                .begin_listing(&mut state, wire::listing_banner(reverse), flagged)
+                .begin_listing(&mut state, wire::listing_banner(fr_banner), flagged)
                 .await?
                 == ScanFlow::Quit
             {
@@ -179,14 +193,17 @@ where
         self.terminal.flush().await
     }
 
-    /// Runs an immediate scan over `span`'s directories, forward (`F`)
-    /// or reverse (`FR`).
+    /// Runs an immediate scan over `span`'s directories under `mode` —
+    /// forward or reverse, optionally quick. `fr_banner` picks the
+    /// banner label (it follows the typed head, not the mode —
+    /// `ae_tierd_fr_probe.txt` FR1/FR2).
     async fn file_list_span(
         &mut self,
         session: &mut MenuSession,
         span: FileSpan,
+        mode: &ScanMode,
         non_stop: bool,
-        reverse: bool,
+        fr_banner: bool,
     ) -> Result<(), T::Error> {
         // Per-task session isolation: the menu loop guarantees a
         // joined conference before any command dispatches.
@@ -201,17 +218,13 @@ where
         // Entry preamble — every argument form (§1.1). Counted: the
         // captured page-1 More? boundary includes these lines.
         if self
-            .begin_listing(&mut state, wire::listing_banner(reverse), flagged)
+            .begin_listing(&mut state, wire::listing_banner(fr_banner), flagged)
             .await?
             == ScanFlow::Quit
         {
             return self.finish_listing().await;
         }
-        let mode = ScanMode {
-            kind: ScanKind::Full { reverse },
-            quick: false,
-        };
-        self.run_span(&mut state, conference, span, &areas, flagged, &mode)
+        self.run_span(&mut state, conference, span, &areas, flagged, mode)
             .await
     }
 

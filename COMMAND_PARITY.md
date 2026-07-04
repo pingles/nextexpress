@@ -791,18 +791,38 @@ stays the forward `Scanning HOLD dir from top...`, matching
 | Art/© byte encoding | NextScan emits UTF-8 multi-byte sequences for high-bit glyphs (art `\xb8\xf8\xa4…` → `\u{b8}\u{f8}\u{a4}…`, © `\xa9` → `\u{a9}`); the AquaScan door emitted raw Latin-1 single bytes. Deliberate policy — see AGENTS.md "Wire encoding"; design rationale in `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. |
 | On-row flag marker (slice D2f) | `F`/`R` flag listed files into a session set; an aligned row gains a 4-column `[X] ` marker slot between the name and the check byte, an over-long row a trailing ` [X]` — a deliberate NextExpress aid the AquaScan door has not (its rows stay byte-identical to the captures). The captured F/R prompt exchange is unchanged (flagging is silent there); flagging a row still on the current page additionally repaints its marker in place (cursor up, `\x1b[14G[X]`, cursor back), suppressed when ANSI is off. Design §5; `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`. The logoff `checkFlagged` warning (slice Ga), the `** AutoSaving File Flags **` autosave banner (slice D5-banner), the `A` alter-flags verb — the read-only listing (D6a) plus the `flagFiles` add/clear prompt loop (D6b) — and the cross-session flag persistence + the logon `** Flagged File(s) Exist **` banner (slice D5-persist) have all landed. Note: the flag identity is `(conference, name)` with no area (July 2026 fix, matching the legacy `isInFlaggedList`, `express.e:12534`), so a flag restored from a previous session — or set by name at the `A` prompt — paints the `[X]` marker on the next `F`/`R` scan of any dir listing that file. |
 
+**Live re-probe, 2026-07-04 (`ae_tierd_fr_probe.txt` FR1–FR3 +
+`ae_tierd_help_audit.txt` W1/W2 + PK–PCC).** The D3 note that "`F R`
+with a space is settled on the Argument-error path
+(`express.e:28310`)" was **wrong — and is fixed**: `:28310` is the
+*internal* dispatcher, but the parity target is the AquaScan door,
+whose own help advertises `F R`, and the live door honours the whole
+`F [R] dir [Q] [NS]` grammar. Now shipped and pinned:
+
+| Form | Door (captured) | NextExpress |
+|---|---|---|
+| `F R` | Directories prompt under the **`'f ?'` banner** (the banner label follows the typed head, not the mode), then `Reverse-scanning dir N...` (FR1) | Fixed — `Prompt { reverse, fr_banner }` decouples the marker from the banner |
+| `F R <dir>` | Immediate `Reverse-scanning dir N... Ok!`, `'f ?'` banner (FR2) | Fixed |
+| `F <dir> Q` | Quick scan — first description line, continuations dropped (FR3) | Fixed — plumbs the engine `quick` flag `N` already used |
+| `F W` / `N W` | Opens the interactive `AquaScan Configuration - Main Menu` (Colours/Dividers/Miscellaneous, D/P/S/Q) — W1/W2 | Argument error — **permanent departure** (config is TOML), now with the door behaviour on record |
+| `N` at `More?` | Held as the ambiguous `n`/`ns` prefix (echoed `n`, waits) — the help's `(N),(Q) Quit` resolves via `n`+Enter | **MATCH** (already pinned, probe P1) |
+| `C` at `More?` | `\r` + form feed, listing continues (PC) | **MATCH** byte-for-byte |
+| `K` at `More?` | Real: overprint clear, skips the rest of the current dir, next dir's header (PK) | Inert (continue) — **next slice**, capture now pinned |
+| `L` at `More?` | Real: form feed + the current dir re-scans from the top (PL) | Inert (continue) — **next slice** |
+| `Ctrl-C` at `More?` | Real: `\r\n` + `\x1b[0m**Break\r\n` + the two-reset exit tail (PCC) | Inert (continue) — **next slice** |
+| `O` at `More?` | Real: runs a WHO display then redraws the page (PO) | Inert — deferred until a who's-online surface exists |
+
+`FR R`, `Q`/`NS` combos beyond the captured single tokens, and the
+pager navigation verbs (`3`/`9`/arrows/`7`/`5`) remain
+grammar-inferred/unprobed; `D` (quit-and-download) and `X` (mark
+fake) were deliberately not probed (transfer-state / board-mutation
+hazards) — each owed to its owning slice.
+
 **UNVERIFIED (provisional, tagged in test names).** `F 0` →
 highest-dir error; unknown `More?` keys continue; the counter reset
 at dir transitions; zero-area conferences; the `H` prompt option for
 non-hold users; framed rendering of real held files (unit-pinned
-only); whether the door accepts the `Q`-token/`F W` forms rather than
-Argument-erroring (`F R` with a space is now settled — D3 ships the
-concatenated `FR` reverse token and keeps `F R` on the Argument-error
-path, `express.e:28310`). The
-help-advertised navigation verbs (`3`/`9`/arrows/`7`/`5`/`K`/`L`)
-and cross-tier verbs (`D`/`X`/`V`/`O`/`Z`/`A`) are
-advertised-but-inert — unknown keys continue, the door's own
-default — each owed to its owning slice.
+only).
 
 ---
 

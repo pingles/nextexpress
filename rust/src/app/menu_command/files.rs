@@ -23,21 +23,24 @@ pub(super) fn parse_zippy_command(line: &str) -> Option<ZippyArg> {
 }
 
 /// Parses the `F` / `FR` command line into a [`FileListArg`] following
-/// the captured `AquaScan` grammar (dir = `U` | `A` | number | `H`,
-/// optional trailing `NS`). Numeric directory tokens carry their
+/// the door's full advertised grammar `F [R] dir [Q] [NS]`
+/// (`ae_tierd_aquascan3.txt` S1 help; the spaced `R`, `Q` and the
+/// prompt-form `F R` captured live in `ae_tierd_fr_probe.txt`
+/// FR1–FR3, 2026-07-04). Numeric directory tokens carry their
 /// [`val_prefix`] result raw; range checks happen at dispatch.
 pub(super) fn parse_file_list_command(line: &str) -> Option<FileListArg> {
     let mut tokens = line.split_ascii_whitespace();
     let command = tokens.next()?;
-    let reverse = if command.eq_ignore_ascii_case("F") {
+    let fr_banner = if command.eq_ignore_ascii_case("F") {
         false
     } else if command.eq_ignore_ascii_case("FR") {
         true
     } else {
         return None;
     };
-    let Some(first) = tokens.next() else {
-        return Some(FileListArg::Prompt { reverse });
+    let mut reverse = fr_banner;
+    let Some(mut first) = tokens.next() else {
+        return Some(FileListArg::Prompt { reverse, fr_banner });
     };
     if first == "?" {
         return Some(if tokens.next().is_none() {
@@ -46,20 +49,48 @@ pub(super) fn parse_file_list_command(line: &str) -> Option<FileListArg> {
             FileListArg::Invalid
         });
     }
+    // The spaced `R` marker: `F R` prompts in reverse (FR1), `F R
+    // <dir>` scans in reverse (FR2). Only the `F` head takes it —
+    // `FR R` is unprobed on the door and stays on the Argument-error
+    // path.
+    if !fr_banner && first.eq_ignore_ascii_case("R") {
+        reverse = true;
+        match tokens.next() {
+            None => return Some(FileListArg::Prompt { reverse, fr_banner }),
+            Some(token) => first = token,
+        }
+    }
 
     let Some(span) = parse_span_token(first) else {
         return Some(FileListArg::Invalid);
     };
 
-    let non_stop = match tokens.next() {
-        None => false,
-        Some(token) if token.eq_ignore_ascii_case("NS") && tokens.next().is_none() => true,
-        Some(_) => return Some(FileListArg::Invalid),
-    };
+    // Optional `[Q] [NS]` in help order (FR3 captured the bare `Q`;
+    // combos are grammar-inferred — the `N` parser precedent).
+    let mut quick = false;
+    let mut non_stop = false;
+    let mut next = tokens.next();
+    if let Some(token) = next {
+        if token.eq_ignore_ascii_case("Q") {
+            quick = true;
+            next = tokens.next();
+        }
+    }
+    if let Some(token) = next {
+        if token.eq_ignore_ascii_case("NS") {
+            non_stop = true;
+            next = tokens.next();
+        }
+    }
+    if next.is_some() {
+        return Some(FileListArg::Invalid);
+    }
     Some(FileListArg::Span {
         span,
         non_stop,
         reverse,
+        quick,
+        fr_banner,
     })
 }
 

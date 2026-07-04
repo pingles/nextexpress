@@ -177,32 +177,44 @@ pub(crate) enum ZippyArg {
 /// `F [R] dir [Q] [NS]` with dir = `U` | `A` | number | `H`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileListArg {
-    /// Bare `F` / bare `FR`: open the door's own `Directories: …`
-    /// prompt (`express.e:27645-27648` → `getDirSpan('')`). `reverse`
-    /// (set by `FR`) reverse-walks whichever span the caller picks.
-    Prompt { reverse: bool },
+    /// Bare `F` / bare `FR` / spaced `F R`: open the door's own
+    /// `Directories: …` prompt (`express.e:27645-27648` →
+    /// `getDirSpan('')`). `reverse` (set by `FR` or the spaced `R`
+    /// marker — `ae_tierd_fr_probe.txt` FR1) reverse-walks whichever
+    /// span the caller picks.
+    Prompt {
+        /// Reverse-walk the chosen span.
+        reverse: bool,
+        /// The typed head was `FR` — the door's banner right label
+        /// follows the icon name: `F R` keeps `'f ?' for options`
+        /// (FR1) while `FR` flexes to `'fr ?'` (`aquascan3` S10).
+        fr_banner: bool,
+    },
     /// `F ?`: show the `NextScan` help screen.
     Help,
-    /// `F <dir> [NS]` / `FR <dir> [NS]`: scan immediately, optionally
-    /// without pausing, optionally in reverse chronological order.
+    /// `F [R] <dir> [Q] [NS]` / `FR <dir> [Q] [NS]`: scan immediately,
+    /// optionally in reverse chronological order, optionally quick,
+    /// optionally without pausing.
     Span {
         /// Which directories to scan.
         span: FileSpan,
         /// `NS` token present — non-stop scrolling, no pager.
         non_stop: bool,
-        /// `FR` (the reverse token) — list newest-first and, for
-        /// multi-dir spans, walk the directories highest→lowest
-        /// (`amiexpress/express.e:27654`).
+        /// `FR`, or the spaced `R` marker (`ae_tierd_fr_probe.txt`
+        /// FR2) — list newest-first and, for multi-dir spans, walk
+        /// the directories highest→lowest (`amiexpress/express.e:27654`).
         reverse: bool,
+        /// `Q` token — quick scan, first description line only
+        /// (`ae_tierd_fr_probe.txt` FR3; the engine flag `N` shares).
+        quick: bool,
+        /// The typed head was `FR` (banner label, as on [`Self::Prompt`]).
+        fr_banner: bool,
     },
     /// Any other argument form — the captured
     /// `Argument error! Type 'f ?' for help.` path
-    /// (`ae_tierd_aquascan4.txt` U4). Includes the unported tokens:
-    /// `Q` (quick scan — capture first) and `W` (door
-    /// self-configuration — `NextExpress` config is TOML, a permanent
-    /// departure). `F R` with a space also lands here — the original
-    /// dispatch matches the whole `FR` token (`express.e:28310`), so a
-    /// space-separated `R` is not a reverse form.
+    /// (`ae_tierd_aquascan4.txt` U4). Includes the unported `W` token
+    /// (door self-configuration — `NextExpress` config is TOML, a
+    /// permanent departure).
     Invalid,
 }
 
@@ -1383,7 +1395,10 @@ mod tests {
         // un-R/Q forms; bare F prompts and `F ?` shows the help.
         assert_eq!(
             parse_menu_command("F"),
-            MenuCommand::FileList(FileListArg::Prompt { reverse: false })
+            MenuCommand::FileList(FileListArg::Prompt {
+                reverse: false,
+                fr_banner: false,
+            })
         );
         assert_eq!(
             parse_menu_command("F ?"),
@@ -1395,6 +1410,8 @@ mod tests {
                 span: FileSpan::Dir(1),
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             })
         );
         assert_eq!(
@@ -1403,6 +1420,8 @@ mod tests {
                 span: FileSpan::All,
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             })
         );
         assert_eq!(
@@ -1411,6 +1430,8 @@ mod tests {
                 span: FileSpan::Upload,
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             })
         );
         assert_eq!(
@@ -1419,6 +1440,8 @@ mod tests {
                 span: FileSpan::Hold,
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             })
         );
         assert_eq!(
@@ -1427,6 +1450,8 @@ mod tests {
                 span: FileSpan::Dir(1),
                 non_stop: true,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             })
         );
         assert_eq!(
@@ -1435,6 +1460,8 @@ mod tests {
                 span: FileSpan::All,
                 non_stop: true,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
             })
         );
         // Raw Val carry: range checks happen at dispatch, where 0 (and
@@ -1445,6 +1472,72 @@ mod tests {
                 span: FileSpan::Dir(0),
                 non_stop: false,
                 reverse: false,
+                quick: false,
+                fr_banner: false,
+            })
+        );
+    }
+
+    #[test]
+    fn f_spaced_r_and_q_parse_the_captured_door_grammar() {
+        // The door honours its own advertised `F [R] dir [Q] [NS]`
+        // (`ae_tierd_fr_probe.txt`, 2026-07-04): spaced `F R` opens the
+        // Directories prompt in reverse under the `'f ?'` banner (FR1),
+        // `F R 2` reverse-scans immediately (FR2), `F 1 Q` quick-scans
+        // (FR3). Combined `Q NS` follows the help order
+        // (grammar-inferred beyond the captured single-token forms).
+        assert_eq!(
+            parse_menu_command("F R"),
+            MenuCommand::FileList(FileListArg::Prompt {
+                reverse: true,
+                fr_banner: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("f r"),
+            MenuCommand::FileList(FileListArg::Prompt {
+                reverse: true,
+                fr_banner: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F R 2"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(2),
+                non_stop: false,
+                reverse: true,
+                quick: false,
+                fr_banner: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F 1 Q"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+                reverse: false,
+                quick: true,
+                fr_banner: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("F R A q ns"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::All,
+                non_stop: true,
+                reverse: true,
+                quick: true,
+                fr_banner: false,
+            })
+        );
+        assert_eq!(
+            parse_menu_command("FR 1 Q"),
+            MenuCommand::FileList(FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+                reverse: true,
+                quick: true,
+                fr_banner: true,
             })
         );
     }
@@ -1452,11 +1545,22 @@ mod tests {
     #[test]
     fn f_command_rejects_unsupported_argument_forms() {
         // Each takes the captured `Argument error! Type 'f ?' for
-        // help.` path (aquascan4.txt U4). `F R` (with a space) stays
-        // here — `FR` is the reverse token (slice D3); the original
-        // dispatch matches the whole code (`express.e:28310`). `F W` is
-        // permanent (config is TOML); `Q` waits for a quick-scan capture.
-        for line in ["F R 1", "F W", "F XYZ", "F ? extra", "F 1 XYZ", "F 1 NS x"] {
+        // help.` path (aquascan4.txt U4). `F W` is permanent (config
+        // is TOML; the door opens its own `AquaScan Configuration`
+        // screen — `ae_tierd_help_audit.txt` W1). `F R <junk>`, the
+        // wrong `NS Q` order and a doubled `R` stay Invalid; `FR R`
+        // is unprobed on the door and stays conservative.
+        for line in [
+            "F W",
+            "F XYZ",
+            "F ? extra",
+            "F 1 XYZ",
+            "F 1 NS x",
+            "F R XYZ",
+            "F 1 NS Q",
+            "FR R",
+            "F R R 1",
+        ] {
             assert_eq!(
                 parse_menu_command(line),
                 MenuCommand::FileList(FileListArg::Invalid),
@@ -1475,7 +1579,10 @@ mod tests {
         // AquaScan capture, which skips the prompt for `FR`.
         assert_eq!(
             parse_menu_command("FR"),
-            MenuCommand::FileList(FileListArg::Prompt { reverse: true })
+            MenuCommand::FileList(FileListArg::Prompt {
+                reverse: true,
+                fr_banner: true,
+            })
         );
         assert_eq!(
             parse_menu_command("fr 1"),
@@ -1483,6 +1590,8 @@ mod tests {
                 span: FileSpan::Dir(1),
                 non_stop: false,
                 reverse: true,
+                quick: false,
+                fr_banner: true,
             })
         );
         assert_eq!(
@@ -1491,6 +1600,8 @@ mod tests {
                 span: FileSpan::All,
                 non_stop: false,
                 reverse: true,
+                quick: false,
+                fr_banner: true,
             })
         );
         assert_eq!(
@@ -1499,6 +1610,8 @@ mod tests {
                 span: FileSpan::Upload,
                 non_stop: false,
                 reverse: true,
+                quick: false,
+                fr_banner: true,
             })
         );
         assert_eq!(
@@ -1507,6 +1620,8 @@ mod tests {
                 span: FileSpan::Hold,
                 non_stop: false,
                 reverse: true,
+                quick: false,
+                fr_banner: true,
             })
         );
         assert_eq!(
@@ -1515,6 +1630,8 @@ mod tests {
                 span: FileSpan::Dir(1),
                 non_stop: true,
                 reverse: true,
+                quick: false,
+                fr_banner: true,
             })
         );
         assert_eq!(
@@ -1727,7 +1844,10 @@ mod tests {
             MenuCommand::NextConference,
             MenuCommand::PrevMsgBase,
             MenuCommand::NextMsgBase,
-            MenuCommand::FileList(FileListArg::Prompt { reverse: false }),
+            MenuCommand::FileList(FileListArg::Prompt {
+                reverse: false,
+                fr_banner: false,
+            }),
             MenuCommand::ZippySearch(ZippyArg::Prompt),
             MenuCommand::NewFilesScan(NewFilesArg::Prompt),
             MenuCommand::AlterFlags,

@@ -29,9 +29,12 @@ def main():
         if blk["text"] is not None:
             by_key.setdefault(blk["key"], blk)
 
+    skip = {"CONNECT", "graphics -> Y", "graphics -> A", "name -> sysop",
+            "password -> POST-LOGIN", "ensure conf 2 (Amiga, seeded)",
+            "LOGOFF round"}
     real = 0
     for rb in rust:
-        if not rb["key"].startswith("P") or rb["text"] is None:
+        if rb["key"] in skip or rb["text"] is None:
             continue
         ab = by_key.get(rb["key"])
         if ab is None:
