@@ -276,6 +276,34 @@ async fn confirm_ignores_unrecognised_keys_until_a_yes_or_no() {
 }
 
 #[tokio::test]
+async fn fs_denies_unconditionally_with_the_higher_access_line() {
+    // Slice D8 (`FS`, FAITHFUL DENY): internalCommandFS gates on
+    // ACS_CONFERENCE_ACCOUNTING (`amiexpress/express.e:24872`) and on
+    // the shipped board no account holds the right, so every `FS`
+    // returns RESULT_NOT_ALLOWED and the dispatcher tail (`:28400`)
+    // prints higherAccess() (`:3038`). Live:
+    // `comparison/transcripts/ae_tierd_fs.txt` (all probes, both
+    // conferences, sysop sec 255 included). NextExpress writes the deny
+    // unconditionally — no gate, no granted branch (design §7) — and
+    // the session continues at the menu.
+    let services = test_services();
+    let mut terminal = CaptureTerminal::default();
+    let outcome = dispatch_line(&services, &mut terminal, menu_session(), "FS").await;
+
+    assert!(
+        matches!(outcome, DispatchOutcome::Continue(_)),
+        "the deny must keep the caller at the menu, not log off"
+    );
+    // Restated single-line literal, independent of HIGHER_ACCESS_LINE.
+    assert_eq!(
+        terminal.output,
+        b"\r\nCommand requires higher access.\r\n".to_vec(),
+        "FS must write exactly the higherAccess() line and nothing else, got {:?}",
+        String::from_utf8_lossy(&terminal.output)
+    );
+}
+
+#[tokio::test]
 async fn a_with_no_flags_lists_no_file_flags() {
     // Slice D6a/D6b. `A` -> alterFlags -> showFlags (express.e:12486): an
     // empty set prints `No file flags`, framed by alterFlags's leading

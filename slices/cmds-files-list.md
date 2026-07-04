@@ -429,14 +429,56 @@ visible divergence. Captured live in
   - The first-char-only `A`/`U`/`H` match (a token like `Apple` → all
     dirs on the legacy) — D7 matches the whole token, an uncaptured edge.
 
-## Slice D8 — `FS` (file status / free space)
+## Slice D8 — `FS` (file status) — DONE 2026-07-04, FAITHFUL DENY
 
-- **In Scope**
-  - Reads the disk-level free space for the current conference's
-    files directory and emits the legacy `fileStatus(0)` wire text
-    (`amiexpress/express.e:24872`).
-- **Out of Scope**
+> The original slice text (git history) planned the `fileStatus(0)`
+> accounting-table wire; the Stage-2 live capture **refuted** that plan
+> (the shipped board denies every account — see the ground-truth
+> finding below), and the Stage-1/capture gate chose the **match the
+> board as-shipped** fork. Design:
+> [`designs/2026-07-04-fs-design.md`](../designs/2026-07-04-fs-design.md).
+
+- **In Scope (as shipped)**
+  - `FS` (any case, args discarded) → the **unconditional deny**
+    `\r\nCommand requires higher access.\r\n` (`higherAccess()`,
+    `amiexpress/express.e:3038`, via the dispatcher tail `:28400`) —
+    the captured outcome of `internalCommandFS()`'s
+    `ACS_CONFERENCE_ACCOUNTING` gate (`:24872`), which no account on
+    the shipped board passes. New dispatcher const
+    `HIGHER_ACCESS_LINE`; no domain `Right`, no gate, no granted
+    branch, **not** advertised in `Menu5.txt`.
+- **Out of Scope (deferred to A11 / Tier I — design Option G)**
+  - The granted `fileStatus(0)` per-conference **Uploads/Downloads
+    accounting table** (files/bytes up + down, Bytes-Avail, Ratio;
+    table body `:24141-24190`) and the real ACS gate with both
+    branches live (COMMAND_PARITY.md D8 row Q1).
   - Per-area drive quotas — not modelled in the spec.
+
+### Stage-2 live capture (2026-07-04) — command → experience
+
+Grounded against the genuine AmiExpress 5.6.0 board (container
+`nextexpress-ref-d8fs`), not folklore.
+
+- Driver: [`comparison/harness/ae_tierd_fs.py`](../comparison/harness/ae_tierd_fs.py)
+- Transcript: [`comparison/transcripts/ae_tierd_fs.txt`](../comparison/transcripts/ae_tierd_fs.txt)
+- Evidence note (per-field stable/volatile tags, edge battery, extrapolations):
+  [`comparison/evidence-tierD/fs-live-observations.md`](../comparison/evidence-tierD/fs-live-observations.md)
+
+**Ground-truth finding (inverts the source-only plan):** on the board
+as seeded, `FS` **denies** for the sysop — `\r\nCommand requires higher
+access.\r\n` — because `internalCommandFS()` gates on
+`checkSecurity(ACS_CONFERENCE_ACCOUNTING)` (`express.e:24873`) and the
+fixture's `ACCESS.255`/default-access config does **not** grant that ACS
+flag (sec 255 ≠ accounting access, `checkSecurity` `:8455-8497`). All four
+probes (`FS`, `fs`, `FS 1`, `FS xyz`) deny identically. The accounting
+**table** was still observed via the login stats screen
+(`fileStatus(1)`, `:25604`, shared format strings): `Bytes` header variant
+(CREDITBYKB off), all-zero counters, Bytes-Avail `Infinite`, Ratio red
+`DSBLD`, current conf coloured `[33m`. The opt=0 multi-conf loop is
+extrapolated-from-source (2 confs → 2 rows). The scope fork (match
+as-shipped deny, or grant accounting access) was **resolved at the
+Stage-1/capture gate: FAITHFUL DENY** — see the design's departures
+ledger. Clean `G Y` logoff, 1 telnet open.
 
 ## Slice D9 — `N` (new files scan, file semantic) — DONE 2026-07-03
 

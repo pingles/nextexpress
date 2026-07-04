@@ -129,6 +129,17 @@ pub(crate) enum MenuCommand {
     /// `CF` file-scan flag (capture + `express.e:591-608` — that flag
     /// gates only the logon `confScan`).
     NewFilesScan(NewFilesArg),
+    /// `FS`: conference accounting / file status (slice D8). Dispatched
+    /// on the exact head token (`StrCmp('FS')`,
+    /// `amiexpress/express.e:28314`); `internalCommandFS()`
+    /// (`:24871-24874`) takes no params, so trailing tokens are
+    /// discarded. The legacy gates on `ACS_CONFERENCE_ACCOUNTING` and on
+    /// the shipped board no account holds the right, so every `FS`
+    /// denies (captured, `comparison/transcripts/ae_tierd_fs.txt`) —
+    /// `NextExpress` mirrors that outcome as a FAITHFUL DENY; the
+    /// granted `fileStatus(0)` accounting table (`:24141`) is slice
+    /// A11's surface (`designs/2026-07-04-fs-design.md`).
+    FileStatus,
     /// `A` (bare): list the session's flagged-file set (slice D6a).
     /// Runs the genuine internal `internalCommandA` -> `alterFlags`
     /// (`amiexpress/express.e:24601`, `:12648`); D6a ships the read-only
@@ -515,6 +526,11 @@ pub(crate) fn parse_menu_command(line: &str) -> MenuCommand {
     }
     if let Some(arg) = files::parse_new_files_command(trimmed) {
         return MenuCommand::NewFilesScan(arg);
+    }
+    // Slice D8 (`FS`): exact head token, params discarded
+    // (`internalCommandFS` reads none, `amiexpress/express.e:24872`).
+    if command_tokens(trimmed, "FS").is_some() {
+        return MenuCommand::FileStatus;
     }
     MenuCommand::Unknown
 }
@@ -1722,6 +1738,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parses_fs_as_the_file_status_command() {
+        // Slice D8 (G1-G4): `FS` binds on the head token alone, any
+        // case; `internalCommandFS()` takes no params
+        // (`amiexpress/express.e:24872`), so trailing tokens are
+        // discarded. All four forms captured denying identically in
+        // `comparison/transcripts/ae_tierd_fs.txt`.
+        assert_eq!(parse_menu_command("FS"), MenuCommand::FileStatus);
+        assert_eq!(parse_menu_command("fs"), MenuCommand::FileStatus);
+        assert_eq!(parse_menu_command("Fs"), MenuCommand::FileStatus);
+        assert_eq!(parse_menu_command("FS 1"), MenuCommand::FileStatus);
+        assert_eq!(parse_menu_command("FS xyz"), MenuCommand::FileStatus);
+        // G6 — labelled tokenizer DEPARTURE: the in-tree trim +
+        // `split_ascii_whitespace` fold binds these to `FS`, while the
+        // legacy tokenizer (space-only split, `express.e:28236`) would
+        // leave them unbound and print `No such command!!` (:28397).
+        assert_eq!(parse_menu_command("  FS  "), MenuCommand::FileStatus);
+        assert_eq!(parse_menu_command("FS\t1"), MenuCommand::FileStatus);
+    }
+
+    #[test]
+    fn fs_binds_the_exact_head_token_only() {
+        // G8: no separator means no `StrCmp('FS')` bind
+        // (`amiexpress/express.e:28314`) — falls to Unknown.
+        assert_eq!(parse_menu_command("FSX"), MenuCommand::Unknown);
+        assert_eq!(parse_menu_command("FS1"), MenuCommand::Unknown);
+        // G9: `F S` is head `F` with a junk arg — slice D2 owns it.
+        assert_eq!(
+            parse_menu_command("F S"),
+            MenuCommand::FileList(FileListArg::Invalid)
+        );
+    }
+
     /// The checked-in main menu (`Conf02/Menu5.txt`) must advertise
     /// **exactly** the set of menu commands the parser implements. The
     /// expected set is derived from [`advertised_token`] applied to
@@ -1781,7 +1830,7 @@ mod tests {
 
     /// The menu token each `MenuCommand` is advertised under in the main
     /// menu, or `None` for commands that are not advertised
-    /// (`Unknown`). The match is **exhaustive on purpose**: a new
+    /// (`Unknown`, `FileStatus`). The match is **exhaustive on purpose**: a new
     /// `MenuCommand` variant will not compile until it is given a token
     /// here, which makes
     /// [`main_menu_advertises_exactly_the_implemented_commands`] fail
@@ -1814,7 +1863,12 @@ mod tests {
             MenuCommand::ZippySearch(_) => Some("Z"),
             MenuCommand::NewFilesScan(_) => Some("N"),
             MenuCommand::AlterFlags => Some("A"),
-            MenuCommand::Unknown => None,
+            // `FS` (slice D8) is deliberately NOT advertised — the
+            // reference board's menu has no FS row (help-audit capture)
+            // and every account denies, so advertising it would be the
+            // §10.4 advertise-then-reject drift (design departures
+            // ledger).
+            MenuCommand::FileStatus | MenuCommand::Unknown => None,
         }
     }
 
@@ -1851,6 +1905,7 @@ mod tests {
             MenuCommand::ZippySearch(ZippyArg::Prompt),
             MenuCommand::NewFilesScan(NewFilesArg::Prompt),
             MenuCommand::AlterFlags,
+            MenuCommand::FileStatus,
             MenuCommand::Unknown,
         ]
     }

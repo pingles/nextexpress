@@ -122,6 +122,14 @@ const ANSI_COLOR_OFF_LINE: &[u8] = b"\r\nAnsi Color Off\r\n";
 /// Sent for unrecognised menu commands.
 const UNKNOWN_COMMAND_LINE: &[u8] = b"Unknown command. Type G to log off.\r\n";
 
+/// `higherAccess()` (`amiexpress/express.e:3038`,
+/// `'\b\nCommand requires higher access.\b\n'`) — the dispatcher's generic
+/// denial, printed on `RESULT_NOT_ALLOWED` (`express.e:28400`). Legacy `\b`
+/// renders `\r` on the wire — byte-pinned in `ae_tierd_fs.txt`. Generic by
+/// design: any future ACS-gated command reuses this line, so it lives with
+/// the dispatcher, not in `file_list/wire.rs`.
+const HIGHER_ACCESS_LINE: &[u8] = b"\r\nCommand requires higher access.\r\n";
+
 /// Sent immediately before the connection closes on a normal logoff.
 const GOODBYE_LINE: &[u8] = b"Goodbye!\r\n";
 
@@ -800,6 +808,20 @@ where
             // Slices D6a/D6b (`A`): the `alterFlags` flag listing +
             // `Filename(s) to flag:` prompt loop (`amiexpress/express.e:12648`).
             MenuCommand::AlterFlags => self.handle_alter_flags(&mut session).await?,
+            MenuCommand::FileStatus => {
+                // Slice D8 (`FS`): internalCommandFS (`express.e:24871-24874`)
+                // gates on ACS_CONFERENCE_ACCOUNTING and returns
+                // RESULT_NOT_ALLOWED emitting zero bytes; the dispatcher tail
+                // (`:28400`) prints higherAccess() (`:3038`). On the shipped
+                // board no account holds the right (captured every probe,
+                // `ae_tierd_fs.txt`), so FS denies unconditionally here — the
+                // deny is reachable without a domain gate (§10.4; see design
+                // §7). The granted branch — fileStatus(0) (`:24141`) — is
+                // A11's surface; when a slice first makes it reachable it
+                // introduces the ACS gate with BOTH branches live (deferred;
+                // COMMAND_PARITY Q1, Option G).
+                self.terminal.write(HIGHER_ACCESS_LINE).await?;
+            }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
         Ok(DispatchOutcome::Continue(session))

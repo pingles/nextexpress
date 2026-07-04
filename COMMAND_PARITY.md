@@ -62,6 +62,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 | `C` (recipient display) | Straight to `Subject:`; never shows it is addressed to sysop | Prints decoration box + `To: (Enter)='ALL'? SYSOP` |
 | `E` (body editor/save) | Ruler / `Msg. Options: A,C,D,E,L,S,?` editor matches structurally, but skips the `FullScreen Editor (y/N)?` fork and the `F`/`X` file-attach verbs, and prints `Message #N saved.` (not `Saving...Message Number N...done!`); `D`/`E` deferred. Reply/forward keep the `.`/`/A` editor | `FullScreen Editor (y/N)?` fork → ruler/line-number editor + `Msg. Options: A,C,D,E,F,L,S,X,?` save menu; `Saving...Message Number N...done!` |
 | `N` | ~~`MenuCommand::Unknown` (new-files binding removed, deferred to Tier D)~~ **Resolved (slice D9):** the AquaScan new-files scan, byte-pinned to the dedicated capture `ae_tierd_newfiles.txt` — see [N — new-files scan](#n--new-files-scan-aquascan-door-slice-d9). Access is ungated, consistent with the ungated `F` (the internal gates `ACS_FILE_LISTINGS`; `ACS_NEW_FILES_SINCE` exists but is unused, `axcommon.e:12`) | Real command — `ACS_FILE_LISTINGS`-gated new-files scan / `AquaScan v1.0` |
+| `FS` (file status) | **FAITHFUL DENY (slice D8):** unconditional `\r\nCommand requires higher access.\r\n` (`HIGHER_ACCESS_LINE`) — no ACS gate, no granted branch; not advertised in the menu. Byte-pinned to `ae_tierd_fs.txt` — see [FS — file status](#fs--file-status-slice-d8-faithful-deny) | `ACS_CONFERENCE_ACCOUNTING`-gated `fileStatus(0)` accounting table (`express.e:24872`); on the shipped board no account holds the right, so every `FS` denies via `higherAccess()` (`:3038`) — the identical wire outcome |
 | `RP`/`FW`/`K`/`MV`/`EH` (top-level) | Menu **still advertises** all five, but every one is rejected as Unknown (internal inconsistency) | Never top-level; menu and dispatcher agree (they live in the `R` sub-prompt) |
 | `G` (plain) | ~~Always logs off immediately~~ **Resolved (slice D5/Ga):** plain `G` runs `checkFlagged()` — with files flagged it prints the live-captured confirm `You have flagged files still not downloaded.` / `Do you leave without them? (y/N)?` (`yesNo(2)`, single-key, default N); `N` returns to the menu, `Y` / `G Y` / an empty flag set log off. Byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt`. | Plain `G` runs `checkFlagged()`: with files flagged, confirms (default N → return to menu); with nothing flagged, logs off |
 | `G` (side effects) | Emits `saveFlagged()`'s `** AutoSaving File Flags **` banner + `<BEL>` on every `G` logoff, even with nothing flagged (slice D5-banner); persists/clears the per-slot flag set on logoff via the `FlaggedStore` port (slice D5-persist, durable under SQLite); `saveHistory()` + the `dump` partial-downloads file still deferred to the file-transfer slice | Runs `saveFlagged()` (banner + persist) + `saveHistory()` on logoff |
@@ -607,7 +608,7 @@ Both reject and re-prompt; the session continues. The notice strings differ:
 
 After the notice, **Rust redraws the entire ASCII-art menu** (banner + all sections, ~30 lines) before the prompt (`menu_flow/mod.rs:80-83`, non-expert), whereas **AE prints only the notice + the one-line prompt** — no full menu re-draw. **COSMETIC** for this group (it is the same redraw cadence for every command, not specific to unknown), but it sharply changes screen volume.
 
-AE additionally runs `IF res=RESULT_NOT_ALLOWED AND privcmd=FALSE THEN higherAccess()` on the fall-through (`express.e:28400`); Rust's `MenuCommand::Unknown` arm has no such hook. Not observable for a plain bogus token but a **BEHAVIOURAL** branch present only in AE.
+AE additionally runs `IF res=RESULT_NOT_ALLOWED AND privcmd=FALSE THEN higherAccess()` on the fall-through (`express.e:28400`); Rust's `MenuCommand::Unknown` arm has no such hook — not observable for a plain bogus token. Since slice D8 the `higherAccess()` line itself *is* ported (`HIGHER_ACCESS_LINE`, written by the `FS` arm — see [FS — file status](#fs--file-status-slice-d8-faithful-deny)); a dispatcher-wide `RESULT_NOT_ALLOWED` channel stays unbuilt until a second denying command needs it.
 
 ### `N`
 
@@ -958,6 +959,82 @@ that flag's reach: capture + `express.e:591-608`/`:28066-28115` show
 consults it. The multi-conference `SCAN`/`NSU` siblings and the logon
 file-scan remain future slices over the deferred section-layer seam
 (SYSTEM.md item 17).
+
+---
+
+## FS — file status (slice D8, FAITHFUL DENY)
+
+**Parity target.** `FS` is **not** AquaScan-shadowed (no door icon), so
+the reference is the genuine `internalCommandFS()`
+(`express.e:24871-24874`), captured live in
+[`comparison/transcripts/ae_tierd_fs.txt`](comparison/transcripts/ae_tierd_fs.txt)
+(evidence note `comparison/evidence-tierD/fs-live-observations.md`;
+design `designs/2026-07-04-fs-design.md`). The command gates on
+`checkSecurity(ACS_CONFERENCE_ACCOUNTING)`, which resolves from board
+configuration (per-user override → `TOOLTYPE_DEFAULT_ACCESS` →
+`ACCESS.<level>`, `express.e:8455-8497`) — never from the numeric
+security level — and on the shipped board no config grants
+`CONFERENCE_ACCOUNTING` to anyone, sysop sec 255 included. So **every**
+`FS` takes `RESULT_NOT_ALLOWED`, rendered by the dispatcher tail
+(`:28400`) as `higherAccess()` (`:3038`,
+`'\b\nCommand requires higher access.\b\n'` → wire
+`\r\nCommand requires higher access.\r\n`). NextExpress reproduces the
+shipped-board outcome as an **unconditional deny** — the dispatcher's
+`HIGHER_ACCESS_LINE` const, no domain `Right`, no gate, no granted
+branch (design §7) — and deliberately does **not** advertise `FS` in
+the menu: the reference menu has no FS row, and advertising a
+100%-deny command is the advertise-then-reject class recorded under
+the retired RP/FW/K/MV/EH finding.
+
+### MATCH — byte-pinned to `ae_tierd_fs.txt` (`express.e:3038`, `:24872`, `:28400`)
+
+| Row | Input | Both systems |
+|---|---|---|
+| G1 | `FS` (bare) | echo, then `\r\nCommand requires higher access.\r\n`, then the menu prompt |
+| G2 | `fs` (lowercase) | identical — case-folded dispatch (`UpperStr`, `express.e:28245`) |
+| G3 | `FS 1` (numeric arg) | identical — `internalCommandFS()` takes no params, args discarded |
+| G4 | `FS xyz` (junk arg) | identical — same discard |
+| G5 | `FS` from a different current conference | identical deny; only the volatile menu-prompt conference fields differ (asserted via the prompt suffix, never the captured literal) |
+
+The capture shows a second `\r\n` between the deny and the menu prompt
+— that is the global `\b\n`-before-every-menu-prompt convention
+(`express.e:28589`), the COSMETIC divergence already recorded under
+[Residual cosmetic deltas](#residual-cosmetic-deltas). It is not
+FS-local and not pinned by the FS tests.
+
+### PLAUSIBLE — extrapolated, parser-unit-pinned
+
+| Row | Input | Shipped behaviour |
+|---|---|---|
+| G7 | `Fs` / `fS` (mixed case) | identical deny — a single `UpperStr` fold covers every casing (`express.e:28245`); upgrades to MATCH when a live probe byte-agrees |
+| G12 | `FS` by an unvalidated new user | identical deny — the board denies every account and NextExpress denies unconditionally (`express.e:3025-3036`, `:8497`) |
+
+### DEPARTURE — labelled
+
+| Row | Input | NextExpress | AmiExpress |
+|---|---|---|---|
+| G6 | `  FS  ` (leading/trailing space), `FS\t1` (tab) | trim + `split_ascii_whitespace` binds the head → `FileStatus` → the deny | space-only tokenizer (`express.e:28236`) never binds `StrCmp('FS')` (`:28314`) → `No such command!!  Use '?' for command list.` (`:28397`). The pre-existing project-wide tokenizer-fold departure (the `  A  ` → `AlterFlags` class) |
+| G8 | `FSX` / `FS1` (no separator) | `Unknown` → `Unknown command. Type G to log off.` | `No such command!!` (`:28397`) — the pre-existing project-wide unknown-command wording departure (see [Unknown Command](#unknown-command-retired-rpfwkmveh-and-n)); not introduced or widened by D8 |
+
+### DEFERRED PLAUSIBLE — Q1: the granted `fileStatus(0)` accounting table (`express.e:24141`, owned by slice A11)
+
+Structurally uncapturable on the shipped board — no account passes the
+gate (`express.e:8455-8497`) — and **not built**: the `FS` dispatch arm
+has no granted branch. When an A11/Tier-I slice first makes the granted
+path reachable, that slice introduces the ACS gate with **both branches
+live** (design Option G). The table's header/rule/row *format* bytes
+are grounded by the login `fileStatus(1)` render (see the [S
+screen](#t-time-and-s-user-stats) BEHAVIOURAL row); the multi-conf
+opt=0 row set remains extrapolated-from-source.
+
+**Does-not-close (verbatim from the design):** `FS` renders **none** of
+the accounting table. A passing FS smoke is **zero evidence** that
+`core.allium:267-272` (per-conference `bytes_uploaded`/
+`bytes_downloaded`/`files_uploaded`/`files_downloaded`/
+`messages_posted` on `ConferenceMembership`, absent from the Rust type)
+or `files.allium:284` (`CompleteDownload` tallies) are satisfied. Those
+remain **unowned Tier-I obligations**; the `fileStatus(1)` login-stats
+table is owned by **slice A11** (`COMMAND_PARITY.md:249`).
 
 ---
 
