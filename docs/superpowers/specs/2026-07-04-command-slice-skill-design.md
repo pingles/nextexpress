@@ -288,6 +288,13 @@ caveat) is distilled into `resources/board-lifecycle.md` from the
 `SKILL.md` stays lean and always-loaded; the `resources/` files are loaded on demand
 by the stage that needs them (the pattern used by the `hexagonal-architecture` skill).
 
+**Role agents.** The per-stage subagents are versioned as `.claude/agents/cs-*.md` (sibling to
+the skill), each pinning its `model:` and `effort:` in frontmatter — the documented, reliable
+way to fix Fable-vs-Opus per role (`code.claude.com` → sub-agents). `subagent-briefs.md` is the
+stage → agent dispatch index. This supersedes the earlier "pass `model=` at call time" sketch
+and the mistaken claim that effort needed the Workflow tool — `effort:` is itself a frontmatter
+field, so the plain Agent-tool path is fully model+effort pinned.
+
 ---
 
 ## 7. AGENTS.md changes

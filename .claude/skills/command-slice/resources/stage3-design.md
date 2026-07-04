@@ -80,6 +80,12 @@ Fable does the generative design work; Opus judges, refutes, and reconciles.
 
 ## Workflow-script sketch (adapt per run)
 
+> **In this environment** realize each `agent({...})` as `agent({agentType: 'cs-<role>', ...})` —
+> model and effort come from the agent frontmatter (`cs-designer` fable/high, `cs-judge`
+> opus/high, `cs-refuter` opus/max, `cs-authority` opus/high). The Fable co-refuter is
+> `cs-refuter` called with `model: 'fable'` (overrides its frontmatter for that one call). The
+> `briefs.*` calls below are illustrative — the brief now lives in the agent definition.
+
 ```js
 // Stage 3 — returns ONE synthesized design; gate fires after this resolves.
 // model/effort are pinned per the map above.

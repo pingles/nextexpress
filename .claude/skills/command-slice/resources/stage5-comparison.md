@@ -59,6 +59,10 @@ Tester-A must drive a **character-at-a-time interactive client**, not line-granu
 
 ## Workflow sketch
 
+> **In this environment** realize each role as `agentType: 'cs-<role>'` (`cs-scenario`,
+> `cs-tester-next`, `cs-tester-ref`, `cs-crossmark` opus/max, `cs-completeness-critic`) — model
+> and effort come from frontmatter. `cs-tester-ref` stays serialized on the singleton board (§10.8).
+
 ```
 workflow stage5_compare:
   # 1. serial: author the scenario set (Opus)

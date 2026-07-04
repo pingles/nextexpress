@@ -57,15 +57,22 @@ comparison proceeds to teardown + merge.
 
 ### Dispatching subagents
 
-Each brief ends `dispatch: model=<opus|fable>, effort=<tier>`. Realize it with the tools
-in *this* environment: **`Opus`** = model `opus`; **`Fable`** = model `fable`
-(`claude-fable-5`). Effort tiers (`high`/`xhigh`/`max`) are only settable through the
-**Workflow tool** (`agent(prompt, {model, effort})`) — so **Stages 3 and 5 run as Workflow
-scripts** (the JS in their resource files *are* those scripts, not pseudo-code to hand-run).
-Single dispatches (Stage 1 readers, Stage 2 driver, Stage 4 implementer, Stage 6 triage)
-use the **Agent tool** with `model=<opus|fable>` (effort inherits the session);
-`superpowers:dispatching-parallel-agents` is the fan-out shape. **Never** silently fall back
-to unpinned generic subagents — that defeats the Fable/Opus split; stop and ask.
+Every stage role is a **versioned agent definition** in `.claude/agents/cs-*.md` with its
+**`model:` and `effort:` pinned in frontmatter** — the documented, reliable mechanism
+(`model: fable` and `effort: high|max` are both frontmatter fields; `code.claude.com` →
+sub-agents). Dispatch a role by its `subagent_type` (Agent tool) or `agentType` (Workflow);
+**do not** pass a call-time `model=`, which would override the pin (precedence:
+`CLAUDE_CODE_SUBAGENT_MODEL` env → call-time model → frontmatter → session).
+`resources/subagent-briefs.md` is the stage → agent dispatch index.
+
+- **Stages 1, 2, 4, 6** dispatch their `cs-*` agents directly (Agent tool `subagent_type`);
+  the frontmatter carries model **and** effort, so the plain Agent path is fully pinned.
+- **Stages 3 and 5** run a **Workflow** for the fan-out / loop *structure* (judge-panel,
+  refute-until-cap, per-scenario pipeline, cross-mark); its `agent()` calls set
+  `agentType: 'cs-<role>'` — and may specialize, e.g. the Fable co-refuter is `cs-refuter`
+  called with `model: 'fable'`. Workflow is for orchestration, no longer needed just for effort.
+- **Never** dispatch an unpinned generic subagent for a role — that defeats the Fable/Opus
+  split; use the `cs-*` agent.
 
 ## Non-negotiable invariants
 
@@ -116,7 +123,7 @@ Before Stage 2, and torn down after Stage 6 — see `resources/board-lifecycle.m
 | File | Load when |
 |---|---|
 | `hardening.md` | always skim before building; the §10 invariants + evidence |
-| `subagent-briefs.md` | dispatching any stage's subagent (exact prompts + model) |
+| `subagent-briefs.md` | dispatching any stage's subagent (stage → `cs-*` agent dispatch index) |
 | `board-lifecycle.md` | booting/driving/tearing down FS-UAE + the NextExpress server |
 | `stage3-design.md` | running the Stage 3 design workflow |
 | `stage5-comparison.md` | running the Stage 5 comparison workflow |
