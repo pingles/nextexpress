@@ -36,6 +36,13 @@ capture transcripts, and discovering files by name.
 
 ## Key Workflow
 
+**When implementing a new command/slice, prefer the `command-slice` skill**
+(`.claude/skills/command-slice/`). It orchestrates assess → capture → design →
+build → compare with model-pinned subagents, drives the live FS-UAE reference and
+the NextExpress server for you, and enforces the project's hardening rules
+(`resources/hardening.md` is the §10 checklist). The steps below are what that skill
+automates — follow them directly only for one-off changes outside the skill.
+
 Do not add more code than is necessary for a particular feature/problem. Always start with a failing test. Use mutant testing to help improve the code.
 
 Code is written test-first with test driven development:
@@ -118,35 +125,36 @@ enforces this. Rust consts carrying re-encoded glyphs are `&str`.
 4. Check for insufficient tests on your changes with `make mutants-diff`
    (the full `make mutants` sweep is a scheduled job, not a commit gate)
 5. Update the SYSTEM.md document to reflect current design. Ensure the diagram reflects the current system.
-6. For any slice that changes user-facing interaction: boot the server
-   (`cargo run -- nextexpress.toml`, or the built binary with the config path
-   as its first argument), connect with a plain UTF-8 terminal client
-   (`telnet 127.0.0.1 2323`), and exercise the new surface **by typing** —
-   checking per-keystroke echo, line terminators, and on-screen rendering.
-   Scripted byte-equality tests cannot observe these (see the 2026-06-11
-   root-cause analysis; `designs/2026-06-12-utf8-hotkeys-flagmark-design.md`
-   §6.3). Capture replay is faithful to the capture's blind spots, so a human
-   has to look at the real terminal once per user-facing slice.
-7. **Verify every new piece of user-facing experience against the live
-   FS-UAE reference — not just against `express.e` source reading.** For
-   any slice that adds or changes a user-visible surface, boot the
-   genuine AmiExpress board in the `docker/amiexpress-fsuae` harness,
-   drive it over telnet to *capture the real wire bytes* of the
-   behaviour, save the transcript under `comparison/transcripts/`, and
-   pin the new NextExpress wire to that capture (restate the literals in
-   the smoke test so they guard against drift). Reading the E source
-   alone is not enough: it omits emergent behaviour (which prompt is
-   shown, exact spacing/echo, run-time data) and the captured plan can be
-   wrong — e.g. slice D4 (`Z`) was planned as "search the current area",
-   but the live reference showed `Z` *always* opens the internal
-   `getDirSpan` directory prompt. Mind the door-shadow caveat: the stock
-   deployment installs `AquaScan` icons over `CS`/`F`/`FR`/`N`/`NSU`/
-   `SCAN`/`SENT`, so those tokens capture the door, while every other
-   token (`Z` included) captures the genuine internal command (see the
-   harness notes in the auto-memory and `COMMAND_PARITY.md`). Do this
-   *while building* the slice, so the wire is grounded before it is
-   pinned, and end every reference session with a clean `G Y` logoff
-   (the FS-UAE node-spin hazard).
+6. **User-facing interaction is verified live and agent-driven by the
+   `command-slice` skill — not by a human typing.** Scripted byte-equality tests
+   have real blind spots (per-keystroke echo, line terminators, on-screen
+   rendering; see the 2026-06-11 root-cause analysis and
+   `designs/2026-06-12-utf8-hotkeys-flagmark-design.md` §6.3). The skill closes
+   this in Stage 5: two independent agents drive the **live NextExpress server**
+   and the **live FS-UAE board** character-at-a-time and cross-mark each other's
+   observations (the parity guarantee). Residual limitation, accepted knowingly:
+   agents reading telnet tokens cannot observe true local per-keystroke echo — so
+   for **interactive / pager / hotkey** slices the skill prompts the operator for
+   an optional hands-on terminal glance (`resources/hardening.md` §10.7). No human
+   step is otherwise required.
+7. **Every new user-facing surface is grounded in the live FS-UAE reference, not
+   just an `express.e` source reading** — the `command-slice` skill's Stage 2 does
+   this with agents *while building* the slice. It boots the genuine AmiExpress
+   board in the `docker/amiexpress-fsuae` harness (its own per-run container +
+   port — see `resources/board-lifecycle.md`), drives it over telnet to capture
+   the real wire bytes, saves the transcript under `comparison/transcripts/`, and
+   pins the new NextExpress wire to that capture (literals restated in the smoke
+   test to guard against drift). Source reading alone is not enough: it omits
+   emergent behaviour (which prompt is shown, exact spacing/echo, run-time data)
+   and a captured plan can be wrong — e.g. slice D4 (`Z`) was planned as "search
+   the current area" but the live reference showed `Z` *always* opens the internal
+   `getDirSpan` directory prompt. **Door-shadow caveat:** the stock deployment
+   installs `AquaScan` icons over `CS`/`F`/`FR`/`N`/`NSU`/`SCAN`/`SENT`, so those
+   tokens capture the door while every other token (`Z` included) captures the
+   genuine internal command; when the door capture and `express.e` conflict, the
+   skill **halts and asks** (express.e-wins default — `resources/hardening.md`
+   §10.3). The wire is grounded before it is pinned, and every reference session
+   ends with a clean `G Y` logoff (the FS-UAE node-spin hazard).
 
 Formatting (`cargo fmt`) and clippy (`cargo clippy -- -D warnings`) run
 automatically via Claude Code hooks defined in `.claude/settings.json` — fmt
