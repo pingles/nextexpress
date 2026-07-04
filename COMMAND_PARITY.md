@@ -710,7 +710,9 @@ clear, `C` form-feed, `Q` → `Quit`, lone `n` held as the ambiguous
 `N`/`ns` prefix and erased `\x08 \x08` by the next verb, `ns` →
 `Non-stop scrolling! Are you sure (Y/n)? ` (decline redraws),
 `F`/`R` → the two distinct silent flag prompts with the 79-space
-clear, `?` → the in-pager pause help; `F A` per-dir
+clear, `?` → the in-pager pause help, `K` → skip dir, `L` → reload
+dir, `Ctrl-C` → the `**Break` quit (all three captured in
+`ae_tierd_help_audit.txt` PK/PL/PCC, landed 2026-07-04); `F A` per-dir
 footer/More?/transition choreography incl. back-to-back headers over
 empty dirs; bare `F` → `Directories: (1-N), …(Enter)=None ? ` with
 silent Enter-abort and `Error in input!`; `F 99` →
@@ -807,9 +809,9 @@ whose own help advertises `F R`, and the live door honours the whole
 | `F W` / `N W` | Opens the interactive `AquaScan Configuration - Main Menu` (Colours/Dividers/Miscellaneous, D/P/S/Q) — W1/W2 | Argument error — **permanent departure** (config is TOML), now with the door behaviour on record |
 | `N` at `More?` | Held as the ambiguous `n`/`ns` prefix (echoed `n`, waits) — the help's `(N),(Q) Quit` resolves via `n`+Enter | **MATCH** (already pinned, probe P1) |
 | `C` at `More?` | `\r` + form feed, listing continues (PC) | **MATCH** byte-for-byte |
-| `K` at `More?` | Real: overprint clear, skips the rest of the current dir, next dir's header (PK) | Inert (continue) — **next slice**, capture now pinned |
-| `L` at `More?` | Real: form feed + the current dir re-scans from the top (PL) | Inert (continue) — **next slice** |
-| `Ctrl-C` at `More?` | Real: `\r\n` + `\x1b[0m**Break\r\n` + the two-reset exit tail (PCC) | Inert (continue) — **next slice** |
+| `K` at `More?` | Real: overprint clear, skips the rest of the current dir, next dir's header (PK) | **Landed same day** — `ScanFlow::SkipDir`; the walk's dir-transition CRLF reproduces PK's bytes; on the last dir it ends the listing (unprobed edge, same shape as `Y`) |
+| `L` at `More?` | Real: form feed + the current dir re-scans from the top (PL) | **Landed same day** — `ScanFlow::ReloadDir`; rows re-fetched, fresh page counter; the entry preamble is not re-emitted |
+| `Ctrl-C` at `More?` | Real: `\r\n` + `\x1b[0m**Break\r\n` + the two-reset exit tail (PCC) | **Landed same day** — pinned at the `More?` prompt; the help's wider "at any time" claim (mid-stream, other prompts) is unprobed and unported |
 | `O` at `More?` | Real: runs a WHO display then redraws the page (PO) | Inert — deferred until a who's-online surface exists |
 
 `FR R`, `Q`/`NS` combos beyond the captured single tokens, and the

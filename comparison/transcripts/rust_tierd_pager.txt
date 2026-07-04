@@ -1,0 +1,501 @@
+
+@@@@@ CONNECT @@@@@ [BANNER]
+----- RENDER -----
+NextExpress (20dd1ad) Copyright ⟨c2⟩⟨a9⟩2026\r\n
+AmiExpress 5 Copyright ⟨c2⟩⟨a9⟩2018-2023 Darren Coles\r\n
+ANSI Graphics (Y/n)? 
+----- REPR -----
+b'NextExpress (20dd1ad) Copyright \xc2\xa92026\r\nAmiExpress 5 Copyright \xc2\xa92018-2023 Darren Coles\r\nANSI Graphics (Y/n)? '
+
+@@@@@ graphics -> Y @@@@@ [MATCHED]
+>>> SENT b'Y\r'
+----- RENDER -----
+Y\r\n
+                               .\r\n
+                               :________\r\n
+  _____ ______ ___________ ____|       / __________\r\n
+  \_   \      \    ______/     |      /       ____/\r\n
+ _/   \ \      \_     /  \_    _      \_        \_\r\n
+ \____ \________/ ________/    |_______/ ________/\r\n
+         next express   \______:\r\n
+                               :\r\n
+\r\n
+Enter your Name: 
+----- REPR -----
+b'Y\r\n                               .\r\n                               :________\r\n  _____ ______ ___________ ____|       / __________\r\n  \\_   \\      \\    ______/     |      /       ____/\r\n _/   \\ \\      \\_     /  \\_    _      \\_        \\_\r\n \\____ \\________/ ________/    |_______/ ________/\r\n         next express   \\______:\r\n                               :\r\n\r\nEnter your Name: '
+
+@@@@@ name -> sysop @@@@@ [MATCHED]
+>>> SENT b'sysop\r'
+----- RENDER -----
+sysop\r\n
+PassWord: 
+----- REPR -----
+b'sysop\r\nPassWord: '
+
+@@@@@ password -> POST-LOGIN @@@@@ [MENU]
+>>> SENT b'sysop\r'
+----- RENDER -----
+*****\r\n
+Authenticated.\r\n
+\r\n
+Scanning conferences for mail...\r\n
+\r\n
+⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Main - \r\n
+ ⟨ESC[32m⟩Message Base⟨ESC[33m⟩: ⟨ESC[0m⟩main - ⟨ESC[32m⟩Scanning Conference⟨ESC[33m⟩: ⟨ESC[0m⟩Programming - \r\n
+ ⟨ESC[32m⟩Message Base⟨ESC[33m⟩: ⟨ESC[0m⟩main - No mail today!\r\n
+\r\n
+Conference 1: Main Auto-ReJoined\r\n
+\r\n
+⟨ESC[32m⟩User Number⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩Lst Date On⟨ESC[33m⟩:⟨ESC[0m⟩ 01-Jan-1970 00:00:00\r\n
+⟨ESC[32m⟩Security Lv⟨ESC[33m⟩:⟨ESC[0m⟩ 255\r\n
+⟨ESC[32m⟩# Times On ⟨ESC[33m⟩:⟨ESC[0m⟩ 1\r\n
+⟨ESC[32m⟩Times Today⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+⟨ESC[32m⟩Msgs Posted⟨ESC[33m⟩:⟨ESC[0m⟩ 0\r\n
+\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+    JM <n>   Join message base number <n>\r\n
+    <        Join previous accessible conference\r\n
+    >        Join next accessible conference\r\n
+    <<       Join previous message base\r\n
+    >>       Join next message base\r\n
+    CF       Edit conference scan flags\r\n
+\r\n
+  FILES\r\n
+    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n
+    N [date] Scan for new files since <date>\r\n
+    Z <str>  Zippy search file descriptions for <str>\r\n
+    A        List your flagged files\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"*****\r\nAuthenticated.\r\n\r\nScanning conferences for mail...\r\n\r\n\x1b[32mScanning Conference\x1b[33m: \x1b[0mMain - \r\n \x1b[32mMessage Base\x1b[33m: \x1b[0mmain - \x1b[32mScanning Conference\x1b[33m: \x1b[0mProgramming - \r\n \x1b[32mMessage Base\x1b[33m: \x1b[0mmain - No mail today!\r\n\r\nConference 1: Main Auto-ReJoined\r\n\r\n\x1b[32mUser Number\x1b[33m:\x1b[0m 1\r\n\x1b[32mLst Date On\x1b[33m:\x1b[0m 01-Jan-1970 00:00:00\r\n\x1b[32mSecurity Lv\x1b[33m:\x1b[0m 255\r\n\x1b[32m# Times On \x1b[33m:\x1b[0m 1\r\n\x1b[32mTimes Today\x1b[33m:\x1b[0m 0\r\n\x1b[32mMsgs Posted\x1b[33m:\x1b[0m 0\r\n\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n    JM <n>   Join message base number <n>\r\n    <        Join previous accessible conference\r\n    >        Join next accessible conference\r\n    <<       Join previous message base\r\n    >>       Join next message base\r\n    CF       Edit conference scan flags\r\n\r\n  FILES\r\n    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n    N [date] Scan for new files since <date>\r\n    Z <str>  Zippy search file descriptions for <str>\r\n    A        List your flagged files\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ PK: F A, K at first More? (Skip dir) @@@@@ [MENU]
+>>> SENT b'F A\r'
+----- RENDER -----
+F A\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩--[ ⟨ESC[36m⟩NextScan ⟨ESC[34m⟩]----------------------------------------[ ⟨ESC[36m⟩'f ?' for options ⟨ESC[34m⟩]--⟨ESC[0m⟩\r\n
+\r\n
+Scanning dir 1 from top... Ok!\r\n
+\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #1 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ANSIPACK.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 234567  ⟨ESC[33m⟩01-15-26⟨ESC[0m⟩  Collection of 40 ANSI screens from the\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Mirage art crew, January release.\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Includes viewer.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-22-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #2 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩TERMV48.LHA  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 456123  ⟨ESC[33m⟩01-22-26⟨ESC[0m⟩  Term v4.8 - the best Amiga comms package\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #3 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩LHA_138.RUN  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 123456  ⟨ESC[33m⟩02-01-26⟨ESC[0m⟩  LhA 1.38 evaluation - archiver\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-03-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ <<<harness answers uit:: K>>>\r                                                                     \r\r\n
+Scanning dir 2 from top... Ok!\r\n
+\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 06-09-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #1 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩FRESHUPL.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩  43210  ⟨ESC[33m⟩06-09-26⟨ESC[0m⟩  Uploaded last night, awaiting sort\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 06-10-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #2 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩MYDEMO.DMS   ⟨ESC[34m⟩    P⟨ESC[32m⟩ 567890  ⟨ESC[33m⟩06-10-26⟨ESC[0m⟩  My first demo - feedback welcome!\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Greets to everyone on node 1.\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #3 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩TOOLPACK.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 234567  ⟨ESC[33m⟩06-10-26⟨ESC[0m⟩  Misc CLI tools collection\r\n
+⟨ESC[0;34m⟩[⟨ESC[36m⟩ End of File List ⟨ESC[34m⟩]⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ <<<harness answers uit:: Q>>>Quit\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+    JM <n>   Join message base number <n>\r\n
+    <        Join previous accessible conference\r\n
+    >        Join next accessible conference\r\n
+    <<       Join previous message base\r\n
+    >>       Join next message base\r\n
+    CF       Edit conference scan flags\r\n
+\r\n
+  FILES\r\n
+    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n
+    N [date] Scan for new files since <date>\r\n
+    Z <str>  Zippy search file descriptions for <str>\r\n
+    A        List your flagged files\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F A\r\n\x1b[0m\r\n\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n\r\nScanning dir 1 from top... Ok!\r\n\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #1 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n\x1b[0m\x1b[0m                                     Mirage art crew, January release.\r\n\x1b[0m\x1b[0m                                     Includes viewer.\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-22-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #2 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mTERMV48.LHA  \x1b[34m    P\x1b[32m 456123  \x1b[33m01-22-26\x1b[0m  Term v4.8 - the best Amiga comms package\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #3 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mLHA_138.RUN  \x1b[34m    P\x1b[32m 123456  \x1b[33m02-01-26\x1b[0m  LhA 1.38 evaluation - archiver\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-03-26\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m <<<harness answers uit:: K>>>\r                                                                     \r\r\nScanning dir 2 from top... Ok!\r\n\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 06-09-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #1 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mFRESHUPL.LHA \x1b[34m    P\x1b[32m  43210  \x1b[33m06-09-26\x1b[0m  Uploaded last night, awaiting sort\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 06-10-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #2 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mMYDEMO.DMS   \x1b[34m    P\x1b[32m 567890  \x1b[33m06-10-26\x1b[0m  My first demo - feedback welcome!\r\n\x1b[0m\x1b[0m                                     Greets to everyone on node 1.\r\n\x1b[0m\x1b[34m[\x1b[0m File #3 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mTOOLPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m06-10-26\x1b[0m  Misc CLI tools collection\r\n\x1b[0;34m[\x1b[36m End of File List \x1b[34m]\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m <<<harness answers uit:: Q>>>Quit\r\n\x1b[0m\r\n\x1b[0m\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n    JM <n>   Join message base number <n>\r\n    <        Join previous accessible conference\r\n    >        Join next accessible conference\r\n    <<       Join previous message base\r\n    >>       Join next message base\r\n    CF       Edit conference scan flags\r\n\r\n  FILES\r\n    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n    N [date] Scan for new files since <date>\r\n    Z <str>  Zippy search file descriptions for <str>\r\n    A        List your flagged files\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ PL: F 1, L at first More? (Reload dir) @@@@@ [MENU]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩--[ ⟨ESC[36m⟩NextScan ⟨ESC[34m⟩]----------------------------------------[ ⟨ESC[36m⟩'f ?' for options ⟨ESC[34m⟩]--⟨ESC[0m⟩\r\n
+\r\n
+Scanning dir 1 from top... Ok!\r\n
+\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #1 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ANSIPACK.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 234567  ⟨ESC[33m⟩01-15-26⟨ESC[0m⟩  Collection of 40 ANSI screens from the\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Mirage art crew, January release.\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Includes viewer.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-22-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #2 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩TERMV48.LHA  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 456123  ⟨ESC[33m⟩01-22-26⟨ESC[0m⟩  Term v4.8 - the best Amiga comms package\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #3 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩LHA_138.RUN  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 123456  ⟨ESC[33m⟩02-01-26⟨ESC[0m⟩  LhA 1.38 evaluation - archiver\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-03-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ <<<harness answers uit:: L>>>⟨0c⟩\r\n
+Scanning dir 1 from top... Ok!\r\n
+\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #1 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ANSIPACK.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 234567  ⟨ESC[33m⟩01-15-26⟨ESC[0m⟩  Collection of 40 ANSI screens from the\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Mirage art crew, January release.\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Includes viewer.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-22-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #2 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩TERMV48.LHA  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 456123  ⟨ESC[33m⟩01-22-26⟨ESC[0m⟩  Term v4.8 - the best Amiga comms package\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #3 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩LHA_138.RUN  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 123456  ⟨ESC[33m⟩02-01-26⟨ESC[0m⟩  LhA 1.38 evaluation - archiver\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-03-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #4 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩MODRIPPR.LZH ⟨ESC[34m⟩    P⟨ESC[32m⟩  98304  ⟨ESC[33m⟩02-03-26⟨ESC[0m⟩  Rip protracker mods from memory\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ <<<harness answers uit:: Q>>>Quit\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+    JM <n>   Join message base number <n>\r\n
+    <        Join previous accessible conference\r\n
+    >        Join next accessible conference\r\n
+    <<       Join previous message base\r\n
+    >>       Join next message base\r\n
+    CF       Edit conference scan flags\r\n
+\r\n
+  FILES\r\n
+    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n
+    N [date] Scan for new files since <date>\r\n
+    Z <str>  Zippy search file descriptions for <str>\r\n
+    A        List your flagged files\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F 1\r\n\x1b[0m\r\n\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n\r\nScanning dir 1 from top... Ok!\r\n\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #1 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n\x1b[0m\x1b[0m                                     Mirage art crew, January release.\r\n\x1b[0m\x1b[0m                                     Includes viewer.\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-22-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #2 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mTERMV48.LHA  \x1b[34m    P\x1b[32m 456123  \x1b[33m01-22-26\x1b[0m  Term v4.8 - the best Amiga comms package\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #3 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mLHA_138.RUN  \x1b[34m    P\x1b[32m 123456  \x1b[33m02-01-26\x1b[0m  LhA 1.38 evaluation - archiver\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-03-26\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m <<<harness answers uit:: L>>>\x0c\r\nScanning dir 1 from top... Ok!\r\n\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #1 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n\x1b[0m\x1b[0m                                     Mirage art crew, January release.\r\n\x1b[0m\x1b[0m                                     Includes viewer.\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-22-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #2 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mTERMV48.LHA  \x1b[34m    P\x1b[32m 456123  \x1b[33m01-22-26\x1b[0m  Term v4.8 - the best Amiga comms package\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #3 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mLHA_138.RUN  \x1b[34m    P\x1b[32m 123456  \x1b[33m02-01-26\x1b[0m  LhA 1.38 evaluation - archiver\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-03-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #4 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mMODRIPPR.LZH \x1b[34m    P\x1b[32m  98304  \x1b[33m02-03-26\x1b[0m  Rip protracker mods from memory\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m <<<harness answers uit:: Q>>>Quit\r\n\x1b[0m\r\n\x1b[0m\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n    JM <n>   Join message base number <n>\r\n    <        Join previous accessible conference\r\n    >        Join next accessible conference\r\n    <<       Join previous message base\r\n    >>       Join next message base\r\n    CF       Edit conference scan flags\r\n\r\n  FILES\r\n    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n    N [date] Scan for new files since <date>\r\n    Z <str>  Zippy search file descriptions for <str>\r\n    A        List your flagged files\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ PC: F 1, C at first More? (Clear) @@@@@ [MENU]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩--[ ⟨ESC[36m⟩NextScan ⟨ESC[34m⟩]----------------------------------------[ ⟨ESC[36m⟩'f ?' for options ⟨ESC[34m⟩]--⟨ESC[0m⟩\r\n
+\r\n
+Scanning dir 1 from top... Ok!\r\n
+\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #1 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ANSIPACK.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 234567  ⟨ESC[33m⟩01-15-26⟨ESC[0m⟩  Collection of 40 ANSI screens from the\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Mirage art crew, January release.\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Includes viewer.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-22-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #2 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩TERMV48.LHA  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 456123  ⟨ESC[33m⟩01-22-26⟨ESC[0m⟩  Term v4.8 - the best Amiga comms package\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #3 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩LHA_138.RUN  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 123456  ⟨ESC[33m⟩02-01-26⟨ESC[0m⟩  LhA 1.38 evaluation - archiver\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-03-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ <<<harness answers uit:: C>>>\r⟨0c⟩⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #4 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩MODRIPPR.LZH ⟨ESC[34m⟩    P⟨ESC[32m⟩  98304  ⟨ESC[33m⟩02-03-26⟨ESC[0m⟩  Rip protracker mods from memory\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-10-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #5 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩SYSINFO4.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 187233  ⟨ESC[33m⟩02-10-26⟨ESC[0m⟩  SysInfo 4.0 - system information tool\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-14-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #6 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩PTREPLAY.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩  45678  ⟨ESC[33m⟩02-14-26⟨ESC[0m⟩  Protracker replay routine, asm source\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Sent by: SYSOP\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-20-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #7 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩AMIGANSI.TXT ⟨ESC[34m⟩    P⟨ESC[32m⟩   4521  ⟨ESC[33m⟩02-20-26⟨ESC[0m⟩  ANSI escape code reference for Amiga\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 03-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #8 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩BBSDOORS.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 345987  ⟨ESC[33m⟩03-01-26⟨ESC[0m⟩  Collection of 12 AmiExpress doors\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Tested on /X 4.x and 5.x.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ <<<harness answers uit:: Q>>>Quit\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+    JM <n>   Join message base number <n>\r\n
+    <        Join previous accessible conference\r\n
+    >        Join next accessible conference\r\n
+    <<       Join previous message base\r\n
+    >>       Join next message base\r\n
+    CF       Edit conference scan flags\r\n
+\r\n
+  FILES\r\n
+    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n
+    N [date] Scan for new files since <date>\r\n
+    Z <str>  Zippy search file descriptions for <str>\r\n
+    A        List your flagged files\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F 1\r\n\x1b[0m\r\n\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n\r\nScanning dir 1 from top... Ok!\r\n\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #1 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n\x1b[0m\x1b[0m                                     Mirage art crew, January release.\r\n\x1b[0m\x1b[0m                                     Includes viewer.\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-22-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #2 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mTERMV48.LHA  \x1b[34m    P\x1b[32m 456123  \x1b[33m01-22-26\x1b[0m  Term v4.8 - the best Amiga comms package\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #3 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mLHA_138.RUN  \x1b[34m    P\x1b[32m 123456  \x1b[33m02-01-26\x1b[0m  LhA 1.38 evaluation - archiver\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-03-26\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m <<<harness answers uit:: C>>>\r\x0c\x1b[0m\x1b[34m[\x1b[0m File #4 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mMODRIPPR.LZH \x1b[34m    P\x1b[32m  98304  \x1b[33m02-03-26\x1b[0m  Rip protracker mods from memory\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-10-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #5 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mSYSINFO4.LHA \x1b[34m    P\x1b[32m 187233  \x1b[33m02-10-26\x1b[0m  SysInfo 4.0 - system information tool\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-14-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #6 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mPTREPLAY.LHA \x1b[34m    P\x1b[32m  45678  \x1b[33m02-14-26\x1b[0m  Protracker replay routine, asm source\r\n\x1b[0m\x1b[0m                                     Sent by: SYSOP\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-20-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #7 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mAMIGANSI.TXT \x1b[34m    P\x1b[32m   4521  \x1b[33m02-20-26\x1b[0m  ANSI escape code reference for Amiga\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 03-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #8 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mBBSDOORS.LHA \x1b[34m    P\x1b[32m 345987  \x1b[33m03-01-26\x1b[0m  Collection of 12 AmiExpress doors\r\n\x1b[0m\x1b[0m                                     Tested on /X 4.x and 5.x.\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m <<<harness answers uit:: Q>>>Quit\r\n\x1b[0m\r\n\x1b[0m\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n    JM <n>   Join message base number <n>\r\n    <        Join previous accessible conference\r\n    >        Join next accessible conference\r\n    <<       Join previous message base\r\n    >>       Join next message base\r\n    CF       Edit conference scan flags\r\n\r\n  FILES\r\n    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n    N [date] Scan for new files since <date>\r\n    Z <str>  Zippy search file descriptions for <str>\r\n    A        List your flagged files\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ PCC: F 1, Ctrl-C at first More? (quit any time) @@@@@ [MENU]
+>>> SENT b'F 1\r'
+----- RENDER -----
+F 1\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩--[ ⟨ESC[36m⟩NextScan ⟨ESC[34m⟩]----------------------------------------[ ⟨ESC[36m⟩'f ?' for options ⟨ESC[34m⟩]--⟨ESC[0m⟩\r\n
+\r\n
+Scanning dir 1 from top... Ok!\r\n
+\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-15-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #1 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩ANSIPACK.LHA ⟨ESC[34m⟩    P⟨ESC[32m⟩ 234567  ⟨ESC[33m⟩01-15-26⟨ESC[0m⟩  Collection of 40 ANSI screens from the\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Mirage art crew, January release.\r\n
+⟨ESC[0m⟩⟨ESC[0m⟩                                     Includes viewer.\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 01-22-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #2 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩TERMV48.LHA  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 456123  ⟨ESC[33m⟩01-22-26⟨ESC[0m⟩  Term v4.8 - the best Amiga comms package\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-01-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩⟨ESC[34m⟩[⟨ESC[0m⟩ File #3 ⟨ESC[34m⟩]                    - ---- ---------------------------------- ---- -\r\n
+⟨ESC[0m⟩⟨ESC[36m⟩LHA_138.RUN  ⟨ESC[34m⟩    P⟨ESC[32m⟩ 123456  ⟨ESC[33m⟩02-01-26⟨ESC[0m⟩  LhA 1.38 evaluation - archiver\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩                                            _⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_\r\n
+⟨ESC[0m⟩      ⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨af⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩,⟨c2⟩⟨b8⟩_⟨c2⟩⟨b8⟩,⟨c3⟩⟨b8⟩*⟨c2⟩⟨a4⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨ac⟩⟨c2⟩⟨b0⟩⟨c2⟩⟨a4⟩*⟨c3⟩⟨b8⟩, 02-03-26\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0;36m⟩More? ⟨ESC[32m⟩(⟨ESC[33m⟩Y⟨ESC[32m⟩/⟨ESC[33m⟩n⟨ESC[32m⟩/⟨ESC[33m⟩ns⟨ESC[32m⟩)⟨ESC[36m⟩, ⟨ESC[32m⟩(⟨ESC[33m⟩C⟨ESC[32m⟩)⟨ESC[36m⟩lear, ⟨ESC[32m⟩(⟨ESC[33m⟩F⟨ESC[32m⟩/⟨ESC[33m⟩R⟨ESC[32m⟩)⟨ESC[36m⟩ Flag, ⟨ESC[32m⟩(⟨ESC[33m⟩?⟨ESC[32m⟩)⟨ESC[36m⟩ Help, ⟨ESC[32m⟩(⟨ESC[33m⟩Q⟨ESC[32m⟩)⟨ESC[36m⟩uit:⟨ESC[0m⟩ <<<harness answers uit:: ⟨03⟩>>>\r\n
+⟨ESC[0m⟩**Break\r\n
+⟨ESC[0m⟩\r\n
+⟨ESC[0m⟩\r\n
+  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n
+       __  __      _        __  __\r\n
+      |  \/  |__ _(_)_ _   |  \/  |___ _ _ _  _\r\n
+      | |\/| / _` | | ' \  | |\/| / -_) ' \ || |\r\n
+      |_|  |_\__,_|_|_||_| |_|  |_\___|_||_\_,_|\r\n
+  `----------------------------------------------------------------'\r\n
+\r\n
+  MESSAGES\r\n
+    R <n>    Read message number <n>\r\n
+    MS       Scan all visible messages\r\n
+    E [to]   Enter a message\r\n
+    C        Comment to sysop\r\n
+\r\n
+  CONFERENCES\r\n
+    J <n>    Join conference number <n>\r\n
+    JM <n>   Join message base number <n>\r\n
+    <        Join previous accessible conference\r\n
+    >        Join next accessible conference\r\n
+    <<       Join previous message base\r\n
+    >>       Join next message base\r\n
+    CF       Edit conference scan flags\r\n
+\r\n
+  FILES\r\n
+    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n
+    N [date] Scan for new files since <date>\r\n
+    Z <str>  Zippy search file descriptions for <str>\r\n
+    A        List your flagged files\r\n
+\r\n
+  SESSION\r\n
+    S        User stats\r\n
+    T        Show current time\r\n
+    Q        Toggle quiet mode\r\n
+    M        Toggle ANSI colour\r\n
+    X        Toggle expert mode\r\n
+    ?        Re-display this menu\r\n
+    ^ <topic> Help on a topic\r\n
+    H        Help\r\n
+    VER      Version information\r\n
+    G        Goodbye (log off)\r\n
+⟨ESC[0m⟩⟨ESC[35m⟩NextExpress ⟨ESC[0m⟩[⟨ESC[36m⟩1⟨ESC[34m⟩:⟨ESC[36m⟩Main⟨ESC[0m⟩] Menu (⟨ESC[33m⟩0⟨ESC[0m⟩ mins. left): 
+----- REPR -----
+b"F 1\r\n\x1b[0m\r\n\x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------------[ \x1b[36m'f ?' for options \x1b[34m]--\x1b[0m\r\n\r\nScanning dir 1 from top... Ok!\r\n\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-15-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #1 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mANSIPACK.LHA \x1b[34m    P\x1b[32m 234567  \x1b[33m01-15-26\x1b[0m  Collection of 40 ANSI screens from the\r\n\x1b[0m\x1b[0m                                     Mirage art crew, January release.\r\n\x1b[0m\x1b[0m                                     Includes viewer.\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 01-22-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #2 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mTERMV48.LHA  \x1b[34m    P\x1b[32m 456123  \x1b[33m01-22-26\x1b[0m  Term v4.8 - the best Amiga comms package\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-01-26\r\n\x1b[0m\r\n\x1b[0m\x1b[34m[\x1b[0m File #3 \x1b[34m]                    - ---- ---------------------------------- ---- -\r\n\x1b[0m\x1b[36mLHA_138.RUN  \x1b[34m    P\x1b[32m 123456  \x1b[33m02-01-26\x1b[0m  LhA 1.38 evaluation - archiver\r\n\x1b[0m\r\n\x1b[0m                                            _\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\r\n\x1b[0m      \xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xaf\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8,\xc2\xb8_\xc2\xb8,\xc3\xb8*\xc2\xa4\xc2\xb0\xc2\xac\xc2\xb0\xc2\xa4*\xc3\xb8, 02-03-26\r\n\x1b[0m\r\n\x1b[0;36mMore? \x1b[32m(\x1b[33mY\x1b[32m/\x1b[33mn\x1b[32m/\x1b[33mns\x1b[32m)\x1b[36m, \x1b[32m(\x1b[33mC\x1b[32m)\x1b[36mlear, \x1b[32m(\x1b[33mF\x1b[32m/\x1b[33mR\x1b[32m)\x1b[36m Flag, \x1b[32m(\x1b[33m?\x1b[32m)\x1b[36m Help, \x1b[32m(\x1b[33mQ\x1b[32m)\x1b[36muit:\x1b[0m <<<harness answers uit:: \x03>>>\r\n\x1b[0m**Break\r\n\x1b[0m\r\n\x1b[0m\r\n  .oO(==============[ NextExpress :: MAIN MENU ]==============)Oo.\r\n       __  __      _        __  __\r\n      |  \\/  |__ _(_)_ _   |  \\/  |___ _ _ _  _\r\n      | |\\/| / _` | | ' \\  | |\\/| / -_) ' \\ || |\r\n      |_|  |_\\__,_|_|_||_| |_|  |_\\___|_||_\\_,_|\r\n  `----------------------------------------------------------------'\r\n\r\n  MESSAGES\r\n    R <n>    Read message number <n>\r\n    MS       Scan all visible messages\r\n    E [to]   Enter a message\r\n    C        Comment to sysop\r\n\r\n  CONFERENCES\r\n    J <n>    Join conference number <n>\r\n    JM <n>   Join message base number <n>\r\n    <        Join previous accessible conference\r\n    >        Join next accessible conference\r\n    <<       Join previous message base\r\n    >>       Join next message base\r\n    CF       Edit conference scan flags\r\n\r\n  FILES\r\n    F [n]    List files (<n>=dir, A=all, U=upload, ?=help)\r\n    N [date] Scan for new files since <date>\r\n    Z <str>  Zippy search file descriptions for <str>\r\n    A        List your flagged files\r\n\r\n  SESSION\r\n    S        User stats\r\n    T        Show current time\r\n    Q        Toggle quiet mode\r\n    M        Toggle ANSI colour\r\n    X        Toggle expert mode\r\n    ?        Re-display this menu\r\n    ^ <topic> Help on a topic\r\n    H        Help\r\n    VER      Version information\r\n    G        Goodbye (log off)\r\n\x1b[0m\x1b[35mNextExpress \x1b[0m[\x1b[36m1\x1b[34m:\x1b[36mMain\x1b[0m] Menu (\x1b[33m0\x1b[0m mins. left): "
+
+@@@@@ LOGOFF round @@@@@
+G\r\n
+\r\n
+** AutoSaving File Flags **\r\n
+⟨BEL⟩\r\n
+Goodbye!\r\n
+
+
+@@@@@ LOGOFF round @@@@@

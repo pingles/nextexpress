@@ -242,6 +242,9 @@ pub(crate) async fn read_telnet_key(
             // ae_tierd_probes.txt:140-175.
             b'\n' => {}
             0x08 | 0x7F => return Ok(Some(KeyEvent::Backspace)),
+            // Ctrl-C — the pager's `**Break` verb needs the raw byte
+            // as its own event (ae_tierd_help_audit.txt PCC).
+            0x03 => return Ok(Some(KeyEvent::CtrlC)),
             0x1b => {
                 swallow_buffered_csi(stream, pushback)?;
                 return Ok(Some(KeyEvent::Other));
@@ -392,6 +395,21 @@ mod tests {
                 KeyEvent::Backspace, // the bare LF before it: no event
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn read_key_decodes_ctrl_c_distinctly() {
+        // 0x03 must reach the pager as its own event (the `**Break`
+        // verb, ae_tierd_help_audit.txt PCC) — not as `Other`, which
+        // the pager treats as a resume.
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"\x03").await.unwrap();
+        let mut pushback = None;
+        let key = read_telnet_key(&mut server, &mut pushback)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(key, KeyEvent::CtrlC);
     }
 
     #[tokio::test]

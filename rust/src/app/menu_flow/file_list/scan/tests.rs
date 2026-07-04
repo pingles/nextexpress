@@ -440,6 +440,193 @@ async fn unknown_key_at_more_resumes_via_the_overprint() {
 }
 
 #[tokio::test]
+async fn k_at_more_skips_the_rest_of_the_current_dir() {
+    // `K` (ae_tierd_help_audit.txt PK, bare keypress): the verb's
+    // overprint clear, then the walk's dir-transition CRLF, then the
+    // next dir's header — the rest of dir 1, its footer and its
+    // post-End More? are all abandoned.
+    let services = services_with_demo_catalogue();
+    let mut terminal = keyed_terminal(vec![key(b'K'), key(b'Q')]);
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Span {
+            span: FileSpan::All,
+            non_stop: false,
+            reverse: false,
+            quick: false,
+            fr_banner: false,
+        },
+    )
+    .await;
+    // `F A`'s page 1 is byte-identical to `F 1`'s (same preamble,
+    // same dir-1 header and body).
+    let lines = f_1_emitted_lines(&services);
+    let mut expected = joined(&lines[..29]);
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(&more_clear());
+    expected.extend_from_slice(b"\r\n");
+    expected.extend_from_slice(&joined(&[
+        b"Scanning dir 2 from top... Ok!".to_vec(),
+        Vec::new(),
+    ]));
+    expected.extend_from_slice(&joined(&area_lines(&services, 2)));
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"Quit\r\n");
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&terminal.output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
+async fn l_at_more_reloads_the_current_dir_from_the_top() {
+    // `L` (ae_tierd_help_audit.txt PL, bare keypress): a form feed +
+    // CRLF, then the current dir restarts from its header with a
+    // fresh page counter — the entry preamble is NOT re-emitted.
+    let services = services_with_demo_catalogue();
+    let mut terminal = keyed_terminal(vec![key(b'L'), key(b'Q')]);
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Span {
+            span: FileSpan::Dir(2),
+            non_stop: false,
+            reverse: false,
+            quick: false,
+            fr_banner: false,
+        },
+    )
+    .await;
+    let dir2 = |expected: &mut Vec<u8>| {
+        expected.extend_from_slice(&joined(&[
+            b"Scanning dir 2 from top... Ok!".to_vec(),
+            Vec::new(),
+        ]));
+        expected.extend_from_slice(&joined(&area_lines(&services, 2)));
+    };
+    let mut expected = joined(&[
+        b"\x1b[0m".to_vec(),
+        super::super::wire::LISTING_BANNER.to_vec(),
+        Vec::new(),
+    ]);
+    dir2(&mut expected);
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"\x0c\r\n");
+    dir2(&mut expected);
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"Quit\r\n");
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&terminal.output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
+async fn ctrl_c_at_more_quits_with_the_break_banner() {
+    // Ctrl-C (ae_tierd_help_audit.txt PCC, bare keypress): `\r\n`,
+    // the reset `**Break` line, then the standard two-reset exit
+    // tail — the in-pager help's "Quit (Can be used at any time)",
+    // pinned at the More? prompt. Driven as the adapter delivers it:
+    // `KeyEvent::CtrlC`, not a `Char` (the PCC replay caught the raw
+    // 0x03 mapping to `Other` and resuming).
+    let (output, mut expected) = f_2_more_output(vec![KeyRead::Key(KeyEvent::CtrlC)]).await;
+    expected.extend_from_slice(b"\r\n\x1b[0m**Break\r\n");
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
+async fn l_at_post_end_reloads_with_the_form_feed_counted() {
+    // The reload path from the post-End More? (as opposed to a
+    // mid-list page boundary): the FF pre-count must survive
+    // `post_end_pause`'s counter reset, so the reloaded page's More?
+    // still fires after FF + 28 lines (PL's captured boundary).
+    let services = services_with_demo_catalogue();
+    let lines = f_1_emitted_lines(&services);
+    let full_pages = lines.len() / 29;
+    assert_ne!(
+        lines.len() % 29,
+        0,
+        "the fixture must leave a partial last page so the L lands on \
+         the post-End More?, not a page boundary",
+    );
+    let mut keys = vec![key(b'Y'); full_pages];
+    keys.push(key(b'L'));
+    keys.push(key(b'Q'));
+    let mut terminal = keyed_terminal(keys);
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Span {
+            span: FileSpan::Dir(1),
+            non_stop: false,
+            reverse: false,
+            quick: false,
+            fr_banner: false,
+        },
+    )
+    .await;
+    let mut expected = Vec::new();
+    for page in 0..full_pages {
+        expected.extend_from_slice(&joined(&lines[page * 29..(page + 1) * 29]));
+        expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+        expected.extend_from_slice(&more_clear());
+    }
+    expected.extend_from_slice(&joined(&lines[full_pages * 29..]));
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"\x0c\r\n");
+    expected.extend_from_slice(&joined(&lines[3..31]));
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"Quit\r\n");
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&terminal.output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
+async fn l_reload_counts_the_form_feed_toward_the_fresh_page() {
+    // PL's captured boundary: the reloaded page's More? fires after
+    // the form-feed line plus 28 listing lines — the door counts what
+    // it prints, the `\x0c\r\n` line included.
+    let services = services_with_demo_catalogue();
+    let mut terminal = keyed_terminal(vec![key(b'L'), key(b'Q')]);
+    run_file_list(
+        &services,
+        &mut terminal,
+        FileListArg::Span {
+            span: FileSpan::Dir(1),
+            non_stop: false,
+            reverse: false,
+            quick: false,
+            fr_banner: false,
+        },
+    )
+    .await;
+    let lines = f_1_emitted_lines(&services);
+    let mut expected = joined(&lines[..29]);
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"\x0c\r\n");
+    // The reload re-emits from the dir header (preamble is lines
+    // 0..3) and pages after 28 more lines: FF + 28 = the 29-line page.
+    expected.extend_from_slice(&joined(&lines[3..31]));
+    expected.extend_from_slice(super::super::wire::MORE_PROMPT);
+    expected.extend_from_slice(b"Quit\r\n");
+    expected.extend_from_slice(EXIT_TAIL);
+    assert_eq!(
+        String::from_utf8_lossy(&terminal.output),
+        String::from_utf8_lossy(&expected),
+    );
+}
+
+#[tokio::test]
 async fn f_at_more_flag_prompt_emits_no_confirmation_bytes() {
     // ae_tierd_aquascan3.txt S4 (:212-217) + probe P3
     // (ae_tierd_probes.txt, per-keystroke echo at the flag read):

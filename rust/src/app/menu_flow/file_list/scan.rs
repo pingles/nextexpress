@@ -20,11 +20,19 @@ use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
 
 use super::wire;
 
-/// Whether a paged listing keeps streaming or the user quit out.
+/// Whether a paged listing keeps streaming or the user quit out —
+/// plus the two dir-navigation verbs the door honours at `More?`
+/// (`ae_tierd_help_audit.txt`, 2026-07-04).
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(super) enum ScanFlow {
     Continue,
     Quit,
+    /// `K`: abandon the rest of the current dir (footer and post-End
+    /// `More?` included) and jump to the dir transition (PK).
+    SkipDir,
+    /// `L`: restart the current dir from its header on a fresh page
+    /// (PL) — rows are re-fetched, so a changed repository re-lists.
+    ReloadDir,
 }
 
 /// The two-reset tail every listing-shaped exit emits before the menu
@@ -119,6 +127,9 @@ where
         flagged: &mut FlaggedFiles,
     ) -> Result<ScanFlow, T::Error> {
         for line in [&b"\x1b[0m"[..], banner, b""] {
+            // `SkipDir`/`ReloadDir` at a preamble More? have no dir to
+            // act on yet — they fall through as a resume (provisional;
+            // the door was only probed mid-dir and at post-End).
             if self
                 .emit_scan_line(state, ScanLine::raw(line.to_vec()), flagged)
                 .await?
@@ -182,36 +193,51 @@ where
             dirs.reverse();
         }
 
-        for (index, dir) in dirs.iter().enumerate() {
-            let files = self.dir_rows(conference, *dir, mode);
-            let header = dir_header(*dir, !files.is_empty(), mode);
-            if self
-                .emit_scan_line(state, ScanLine::raw(header), flagged)
-                .await?
-                == ScanFlow::Quit
-            {
-                return Ok(());
-            }
-            if files.is_empty() {
-                // A Nothing-found dir runs straight into the next
-                // header — no blank, no More? between
-                // (ae_tierd_aquascan5.txt V1).
-                continue;
-            }
-            if self
-                .stream_dir_body(state, conference, &files, flagged, mode)
-                .await?
-                == ScanFlow::Quit
-            {
-                return Ok(());
-            }
-            if self.post_end_pause(state, flagged).await? == ScanFlow::Quit {
-                return Ok(());
+        'dirs: for (index, dir) in dirs.iter().enumerate() {
+            // The dir loop: `ReloadDir` restarts it (rows re-fetched),
+            // `SkipDir` breaks to the transition, `Quit` ends the walk.
+            loop {
+                let files = self.dir_rows(conference, *dir, mode);
+                let header = dir_header(*dir, !files.is_empty(), mode);
+                match self
+                    .emit_scan_line(state, ScanLine::raw(header), flagged)
+                    .await?
+                {
+                    ScanFlow::Quit => return Ok(()),
+                    ScanFlow::ReloadDir => continue,
+                    ScanFlow::SkipDir => break,
+                    ScanFlow::Continue => {}
+                }
+                if files.is_empty() {
+                    // A Nothing-found dir runs straight into the next
+                    // header — no blank, no More?, no transition CRLF
+                    // between (ae_tierd_aquascan5.txt V1).
+                    continue 'dirs;
+                }
+                match self
+                    .stream_dir_body(state, conference, &files, flagged, mode)
+                    .await?
+                {
+                    ScanFlow::Quit => return Ok(()),
+                    ScanFlow::ReloadDir => continue,
+                    ScanFlow::SkipDir => break,
+                    ScanFlow::Continue => {}
+                }
+                match self.post_end_pause(state, flagged).await? {
+                    ScanFlow::Quit => return Ok(()),
+                    // ReloadDir falls off the loop end and restarts
+                    // the dir.
+                    ScanFlow::ReloadDir => {}
+                    // Continue — or a SkipDir with nothing left to
+                    // skip: the dir is done either way.
+                    ScanFlow::Continue | ScanFlow::SkipDir => break,
+                }
             }
             if index + 1 < dirs.len() {
                 // Y at a non-last dir's post-End More?: the verb's
                 // overprint clear, then CRLF, then the next Scanning
-                // header (ae_tierd_aquascan3.txt S8 repr :673).
+                // header (ae_tierd_aquascan3.txt S8 repr :673). K's
+                // mid-list skip shares the same transition (PK).
                 self.terminal.write(CRLF).await?;
             }
         }
@@ -227,26 +253,35 @@ where
         flagged: &mut FlaggedFiles,
         mode: &ScanMode,
     ) -> Result<(), T::Error> {
-        let held = self.hold_rows(conference, mode);
-        let header = hold_header(!held.is_empty(), mode);
-        if self
-            .emit_scan_line(state, ScanLine::raw(header), flagged)
-            .await?
-            == ScanFlow::Quit
-        {
-            return Ok(());
-        }
-        if !held.is_empty()
-            && self
+        // Hold is a single-dir span: `ReloadDir` restarts it, every
+        // other verb ends the listing here.
+        loop {
+            let held = self.hold_rows(conference, mode);
+            let header = hold_header(!held.is_empty(), mode);
+            match self
+                .emit_scan_line(state, ScanLine::raw(header), flagged)
+                .await?
+            {
+                ScanFlow::ReloadDir => continue,
+                ScanFlow::Continue => {}
+                ScanFlow::Quit | ScanFlow::SkipDir => return Ok(()),
+            }
+            if held.is_empty() {
+                return Ok(());
+            }
+            match self
                 .stream_dir_body(state, conference, &held, flagged, mode)
                 .await?
-                == ScanFlow::Continue
-        {
-            // Hold is a single-dir span: whatever the post-End verb
-            // says, the listing ends here.
-            let _ = self.post_end_pause(state, flagged).await?;
+            {
+                ScanFlow::ReloadDir => continue,
+                ScanFlow::Continue => {}
+                ScanFlow::Quit | ScanFlow::SkipDir => return Ok(()),
+            }
+            if self.post_end_pause(state, flagged).await? == ScanFlow::ReloadDir {
+                continue;
+            }
+            return Ok(());
         }
-        Ok(())
     }
 
     /// One directory's rows under `mode` — the engine's lazy per-dir
@@ -317,7 +352,11 @@ where
             return Ok(ScanFlow::Continue);
         }
         let flow = self.scan_more_prompt(state, flagged).await?;
-        state.emitted = 0;
+        // A reload has already pre-counted its form-feed line —
+        // resetting here would drop it (PL's captured boundary).
+        if flow != ScanFlow::ReloadDir {
+            state.emitted = 0;
+        }
         Ok(flow)
     }
 
@@ -331,20 +370,20 @@ where
         flagged: &mut FlaggedFiles,
         mode: &ScanMode,
     ) -> Result<ScanFlow, T::Error> {
-        if self
+        let flow = self
             .emit_scan_line(state, ScanLine::raw(Vec::new()), flagged)
-            .await?
-            == ScanFlow::Quit
-        {
-            return Ok(ScanFlow::Quit);
+            .await?;
+        if flow != ScanFlow::Continue {
+            return Ok(flow);
         }
         // Reborrow `flagged` immutably only for the assemble call: it
         // returns an owned `Vec`, so the immutable borrow ends here and
         // the pager loop below can hand the `&mut` to `emit_scan_line`.
         let lines = wire::assemble_dir_lines(files, conference, flagged, mode.quick);
         for line in lines {
-            if self.emit_scan_line(state, line, flagged).await? == ScanFlow::Quit {
-                return Ok(ScanFlow::Quit);
+            let flow = self.emit_scan_line(state, line, flagged).await?;
+            if flow != ScanFlow::Continue {
+                return Ok(flow);
             }
         }
         Ok(ScanFlow::Continue)
@@ -474,6 +513,31 @@ where
                 KeyEvent::Char(b'c' | b'C') => {
                     self.terminal.write(b"\r\x0c").await?;
                     return Ok(ScanFlow::Continue);
+                }
+                KeyEvent::Char(b'k' | b'K') => {
+                    // Skip dir (ae_tierd_help_audit.txt PK): the
+                    // verb's overprint clear here; the walk's
+                    // dir-transition CRLF and the next header follow.
+                    self.terminal.write(&more_overprint_clear()).await?;
+                    return Ok(ScanFlow::SkipDir);
+                }
+                KeyEvent::Char(b'l' | b'L') => {
+                    // Reload dir (PL): form feed + CRLF, then the walk
+                    // restarts the current dir from its header. The FF
+                    // line counts toward the fresh page (the door's
+                    // More? fires 28 lines after it — PL's boundary),
+                    // and the page buffer restarts with the cleared
+                    // screen so `?`-redraw/repaint geometry stays true.
+                    self.terminal.write(b"\x0c\r\n").await?;
+                    state.page.clear();
+                    state.emitted = 1;
+                    return Ok(ScanFlow::ReloadDir);
+                }
+                KeyEvent::CtrlC => {
+                    // Ctrl-C (PCC): the door's `**Break` line; the
+                    // standard exit tail follows from the quit path.
+                    self.terminal.write(b"\r\n\x1b[0m**Break\r\n").await?;
+                    return Ok(ScanFlow::Quit);
                 }
                 KeyEvent::Char(verb @ (b'f' | b'F' | b'r' | b'R')) => {
                     // Flagging is silent in the captures

@@ -60,6 +60,12 @@ pub(crate) enum KeyEvent {
     Enter,
     /// Backspace (0x08) or DEL (0x7F).
     Backspace,
+    /// Ctrl-C (0x03) — the pager's `**Break` quit
+    /// (`ae_tierd_help_audit.txt` PCC). Decoded distinctly so the raw
+    /// byte reaches the verb table; the fake terminal cannot stand in
+    /// for this mapping (the first PCC replay shipped Ctrl-C as
+    /// `Other` and the listing resumed instead of breaking).
+    CtrlC,
     /// Anything else: other control bytes, bytes ≥ 0x80, or one
     /// swallowed `ESC[…` sequence (an arrow press is ONE event, so it
     /// cannot fire three pager verbs).

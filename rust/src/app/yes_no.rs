@@ -27,7 +27,9 @@ pub(crate) fn yes_no(key: KeyEvent, default: YesNo) -> Option<YesNo> {
         KeyEvent::Char(b'y' | b'Y') => Some(YesNo::Yes),
         KeyEvent::Char(b'n' | b'N') => Some(YesNo::No),
         KeyEvent::Enter => Some(default),
-        KeyEvent::Char(_) | KeyEvent::Backspace | KeyEvent::Other => None,
+        // Ctrl-C loops like any other non-answer key — the legacy
+        // `yesNo` has no break-out (`express.e:2143-2154`).
+        KeyEvent::Char(_) | KeyEvent::Backspace | KeyEvent::CtrlC | KeyEvent::Other => None,
     }
 }
 
