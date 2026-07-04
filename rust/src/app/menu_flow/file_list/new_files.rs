@@ -216,23 +216,31 @@ where
     }
 }
 
-/// Parses a non-empty `Date:` prompt answer (the forms N1a
-/// advertises): `mm-dd[-yy]` → a dated scan, `-x` → days back, `R` →
-/// reverse (following tokens tolerated and discarded — the captured
-/// `R 12-30-26`/`R 01-01-26` both ran the plain full-reverse scan,
-/// N4b). `None` is the `Error in date!` path; the inline-only verbs
-/// (`T`/`Y`/`S`/`!x`) are provisionally rejected here (TO-CONFIRM #2),
-/// as is trailing junk after a date (TO-CONFIRM #11).
+/// Parses a non-empty `Date:` prompt answer. The 2026-07-04 re-probe
+/// (`ae_tierd_newfiles2.txt`/`ae_tierd_newfiles3.txt`) closed
+/// TO-CONFIRM #2/#11: the door accepts `mm-dd[-yy]`, `-x`, `R`, `T`,
+/// `S` and `!x` here — everything after a recognised first token is
+/// tolerated and discarded (captured for `R 12-30-26`/`R 01-01-26`,
+/// N4b, and `01-01-26 X`, P11f) — while `Y` alone is rejected (P2y),
+/// even though inline `N Y` scans since yesterday (N7y). `None` is the
+/// `Error in date!` path.
 fn parse_date_answer(answer: &str) -> Option<ScanRequest> {
-    let mut tokens = answer.split_ascii_whitespace();
-    let first = tokens.next()?;
+    let first = answer.split_ascii_whitespace().next()?;
     if first.eq_ignore_ascii_case("R") {
         return Some(ScanRequest::Reverse);
     }
-    let request = crate::app::menu_command::parse_days_back(first)
+    if first.eq_ignore_ascii_case("T") {
+        return Some(ScanRequest::Today);
+    }
+    if first.eq_ignore_ascii_case("S") {
+        return Some(ScanRequest::SinceLastCall);
+    }
+    crate::app::menu_command::parse_days_back(first)
         .map(ScanRequest::DaysBack)
-        .or_else(|| crate::app::menu_command::parse_date_token(first))?;
-    tokens.next().is_none().then_some(request)
+        .or_else(|| {
+            crate::app::menu_command::parse_newest_count(first).map(ScanRequest::NewestLast)
+        })
+        .or_else(|| crate::app::menu_command::parse_date_token(first))
 }
 
 /// Resolves a [`ScanRequest`] to the engine [`ScanKind`], with all day

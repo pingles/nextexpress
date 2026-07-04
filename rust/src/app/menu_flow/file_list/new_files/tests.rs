@@ -895,7 +895,11 @@ async fn help_writes_the_rebranded_screen_and_nothing_else() {
 #[test]
 fn parse_date_answer_accepts_the_advertised_forms() {
     // N1a advertises `mm-dd-yy`, `-x` and `R`; `R <date>` discards the
-    // date (N4b).
+    // date (N4b). The live re-probe closed TO-CONFIRM #2/#11: the door
+    // also accepts `T`, `S` and `!x` at the prompt
+    // (ae_tierd_newfiles2.txt P2a, ae_tierd_newfiles3.txt P2s/P2x) and
+    // tolerates trailing junk after a valid date (P11f) — every
+    // recognised first token discards the rest of the line.
     assert_eq!(parse_date_answer("R"), Some(ScanRequest::Reverse));
     assert_eq!(parse_date_answer("r"), Some(ScanRequest::Reverse));
     assert_eq!(
@@ -905,12 +909,37 @@ fn parse_date_answer_accepts_the_advertised_forms() {
     );
     assert_eq!(parse_date_answer("-30"), Some(ScanRequest::DaysBack(30)));
     assert_eq!(
+        parse_date_answer("T"),
+        Some(ScanRequest::Today),
+        "T at the prompt scans today (P2a)",
+    );
+    assert_eq!(parse_date_answer("t"), Some(ScanRequest::Today));
+    assert_eq!(
+        parse_date_answer("S"),
+        Some(ScanRequest::SinceLastCall),
+        "S at the prompt scans since last call (P2s)",
+    );
+    assert_eq!(
+        parse_date_answer("!2"),
+        Some(ScanRequest::NewestLast(2)),
+        "!x at the prompt runs the newest-x scan (P2x)",
+    );
+    assert_eq!(
         parse_date_answer("01-01-26"),
         Some(ScanRequest::Date {
             month: 1,
             day: 1,
             year: Some(26),
         })
+    );
+    assert_eq!(
+        parse_date_answer("01-01-26 X"),
+        Some(ScanRequest::Date {
+            month: 1,
+            day: 1,
+            year: Some(26),
+        }),
+        "trailing junk after a valid date is tolerated and discarded (P11f)",
     );
     assert_eq!(
         parse_date_answer("6-1"),
@@ -925,10 +954,10 @@ fn parse_date_answer_accepts_the_advertised_forms() {
 
 #[test]
 fn parse_date_answer_rejects_everything_else() {
-    // Junk → `Error in date!` (N5). The inline-only verbs are
-    // provisionally rejected at the prompt (TO-CONFIRM #2), as is
-    // trailing junk after a valid date (TO-CONFIRM #11).
-    for answer in ["FOO", "T", "Y", "S", "!2", "01-01-26 X", "-", "1-2-3-4"] {
+    // Junk → `Error in date!` (N5). `Y` is genuinely rejected at the
+    // prompt (ae_tierd_newfiles3.txt P2y) even though inline `N Y`
+    // scans since yesterday (N7y) — the door's quirk, kept faithfully.
+    for answer in ["FOO", "Y", "-", "1-2-3-4"] {
         assert_eq!(
             parse_date_answer(answer),
             None,

@@ -162,7 +162,8 @@ pub(crate) fn parse_days_back(token: &str) -> Option<u32> {
 }
 
 /// `!x`: a `!` followed by one or more digits — `N`'s newest-x token.
-fn parse_newest_count(token: &str) -> Option<u32> {
+/// Shared with the date-prompt answer parser (`file_list/new_files`).
+pub(crate) fn parse_newest_count(token: &str) -> Option<u32> {
     let digits = token.strip_prefix('!')?;
     (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
         .then(|| digits.parse().ok())

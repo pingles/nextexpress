@@ -8,7 +8,7 @@ mod files;
 mod join;
 mod mail;
 
-pub(crate) use files::{parse_date_token, parse_days_back};
+pub(crate) use files::{parse_date_token, parse_days_back, parse_newest_count};
 
 use std::str::SplitAsciiWhitespace;
 

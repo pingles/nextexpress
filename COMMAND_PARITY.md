@@ -736,6 +736,18 @@ folded both ways) is **INFERENCE** — only those cases were captured.
 | Page positions ≥ page 3 | NextScan pages at a flat 29 lines (matches captured pages 1–2 exactly); the door's own counter drifts from page 3 |
 | `?` redraw window | NextScan redraws exactly the current page's lines; the door redraws a drifted window of its internal page memory |
 
+**Fixed 2026-07-04 — help-screen diagram indent.** The `F ?` (and
+`N ?`) arrow diagrams shipped with their leading indent stripped: the
+Rust consts were written as trailing-`\` continuation literals, and
+that escape eats the next source line's leading whitespace, so the
+captured 5-space (`F`) / 7-space (`N`) indents never reached the wire —
+the arrows no longer sat under the `[R] dir [Q] [NS]` columns. The
+content pin couldn't catch it because the test expectation was built
+with the same continuation idiom (both sides stripped identically).
+The diagram lines now open with `\x20` and
+`wire.rs::help_diagrams_keep_the_captured_leading_indent` guards the
+indent with single-line literals.
+
 ### FR — reverse listing (slice D3)
 
 **Parity target.** Same AquaScan door, reverse mode. `internalCommandFR`
@@ -886,23 +898,34 @@ resets its counter at interactive prompts, N2); the inline path counts
 | Art/© byte encoding | Same UTF-8 policy as `F` (AGENTS.md "Wire encoding") |
 | Menu advert | `Conf02/Menu5.txt` gains an `N [date]` row — the `?` menu wire now differs from the shipped AquaScan board's menu (which advertises no N row) |
 
-**PLAUSIBLE (uncaptured; shipped provisionally, each quarantined
+**PLAUSIBLE re-probe (2026-07-04,
+`comparison/transcripts/ae_tierd_newfiles2.txt` P1c–P11f +
+`ae_tierd_newfiles3.txt` P2y/P2s/P2x/P8j).** Nine of the thirteen
+TO-CONFIRM items were probed live. Six shipped choices were
+**CONFIRMED** (#3 junk at the dirs prompt → `Error in input!`; #4
+inline `A` span; #6 year-omitted → current year; #7 `13-40-26` at the
+prompt → `Error in date!`; #10 inline out-of-range dir → highest-dir
+envelope; #1's header wording `Scanning HOLD dir for 12-30-26...`
+exactly as substituted). Three were **REFUTED and fixed same day**:
+
+| # | Probe | Door behaviour (now shipped) | Was shipped |
+|---|---|---|---|
+| 2 | `T`/`S`/`!2`/`Y` at the Date prompt (P2a/P2s/P2x/P2y) | `T`, `S` and `!x` are **accepted** and run their scans; `Y` alone is rejected `Error in date!` — the door's quirk (inline `N Y` works, prompt `Y` does not), kept faithfully | `Error in date!` for all four |
+| 8 | `N !1` / `N !99` (P8i/P8j) | `!1` takes a count-less singular — `Scanning dir 2 for the last file... Ok!`; overshoot echoes the requested count (`the last 99 files`) and saturates to the dir (P8j confirms the shipped choice) | `the last 1 files` |
+| 11 | `01-01-26 X` at the Date prompt (P11f) | Trailing junk after a valid date is **tolerated and discarded** — the scan runs (the `R <date>` tolerance generalises: every recognised first token discards the rest of the line) | Rejected (`Error in date!`) |
+
+**PLAUSIBLE (still uncaptured; shipped provisionally, each quarantined
 behind its own const/test — one-line fix on re-probe).** Numbered
 after the design brief's §1.2 TO-CONFIRM list:
 
 | # | Surface | Shipped behaviour |
 |---|---|---|
-| 1 | `H` at N's `Directories:` prompt / inline `N <date> H` | Date-/newest-filtered **held** rows under the dir→HOLD header substitution (`Scanning HOLD dir for <label>...`). The prompt advertises `(H)old`, so a defined, non-panicking behaviour ships; header wording unprobed |
-| 2 | `T`/`Y`/`S`/`!x` typed at the Date prompt | `Error in date!` (only date/`-x`/`R`/Enter/junk were probed there) |
-| 3 | Junk at N's `Directories:` prompt | F's `Error in input!` envelope (same door machinery, byte-identical prompt) |
-| 4 | Inline letter spans `N <date> A` / `U` | Resolved via the shared span-token resolver (inferred from the help diagram; only numeric dirs and the Upload default were captured) |
+| 1 | `H` with a **non-empty** HOLD dir, and `H` typed at N's `Directories:` prompt | Date-/newest-filtered **held** rows under the dir→HOLD header substitution. The header wording + empty-HOLD envelope are now capture-confirmed (P1c); the filtered listing body and the prompt-path `H` remain unprobed |
+| 4 | Inline letter span `N <date> U` | Shared span-token resolver (`A` is now capture-confirmed, P4h; explicit `U` still inferred — it is also the captured default) |
 | 5 | Bare `N <dir>` date source | SinceLastCall per the help grammar `N [S] [dir]` (pass-2's last call = today, so the capture cannot distinguish it from Today); pinned by a diverging-clock test as a NextExpress choice |
-| 6 | `N mm-dd` (year omitted) | Current year from the Clock port |
-| 7 | Calendar-invalid but date-shaped input (`13-40-26`) | Rejected — `Error in date!` at the prompt / Argument error inline (the internal accepts any 8 chars) |
-| 8 | `!x` edges (`!1` wording, `!x` > dir size, `!x` on empty dir, `Q`+`R` combos) | Header pluralisation unchanged (`the last 1 files`); overshoot saturates to the whole dir; empty dir → Nothing found |
+| 7 | Calendar-invalid **inline** (`N 13-40-26`) | Argument-error envelope (the prompt-path rejection is now capture-confirmed, P7g; the inline envelope is still inferred from N7e) |
+| 8 | Remaining `!x` edges (`!x` on an empty dir, `!0`, `Q`+`R` combos) | Empty dir → Nothing found; `!0` echoes `the last 0 files`; engine-shared combos |
 | 9 | Pager verbs beyond `Y`/`Q` at an N `More?` | Engine-shared with F (same machine on the real door too), never exercised inside an N scan on the reference |
-| 10 | Inline out-of-range dir (`N 9`) | F's highest-dir envelope (the prompt-path variant N8b was captured byte-identical) |
-| 11 | Trailing junk after a valid date at the prompt | Rejected (`Error in date!`); `R <date>` shows extra tokens tolerated in that one captured form only |
 | 12 | First-time caller default (`last_call == None`) | Today (not capturable — the reference sysop always has a prior call) |
 | 13 | Date-prompt echo discipline (per-keystroke echo, backspace, the trailing-space final byte) | The AGENTS.md step-6 type-at-a-real-terminal item + the like-for-like FS-UAE pass own this |
 

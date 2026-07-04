@@ -198,7 +198,9 @@ pub(super) const PAUSE_HELP: &[u8] = b"\x0c\r\n\
 /// S1 (:100-129) with the three `NextScan` branding swaps: form feed,
 /// the Copyright help banner, the verbatim syntax/diagram text, and
 /// the captured epilogue (one reset blank, a doubled-reset blank, a
-/// reset blank).
+/// reset blank). The diagram lines open with `\x20` because a
+/// trailing-`\` continuation eats the next source line's leading
+/// whitespace — the captured 5-space indent must survive to the wire.
 pub(super) const HELP_SCREEN: &str = "\x1b[0m\x0c\r\n\
 \x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \u{a9} 2026 NextScan \x1b[34m]--\x1b[0m\r\n\
 \r\n\
@@ -208,17 +210,17 @@ pub(super) const HELP_SCREEN: &str = "\x1b[0m\x0c\r\n\
 \x1b[0m  F ?                         \x1b[36m- Show this help text\r\n\
 \x1b[0m  F W                         \x1b[36m- Configure NextScan\r\n\
 \x1b[0m  F [R] dir [Q] [NS]          \x1b[36m- Start scanning immediately\r\n\
-     ^  ^    ^   ^\r\n\
-     |  |    |   |\r\n\
-     |  |    |   `-- Non-stop scrolling\r\n\
-     |  |    `--- Quick scan = Show only first line of every description\r\n\
-     |  |\r\n\
-     |  +-- U -- Upload dir\r\n\
-     |  +-- A -- All dirs\r\n\
-     |  +-- x -- Dir number x\r\n\
-     |  `-- H -- Hold dir\r\n\
-     |\r\n\
-     `-- Scan in reverse chronological order\r\n\
+\x20    ^  ^    ^   ^\r\n\
+\x20    |  |    |   |\r\n\
+\x20    |  |    |   `-- Non-stop scrolling\r\n\
+\x20    |  |    `--- Quick scan = Show only first line of every description\r\n\
+\x20    |  |\r\n\
+\x20    |  +-- U -- Upload dir\r\n\
+\x20    |  +-- A -- All dirs\r\n\
+\x20    |  +-- x -- Dir number x\r\n\
+\x20    |  `-- H -- Hold dir\r\n\
+\x20    |\r\n\
+\x20    `-- Scan in reverse chronological order\r\n\
 \x1b[0m\r\n\
 \x1b[0m\x1b[0m\r\n\
 \x1b[0m\r\n\
@@ -438,11 +440,25 @@ pub(super) fn scanning_new_header(n: u32, label: &str, found: bool) -> Vec<u8> {
     format!("Scanning dir {n} for {label}... {outcome}").into_bytes()
 }
 
+/// The `!x` header noun: the door drops the count for a single file —
+/// `the last file`, not `the last 1 files` (`ae_tierd_newfiles2.txt`
+/// P8i) — while an overshooting count is echoed as requested
+/// (`the last 99 files`, P8j).
+fn last_files_label(count: u32) -> String {
+    if count == 1 {
+        "the last file".to_owned()
+    } else {
+        format!("the last {count} files")
+    }
+}
+
 /// The `!x` newest-files header (N7n):
-/// `Scanning dir {n} for the last {count} files... Ok! / Nothing found!`.
+/// `Scanning dir {n} for the last {count} files... Ok! / Nothing found!`
+/// (count-less singular for `!1` — [`last_files_label`]).
 pub(super) fn scanning_newest_header(n: u32, count: u32, found: bool) -> Vec<u8> {
     let outcome = if found { "Ok!" } else { "Nothing found!" };
-    format!("Scanning dir {n} for the last {count} files... {outcome}").into_bytes()
+    let label = last_files_label(count);
+    format!("Scanning dir {n} for {label}... {outcome}").into_bytes()
 }
 
 /// The dated HOLD header — F's dir→HOLD substitution applied to
@@ -455,10 +471,12 @@ pub(super) fn scanning_new_hold_header(label: &str, found: bool) -> Vec<u8> {
 }
 
 /// The `!x` HOLD header — same substitution, same PLAUSIBLE status as
-/// [`scanning_new_hold_header`].
+/// [`scanning_new_hold_header`], same count-less singular as the dir
+/// form ([`last_files_label`]).
 pub(super) fn scanning_newest_hold_header(count: u32, found: bool) -> Vec<u8> {
     let outcome = if found { "Ok!" } else { "Nothing found!" };
-    format!("Scanning HOLD dir for the last {count} files... {outcome}").into_bytes()
+    let label = last_files_label(count);
+    format!("Scanning HOLD dir for {label}... {outcome}").into_bytes()
 }
 
 /// Unsupported `N` argument forms (N7e) — F's argument-error envelope
@@ -470,7 +488,10 @@ pub(super) const NEW_FILES_ARGUMENT_ERROR: &[u8] = b"Argument error! Type 'n ?' 
 /// byte-reused) and `Configure AquaScan` → `Configure NextScan`; every
 /// other line verbatim, including the captured epilogue. `N W` itself
 /// is advertised but not ported (→ the Argument-error envelope, the
-/// `F W` precedent — config is TOML).
+/// `F W` precedent — config is TOML). The diagram lines open with
+/// `\x20` because a trailing-`\` continuation eats the next source
+/// line's leading whitespace — the captured 7-space indent must
+/// survive to the wire.
 pub(super) const NEW_FILES_HELP_SCREEN: &str = "\x1b[0m\x0c\r\n\
 \x1b[0m\x1b[34m--[ \x1b[36mNextScan \x1b[34m]----------------------------------[ \x1b[36mCopyright \u{a9} 2026 NextScan \x1b[34m]--\x1b[0m\r\n\
 \r\n\
@@ -485,15 +506,15 @@ pub(super) const NEW_FILES_HELP_SCREEN: &str = "\x1b[0m\x0c\r\n\
 \x1b[0m  N -x [dir] [Q] [NS]         \x1b[36m- Scan since x days back\r\n\
 \x1b[0m  N !x [dir] [Q] [NS]         \x1b[36m- Scan the x newest files\r\n\
 \x1b[0m  N R [dir] [Q] [NS]          \x1b[36m- Scan the dir in reverse chronological order\r\n\
-       ^     ^   ^\r\n\
-       |     |   |\r\n\
-       |     |   `-- Non-stop scrolling\r\n\
-       |     `--- Quick scan = Show only first line of every description\r\n\
-       |\r\n\
-       +-- U -- Upload dir (default)\r\n\
-       +-- A -- All dirs\r\n\
-       +-- x -- Dir number x\r\n\
-       `-- H -- Hold dir\r\n\
+\x20      ^     ^   ^\r\n\
+\x20      |     |   |\r\n\
+\x20      |     |   `-- Non-stop scrolling\r\n\
+\x20      |     `--- Quick scan = Show only first line of every description\r\n\
+\x20      |\r\n\
+\x20      +-- U -- Upload dir (default)\r\n\
+\x20      +-- A -- All dirs\r\n\
+\x20      +-- x -- Dir number x\r\n\
+\x20      `-- H -- Hold dir\r\n\
 \x1b[0m\r\n\
 \x1b[0m\x1b[0m\r\n\
 \x1b[0m\r\n\
@@ -1120,6 +1141,11 @@ mod tests {
             b"Scanning dir 2 for the last 2 files... Ok!".to_vec(),
         );
         assert_eq!(
+            scanning_newest_header(2, 1, true),
+            b"Scanning dir 2 for the last file... Ok!".to_vec(),
+            "!1 takes the door's count-less singular (ae_tierd_newfiles2.txt P8i)",
+        );
+        assert_eq!(
             scanning_newest_header(1, 99, false),
             b"Scanning dir 1 for the last 99 files... Nothing found!".to_vec(),
         );
@@ -1136,6 +1162,10 @@ mod tests {
             b"Scanning HOLD dir for the last 2 files... Nothing found!".to_vec(),
         );
         assert_eq!(
+            scanning_newest_hold_header(1, false),
+            b"Scanning HOLD dir for the last file... Nothing found!".to_vec(),
+        );
+        assert_eq!(
             scanning_newest_hold_header(3, true),
             b"Scanning HOLD dir for the last 3 files... Ok!".to_vec(),
         );
@@ -1144,6 +1174,21 @@ mod tests {
             NEW_FILES_ARGUMENT_ERROR,
             &b"Argument error! Type 'n ?' for help."[..],
         );
+    }
+
+    #[test]
+    fn help_diagrams_keep_the_captured_leading_indent() {
+        // The reference captures indent the arrow diagrams under the
+        // grammar rows: `F ?` by 5 spaces (ae_tierd_aquascan3.txt S1),
+        // `N ?` by 7 (ae_tierd_newfiles.txt N6) — the arrows must line
+        // up under the `[R] dir [Q] [NS]` columns above them. Asserted
+        // with single-line literals: a trailing-`\` continuation in a
+        // multi-line literal eats the next line's leading spaces, so a
+        // continuation-style expectation cannot catch this stripping.
+        assert!(HELP_SCREEN.contains("\r\n     ^  ^    ^   ^\r\n"));
+        assert!(HELP_SCREEN.contains("\r\n     `-- Scan in reverse chronological order\r\n"));
+        assert!(NEW_FILES_HELP_SCREEN.contains("\r\n       ^     ^   ^\r\n"));
+        assert!(NEW_FILES_HELP_SCREEN.contains("\r\n       `-- H -- Hold dir\r\n"));
     }
 
     #[test]
@@ -1163,15 +1208,15 @@ mod tests {
 \x1b[0m  N -x [dir] [Q] [NS]         \x1b[36m- Scan since x days back\r\n\
 \x1b[0m  N !x [dir] [Q] [NS]         \x1b[36m- Scan the x newest files\r\n\
 \x1b[0m  N R [dir] [Q] [NS]          \x1b[36m- Scan the dir in reverse chronological order\r\n\
-       ^     ^   ^\r\n\
-       |     |   |\r\n\
-       |     |   `-- Non-stop scrolling\r\n\
-       |     `--- Quick scan = Show only first line of every description\r\n\
-       |\r\n\
-       +-- U -- Upload dir (default)\r\n\
-       +-- A -- All dirs\r\n\
-       +-- x -- Dir number x\r\n\
-       `-- H -- Hold dir\r\n\
+\x20      ^     ^   ^\r\n\
+\x20      |     |   |\r\n\
+\x20      |     |   `-- Non-stop scrolling\r\n\
+\x20      |     `--- Quick scan = Show only first line of every description\r\n\
+\x20      |\r\n\
+\x20      +-- U -- Upload dir (default)\r\n\
+\x20      +-- A -- All dirs\r\n\
+\x20      +-- x -- Dir number x\r\n\
+\x20      `-- H -- Hold dir\r\n\
 \x1b[0m\r\n\x1b[0m\x1b[0m\r\n\x1b[0m\r\n"
         );
         assert_eq!(NEW_FILES_HELP_SCREEN, expected);
