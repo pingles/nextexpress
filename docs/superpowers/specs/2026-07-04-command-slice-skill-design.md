@@ -389,7 +389,7 @@ control-flow (`displayFileList:27626`, `getDirSpan:26857`), tagged *extrapolated
 source* in `COMMAND_PARITY.md` — never guessed from the partial bytes.
 
 **§10.3 — Door/source authority is a human decision, surfaced not auto-resolved (HIGH).**
-For door-shadowed tokens (F/FR/N/SCAN/NS/NSU/CS/SENT) the AquaScan door and `express.e`
+For door-shadowed tokens (F/FR/N/SCAN/NSU/CS/SENT) the AquaScan door and `express.e`
 genuinely conflict, and which wins is the operator's call (bare `FR` shipped to the
 capture, reversed two days later — commit `fa2a855`, 9 files). Stage 3 diffs the two;
 **any divergence HALTS and is presented at the gate as an A/B decision** (express.e-wins

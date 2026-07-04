@@ -42,6 +42,14 @@ fully-agent-driven verification.
 
 Tester-A must drive a **character-at-a-time interactive client**, not line-granular I/O:
 
+- **Reference technique to port:** `comparison/harness/ae_tierd_probes.py` (P3 feeds a prompt
+  one byte at a time to observe per-keystroke echo) is the shape to adapt to the NextExpress
+  side; take the telnet IAC / SUPPRESS-GO-AHEAD (character-mode) option handling from
+  `bbsdrive.py`. The line-granular `rust_*.py` drivers (`read_until_any`) do **not** satisfy
+  §10.7 and must not be the Tester-A base.
+- **How echo is observed over telnet:** send one byte, read what comes back — the sent byte
+  returned = echo, anything else = server output. A line-read prompt echoes each key; a
+  hotkey / lone-key read echoes nothing.
 - Send one keystroke at a time; **log the bytes received after each keystroke**.
 - Record **echo vs no-echo** per key (hotkey/lone-key surfaces echo nothing; line-reads echo).
 - Record the **line terminator** actually emitted: **CR vs LF vs CRLF**.

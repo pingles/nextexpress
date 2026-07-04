@@ -15,7 +15,7 @@ Golden rule: **one board per run, reference access serialized, every session end
 ## (a) Ports — `allocate_ports.py`
 
 ```sh
-python resources/allocate_ports.py --worktree "$PWD"
+python .claude/skills/command-slice/resources/allocate_ports.py --worktree "$PWD"
 ```
 
 Emits JSON: `board_port`, `server_port` (both free, worktree-derived so parallel
@@ -32,7 +32,12 @@ kills them (§10.5). Record both ports in the run-state file (see (f)).
 
 **Detect, never adopt.** If `board_containers` is non-empty, that is *another
 session's* board. Do **not** `docker kill`/`rm`/reuse it — that corrupts their
-run. Boot a per-run container with a unique name and our own host port:
+run. Boot a per-run container with a unique name and our own host port.
+
+**Prerequisite — image + volumes.** Verify the image exists (`docker images | grep
+amiexpress-fsuae`); if absent, build it from `docker/amiexpress-fsuae/Dockerfile` and seed
+the named volumes (`docker/amiexpress-fsuae/seed_sysop.py`, per that dir's notes) before
+booting. The three named volumes below must already exist or be created by that bootstrap.
 
 ```sh
 docker run -d --name nextexpress-ref-<run> \
@@ -111,7 +116,7 @@ that shadow these tokens; `processCommand` (`express.e:28229-28256`) runs door i
 internal proc:
 
 ```
-CS   F   FR   N   NS   NSU   SCAN   SENT
+CS   F   FR   N   NSU   SCAN   SENT
 ```
 
 Every **other** token captures the genuine internal command. To capture a stock

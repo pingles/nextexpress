@@ -65,8 +65,8 @@ Fable does the generative design work; Opus judges, refutes, and reconciles.
    Survivors feed back to synthesis. **Capped (§10.8):** ≤ 2 refute→revise rounds; on a
    third unresolved objection, escalate to the gate — never spin.
 
-5. **Authority reconciliation — door-shadowed tokens only (§10.3, max).** For
-   `F/FR/N/SCAN/NS/NSU/CS/SENT` the AquaScan door capture and `express.e` genuinely
+5. **Authority reconciliation — door-shadowed tokens only (§10.3, high).** For
+   `F/FR/N/SCAN/NSU/CS/SENT` the AquaScan door capture and `express.e` genuinely
    conflict. **Diff** the door capture against the `express.e` dispatch/control-flow.
    - **On any divergence: HALT.** Surface it at the gate as an explicit **A/B decision**
      (express.e-wins default). A subagent **never** auto-resolves this.
@@ -117,7 +117,7 @@ const design = await pipeline(
     brief: briefs.stage3Synthesize(scored),
   }),
 
-  // 4. adversarial refutation — xhigh; loop capped at 2 (§10.8)
+  // 4. adversarial refutation — max; loop capped at 2 (§10.8)
   async (winner, ctx) => {
     let design = winner;
     for (let round = 0; round < 2; round++) {
@@ -136,7 +136,7 @@ const design = await pipeline(
 
   // 5. authority reconciliation — door-shadowed tokens only; HALT on divergence
   async (design, ctx) => {
-    if (!isDoorShadowed(ctx.cmd)) return design;           // F/FR/N/SCAN/NS/NSU/CS/SENT
+    if (!isDoorShadowed(ctx.cmd)) return design;           // F/FR/N/SCAN/NSU/CS/SENT
     const conflict = await agent({
       role: "authority-reconciler", model: "opus", effort: "high",
       brief: briefs.stage3Authority(design, ctx),          // diff capture vs express.e

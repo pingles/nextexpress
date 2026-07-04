@@ -58,7 +58,7 @@ letter, then each sub-prompt it opens. Record command → keystrokes → bytes s
 
 ## Door-shadow caveat (affects rows 6, 9, 14)
 
-For door-shadowed tokens (`F`/`FR`/`N`/`SCAN`/`NS`/`NSU`/`CS`/`SENT`) the stock
+For door-shadowed tokens (`F`/`FR`/`N`/`SCAN`/`NSU`/`CS`/`SENT`) the stock
 AquaScan/NextScan door — not `internalCommand*` — answers the token, so your
 capture is of the **door**, not the genuine internal command. Capture both facets:
 AquaScan owns the **wire bytes**, `express.e` owns the **silent control-flow**. Any

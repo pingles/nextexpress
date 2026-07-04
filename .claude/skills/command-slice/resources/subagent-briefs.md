@@ -21,7 +21,10 @@ orchestrator; the three readers run in parallel.
 
 ### 1a · Roadmap + git-state reader
 
-> Read `SLICES.md` and the relevant `slices/cmds-*.md`, plus the last ~15 commits
+> First check `.command-slice/run-state.json`: if present, report a **RESUME** with its
+> recorded stage / scenario / ports / container / server PID so the orchestrator reconciles
+> live resources before continuing (Setup step 0). Otherwise read `SLICES.md` and the
+> relevant `slices/cmds-*.md`, plus the last ~15 commits
 > (`git log --oneline -15`) and working-tree status. Determine what shipped most recently and
 > what the roadmap says is next. If the invocation named a token `<TOKEN>`, locate its roadmap
 > row and In/Out-scope entry instead of picking. Report: the candidate next command, its family
@@ -56,7 +59,7 @@ orchestrator; the three readers run in parallel.
 > Inputs: the synthesized Stage-1 plan (chosen command, named pre-refactors, declared track) and
 > the three readers' notes. Ask one question hard: **what dependency or pre-refactor did we
 > miss?** Check for an unnamed seam, an Allium obligation with no home in the plan, a token that
-> is door-shadowed (F/FR/N/SCAN/NS/NSU/CS/SENT) and therefore carries a §10.3 authority decision,
+> is door-shadowed (F/FR/N/SCAN/NSU/CS/SENT) and therefore carries a §10.3 authority decision,
 > and whether the declared track (§10.5) is right — no capture theatre for a refactor, no skipped
 > capture for a wire slice. Output a short PASS/AMEND verdict with concrete additions. This is a
 > **bounded** pass (§10.8): one round, then the plan goes to the human gate.
@@ -67,6 +70,26 @@ orchestrator; the three readers run in parallel.
 roadmap row in `SLICES.md`, plus the declared track. §10 honored: **§10.5** (track routing),
 **§10.3** (flag door-shadow authority decisions early), **§10.10** (gate presents a structured
 decision, not a rubber-stamp).
+
+### Refactor-track briefs (non-user-facing slices, §10.5)
+
+A slice Stage 1 declared **non-user-facing** (pure refactor / port / infra, no wire surface)
+**skips Stages 2, 3, and 5**. It runs: Stage 1 → a reduced Stage 4 → optional Stage 6. Use
+this variant of brief 4a instead of the six-stage one:
+
+> Inputs: the Stage-1 plan + named pre-refactor and the target module(s) — there are **no**
+> Stage-2 captures, grammar table, or design doc (none exist for a refactor). Implement
+> test-first, but the failing test is a **characterization / behaviour-preservation** test
+> (pin current observable behaviour, then refactor under it), NOT a capture-pinned wire
+> literal. The encoding (§10.7), volatile-field (§10.6), door/authority (§10.3), and
+> grammar-table (§10.4) rules do not apply; the mutation-gate integrity (§10.1), failure-path
+> / no-panic-on-port, test-placement, and doc-re-audit rules (§10.4) still do. **Done-
+> condition:** `cargo nextest run` green, warning-free `cargo build`, doctests, `make
+> mutants-diff` clean with a plausible count (§10.1), and an Allium-drift review — no
+> capture/compare stages.
+
+`dispatch: model=fable, effort=high` (post-build review: the Opus 4b reviewer, minus the
+capture-parity/door checks that do not apply)
 
 ---
 
@@ -85,7 +108,7 @@ clean `G Y` logoff. Respect the connection budget (< 5 opens before recycling �
 > "command → experience" is recorded, not folklore.
 >
 > Constraints:
-> - **Door-shadow caveat (§10.3):** if `<TOKEN>` is F/FR/N/SCAN/NS/NSU/CS/SENT you are capturing
+> - **Door-shadow caveat (§10.3):** if `<TOKEN>` is F/FR/N/SCAN/NSU/CS/SENT you are capturing
 >   the AquaScan door, not the internal command — label it as such; the source facet is Stage 3's
 >   job to reconcile.
 > - **Encoding (§10.7):** record every captured byte ≥0x80 with **both** its Latin-1 byte and its
@@ -170,11 +193,13 @@ Spawn one per framing. Each gets the same inputs, a different mandate.
 > each refutation with the exact capture/spec line. This is the deepest pass in the stage — use
 > maximum scrutiny.
 
-`dispatch: model=opus, effort=max` (retry once, then escalate the role to Fable per §10.10)
+`dispatch: model=opus, effort=max` (retry once → add a Fable co-refuter for a second opinion
+→ halt to the gate; the §10.10 Fable→Opus upgrade applies to that Fable co-refuter, not to
+this Opus-primary refuter)
 
 ### 3d · Authority-reconciliation check (Opus)
 
-> **Only for door-shadowed tokens** (F/FR/N/SCAN/NS/NSU/CS/SENT). Diff the AquaScan capture
+> **Only for door-shadowed tokens** (F/FR/N/SCAN/NSU/CS/SENT). Diff the AquaScan capture
 > (wire bytes) against the `express.e` dispatch/control-flow (silent behaviour). For **any**
 > divergence, do NOT auto-resolve: record it as an explicit **A/B decision** (express.e-wins
 > default) tagged per facet — AquaScan owns wire bytes, `express.e` owns control-flow — in the
@@ -221,8 +246,14 @@ authority decisions surfaced, and an implementation plan. §10 honored: **§10.3
 >   never `foo_test.rs` / `#[path]`.
 > - **Doc re-audit (§10.4):** re-audit existing claims in every doc section you touch — don't just
 >   append; guard tests assert over full unfiltered content.
+> - **Binding provenance (§10.4):** every letter the slice binds cites its `express.e:28285`
+>   dispatch line (or is a labelled departure); menu-asset (`Menu5.txt`) rows are diffed
+>   **verbatim**, no token pre-filter (guards the advertise-then-reject drift).
 >
-> If you hit an unforeseen blocker, **flag it back to the user** — do not guess.
+> If the design or scope is blocked, **flag it back to the user** — do not guess. But a
+> compile/test failure of your own implementation follows the §10.10 ladder: retry once → if
+> it still won't compile or pass, escalate the implementer role **Fable→Opus** → then halt to
+> a human gate. Never ship the least-bad non-compiling attempt.
 
 `dispatch: model=fable, effort=high`
 
@@ -232,8 +263,10 @@ authority decisions surfaced, and an implementation plan. §10 honored: **§10.3
 > checks and report findings:
 > 1. **Mutation-gap:** any surviving mutant → run an adversarial "find the untested behaviour"
 >    pass and add/strengthen tests; sanity-check the mutant count is plausible for the diff (§10.1).
-> 2. **Capture-parity:** every pinned literal matches its Stage-2 capture (stable) or asserts the
->    right derivation (volatile, §10.6); every wire string has `express.e:N` provenance (§10.4).
+> 2. **Capture-parity + provenance:** every pinned literal matches its Stage-2 capture (stable)
+>    or asserts the right derivation (volatile, §10.6); every wire string has `express.e:N`
+>    provenance and every bound letter cites its `express.e:28285` dispatch line; menu-asset
+>    rows are diffed **verbatim**, no token pre-filter (§10.4).
 > 3. **Allium-drift:** the implementation satisfies the Stage-1c obligations and introduced no new
 >    drift.
 > 4. **Doc-staleness:** `COMMAND_PARITY.md` / `SYSTEM.md` re-audited, not just appended (§10.4).
