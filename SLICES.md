@@ -11,9 +11,10 @@ wire text, and the rule and its invariants are backed by tests. Slices
 are ordered so the most user-visible commands land first and so each
 slice introduces only the seams the *next* slice will need.
 
-Each slice is sized to fit a 15–20 minute TDD session: write a failing
-test, write the minimum code to pass, mutate to verify the test
-catches real bugs, then refactor.
+Each implementation increment within a slice is sized to fit a short TDD
+session: write a failing test, write the minimum code to pass, mutate to
+verify the test catches real bugs, then refactor. Larger command slices such
+as transfer are deliberately split into many such increments.
 
 Spec references use the form `<file>:<RuleOrEntity>` and point at
 [the Allium specs](specs/) as the source of truth. Legacy E source in
@@ -30,11 +31,14 @@ command family — load only the family you're working on.
 The Cargo crate, the telnet listener, the session state machine, the
 user / conference / mail entities, the on-disk repositories, and the
 legacy-format menu prompt (`<bbsName> [<conf>:<name>] Menu (<n> mins.
-left): `, Tier A A4) are in place. The commands shipped so far are:
-`G`, `J`, `R`, `E`, `C`, `RP`, `FW`, `K`, `MV`, `EH`, `T`, `VER`, `H`,
-`Q`, plus the whole of Tier A's quick wins — `S`, `X`, `?`, `^`, `M`
-(and `MS`) — the auto-mail-scan and auto-rejoin hooks fired by `J`,
-and Tier D's `F` (the NextScan file lister, slices D1+D2).
+left): `, Tier A A4) are in place. The currently shipped menu-command
+surface includes `G`, `J`, `JM`, `<`, `>`, `<<`, `>>`, `R`, `E`, `C`,
+`T`, `VER`, `H`, `Q`, `S`, `X`, `?`, `^`, `M`, `MS`, `CF`, `F`, `FR`,
+`Z`, `A`, `FS`, and `N`, plus the auto-mail-scan and auto-rejoin hooks
+fired by `J`. The former NextExpress-only top-level mail shortcuts
+`RP`, `FW`, `K`, `MV`, and `EH` are **not** shipped commands: B8 retired
+them to the unknown-command path after their legitimate operations
+landed in the `R` sub-prompt.
 The canonical record of what each shipped slice covers is the
 [Allium specs](specs/) plus the code and its tests; the per-slice
 "In Scope" history is in git.
@@ -65,6 +69,36 @@ no-dependency commands land first; commands that need new subsystems
 (file transfer, OLM, …) come once the prerequisite slice has been
 done.
 
+### Settled roadmap decisions and ordering constraints
+
+The July 2026 pre-transfer review assigned accounting model pieces to the
+first rules which consume them:
+
+1. D-T2 introduces and updates download-side user, membership and daily
+   counters. D-T3 introduces the per-conference ratio and eligibility-facing
+   credit/daily-limit fields it reads. D-T4a introduces and updates the
+   upload-side membership counters.
+2. Tier I retains later accounting reports, configuration and refinements; it
+   no longer owns fields needed to make an earlier transfer rule correct.
+
+The named Allium `CompleteDownload`, `CompleteUpload`, and
+`CheckDownloadEligibility` rules are not marked Done with accounting
+invariants omitted. Each D sub-slice grows the model with its consuming rule.
+
+There is also a hard ordering constraint in Tier E: E2's two-way `O`
+chat cannot land until G1 provides a live sysop-console session, G9
+provides the availability state, and a typed cross-session control path
+can enter/leave chat. E2 itself must own the page notification and accept /
+decline interaction unless that UI is deliberately split into a new G
+prerequisite. E1, E3, E4, and E5 may land earlier. D-S2's active-session
+flag purge—and any move/status/area mutation that invalidates active
+flags—needs the same typed control plane before that mutation ships.
+
+X1 has a separate fixed parity constraint: configured external commands
+must be resolved before built-in commands so an installed door can shadow
+`F`, `FR`, `N`, or any later internal token. An unknown-only fallback is
+the inverse of the live-verified legacy dispatch order.
+
 | Cmd | Legacy source | Slice file | Tier | Status |
 | :---: | --- | --- | :---: | :---: |
 | **A. Quick wins (small commands, no new subsystems)** ||||
@@ -86,6 +120,7 @@ done.
 | `R` no-arg entry + legacy `readMSG` loop | `express.e:11984, 12008-12230` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B10 — prompt-first bare `R` at the read-pointer; next-to-read range + `( QUIT )` exhausted prompt; reshaped the shared loop, so `R <num>` matches too) |
 | Scan listing rows | `express.e:11713-11739` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B3, shipped with B1's `MS`) |
 | Retire top-level mail shortcuts | (cleanup) | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Done (B8 — `RP`/`FW`/`K`/`MV`/`EH` now parse to unknown) |
+| `R` sub-prompt ACS gate mapping | `express.e:12148, 12170, 12179` | [cmds-mail-finish.md](slices/cmds-mail-finish.md) | B | Todo (B9 — map delete/move/edit-header to their distinct legacy rights; the family document records the remaining policy decision over NextExpress's broader delete-by-owner/addressee rule) |
 | **C. Conference navigation** ||||
 | `<` / `>` | `express.e:24529, 24548` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C3 — nearest accessible neighbour via the sorted-catalogue walk, joined through the same machinery as `J <n>` (byte-identical output); past either edge the command opens the C2 interactive prompt, no wraparound; the legacy `ACS_JOIN_CONFERENCE` gate stays unported for consistency with the ungated `J`) |
 | `JM <n>` | `express.e:25185` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C4a — in-range `JM <n>` re-runs the full join sequence on the current conference (multi-base announcements append ` [<base>]`, no "already there" check); single-base conferences fail with the verbatim "does not contain multiple message bases" notice; a `.`-dotted first token delegates the raw params to `J`, whose dotted / two-token forms now join the requested base; missing/out-of-range bases open C4b's `Message Base Number (1-N): ` prompt, deviations recorded in the slice doc) |
@@ -93,23 +128,25 @@ done.
 | `J` no-arg prompt | `express.e:25113-25183` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C2 — bare / non-numeric / out-of-range `J` opens the single-shot `Conference Number (1-N): ` prompt (`Val` + clamp, blank aborts); denied joins keep the caller in their current conference with the legacy notice instead of falling through; dotted / two-token msgbase forms joined the requested base when C4a landed, the base request surviving the conference prompt) |
 | `CF` | `express.e:24672` | [cmds-conf-nav.md](slices/cmds-conf-nav.md) | C | Done (C5 — landed first in Tier C; M/A/F/Z editor, flags on `ConferenceMembership` (SQLite-persisted), `*` honours the advertised toggle-all the legacy no-ops) |
 | **D. Files — browsing first, transfer second** ||||
-| `F` (file listings) | AquaScan door (shadows `express.e:24877` — see [evidence-tierD](comparison/evidence-tierD/live-observations.md)) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D1+D2 — the NextScan lister over the seeded in-memory catalogue, byte-pinned to the live captures with the three NextScan branding swaps; pager verbs incl. the in-pager help; six-scenario telnet smoke. True single-key hotkey pager landed in slice D2b (probe-pinned held-`n`/Enter and bare-LF corners); UTF-8 wire = slice D2u; F/R flag into a session set with an on-row `[X]` marker + in-place repaint = slice D2f. The clean-logoff `checkFlagged` confirm (`G`'s `You have flagged files still not downloaded.` prompt + `G Y` force form) landed in slice Ga, and the `** AutoSaving File Flags **` autosave banner + `<BEL>` (emitted on every `G` logoff, even with nothing flagged) landed in slice D5-banner — byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt` (flagged) and `ae_tierd_g_empty.txt` (empty). The `A` alter-flags verb (the read-only listing + the `flagFiles` add/clear prompt loop) landed in slices D6a/D6b. Cross-session flag persistence + the logon `** Flagged File(s) Exist **` banner landed in slice D5-persist: the `FlaggedStore` port (`domain/files/flagged_store.rs`) with an `InMemoryFlaggedStore` (process-lifetime default) and a `SqliteFlaggedStore` (durable, same `users.db`), selected by `config.user_storage`; keying is `(conference, name)` — since the July 2026 identity fix the domain `FlaggedKey` carries no area at all, so a restored flag appears in the banner, the `A` listing, AND paints the `[X]` marker on the next `F`/`R` scan (the old "won't repaint until re-flagged" limitation is gone). Still Todo: the SQLite file-metadata store (slice D2s, deferred until the first file-writer slice) and the FlagFile/UnflagFile rule layer. `saveHistory()` + the partial-downloads `dump` file are deferred to the file-transfer slice.) |
-| `FR` (reverse listings) | AquaScan door (shadows `express.e:24883`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D3 — the `FR` token reuses the D2 lister with `reverse=true`: banner `'fr ?'` (dash run flexed 40→39), `Reverse-scanning dir N... Ok!` header, files newest-first; bare `FR` opens the `Directories:` prompt under the reverse banner (like bare `F`), then reverse-walks the chosen span — following `express.e:27645` over the AquaScan capture, which skips the prompt for `FR`; `FR A` descends highest→lowest per `express.e:27654`; `F R` with a space stays the `F`-with-junk Argument-error path) |
+| `F` (file listings) | AquaScan door (shadows `express.e:24877` — see [evidence-tierD](comparison/evidence-tierD/live-observations.md)) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D1+D2 — the NextScan lister over the seeded in-memory catalogue, byte-pinned to the live captures with the three NextScan branding swaps; pager verbs incl. the in-pager help; six-scenario telnet smoke. True single-key hotkey pager landed in slice D2b (probe-pinned held-`n`/Enter and bare-LF corners); UTF-8 wire = slice D2u; F/R flag into a session set with an on-row `[X]` marker + in-place repaint = slice D2f. The clean-logoff `checkFlagged` confirm (`G`'s `You have flagged files still not downloaded.` prompt + `G Y` force form) landed in slice Ga, and the `** AutoSaving File Flags **` autosave banner + `<BEL>` (emitted on every `G` logoff, even with nothing flagged) landed in slice D5-banner — byte-pinned to `comparison/transcripts/ae_tierd_g_confirm.txt` (flagged) and `ae_tierd_g_empty.txt` (empty). The `A` alter-flags verb (the read-only listing + the `flagFiles` add/clear prompt loop) landed in slices D6a/D6b. Cross-session flag persistence + the logon `** Flagged File(s) Exist **` banner landed in slice D5-persist: the `FlaggedStore` port (`domain/files/flagged_store.rs`) with an `InMemoryFlaggedStore` (process-lifetime default) and a `SqliteFlaggedStore` (durable, same `users.db`), selected by `config.user_storage`; keying is `(conference, name)` — since the July 2026 identity fix the domain `FlaggedKey` carries no area at all, so a restored flag appears in the banner, the `A` listing, AND paints the `[X]` marker on the next `F`/`R` scan (the old "won't repaint until re-flagged" limitation is gone). Still Todo: the SQLite file-metadata store (slice D2s), now required before transfer persistence rather than merely before the first writer, and the FlagFile/UnflagFile rule layer. `saveHistory()` + the partial-downloads `dump` file are deferred to the file-transfer slice.) |
+| `FR` (reverse listings) | AquaScan door (shadows `express.e:24883`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D3 — the `FR` token reuses the D2 lister with `reverse=true`: banner `'fr ?'` (dash run flexed 40→39), `Reverse-scanning dir N... Ok!` header, files newest-first; bare `FR` opens the `Directories:` prompt under the reverse banner (like bare `F`), then reverse-walks the chosen span — following `express.e:27645` over the AquaScan capture, which skips the prompt for `FR`; `FR A` descends highest→lowest per `express.e:27654`; the captured spaced forms also ship: `F R` prompts in reverse under the typed-head `'f ?'` banner and `F R <dir>` scans immediately) |
 | `Z` (zippy search) | `express.e:26123` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D4 + D7 — the genuine internal `internalCommandZ`, not AquaScan-shadowed: plain raw-DIR-row dump (no NextScan frames), `UpperStr`+`InStr` whole-row match. Live-captured (`ae_tierd_zippy{,2,3}.txt`). Bare `Z`/`Z <term>` opens the internal `getDirSpan('')` prompt (number/`U`/`A`/`H`/none/out-of-range); **D7** adds the inline `item(1)` form `Z <term> <span>` that scans immediately with no prompt — added after user feedback that `Z ART 1` should match the reference's immediate scan) |
 | `A` list flagged set | `express.e:24601` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D6a — bare `A` runs the genuine internal `alterFlags` -> `showFlags`: empty prints `No file flags`, else the upper-cased flagged names space-joined, each framed by a blank line. The `Filename(s) to flag:` prompt loop now follows (slice D6b). Byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`; parser + handler unit tests + telnet smokes, live-verified against both the AE reference and the Rust server) |
-| `A` add/remove flagged | `express.e:24604` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D6b — the `A` `alterFlags` -> `flagFiles` REPEAT loop: the `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` main prompt + the `Filename(s) to Clear: (*)All, ...` clear sub-prompt. A typed name flags (upper-cased, current conf, area 0) and exits to the menu with no trailing line (`RESULT_FAILURE`); `C` -> `*` clears all and re-prompts; `<CR>`=none ends the loop. Byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`; 6 handler unit tests + 2 telnet smokes; mutation-clean. Deferred: `F`-from (`flagFrom`), clear-by-name (`removeFlagFromList`), the `ACS_DOWNLOAD` gate) |
+| `A` add/remove flagged | `express.e:24604` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D6b — the `A` `alterFlags` -> `flagFiles` REPEAT loop: the `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` main prompt + the `Filename(s) to Clear: (*)All, ...` clear sub-prompt. A typed name flags the upper-cased `(current conference, name)` key and exits to the menu with no trailing line (`RESULT_FAILURE`); `C` -> `*` clears all and re-prompts; `<CR>`=none ends the loop. Byte-pinned to `comparison/transcripts/ae_tierd_alterflags.txt`; 6 handler unit tests + 2 telnet smokes; mutation-clean. Deferred: `F`-from (`flagFrom`), clear-by-name (`removeFlagFromList`), the `ACS_DOWNLOAD` gate) |
 | `FS` (file status) | `express.e:24872` | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D8 — **FAITHFUL DENY**: the live capture `ae_tierd_fs.txt` refuted the accounting-table plan — the shipped board grants `ACS_CONFERENCE_ACCOUNTING` to nobody, sysop sec 255 included, so every `FS` form denies with `\r\nCommand requires higher access.\r\n` (`higherAccess()`, `express.e:3038`). NextExpress mirrors the outcome with an unconditional dispatcher deny (`HIGHER_ACCESS_LINE`): no `Right`, no gate, no granted branch, not advertised in the menu. The granted `fileStatus(0)` table + the real ACS gate are deferred to A11 (design Option G, `designs/2026-07-04-fs-design.md`); parser + dispatch unit tests + 4-scenario telnet smoke `tierd_fs_smoke.rs` incl. the UTF-8 gate) |
 | `N` (new files scan) | AquaScan door (shadows `express.e:25275`) | [cmds-files-list.md](slices/cmds-files-list.md) | D | Done (D9 — the AquaScan date-scan experience over the item-17 engine, byte-pinned to the dedicated live capture `comparison/transcripts/ae_tierd_newfiles.txt` (two passes, N1–N9): bare `N` opens the door's `Date:` prompt (Enter default = day of previous call via `last_call`; single-shot `Error in date!`) then `F`'s `Directories:` prompt, **current conference only, no `CF` gating** (the old multi-conf slice text was refuted by the capture); full inline grammar `N [S|mm-dd[-yy]|T|Y|-x|!x|R] [dir] [Q] [NS]`; inclusive `uploaded_at >= cutoff` via `FileRepository::list_new_since`, filtered sets renumbered from `#1`; `R` runs the FR mode; `Q` quick-scan drops continuations; dates through the `Clock` port (yy>77 → 19yy pivot); two capture-pinned page-1 models (prompt path counts from the post-answer blank, inline from the reset); `N W` unported → Argument error; seven-scenario telnet smoke `tierd_newfiles_smoke.rs` incl. the two-session last-call default and the UTF-8 gate; TO-CONFIRM edges shipped provisionally as PLAUSIBLE rows in COMMAND_PARITY.md) |
-| `D` / `DS` (download) | `express.e:24853` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
-| `U` (upload, baseline) | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4a) |
+| `D` (download) | `express.e:24853` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T1–D-T3; D-T2 owns download counters/reservations and D-T3 owns ratio, credit and daily-limit eligibility fields) |
+| `DS` (sysop download) | `express.e:20040, 24853, 28302` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (requires its own capture/sub-slice for `ACS_SYSOP_DOWNLOAD`, bypass and audit behaviour; it is not covered implicitly by D-T1–D-T3) |
+| `U` (upload, baseline) | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4a; owns the upload-side user/membership counters consumed by completion) |
 | `U` upload accounting refinements | `express.e:25646` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo (D-T4b) |
 | `RZ` (instant upload) | `express.e:25608` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
 | `V` / `VS` (view file) | `express.e:25675` | [cmds-files-transfer.md](slices/cmds-files-transfer.md) | D | Todo |
 | `FM` (file maintenance) | `express.e:24889` | [cmds-files-sysop.md](slices/cmds-files-sysop.md) | D | Todo |
 | `US` (sysop upload) | `express.e:25660` | [cmds-files-sysop.md](slices/cmds-files-sysop.md) | D | Todo |
 | **E. Communication with other users / sysop** ||||
-| `O` (page sysop) | `express.e:25372` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
-| `OLM` (node-to-node) | `express.e:25406` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
+| `O` (page sysop, unavailable/comment branch) | `express.e:25372` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo (E1; no live sysop-console dependency) |
+| `O` (page sysop, two-way live chat) | `express.e:25372` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo (E2; after G1 sysop-console, G9 availability, and typed cross-session-control prerequisites; E2 owns page accept/decline unless split explicitly) |
+| `OLM` (node-to-node) | `express.e:25406` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo (E5; the terminal delivery receiver has landed, while presence/routing and the send side remain) |
 | `WHO` | `express.e:26094` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
 | `WHD` | `express.e:26104` | [cmds-comm.md](slices/cmds-comm.md) | E | Todo |
 | **F. User self-service** ||||
@@ -141,9 +178,9 @@ done.
 | `UP` (node uptime) | `express.e:25667` | [cmds-sysop-console.md](slices/cmds-sysop-console.md) | H | Todo |
 | `CM` (conference maint.) | `express.e:24843` | — | H | Skipped (see below) |
 | **I. Accounting + crypto refinements** ||||
-| Per-conference accounting | spec — `core.allium:ConferenceMembership` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
-| Credit accounts | spec — `core.allium:CreditAccount` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
-| Daily byte cap end-to-end | spec — `files.allium:DailyDownloadsLeQuota` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
+| Per-conference accounting reports/refinements | spec — `core.allium:ConferenceMembership` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo (I1; transfer-consumed counters and ratio fields land with D-T2/D-T3/D-T4a) |
+| Credit-account reports/refinements | spec — `core.allium:CreditAccount` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo (I2; eligibility-facing model lands with D-T3) |
+| Daily-byte reports/refinements | spec — `files.allium:DailyDownloadsLeQuota` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo (I3; counters and enforcement land with D-T2/D-T3) |
 | Low-credit ratio weighting (`lcfiles`) | spec — `files.allium:File.status` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo (I3b) |
 | Legacy + lower-round password hashes | spec — `core.allium:PasswordHashKind` | [cmds-accounting.md](slices/cmds-accounting.md) | I | Todo |
 | **J. Lower-priority / niche commands** ||||
@@ -161,35 +198,43 @@ done.
 Each command-family file lays out its slices in the order the table
 suggests, and is the only file you need to load when working on
 commands in that tier. A command-family file owns its own
-**wire-and-smoke closing slice**: a phase whose theme names a
-user-visible capability is only **Done** once that capability is
-reachable by running the compiled binary, not merely the library
-tests — same rule as the foundation phases.
+**wire-and-smoke closing slice**. Its completion criteria are the
+in-process listener and independent live verification rules under
+"Done means done" below; spawned-binary coverage is reserved for
+startup/configuration behaviour.
 
 ## Concurrency model
 
-The BBS is one process serving many concurrent sessions. We use tokio
-for the async runtime: the listener is async, each accepted connection
-runs in its own tokio task, and shared stores sit behind async-aware
-locks (`tokio::sync::Mutex` / `RwLock`, or `dashmap` where appropriate).
+The BBS is one process serving many concurrent sessions. Tokio owns the
+async listener and one task per accepted connection. The fixed-size
+`NodePool` allocates at most `core/config.max_nodes` live nodes and
+enforces `OneActiveSessionPerNode`; there is not yet a server supervisor,
+tracked task set, or coordinated shutdown path.
 
-The `Node` entity is the unit of concurrency. At most
-`core/config.max_nodes` sessions run at once; the supervisor enforces
-this with a `Semaphore` and the `OneActiveSessionPerNode` invariant
-(`session.allium`). Sessions don't share state beyond what the spec
-models — the user record, the message base, the file area — so
-contention is fine-grained: one lock per message-base or area, never a
-global one. `messaging.allium`'s `lock_msgbase` predicate is one such
-lock; `User` mutations from a single session are serialised by virtue
-of one task per session.
+Adapter concurrency is currently mixed. Node/message-base coordination
+uses async-aware locks, while the SQLite user/flag adapters and file-backed
+mail perform synchronous database/filesystem work from session flows. The
+accepted item-31 design puts async application facades in front of a bounded
+blocking executor, one serialized SQLite writer and a small read pool before
+D2s and content transfer increase that work.
+
+Multiple sessions for the same account are allowed. `UserRepository` writes
+are command/delta based so independent sessions compose instead of
+overwriting whole stale user snapshots. `FlaggedStore` still has unsafe
+replace-all save semantics; the accepted FILES design replaces it with
+command-time add/remove persistence. `messaging.allium`'s `lock_msgbase` predicate still
+provides per-base coordination. File-area writer coordination is not yet
+implemented; it is owned by the D2s/upload design rather than assumed to be
+one lock per area.
 
 Wire protocols are pluggable. Telnet is the first transport (Slice 8);
 SSH and FTP are listed under future phases and will plug into the same
-per-task accept-loop pattern. From the supervisor's point of view a
+per-task accept-loop pattern. From the session driver's point of view a
 transport is just an `AsyncRead + AsyncWrite` byte stream.
 
-Async-friendliness is therefore part of the design from Slice 1 (which
-brings in tokio) onwards, not something we retrofit later.
+Async-friendliness is the boundary rule for new adapters. Item 31 records
+the synchronous SQLite/filesystem debt that must be corrected rather than
+copied into D2s.
 
 ## How slices grow the schema
 
@@ -305,10 +350,12 @@ Concretely, each slice that introduces a user-facing string must:
   telnet `\r\n`; legacy `[<n>m` ANSI escapes pass through unchanged;
   the textual content is preserved character-for-character (modulo
   obvious mojibake of `©` / `é` / similar from the original file's
-  encoding, which we restore via `\u{...}` escapes). The wire is
-  valid UTF-8 always — encoding policy is owned by the "Wire
-  encoding" section in AGENTS.md; that section supersedes any
-  earlier slice-level guidance about emitting raw Latin-1 bytes.
+  encoding, which we restore via `\u{...}` escapes). The accepted target
+  contract is valid UTF-8 in interactive text windows; a negotiated binary
+  transfer window carries arbitrary bytes through the raw channel. Item 19
+  updates AGENTS.md and the UTF-8 gate before D-T1. Until that implementation
+  lands, the current valid-UTF-8-always rule remains enforced and no slice may
+  emit raw Latin-1 or arbitrary high-bit bytes.
 - **Document any deliberate departure** in the slice's In Scope, with
   reasoning. "We renamed X to Y because Z" belongs in the slice spec
   so it isn't quietly drift.
@@ -337,21 +384,19 @@ business.
 ## Done means done
 
 A slice is **Done** only when every Allium rule, invariant and black-box
-function listed in its "In Scope" section is implemented, backed by tests
-that pass, and `cargo test`, `cargo build`, `cargo fmt --check` and
-`cargo clippy -- -D warnings` are all clean. Anything else is **Todo**
-(or **In progress** while a slice is being worked on).
+function listed in its "In Scope" section is implemented and the repository
+gates are clean: `cargo nextest run`, `cargo build`, `cargo test --doc`,
+`cargo fmt --check`, `cargo clippy -- -D warnings`, and diff-scoped mutation
+testing via `make mutants-diff`. Anything else is **Todo** (or **In
+progress** while a slice is being worked on).
 
-A **command-family file** whose theme names a user-facing capability
-is **Done** only once each of its commands is reachable by running the
-compiled binary — not merely the library or per-test in-process
-listeners. Every such file therefore owns a closing slice that wires
-the composition root (`app::main`), pins down the runtime config
-acquisition story and the seed-data story, and adds a smoke test that
-spawns the binary process and exercises the headline flow end-to-end.
-Library-level slice tests are necessary but not sufficient: a
-command-family whose binary wouldn't actually deliver its commands is
-**In progress**, not Done.
+A **command-family file** whose theme names a user-facing capability is
+**Done** only after its capture-pinned interaction is exercised through an
+in-process `TelnetListener` with an ephemeral port and in-memory adapters,
+then independently live-verified against NextExpress and the FS-UAE
+reference as required by the command-slice workflow. Spawned-binary tests
+are reserved for the binary's argv/config/startup path; command e2e tests do
+not duplicate that coverage.
 
 ## Skipped slices
 
@@ -373,8 +418,8 @@ is the *logon-time* `confScan()` (`express.e:28066`), not a menu command.
 The original C1 entry proposed a `CS` command with an invented
 `Conference <n>:` / `<CR>=next, S=stop` UX — dropped as drift. The
 per-conference scan flags `confScan()` consults are edited by `CF`
-(Slice C5) and gate the conference mail-scan and the `N` new-files scan
-(Tier D); no `CS` command is planned.
+(Slice C5) and gate the logon-time `confScan` file scan. They do not gate
+the user-invoked `N` command (Tier D); no `CS` command is planned.
 
 ### Conferences (admin) — original Phase 5 (Slices 35, 36) and `CM`
 
