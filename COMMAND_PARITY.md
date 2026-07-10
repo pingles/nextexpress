@@ -778,9 +778,16 @@ Two places follow `express.e` over the captures:
   bare-`FR`-prompt bytes are therefore extrapolated, not captured. Bare
   `F` and bare `FR` are now **symmetric** (both prompt).
 - **`FR A` descends the multi-dir span highest→lowest** —
-  `displayFileList`'s reverse loop walks `dirScan→startDir` (`fLLoop--`,
-  `express.e:27654`), each dir's rows reversed. The captures only
-  exercise single-dir `FR`, so the multi-dir order is `express.e`-derived.
+  `displayFileList` starts its reverse loop at `dirScan` and walks to
+  `startDir` (`express.e:27654-27659`, `:27709-27714`), with each
+  directory's rows reversed through `fileListReverse` (`:27695-27698`).
+  The later D10 live AquaScan capture instead exercises `FR A` and walks
+  directories 1→2 (low→high), while still reversing the rows inside each;
+  directory 2's `R 1` selects `TOOLPACK.LHA`
+  (`comparison/transcripts/ae_tierd_d10_selection.txt:428-645`). The
+  2026-07-10 human choice was **A**: retain the current/source high→low
+  traversal and record this door divergence. D10 therefore does not change
+  the directory walk.
 
 **UNVERIFIED.** `FR ?` (reuses the `F ?` help — no distinct `'fr ?'`
 help screen captured); `FR H` reverse hold (uncaptured; the hold header
@@ -826,6 +833,33 @@ highest-dir error; unknown `More?` keys continue; the counter reset
 at dir transitions; zero-area conferences; the `H` prompt option for
 non-hold users; framed rendering of real held files (unit-pinned
 only).
+
+### D10 — current-directory pager selection index
+
+**Authority gate (2026-07-10): A/A/A.** Ground truth is the live AquaScan
+campaign in `comparison/transcripts/ae_tierd_d10_selection.txt`, its bounded
+edge retry in `comparison/transcripts/ae_tierd_d10_edge_reprobe.txt`, and the
+indexed limitations in
+`comparison/evidence-tierD/d10-selection-live-observations.md`. D10 changes
+selection identity and lifecycle, not any pager prompt or other wire literal.
+
+Implementation close-out: all local tests, build/clippy/doctest gates, and the
+diff-scoped mutation run pass (0 missed mutants). The optional interactive
+terminal glance was declined. The prepared independent Stage-5 live
+NextExpress/reference cross-comparison remains deferred and is listed in the
+D10 design §10; the MATCH labels below are grounded in the cited legacy live
+captures plus the implementation regression tests, not a completed post-change
+dual-target replay.
+
+| Facet | NextExpress behaviour and authority | Status |
+|---|---|---|
+| Current-directory numeric identity | `R <number>` resolves only a numbered row emitted for the directory currently on screen. Moving to another directory replaces the prior mapping even when that directory is empty; pages within one directory retain it. `F A` selects directory 2's restarted `File #1`, and an empty directory-1 `N` transition selects directory 2's new #1 (`ae_tierd_d10_selection.txt:188-398,675-738`). | **MATCH** — capture-backed |
+| Reload replacement | `L` clears the current mapping before refetching and rebuilds it only from the newly rendered rows. In the changed-catalogue retry, directory 2's old `FRESHUPL.LHA` #1 was replaced by `ANSIPACK.LHA`, and the following `R 1` selected `ANSIPACK.LHA` (`ae_tierd_d10_edge_reprobe.txt:377-466`). | **MATCH** — capture-backed |
+| Numeric line grammar | Entries are strict-decimal, ASCII-whitespace-separated tokens. Empty/whitespace-only, invalid and out-of-range tokens are silent no-ops; `1 garbage` selects #1 and ignores the separate junk token (`ae_tierd_d10_selection.txt:768-852`). Plural `1 2 1` selects distinct #1 and #2 once each, in first-occurrence order (`ae_tierd_d10_edge_reprobe.txt:181-244`). | **MATCH** for the captured forms |
+| Unspaced numeric junk | `1garbage` is one strict-invalid token and selects nothing. That exact form was not probed. | **PLAUSIBLE** — uncaptured strict-parser behaviour |
+| Pager name entry — human choice **A** | Trim outer whitespace once; require `len > 1`; uppercase and store the remaining **whole line once**, preserving internal spaces and accepting unknown names. AquaScan accepted `NOSUCH.LHA` and a space-containing line (`ae_tierd_d10_selection.txt:768-852`; `ae_tierd_d10_edge_reprobe.txt:279-342`); legacy `addFlagToList` independently performs the trim/length/uppercase/store path, and `flagFiles` passes the line once (`express.e:12523-12542`, `:12638`). This deliberately does not resolve an existing downloadable file. | **MATCH** — capture + `express.e`; **ALLIUM-DEPARTURE** from `FlagFile` (`specs/files.allium:187-203`) |
+| `FR A` directory order — human choice **A** | Retain the current/source high→low directory traversal with reversed rows (`express.e:27654-27659`, `:27695-27698`, `:27709-27714`), despite the D10 AquaScan capture's low→high traversal with reversed rows (`ae_tierd_d10_selection.txt:428-645`). D10 makes no traversal change; `N R` is also unchanged. | **BEHAVIOURAL** — explicit source-over-door decision |
+| Populated HOLD numeric selection — human choice **A** | The refactored current-directory index continues to register numbered HOLD rows, so `R <number>` remains permitted. Only empty HOLD is authoritative (`ae_tierd_d10_selection.txt:882-929`); the one populated-HOLD retry timed out after `R` before an evidence block and the bounded retry was not repeated (`d10-selection-live-observations.md`, "Populated HOLD retry"). | **PLAUSIBLE** — uncaptured compatibility extrapolation; **ALLIUM-DEPARTURE** from `FlagFile`'s allowed-status rule (`specs/files.allium:187-203`) |
 
 ---
 

@@ -370,7 +370,10 @@ and emit in requested area plus legacy catalogue order rather than FTS rank.
   batch order, but container iteration order never chooses it implicitly.
 - A flag does not identify an area. Duplicate names remain legal across areas;
   `(conference, name)` resolves in configured area order and then retains the
-  stable `FileId`. A manual `A` flag may remain unresolved until D/DS preflight.
+  stable `FileId`. D10 confirmed that the pager's `F` name entry, like manual
+  `A`, accepts one unchecked trimmed/upper-cased whole line (including unknown
+  or space-containing names), so either source may remain unresolved until
+  D/DS preflight.
 - Once resolved, `FileId` is authoritative and is never silently retargeted to
   a same-named replacement. Preflight reloads that row and rechecks current
   status, active area and caller access. A same-conference move keeps the

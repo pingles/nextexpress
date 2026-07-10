@@ -14,7 +14,7 @@
 use std::time::SystemTime;
 
 use super::dir_row;
-use super::scan::{ScanFlow, ScanKind, ScanLine, ScanMode, ScanState};
+use super::scan::{DirectoryOrder, ScanFlow, ScanKind, ScanLine, ScanMode, ScanState};
 use super::wire;
 use crate::app::menu_command::{FileSpan, NewFilesArg, NewFilesSpec, ScanRequest};
 use crate::app::menu_flow::{AbortNotice, EmptyMeaning, PromptLine};
@@ -154,8 +154,16 @@ where
         // COUNTED — it opens the 29-line page-1 window the capture
         // pins (N2: More? after exactly 29 lines from this blank).
         let flagged = session.flagged_files_mut();
-        let mut state = ScanState::new(false);
-        let mode = ScanMode { kind, quick: false };
+        let mut state = ScanState::new(false, conference);
+        let directory_order = match &kind {
+            ScanKind::Full { reverse: true } => DirectoryOrder::Reverse,
+            _ => DirectoryOrder::Forward,
+        };
+        let mode = ScanMode {
+            kind,
+            directory_order,
+            quick: false,
+        };
         if self
             .emit_scan_line(&mut state, ScanLine::raw(Vec::new()), flagged)
             .await?
@@ -188,9 +196,14 @@ where
         };
         let span = spec.span.unwrap_or(FileSpan::Upload);
         let flagged = session.flagged_files_mut();
-        let mut state = ScanState::new(spec.non_stop);
+        let mut state = ScanState::new(spec.non_stop, conference);
+        let directory_order = match &kind {
+            ScanKind::Full { reverse: true } => DirectoryOrder::Reverse,
+            _ => DirectoryOrder::Forward,
+        };
         let mode = ScanMode {
             kind,
+            directory_order,
             quick: spec.quick,
         };
         if self

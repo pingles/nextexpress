@@ -11,6 +11,8 @@
 //! by the capture-replay tests in `scan/tests.rs` and the smoke
 //! `rust/tests/tierd_file_list_smoke.rs`.
 
+use std::collections::BTreeSet;
+
 use crate::app::menu_command::FileSpan;
 use crate::app::terminal::{KeyEvent, KeyRead, Terminal};
 use crate::app::wire_text::CRLF;
@@ -69,6 +71,41 @@ pub(super) struct ListedRow {
     pub(super) aligned: bool,
 }
 
+/// Numbered file identities emitted for the directory currently on
+/// screen. Display numbers are dense `1..=N`, so their zero-based
+/// positions are the lookup index; the wrapper owns replacement at
+/// directory and reload boundaries.
+#[derive(Debug, Default)]
+struct DisplayedSelectionIndex {
+    keys: Vec<FlaggedKey>,
+}
+
+impl DisplayedSelectionIndex {
+    /// Replaces the prior directory's displayed-number mapping.
+    fn begin_directory(&mut self) {
+        self.keys.clear();
+    }
+
+    /// Records a numbered row after its complete wire line is visible.
+    fn record(&mut self, row: &ListedRow) {
+        let Some(number) = row.number else { return };
+        assert_eq!(
+            usize::try_from(number).ok(),
+            self.keys.len().checked_add(1),
+            "displayed file numbers must be dense",
+        );
+        self.keys.push(row.key.clone());
+    }
+
+    /// Resolves a one-based displayed number in the current directory.
+    fn resolve(&self, number: u32) -> Option<&FlaggedKey> {
+        number
+            .checked_sub(1)
+            .and_then(|index| usize::try_from(index).ok())
+            .and_then(|index| self.keys.get(index))
+    }
+}
+
 /// What a `NextScan` walk lists per directory and how it titles it
 /// (item 17's generalisation — a mode enum owned by the engine, so
 /// per-dir row acquisition stays lazy and quit-stops-fetching holds).
@@ -77,8 +114,8 @@ pub(super) enum ScanKind {
     /// `F` / `FR` / `N`'s `R` answer: the full listing, forward or
     /// newest-first.
     Full {
-        /// List newest-first and walk multi-dir spans highest→lowest
-        /// (`express.e:27654`).
+        /// List each directory newest-first. Multi-directory traversal
+        /// is controlled independently by [`ScanMode::directory_order`].
         reverse: bool,
     },
     /// `N`: files uploaded on/after `cutoff` — **inclusive**
@@ -98,18 +135,30 @@ pub(super) enum ScanKind {
     },
 }
 
+/// Directory traversal is independent from the order of rows inside
+/// each directory. The distinction prevents an `FR` authority choice
+/// from silently changing `N R` traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DirectoryOrder {
+    /// Walk the resolved span from its first directory to its last.
+    Forward,
+    /// Walk the resolved span from its last directory to its first.
+    Reverse,
+}
+
 /// A scan's mode: what each directory lists ([`ScanKind`]) plus `N`'s
 /// `Q` quick flag (capture N7q — description continuations dropped).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ScanMode {
     pub(super) kind: ScanKind,
+    pub(super) directory_order: DirectoryOrder,
     pub(super) quick: bool,
 }
 
 impl ScanMode {
     /// Whether multi-dir spans walk highest→lowest (the `FR` walk).
     fn reverse_walk(&self) -> bool {
-        matches!(self.kind, ScanKind::Full { reverse: true })
+        self.directory_order == DirectoryOrder::Reverse
     }
 }
 
@@ -197,6 +246,7 @@ where
             // The dir loop: `ReloadDir` restarts it (rows re-fetched),
             // `SkipDir` breaks to the transition, `Quit` ends the walk.
             loop {
+                state.displayed.begin_directory();
                 let files = self.dir_rows(conference, *dir, mode);
                 let header = dir_header(*dir, !files.is_empty(), mode);
                 match self
@@ -256,6 +306,7 @@ where
         // Hold is a single-dir span: `ReloadDir` restarts it, every
         // other verb ends the listing here.
         loop {
+            state.displayed.begin_directory();
             let held = self.hold_rows(conference, mode);
             let header = hold_header(!held.is_empty(), mode);
             match self
@@ -403,10 +454,10 @@ where
     ) -> Result<ScanFlow, T::Error> {
         self.terminal.write(&line.bytes).await?;
         self.terminal.write(CRLF).await?;
-        // A listed file row joins the scan-wide registry (the F/R
-        // verbs match against it) regardless of paging mode.
+        // A numbered row becomes selectable only after both writes
+        // succeed, but before a page-boundary More? can accept `R`.
         if let Some(listed) = &line.listed {
-            state.listed.push(listed.clone());
+            state.displayed.record(listed);
         }
         if state.non_stop {
             return Ok(ScanFlow::Continue);
@@ -547,20 +598,9 @@ where
                     // bytes. Only the session flag set changes, plus
                     // the in-place repaint of the newly flagged rows.
                     let by_number = matches!(verb, b'r' | b'R');
-                    let prompt: &[u8] = if by_number {
-                        wire::FLAG_BY_NUMBER_PROMPT
-                    } else {
-                        wire::FLAG_BY_NAME_PROMPT
-                    };
-                    self.terminal.write(&more_overprint_clear()).await?;
-                    self.terminal.write(prompt).await?;
-                    let Some(entry) = self.read_flag_entry().await? else {
+                    if self.run_flag_prompt(state, flagged, by_number).await? == ScanFlow::Quit {
                         return Ok(ScanFlow::Quit);
-                    };
-                    let newly = apply_flags(&entry, by_number, &state.listed, flagged);
-                    self.terminal.write(&flag_overprint_clear()).await?;
-                    self.repaint_flagged_rows(state, &newly).await?;
-                    self.terminal.write(wire::MORE_PROMPT).await?;
+                    }
                 }
                 KeyEvent::Char(b'?') => {
                     // The in-pager pause help, then a redraw of the
@@ -586,6 +626,41 @@ where
         }
     }
 
+    /// Runs the number/name flag line read, redraws the pager from a
+    /// staged selection, then commits only after every write succeeds.
+    async fn run_flag_prompt(
+        &mut self,
+        state: &ScanState,
+        flagged: &mut FlaggedFiles,
+        by_number: bool,
+    ) -> Result<ScanFlow, T::Error> {
+        let prompt: &[u8] = if by_number {
+            wire::FLAG_BY_NUMBER_PROMPT
+        } else {
+            wire::FLAG_BY_NAME_PROMPT
+        };
+        self.terminal.write(&more_overprint_clear()).await?;
+        self.terminal.write(prompt).await?;
+        let Some(entry) = self.read_flag_entry().await? else {
+            return Ok(ScanFlow::Quit);
+        };
+        let newly = plan_flags(
+            &entry,
+            by_number,
+            state.conference,
+            &state.displayed,
+            flagged,
+        );
+        self.terminal.write(&flag_overprint_clear()).await?;
+        self.repaint_flagged_rows(state, &newly).await?;
+        self.terminal.write(wire::MORE_PROMPT).await?;
+        for key in newly {
+            let inserted = flagged.flag(key);
+            debug_assert!(inserted, "planned flags are distinct and previously absent");
+        }
+        Ok(ScanFlow::Continue)
+    }
+
     /// Paints `[X]` into the marker slot of any newly flagged row
     /// still on the current page (slice D2f): for each such row,
     /// `\r`, cursor up to it, write the marker at its column, then
@@ -598,8 +673,8 @@ where
     /// # Parameters
     /// - `state`: the current pager state; `state.page` supplies the
     ///   on-screen rows and their geometry.
-    /// - `newly`: the keys [`apply_flags`] just turned on — only these
-    ///   rows are repainted.
+    /// - `newly`: the keys [`plan_flags`] staged for commit — only
+    ///   these rows are repainted.
     ///
     /// # Errors
     /// Propagates the terminal's write error.
@@ -714,37 +789,51 @@ fn hold_header(found: bool, mode: &ScanMode) -> Vec<u8> {
     }
 }
 
-/// Flags the files named/numbered in a `More?` flag entry against the
-/// scan's listed registry. `F` matches whitespace-separated names
-/// (case-insensitively, via the uppercase-folded `FlaggedKey::name`);
-/// `R` matches `[ File #N ]` numbers. Tokens that match nothing are
-/// silently ignored (the door accepts junk silently — the accidental
-/// capture fed `99`/`A`/`U` with no feedback). Returns the NEWLY
-/// flagged keys (the repaint set).
-pub(super) fn apply_flags(
+/// Plans the distinct, previously unflagged keys selected by one
+/// `More?` flag entry without mutating session state.
+///
+/// Numeric `R` entries are strict decimal ASCII-whitespace tokens and
+/// resolve only in the current directory's displayed index. Name `F`
+/// entries follow the captured legacy boundary: trim once, require more
+/// than one byte, uppercase through [`FlaggedKey`], and preserve the
+/// whole remaining line even when it is not a catalogue name.
+fn plan_flags(
     entry: &str,
     by_number: bool,
-    listed: &[ListedRow],
-    flagged: &mut FlaggedFiles,
+    conference: u32,
+    displayed: &DisplayedSelectionIndex,
+    flagged: &FlaggedFiles,
 ) -> Vec<FlaggedKey> {
-    let mut newly = Vec::new();
-    for token in entry.split_whitespace() {
-        let matched = if by_number {
-            token
-                .parse::<u32>()
-                .ok()
-                .and_then(|n| listed.iter().find(|row| row.number == Some(n)))
-        } else {
-            let wanted = token.to_ascii_uppercase();
-            listed.iter().find(|row| row.key.name() == wanted)
+    if !by_number {
+        let name = entry.trim();
+        if name.len() <= 1 {
+            return Vec::new();
+        }
+        let key = FlaggedKey::new(conference, name);
+        return (!flagged.contains(&key))
+            .then_some(key)
+            .into_iter()
+            .collect();
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut planned = Vec::new();
+    for token in entry.split_ascii_whitespace() {
+        if !token.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let Some(key) = token
+            .parse::<u32>()
+            .ok()
+            .and_then(|number| displayed.resolve(number))
+        else {
+            continue;
         };
-        if let Some(row) = matched {
-            if flagged.flag(row.key.clone()) {
-                newly.push(row.key.clone());
-            }
+        if !flagged.contains(key) && seen.insert(key.clone()) {
+            planned.push(key.clone());
         }
     }
-    newly
+    planned
 }
 
 /// Per-span pager state.
@@ -753,22 +842,24 @@ pub(super) struct ScanState {
     emitted: u32,
     /// `NS` requested — no pauses at all.
     non_stop: bool,
+    /// Conference used by unchecked legacy name flagging.
+    conference: u32,
     /// The current page's lines, for the `?` help's page redraw.
     page: Vec<ScanLine>,
-    /// Every listed file's identity, scan-wide — the registry the
-    /// F/R flag verbs match against (slice D2f, Task 3.4). Populated
-    /// as rows stream.
-    listed: Vec<ListedRow>,
+    /// Dense numeric identity for the directory currently on screen.
+    displayed: DisplayedSelectionIndex,
 }
 
 impl ScanState {
-    /// A fresh pager state; `non_stop` suppresses every `More?`.
-    pub(super) fn new(non_stop: bool) -> Self {
+    /// A fresh pager state in `conference`; `non_stop` suppresses every
+    /// `More?`.
+    pub(super) fn new(non_stop: bool, conference: u32) -> Self {
         Self {
             emitted: 0,
             non_stop,
+            conference,
             page: Vec::new(),
-            listed: Vec::new(),
+            displayed: DisplayedSelectionIndex::default(),
         }
     }
 }

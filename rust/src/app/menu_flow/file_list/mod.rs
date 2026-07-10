@@ -13,7 +13,7 @@ mod scan;
 mod test_support;
 mod wire;
 
-use self::scan::{ScanFlow, ScanKind, ScanMode, ScanState};
+use self::scan::{DirectoryOrder, ScanFlow, ScanKind, ScanMode, ScanState};
 use crate::app::menu_command::{FileListArg, FileSpan, ZippyArg};
 use crate::app::terminal::Terminal;
 use crate::app::wire_text::CRLF;
@@ -90,6 +90,11 @@ where
             } => {
                 let mode = ScanMode {
                     kind: ScanKind::Full { reverse },
+                    directory_order: if reverse {
+                        DirectoryOrder::Reverse
+                    } else {
+                        DirectoryOrder::Forward
+                    },
                     quick,
                 };
                 self.file_list_span(session, span, &mode, non_stop, fr_banner)
@@ -126,7 +131,7 @@ where
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
-        let mut state = ScanState::new(false);
+        let mut state = ScanState::new(false, conference);
 
         // The banner emits borrow the flag set only within this block,
         // so the prompt read below can take `session` mutably (the
@@ -175,6 +180,11 @@ where
         let flagged = session.flagged_files_mut();
         let mode = ScanMode {
             kind: ScanKind::Full { reverse },
+            directory_order: if reverse {
+                DirectoryOrder::Reverse
+            } else {
+                DirectoryOrder::Forward
+            },
             quick: false,
         };
         self.run_span(&mut state, conference, span, &areas, flagged, &mode)
@@ -213,7 +223,7 @@ where
         // it immutably at the assemble call, the `F`/`R` verbs mutate
         // it. `session` is otherwise untouched from here on.
         let flagged = session.flagged_files_mut();
-        let mut state = ScanState::new(non_stop);
+        let mut state = ScanState::new(non_stop, conference);
 
         // Entry preamble — every argument form (§1.1). Counted: the
         // captured page-1 More? boundary includes these lines.

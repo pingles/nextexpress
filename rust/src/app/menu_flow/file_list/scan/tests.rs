@@ -18,7 +18,9 @@ use crate::app::menu_flow::test_support::{
 };
 use crate::app::seed;
 use crate::app::services::AppServices;
-use crate::app::terminal::{KeyEvent, KeyRead};
+use crate::app::terminal::{
+    KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalFuture, TerminalRead,
+};
 use crate::domain::files::area::FileAreaRef;
 use crate::domain::files::flagged::FlaggedFiles;
 
@@ -525,6 +527,113 @@ async fn l_at_more_reloads_the_current_dir_from_the_top() {
 }
 
 #[tokio::test]
+async fn l_reload_replaces_numeric_identity_with_the_refetched_catalogue() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::domain::bytes::Bytes;
+    use crate::domain::files::area::FileArea;
+    use crate::domain::files::file::{File, FileStatus};
+    use crate::domain::files::repository::{FileRepository, FileRepositoryError};
+
+    struct ReloadingFileRepository {
+        reads: AtomicUsize,
+        old: File,
+        new: File,
+    }
+
+    impl FileRepository for ReloadingFileRepository {
+        fn areas_in_conference(
+            &self,
+            conference: u32,
+        ) -> Result<Vec<FileArea>, FileRepositoryError> {
+            Ok((conference == 1)
+                .then(|| FileArea::new(1, 1, "Main".to_string()))
+                .into_iter()
+                .collect())
+        }
+
+        fn find_in_area(&self, _area: FileAreaRef) -> Result<Vec<File>, FileRepositoryError> {
+            let file = if self.reads.fetch_add(1, Ordering::SeqCst) == 0 {
+                &self.old
+            } else {
+                &self.new
+            };
+            Ok(vec![file.clone()])
+        }
+
+        fn list_held(&self, _conference: u32) -> Result<Vec<File>, FileRepositoryError> {
+            Ok(Vec::new())
+        }
+
+        fn list_new_since(
+            &self,
+            area: FileAreaRef,
+            _since: SystemTime,
+        ) -> Result<Vec<File>, FileRepositoryError> {
+            self.find_in_area(area)
+        }
+    }
+
+    let file = |name: &str| {
+        File::new(
+            name.to_string(),
+            Bytes::new(1_000),
+            FileStatus::Available,
+            Some(b'P'),
+            format!("{name} description"),
+            SystemTime::from(time::macros::datetime!(2026-06-01 12:00 UTC)),
+        )
+    };
+    let mut services = test_services();
+    services.file_repo = Arc::new(ReloadingFileRepository {
+        reads: AtomicUsize::new(0),
+        old: file("OLD.LHA"),
+        new: file("NEW.LHA"),
+    });
+    let mut session = menu_session();
+    let mut terminal = keyed_terminal(vec![
+        key(b'L'),
+        key(b'R'),
+        key(b'1'),
+        KeyRead::Key(KeyEvent::Enter),
+        key(b'Q'),
+    ]);
+    {
+        let mut flow = crate::app::menu_flow::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.handle_file_list(
+            &mut session,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+                reverse: false,
+                quick: false,
+                fr_banner: false,
+            },
+        )
+        .await
+        .expect("reloaded listing");
+    }
+
+    let output = String::from_utf8_lossy(&terminal.output);
+    assert!(output.contains("OLD.LHA"));
+    assert!(output.contains("NEW.LHA"));
+    let flags = session.flagged_files_mut();
+    assert!(
+        flags.contains(&crate::domain::files::flagged::FlaggedKey::new(
+            1, "NEW.LHA",
+        ))
+    );
+    assert!(
+        !flags.contains(&crate::domain::files::flagged::FlaggedKey::new(
+            1, "OLD.LHA",
+        ))
+    );
+}
+
+#[tokio::test]
 async fn ctrl_c_at_more_quits_with_the_break_banner() {
     // Ctrl-C (ae_tierd_help_audit.txt PCC, bare keypress): `\r\n`,
     // the reset `**Break` line, then the standard two-reset exit
@@ -635,9 +744,9 @@ async fn f_at_more_flag_prompt_emits_no_confirmation_bytes() {
     // Enter finishing with NO trailing CRLF, the wider clear,
     // More? redrawn — and no confirmation text anywhere. Flagging
     // is silent at the prompt (only the session set changes); the
-    // typed TERMV48X.LHA is not in the dir-1 registry, so it
-    // matches nothing — no row is flagged and so no in-place
-    // repaint fires (Task 3.4b), leaving the wire bytes unaffected.
+    // typed TERMV48X.LHA is not in the dir-1 display, so legacy name
+    // handling stores it but no in-place row repaint fires, leaving
+    // the wire bytes unaffected.
     let services = services_with_demo_catalogue();
     let mut keys = vec![key(b'F')];
     keys.extend(b"TERMV48X.LHA".iter().map(|&c| key(c)));
@@ -804,40 +913,404 @@ async fn r_at_more_opens_the_distinct_flag_by_number_prompt() {
 }
 
 #[test]
-fn apply_flags_matches_names_case_insensitively_and_numbers() {
+fn displayed_selection_index_is_dense_and_replaced_for_each_directory() {
     use crate::domain::files::flagged::FlaggedKey;
-    let listed = vec![
-        super::ListedRow {
-            key: FlaggedKey::new(1, "ANSIPACK.LHA"),
-            number: Some(1),
-            aligned: true,
-        },
-        super::ListedRow {
-            key: FlaggedKey::new(1, "THIRTEENCH.LZ"),
-            number: None,
-            aligned: false,
-        },
-    ];
-
-    // `F` matches by name, case-insensitively, and reports the new key.
-    let mut flagged = FlaggedFiles::default();
-    let newly = super::apply_flags("ansipack.lha", false, &listed, &mut flagged);
-    assert_eq!(newly, vec![FlaggedKey::new(1, "ANSIPACK.LHA")]);
-    assert!(flagged.contains(&FlaggedKey::new(1, "ANSIPACK.LHA")));
-    // Re-flagging is idempotent: nothing new.
-    assert!(super::apply_flags("ANSIPACK.LHA", false, &listed, &mut flagged).is_empty());
-    // An unlisted name matches nothing.
-    assert!(super::apply_flags("NOSUCH.LHA", false, &listed, &mut flagged).is_empty());
-
-    // `R` matches by `[ File #N ]` number (framed rows only).
-    let mut by_num = FlaggedFiles::default();
+    let row = |number, name| super::ListedRow {
+        key: FlaggedKey::new(1, name),
+        number: Some(number),
+        aligned: true,
+    };
+    let mut displayed = super::DisplayedSelectionIndex::default();
+    displayed.record(&row(1, "FIRST.LHA"));
+    displayed.record(&super::ListedRow {
+        key: FlaggedKey::new(1, "PLAINROW.LHA"),
+        number: None,
+        aligned: false,
+    });
+    displayed.record(&row(2, "SECOND.LHA"));
+    assert_eq!(displayed.resolve(1), Some(&FlaggedKey::new(1, "FIRST.LHA")),);
     assert_eq!(
-        super::apply_flags("1", true, &listed, &mut by_num),
-        vec![FlaggedKey::new(1, "ANSIPACK.LHA")],
+        displayed.resolve(2),
+        Some(&FlaggedKey::new(1, "SECOND.LHA")),
     );
-    // No such number, and a plain row (number None) is never `R`-matched.
-    assert!(super::apply_flags("9", true, &listed, &mut by_num).is_empty());
-    assert!(super::apply_flags("2", true, &listed, &mut by_num).is_empty());
+
+    displayed.begin_directory();
+    displayed.record(&row(1, "REPLACEMENT.LHA"));
+    assert_eq!(
+        displayed.resolve(1),
+        Some(&FlaggedKey::new(1, "REPLACEMENT.LHA")),
+    );
+    assert_eq!(displayed.resolve(2), None);
+    assert_eq!(displayed.resolve(0), None);
+}
+
+#[test]
+#[should_panic(expected = "displayed file numbers must be dense")]
+fn displayed_selection_index_rejects_a_non_dense_first_number() {
+    let mut displayed = super::DisplayedSelectionIndex::default();
+    displayed.record(&super::ListedRow {
+        key: crate::domain::files::flagged::FlaggedKey::new(1, "SECOND.LHA"),
+        number: Some(2),
+        aligned: true,
+    });
+}
+
+#[test]
+fn numeric_flag_plan_accepts_valid_tokens_and_ignores_invalid_tokens() {
+    use crate::domain::files::flagged::FlaggedKey;
+    let mut displayed = super::DisplayedSelectionIndex::default();
+    for (number, name) in [(1, "FIRST.LHA"), (2, "SECOND.LHA")] {
+        displayed.record(&super::ListedRow {
+            key: FlaggedKey::new(1, name),
+            number: Some(number),
+            aligned: true,
+        });
+    }
+    let flagged = FlaggedFiles::default();
+    assert_eq!(
+        super::plan_flags("1 2 1", true, 1, &displayed, &flagged),
+        vec![
+            FlaggedKey::new(1, "FIRST.LHA"),
+            FlaggedKey::new(1, "SECOND.LHA"),
+        ],
+    );
+    assert_eq!(
+        super::plan_flags("1 garbage", true, 1, &displayed, &flagged),
+        vec![FlaggedKey::new(1, "FIRST.LHA")],
+    );
+    for entry in ["", "   ", "0", "999", "abc", "+1", "-1", "1garbage"] {
+        assert!(
+            super::plan_flags(entry, true, 1, &displayed, &flagged).is_empty(),
+            "{entry:?} is a silent no-op",
+        );
+    }
+
+    let mut already_flagged = FlaggedFiles::default();
+    already_flagged.flag(FlaggedKey::new(1, "FIRST.LHA"));
+    assert_eq!(
+        super::plan_flags("1 2", true, 1, &displayed, &already_flagged),
+        vec![FlaggedKey::new(1, "SECOND.LHA")],
+    );
+}
+
+#[test]
+fn name_flag_plan_is_unchecked_trimmed_uppercase_whole_line() {
+    use crate::domain::files::flagged::FlaggedKey;
+    let displayed = super::DisplayedSelectionIndex::default();
+    let flagged = FlaggedFiles::default();
+    assert_eq!(
+        super::plan_flags("  my demo.lha  ", false, 7, &displayed, &flagged),
+        vec![FlaggedKey::new(7, "MY DEMO.LHA")],
+    );
+    for entry in ["", "   ", " a "] {
+        assert!(super::plan_flags(entry, false, 7, &displayed, &flagged).is_empty());
+    }
+    let mut already_flagged = FlaggedFiles::default();
+    already_flagged.flag(FlaggedKey::new(7, "MY DEMO.LHA"));
+    assert!(super::plan_flags("my demo.lha", false, 7, &displayed, &already_flagged,).is_empty(),);
+}
+
+#[tokio::test]
+async fn numeric_selection_is_replaced_when_the_scan_enters_the_next_directory() {
+    // D10 live capture `F A`: each directory restarts at File #1, and
+    // `R 1` in directory 2 selects that directory's row rather than
+    // the stale first match from directory 1
+    // (`ae_tierd_d10_selection.txt:188-398`).
+    let services = services_with_two_small_areas();
+    let mut session = menu_session();
+    let mut terminal = keyed_terminal(vec![
+        key(b'Y'),
+        key(b'R'),
+        key(b'1'),
+        KeyRead::Key(KeyEvent::Enter),
+        key(b'Q'),
+    ]);
+    {
+        let mut flow = crate::app::menu_flow::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.handle_file_list(
+            &mut session,
+            FileListArg::Span {
+                span: FileSpan::All,
+                non_stop: false,
+                reverse: false,
+                quick: false,
+                fr_banner: false,
+            },
+        )
+        .await
+        .expect("two-directory listing");
+    }
+
+    let flags = session.flagged_files_mut();
+    assert!(
+        flags.contains(&crate::domain::files::flagged::FlaggedKey::new(
+            1,
+            "SECOND.LHA",
+        )),
+        "directory 2's displayed File #1 must win",
+    );
+    assert!(
+        !flags.contains(&crate::domain::files::flagged::FlaggedKey::new(
+            1,
+            "FIRST.LHA",
+        )),
+        "directory 1's stale File #1 must not remain selectable",
+    );
+}
+
+#[tokio::test]
+async fn page_boundary_row_is_registered_before_more_accepts_numeric_selection() {
+    use crate::domain::files::flagged::FlaggedKey;
+
+    let services = test_services();
+    let mut terminal = keyed_terminal_no_ansi(vec![
+        key(b'R'),
+        key(b'1'),
+        KeyRead::Key(KeyEvent::Enter),
+        key(b'Q'),
+    ]);
+    let mut state = super::ScanState::new(false, 1);
+    state.emitted = super::PAGE_LINES - 1;
+    state.displayed.record(&super::ListedRow {
+        key: FlaggedKey::new(1, "EARLIER.LHA"),
+        number: Some(1),
+        aligned: true,
+    });
+    let mut flagged = FlaggedFiles::default();
+    let row = super::ScanLine {
+        bytes: b"BOUNDARY.LHA".to_vec(),
+        listed: Some(super::ListedRow {
+            key: FlaggedKey::new(1, "BOUNDARY.LHA"),
+            number: Some(2),
+            aligned: true,
+        }),
+    };
+    let flow = {
+        let mut menu = crate::app::menu_flow::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        menu.emit_scan_line(&mut state, row, &mut flagged)
+            .await
+            .expect("boundary row")
+    };
+
+    assert_eq!(flow, super::ScanFlow::Quit);
+    assert!(
+        flagged.contains(&FlaggedKey::new(1, "EARLIER.LHA")),
+        "an earlier-page number remains selectable at the next boundary",
+    );
+    assert!(!flagged.contains(&FlaggedKey::new(1, "BOUNDARY.LHA")));
+    assert_eq!(
+        state.displayed.resolve(2),
+        Some(&FlaggedKey::new(1, "BOUNDARY.LHA")),
+        "the fully written boundary row is registered before More?",
+    );
+    assert!(terminal.output.starts_with(b"BOUNDARY.LHA\r\n"));
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InjectedWriteFailure;
+
+struct FailOnNthWriteTerminal {
+    writes: usize,
+    fail_on: usize,
+}
+
+impl Terminal for FailOnNthWriteTerminal {
+    type Error = InjectedWriteFailure;
+
+    fn write<'a>(&'a mut self, _bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
+        Box::pin(async move {
+            self.writes += 1;
+            if self.writes == self.fail_on {
+                Err(InjectedWriteFailure)
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn read_line(
+        &mut self,
+        _echo: TerminalEcho,
+        _timeout: Duration,
+    ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+        Box::pin(async { Ok(TerminalRead::Eof) })
+    }
+}
+
+#[tokio::test]
+async fn failed_row_or_crlf_write_does_not_register_the_row() {
+    use crate::domain::files::flagged::FlaggedKey;
+
+    let services = test_services();
+    for fail_on in [1, 2] {
+        let mut terminal = FailOnNthWriteTerminal { writes: 0, fail_on };
+        let mut state = super::ScanState::new(false, 1);
+        let mut flagged = FlaggedFiles::default();
+        let row = super::ScanLine {
+            bytes: b"PARTIAL.LHA".to_vec(),
+            listed: Some(super::ListedRow {
+                key: FlaggedKey::new(1, "PARTIAL.LHA"),
+                number: Some(1),
+                aligned: true,
+            }),
+        };
+        let result = {
+            let mut menu = crate::app::menu_flow::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            menu.emit_scan_line(&mut state, row, &mut flagged).await
+        };
+
+        assert_eq!(result, Err(InjectedWriteFailure), "write {fail_on}");
+        assert_eq!(state.displayed.resolve(1), None, "write {fail_on}");
+        assert!(state.page.is_empty(), "write {fail_on}");
+        assert_eq!(state.emitted, 0, "write {fail_on}");
+        assert!(flagged.is_empty(), "write {fail_on}");
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlagFailurePoint {
+    Clear,
+    Repaint,
+    More,
+}
+
+/// Injects one failure after a flag entry has been planned but before
+/// its in-memory commit.
+struct FailDuringFlagRedrawTerminal {
+    keys: VecDeque<KeyRead>,
+    fail_at: FlagFailurePoint,
+    armed: bool,
+}
+
+impl Terminal for FailDuringFlagRedrawTerminal {
+    type Error = InjectedWriteFailure;
+
+    fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
+        Box::pin(async move {
+            if bytes == flag_clear() {
+                if self.fail_at == FlagFailurePoint::Clear {
+                    return Err(InjectedWriteFailure);
+                }
+                self.armed = true;
+            }
+            if self.armed
+                && self.fail_at == FlagFailurePoint::Repaint
+                && bytes
+                    .windows(b"\x1b[14G[X]".len())
+                    .any(|window| window == b"\x1b[14G[X]")
+            {
+                return Err(InjectedWriteFailure);
+            }
+            if self.armed
+                && self.fail_at == FlagFailurePoint::More
+                && bytes == super::super::wire::MORE_PROMPT
+            {
+                return Err(InjectedWriteFailure);
+            }
+            Ok(())
+        })
+    }
+
+    fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn read_line(
+        &mut self,
+        _echo: TerminalEcho,
+        _timeout: Duration,
+    ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+        Box::pin(async { Ok(TerminalRead::Eof) })
+    }
+
+    fn read_key(&mut self, _timeout: Duration) -> TerminalFuture<'_, KeyRead, Self::Error> {
+        let key = self.keys.pop_front().unwrap_or(KeyRead::Eof);
+        Box::pin(async move { Ok(key) })
+    }
+}
+
+#[tokio::test]
+async fn flag_is_not_committed_when_any_post_plan_redraw_write_fails() {
+    // Hardening §10.4: accepting a complete entry is not the commit
+    // point. A failure in the clear, repaint, or restored More? leaves
+    // the session set unchanged.
+    for fail_at in [
+        FlagFailurePoint::Clear,
+        FlagFailurePoint::Repaint,
+        FlagFailurePoint::More,
+    ] {
+        let services = services_with_demo_catalogue();
+        let mut session = menu_session();
+        let mut terminal = FailDuringFlagRedrawTerminal {
+            keys: VecDeque::from(vec![key(b'R'), key(b'1'), KeyRead::Key(KeyEvent::Enter)]),
+            fail_at,
+            armed: false,
+        };
+        let result = {
+            let mut flow = crate::app::menu_flow::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_file_list(
+                &mut session,
+                FileListArg::Span {
+                    span: FileSpan::Dir(1),
+                    non_stop: false,
+                    reverse: false,
+                    quick: false,
+                    fr_banner: false,
+                },
+            )
+            .await
+        };
+
+        assert_eq!(result, Err(InjectedWriteFailure), "{fail_at:?}");
+        assert!(
+            session.flagged_files_mut().is_empty(),
+            "{fail_at:?} must not commit any key",
+        );
+    }
+}
+
+#[tokio::test]
+async fn flag_entry_eof_or_idle_timeout_does_not_commit() {
+    for abort in [KeyRead::Eof, KeyRead::IdleTimedOut] {
+        let services = services_with_demo_catalogue();
+        let mut session = menu_session();
+        let mut terminal = keyed_terminal(vec![key(b'R'), abort]);
+        {
+            let mut flow = crate::app::menu_flow::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.handle_file_list(
+                &mut session,
+                FileListArg::Span {
+                    span: FileSpan::Dir(1),
+                    non_stop: false,
+                    reverse: false,
+                    quick: false,
+                    fr_banner: false,
+                },
+            )
+            .await
+            .expect("carrier/idle exits the listing cleanly");
+        }
+        assert!(session.flagged_files_mut().is_empty(), "{abort:?}");
+    }
 }
 
 #[tokio::test]
@@ -1038,28 +1511,44 @@ async fn flagging_by_number_repaints_the_row() {
 
 #[tokio::test]
 async fn flagging_an_unlisted_name_emits_no_repaint() {
-    // Slice D2f (Task 3.4b): flagging a name absent from the
-    // listing flags nothing, so no row is repainted — no cursor-up
-    // CSI appears between the flag clear and the More? redraw,
-    // which still fires.
+    // D10 capture: AquaScan accepts an unchecked name absent from the
+    // catalogue (`NOSUCH.LHA`) and `express.e:12523-12542` stores it,
+    // but there is no visible row to repaint.
     let services = services_with_demo_catalogue();
+    let mut session = menu_session();
     let mut keys = vec![key(b'F')];
     keys.extend(b"NOSUCH.LHA".iter().map(|&c| key(c)));
     keys.push(KeyRead::Key(KeyEvent::Enter));
     keys.push(key(b'Q'));
     let mut terminal = keyed_terminal(keys);
-    run_file_list(
-        &services,
-        &mut terminal,
-        FileListArg::Span {
-            span: FileSpan::Dir(1),
-            non_stop: false,
-            reverse: false,
-            quick: false,
-            fr_banner: false,
-        },
-    )
-    .await;
+    {
+        let mut flow = crate::app::menu_flow::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.handle_file_list(
+            &mut session,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+                reverse: false,
+                quick: false,
+                fr_banner: false,
+            },
+        )
+        .await
+        .expect("listing");
+    }
+
+    assert!(
+        session
+            .flagged_files_mut()
+            .contains(&crate::domain::files::flagged::FlaggedKey::new(
+                1,
+                "NOSUCH.LHA",
+            )),
+        "the unchecked whole-line name is still committed",
+    );
 
     let clear = flag_clear();
     let clear_at = terminal
@@ -1075,13 +1564,66 @@ async fn flagging_an_unlisted_name_emits_no_repaint() {
             &after_clear[..super::super::wire::MORE_PROMPT.len().min(after_clear.len())]
         ),
     );
-    // No aligned-slot repaint move anywhere — nothing was flagged.
+    // No aligned-slot repaint move anywhere — no listed row matched.
     assert!(
         !terminal
             .output
             .windows(b"\x1b[14G".len())
             .any(|w| w == b"\x1b[14G"),
         "no repaint CSI is emitted for an unlisted name",
+    );
+}
+
+#[tokio::test]
+async fn name_selection_preserves_one_trimmed_space_containing_whole_line() {
+    // D10 edge capture E2 plus `express.e:12638`: the name prompt
+    // passes its entire line once to addFlagToList. It is not a list of
+    // catalogue-name tokens, even when each word is itself listed.
+    let services = services_with_demo_catalogue();
+    let mut session = menu_session();
+    let entry = b"  ansipack.lha termv48.lha  ";
+    let mut keys = vec![key(b'F')];
+    keys.extend(entry.iter().map(|&c| key(c)));
+    keys.push(KeyRead::Key(KeyEvent::Enter));
+    keys.push(key(b'Q'));
+    let mut terminal = keyed_terminal(keys);
+    {
+        let mut flow = crate::app::menu_flow::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.handle_file_list(
+            &mut session,
+            FileListArg::Span {
+                span: FileSpan::Dir(1),
+                non_stop: false,
+                reverse: false,
+                quick: false,
+                fr_banner: false,
+            },
+        )
+        .await
+        .expect("listing");
+    }
+
+    let flags = session.flagged_files_mut();
+    assert!(
+        flags.contains(&crate::domain::files::flagged::FlaggedKey::new(
+            1,
+            "ANSIPACK.LHA TERMV48.LHA",
+        ))
+    );
+    assert!(
+        !flags.contains(&crate::domain::files::flagged::FlaggedKey::new(
+            1,
+            "ANSIPACK.LHA",
+        ))
+    );
+    assert!(
+        !flags.contains(&crate::domain::files::flagged::FlaggedKey::new(
+            1,
+            "TERMV48.LHA",
+        ))
     );
 }
 
@@ -1585,6 +2127,98 @@ async fn hold_span_reports_nothing_found_when_no_files_are_held() {
 }
 
 #[tokio::test]
+async fn populated_hold_listing_permits_dense_numeric_selection() {
+    use crate::domain::bytes::Bytes;
+    use crate::domain::files::area::FileArea;
+    use crate::domain::files::file::{File, FileStatus};
+
+    // Human gate A: preserve compatibility by registering displayed
+    // HOLD numbers. This is an uncaptured extrapolation and explicit
+    // Allium status departure, not a live-board MATCH claim.
+    let held = File::new(
+        "HELD.LHA".to_string(),
+        Bytes::new(1_000),
+        FileStatus::HeldForReview,
+        Some(b'P'),
+        "Held file".to_string(),
+        SystemTime::from(time::macros::datetime!(2026-06-01 12:00 UTC)),
+    );
+    let services = services_with(InMemoryFileRepository::new(
+        vec![FileArea::new(1, 1, "Main".to_string())],
+        vec![(1, 1, held)],
+    ));
+    let mut session = menu_session();
+    let mut terminal = keyed_terminal(vec![
+        key(b'L'),
+        key(b'R'),
+        key(b'1'),
+        KeyRead::Key(KeyEvent::Enter),
+        key(b'Q'),
+    ]);
+    {
+        let mut flow = crate::app::menu_flow::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.handle_file_list(
+            &mut session,
+            FileListArg::Span {
+                span: FileSpan::Hold,
+                non_stop: false,
+                reverse: false,
+                quick: false,
+                fr_banner: false,
+            },
+        )
+        .await
+        .expect("populated HOLD listing");
+    }
+
+    assert!(
+        session
+            .flagged_files_mut()
+            .contains(&crate::domain::files::flagged::FlaggedKey::new(
+                1, "HELD.LHA",
+            )),
+        "the displayed HOLD File #1 remains selectable",
+    );
+}
+
+#[tokio::test]
+async fn directory_order_is_independent_from_reverse_row_order() {
+    // The live AquaScan `FR A` capture proves these are distinct axes,
+    // even though human gate A keeps the shipped FR/N-R constructors
+    // paired as reverse rows + descending dirs.
+    let services = services_with_two_small_areas();
+    let areas = services.file_repo.areas_in_conference(1).expect("areas");
+    let mut terminal = CaptureTerminal::default();
+    let mut state = super::ScanState::new(true, 1);
+    let mut flagged = FlaggedFiles::default();
+    let mode = super::ScanMode {
+        kind: super::ScanKind::Full { reverse: true },
+        directory_order: super::DirectoryOrder::Forward,
+        quick: false,
+    };
+    {
+        let mut flow = crate::app::menu_flow::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.run_span(&mut state, 1, FileSpan::All, &areas, &mut flagged, &mode)
+            .await
+            .expect("mixed ordering mode");
+    }
+
+    let output = String::from_utf8_lossy(&terminal.output);
+    let dir1 = output.find("Reverse-scanning dir 1").expect("dir 1 header");
+    let dir2 = output.find("Reverse-scanning dir 2").expect("dir 2 header");
+    assert!(
+        dir1 < dir2,
+        "explicit Forward order must win over row reversal"
+    );
+}
+
+#[tokio::test]
 async fn run_span_full_mode_streams_the_dir_through_the_engine_api() {
     // Item 17's generalised engine API: `run_span` takes a `&ScanMode`
     // — `Full { reverse: false }` over dir 2 streams the same header +
@@ -1593,9 +2227,10 @@ async fn run_span_full_mode_streams_the_dir_through_the_engine_api() {
     let mut terminal = CaptureTerminal::default();
     let mut session = menu_session();
     let areas = services.file_repo.areas_in_conference(1).expect("areas");
-    let mut state = super::ScanState::new(true);
+    let mut state = super::ScanState::new(true, 1);
     let mode = super::ScanMode {
         kind: super::ScanKind::Full { reverse: false },
+        directory_order: super::DirectoryOrder::Forward,
         quick: false,
     };
     {
@@ -1631,9 +2266,10 @@ async fn run_span_full_reverse_mode_lists_newest_first_through_the_engine_api() 
     let mut terminal = CaptureTerminal::default();
     let mut session = menu_session();
     let areas = services.file_repo.areas_in_conference(1).expect("areas");
-    let mut state = super::ScanState::new(true);
+    let mut state = super::ScanState::new(true, 1);
     let mode = super::ScanMode {
         kind: super::ScanKind::Full { reverse: true },
+        directory_order: super::DirectoryOrder::Reverse,
         quick: false,
     };
     {

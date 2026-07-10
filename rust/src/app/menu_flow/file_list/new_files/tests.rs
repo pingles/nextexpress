@@ -302,6 +302,27 @@ async fn r_answer_runs_the_full_reverse_scan() {
 }
 
 #[tokio::test]
+async fn prompt_reverse_all_keeps_the_existing_descending_directory_walk() {
+    // D10 keeps unprobed `N R A` source/current ordering on both entry
+    // paths. This independently pins the prompt-path ScanMode arm.
+    let services = demo_services_at_capture_noon();
+    let mut terminal = CaptureTerminal::with_lines_and_keys(
+        vec![
+            TerminalRead::Line("R".to_string()),
+            TerminalRead::Line("A".to_string()),
+        ],
+        vec![key(b'Y'), key(b'Q')],
+    );
+    let mut session = menu_session();
+    run_new_files(&services, &mut terminal, &mut session, NewFilesArg::Prompt).await;
+
+    let output = String::from_utf8_lossy(&terminal.output);
+    let dir2 = output.find("Reverse-scanning dir 2").expect("dir 2 header");
+    let dir1 = output.find("Reverse-scanning dir 1").expect("dir 1 header");
+    assert!(dir2 < dir1, "prompt N R A must retain descending dir order");
+}
+
+#[tokio::test]
 async fn r_with_a_trailing_date_discards_the_date() {
     // N4b: `R 12-30-26` at the Date prompt ran the identical plain
     // full-reverse scan — the date token is tolerated and discarded.
@@ -831,6 +852,27 @@ async fn inline_reverse_scans_the_dir_newest_first() {
         String::from_utf8_lossy(&terminal.output),
         String::from_utf8_lossy(&expected),
     );
+}
+
+#[tokio::test]
+async fn inline_reverse_all_keeps_the_existing_descending_directory_walk() {
+    // D10 separates row order from directory order but does not alter
+    // unprobed `N R A`: retain the existing/source reverse span walk.
+    let services = demo_services_at_capture_noon();
+    let mut terminal = CaptureTerminal::default();
+    let mut session = menu_session();
+    let arg = NewFilesArg::Scan(NewFilesSpec {
+        request: ScanRequest::Reverse,
+        span: Some(FileSpan::All),
+        quick: false,
+        non_stop: true,
+    });
+    run_new_files(&services, &mut terminal, &mut session, arg).await;
+
+    let output = String::from_utf8_lossy(&terminal.output);
+    let dir2 = output.find("Reverse-scanning dir 2").expect("dir 2 header");
+    let dir1 = output.find("Reverse-scanning dir 1").expect("dir 1 header");
+    assert!(dir2 < dir1, "N R A must retain descending dir order");
 }
 
 #[tokio::test]

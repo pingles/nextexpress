@@ -32,7 +32,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 17 | **Terminal-delivery `SessionSignal` channel** (26) | **Landed** 2026-07-03 (pulled forward; OLM/page add the send side) | The landed one-variant `Deliver(Vec<u8>)` lane can wake a session blocked on terminal input without losing partially typed text. It is deliberately **delivery-only**: it cannot mutate session state or preserve typed logoff reasons for kick/suspend/time changes. Row 23 records the missing control plane. | ~5–7 | ~3 days |
 | 18 | **Activate the time budget** (27) | **Before D-T3** | `tick_minute` has zero callers — "mins. left" is frozen and `OutOfTime` unreachable (a parity gap now). D-T3's transfer eligibility must not read a frozen budget; Tier G's time +/- and Tier I accounting depend on the same live accrual. | ~4–6 + FS-UAE capture | 1–2 days |
 | 19 | **Stable file identity + transfer transaction boundary** (28) | **Design accepted**; implementation spans D2s/D-T1/D-T2 | Add stable `FileId` and one durable SQLite metadata database/pool whose unit-of-work atomically updates transfer, file, user and membership projections; ephemeral mode implements the same boundary in memory. Stable configuration area keys preserve identity across renumbering. | ~8–15 | implementation in-slice |
-| 20 | **NextScan listed-file index** (29) | Now, before D/DS pins numeric selection | The scan-wide `Vec<ListedRow>` grows across areas/reloads and each flag token linearly searches it. Directory numbering restarts, so retaining old numeric rows can resolve `R 1` to the wrong area. A normalized-name index plus current-directory numeric index fixes correctness and scale without changing the current-page `Vec`. | ~3–5 | 1–2 days + capture |
+| 20 | **NextScan listed-file index** (29) | **Landed** 2026-07-10 (D10) | The scan-wide `Vec<ListedRow>` incorrectly retained repeated numbers across areas/reloads. A private dense `DisplayedSelectionIndex(Vec<FlaggedKey>)` now replaces identity at each directory/reload boundary and resolves `R n` by direct `n - 1` lookup; captured legacy names deliberately bypass catalogue lookup. The ordered current-page `Vec` remains solely for redraw geometry, and staged flags commit only after terminal output succeeds. | 4 src/test + 4 docs/evidence | capture + 1 day |
 | 21 | **Complete flagged-file identity/order lifecycle** (30) | **Design accepted**; implement before D/DS, purge before D-S2 | Allow duplicate names across areas, resolve legacy keys in configured area order to `FileId`, preserve insertion order with sequence + membership index, enforce 1000 entries, persist command deltas, and quarantine/report migration overflow. | ~6–10 | 2–4 days |
 | 22 | **Bounded blocking-work boundary** (31) | **Design accepted**; implement before D2s/D-T1 | Put async application facades over bounded blocking workers, with one serialized SQLite writer and a small read pool. Keep pure domain rules synchronous, isolate password/extraction capacity, and stream file bytes with backpressure. | ~8–15 | 3–6 days, staged |
 | 23 | **Typed session control plane** (32) | **DECISION REQUIRED before any file mutation that invalidates active flags, or state-changing Tier E/G slices** | Terminal delivery cannot implement flag reconciliation, kick reason, suspend/reserve, time adjustment or chat state. Choose one typed lane owned by the session driver or separate notification/control lanes; terminal `Deliver` may remain the text wake-up mechanism. | design + ~6–12 | decision: 0.5–1 day; implementation with first consumer |
@@ -248,7 +248,7 @@ flowchart LR
     BaseHelpers --> MailRegistryPort
     MenuFlowHandlers --> FileList["file_list\n(NextScan F/FR entry points + dir_row + wire;\nplus the internal Z zippy search, slice D4)"]
     FileList --> NewFiles["file_list/new_files\n(N date-scan entry, slice D9:\nDate/Directories prompts +\nClock-port date resolver)"]
-    FileList --> ScanEngine["file_list/scan\n(the NextScan engine, item 17:\nScanMode dir walk + 29-line\nScanState More? pager + flag verbs)"]
+    FileList --> ScanEngine["file_list/scan\n(the NextScan engine, items 17/29:\nScanMode dir walk + 29-line pager +\ncurrent-dir DisplayedSelectionIndex)"]
     NewFiles --> ScanEngine
     FileList --> FilePort["FileRepository (port)"]
     FileCatalogue -.implements.-> FilePort
@@ -353,7 +353,7 @@ module under `app::menu_flow/`):
 | `M` | `AnsiToggle` | dispatch (`terminal.set_ansi_colour`; `ColourTerminal` strips ANSI when off) |
 | `MS` | `ScanAllMail` | multi-conference mail scan — `scan_all_mail`; per base with matched mail, offers `Would you like to read it now` and (on Yes) attaches that base as a transient read visit and drops into `read_subprompt`, restoring the home conference after |
 | `CF` | `ConferenceFlags` | `conf_flags` — the M/A/F/Z scan-flag editor (legacy `internalCommandCF`); redraws the listing, reads a mask key then a conference expression (`+`/`-`/`*`/list) and applies it to the caller's own `ConferenceMembership` flags via `domain::conference_flags`. Gated on `Right::EditConferenceFlags`. |
-| `F [R] [dir] [Q] [NS]` / `F ?` / `FR …` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). The `FR` reverse token (slice D3) reuses this code path via a `reverse` flag on `FileListArg::Span`: banner `'fr ?'` (dash run flexed 40→39), `Reverse-scanning dir N... Ok!` header, files newest-first, multi-dir spans descending; bare `FR` opens the `Directories:` prompt under the reverse banner (symmetric with bare `F`), then reverse-walks the chosen span — following `express.e:27645` over the AquaScan capture (which skips the prompt for `FR`). The 2026-07-04 re-probe (`ae_tierd_fr_probe.txt`) proved the door honours its advertised spaced forms, now shipped: `F R` prompts in reverse under the **`'f ?'` banner** (`fr_banner` on `FileListArg` decouples the banner label — it follows the typed head — from `reverse`), `F R <dir>` reverse-scans immediately, and `F <dir> Q` runs the quick scan (first description line only) through the same engine `quick` flag `N` uses. `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`, plus — landed 2026-07-04 from the `ae_tierd_help_audit.txt` probes — `K` skip-dir/`L` reload-dir via `ScanFlow::SkipDir`/`ReloadDir` and the Ctrl-C `**Break` quit) over true single-key hotkey reads (`Terminal::read_key`, slice D2b; held-`n`/Enter and bare-LF corners probe-pinned). `F`/`R` flag listed files into the session's `FlaggedFiles` set (slice D2f), rendered as an on-row `[X]` marker and repainted in place when ANSI is on; `ScanState` carries the scan-wide `listed` registry the flag verbs match against. Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
+| `F [R] [dir] [Q] [NS]` / `F ?` / `FR …` | `FileList(FileListArg)` | `file_list` — the NextScan lister (Tier D D1+D2; parity target is the AquaScan door the stock deployment shadows `F` with, NextScan-branded — `comparison/evidence-tierD/live-observations.md`). The `FR` reverse token (slice D3) reuses this code path via a `reverse` flag on `FileListArg::Span`: banner `'fr ?'` (dash run flexed 40→39), `Reverse-scanning dir N... Ok!` header, files newest-first, multi-dir spans descending; bare `FR` opens the `Directories:` prompt under the reverse banner (symmetric with bare `F`), then reverse-walks the chosen span — following `express.e:27645` over the AquaScan capture (which skips the prompt for `FR`). The 2026-07-04 re-probe (`ae_tierd_fr_probe.txt`) proved the door honours its advertised spaced forms, now shipped: `F R` prompts in reverse under the **`'f ?'` banner** (`fr_banner` on `FileListArg` decouples the banner label — it follows the typed head — from `reverse`), `F R <dir>` reverse-scans immediately, and `F <dir> Q` runs the quick scan (first description line only) through the same engine `quick` flag `N` uses. `dir_row` renders the legacy upload-writer row layout from `File` fields; `wire` holds the capture-pinned `&[u8]` constants (banners, separator art, prompts, in-pager help, `F ?` screen) and the date-group frame assembler; the module-local `ScanState` pager pages at 29 lines with the captured `More?` verb set (`Y`/`n`-hold/`ns`+confirm/`C`/`F`/`R`/`?`/`Q`, plus — landed 2026-07-04 from the `ae_tierd_help_audit.txt` probes — `K` skip-dir/`L` reload-dir via `ScanFlow::SkipDir`/`ReloadDir` and the Ctrl-C `**Break` quit) over true single-key hotkey reads (`Terminal::read_key`, slice D2b; held-`n`/Enter and bare-LF corners probe-pinned). `F`/`R` flag into the session's `FlaggedFiles` set, rendered as an on-row `[X]` marker and repainted in place when ANSI is on. D10's private dense `DisplayedSelectionIndex` replaces numeric identity at every directory/reload boundary, while name input follows the legacy unchecked whole-line rule; flag keys are staged through terminal redraw and committed only after successful output. `DirectoryOrder` is independent from row reversal; the A/A/A gate retains current/source `FR A` high→low traversal and unchanged `N R`. Reads `services.file_repo` only — listings are generated at runtime; no DIR files on disk. |
 | `N` / `N [S\|mm-dd[-yy]\|T\|Y\|-x\|!x\|R] [dir] [Q] [NS]` / `N ?` | `NewFilesScan(NewFilesArg)` | `file_list/new_files::handle_new_files` — the NextScan new-files scan (Tier D D9; parity target is the AquaScan door's date-scan mode, byte-pinned to the dedicated capture `comparison/transcripts/ae_tierd_newfiles.txt` N1–N9; the internal `internalCommandN`, `express.e:25275`, is door-shadowed — diff record only). Bare `N` runs the door's own `Date: (MM-DD-YY), (-X) Days, (R)everse, (Enter)=<mm-dd-yy> ?` prompt (Enter default = day of the previous call via `user.last_call()`, today for a first-time caller; bad answer → single-shot `Error in date!`; the 2026-07-04 re-probe showed the prompt also accepts `T`/`S`/`!x` and tolerates trailing tokens after any recognised first token, while `Y` alone stays rejected — `ae_tierd_newfiles2/3.txt`) then `F`'s `Directories:` prompt — **current conference only, no `CF` involvement** (that flag gates only the logon `confScan`). Inline forms resolve a `ScanRequest` through the `Clock` port (UTC day boundary; two-digit years pivot at 77) into the item-17 engine's `ScanKind::NewSince { cutoff, label }` (inclusive `uploaded_at >= cutoff` via `FileRepository::list_new_since`, filtered rows renumbered from `[ File #1 ]`), `NewestLast { count }` (`!x`, ascending tail, saturating) or `Full { reverse: true }` (`R` = the FR mode); `Q` (quick) drops description continuations via `assemble_dir_lines`' quick flag; `NS` suppresses every `More?`. Two capture-pinned page-1 models: the prompt path counts from the post-answer blank (the door resets its counter at prompts), the inline path counts its preamble (F's span-path model). `N W` is advertised by the rebranded help screen but unported → Argument error. Nine TO-CONFIRM edges were live-probed 2026-07-04 (three refuted and fixed same day: the date-prompt verb family, the `!1` count-less singular header, trailing-junk tolerance after a valid date; the same pass fixed the `F ?`/`N ?` help-diagram indent stripped by trailing-`\` string continuations); the remainder ship provisionally (PLAUSIBLE rows in COMMAND_PARITY.md). |
 | `Z` / `Z <token>` | `ZippySearch(ZippyArg)` | `file_list::handle_zippy_search` — the internal zippy text search (Tier D D4; `internalCommandZ`, `express.e:26123`). **Not** AquaScan-shadowed, so parity is the genuine internal command — captured live (`comparison/transcripts/ae_tierd_zippy{,2}.txt`). Emits plain text (raw `dir_row` rows, **no** NextScan frames/colour): the `Enter string to search for:` prompt (bare `Z`), the internal `getDirSpan('')` `Directories: …=none? ` prompt (distinct from the AquaScan `=None ?` form), `Scanning directory N` headers, and the `No such directory.` error. The prompt's number/`U`/`A`/`H`/none/out-of-range answers are honoured. The inline `item(1)` form `Z <term> <span>` (slice D7) resolves the span with the same `getDirSpan` logic but **without** the prompt — `Z ART 1` scans immediately (`ZippyArg::QueryInDir`); large-match pagination still defers. Matching is `UpperStr`+`InStr` over each rendered row (filename included) — a hit dumps the whole block. Reads `services.file_repo` only. |
 | `A` | `AlterFlags` | `handle_alter_flags` — the genuine internal `alterFlags` -> `flagFiles` loop (Tier D D6a/D6b; `express.e:24601`, `:12648`, `:12594`). **Not** AquaScan-shadowed, captured live (`comparison/transcripts/ae_tierd_alterflags.txt`). Each pass renders the `showFlags` listing (`No file flags` or the upper-cased flagged names space-joined, `render_flag_listing`) then the `Filename(s) to flag: (F)rom, (C)lear, (Enter)=none? ` prompt (`FLAG_PROMPT`). A typed name flags via `flag_add` (`addFlagToList`, no on-disk existence check, the `(current conference, upper-cased name)` key) and exits to the menu with no trailing line; bare `C` opens the `Filename(s) to Clear: (*)All, …` sub-prompt (`CLEAR_PROMPT`) where `*` clears the whole set and re-prompts; `<CR>`=none ends the loop. The `FlaggedFiles` set is the same session aggregate the `F`/`R` pager verbs build. Deferred: `F`-from (`flagFrom`), clear-by-name (`removeFlagFromList`), the `ACS_DOWNLOAD` gate. |
@@ -548,7 +548,7 @@ shared cross-cutting primitives.
 
 | File | Lines | Notes |
 |---|---|---|
-| `app/menu_flow/file_list/scan/tests.rs` | ~1420 | The NextScan engine's capture-replay tests (pager verbs, page boundaries, flag/repaint suite), moved with the item-17 extraction; they still drive `handle_file_list`. `file_list/tests.rs` keeps the F-entry + zippy tests (~770). |
+| `app/menu_flow/file_list/scan/tests.rs` | ~2308 | The NextScan engine's capture-replay tests (pager verbs, page boundaries, flag/repaint suite, D10 directory/reload identity and failure-path regressions); they still drive `handle_file_list`. `file_list/tests.rs` keeps the F-entry + zippy tests (~770). |
 | `domain/session/tests.rs` | 2062 | Cross-capability session tests in 14 nested mods, internally grouped but monolithic. |
 | `app/menu_flow/join/tests.rs` | 1615 | `J`/`JM`/`<`/`>`/`<<`/`>>` family tests, sibling of `join/mod.rs` (605 production lines + the inlined `scan_mail_on_join`); refactoring 13. |
 | `adapters/telnet_listener/tests.rs` | 1574 | In-process integration tests (44 fns) for `TelnetListener`/`TelnetTerminal`, sibling of `telnet_listener/mod.rs` (214 production lines); refactoring 13. |
@@ -1783,23 +1783,41 @@ identity. A display key such as `(conference, area, name)` remains useful for
 legacy lookup but is not a foreign key. This accepted shape governs D2s
 migrations, flag resolution, D-T2 retries and deletion.
 
-### 29. Index the scan-wide listed-file registry
+### 29. Index the scan-wide listed-file registry — landed 2026-07-10
 
-`ScanState.listed: Vec<ListedRow>` is not page state: it accumulates
-rows across areas and reloads. Flag parsing then linearly searches the
-whole vector for each token, and directory-local display numbers can
-collide with retained rows from earlier directories. Keep the ordered
-`Vec` for the current page, but replace the scan-wide lookup registry
-with a small value object holding:
+The D10 live capture proved that display numbers are directory-local and a
+reload replaces the mapping. The former `ScanState.listed: Vec<ListedRow>`
+accumulated rows across directories/reloads and linearly searched repeated
+numbers, so `R 1` could select an earlier directory's file.
 
-- a normalized-name map that preserves first-seen legacy resolution;
-- a current-directory displayed-number map, reset when the directory
-  changes; and
-- explicit reload deduplication.
+`ScanState` now owns a private
+`DisplayedSelectionIndex { keys: Vec<FlaggedKey> }`. Numbered rows are dense,
+so one-based `R n` resolves by checked `n - 1` indexing in O(1), without a
+hash map that could represent holes. The index:
 
-This is a correctness refactor first and a scale improvement second.
-Pin cross-directory `R <number>`, duplicate names and reload behaviour
-against a live capture before changing resolution semantics.
+- clears before every directory or HOLD fetch, including empty results and
+  every `L` reload;
+- records a numbered row only after both its bytes and CRLF are written, but
+  before a page-boundary `More?` can accept `R`;
+- retains identity across pages and `?` redraws within one directory; and
+- never registers assembled-but-not-yet-visible rows.
+
+The ordered current-page `Vec<ScanLine>` remains separate because redraw and
+cursor repaint need presentation order. A normalized-name index was rejected
+after capture: AquaScan and `express.e:12523-12542,12638` accept one unchecked,
+trimmed, upper-cased whole line, including unknown names. Numeric input uses
+strict decimal whitespace tokens and a small `BTreeSet` only to suppress
+repeated staged keys while retaining first-occurrence order in the returned
+`Vec`.
+
+Flag handling is plan/render/commit: it computes owned keys without mutation,
+writes the clear/repaint/restored prompt, then commits to `FlaggedFiles` only
+after every terminal write succeeds. `DirectoryOrder` is also explicit and
+separate from per-directory row reversal, so a future `FR` authority change
+cannot silently alter `N R`. D10's A/A/A gate retains current/source `FR A`
+high-to-low traversal and permits populated-HOLD numbers as an uncaptured,
+Allium-departing compatibility extrapolation. Stable duplicate identity stays
+with item 30.
 
 ### 30. Complete flagged-file identity, order and purge semantics
 
@@ -1995,8 +2013,9 @@ area and call identity; command-persisted insertion-ordered flags; bounded
 blocking workers; full transfer accounting in its consuming D slices; a raw
 binary transfer window; and a provisional sysop-only time override.
 
-1. **Close current correctness gaps.** Implement item 29's scan-wide
-   lookup index, item 24's minimal `OverrideTimeLimit` mapping, item 27's
+1. **Close current correctness gaps.** Item 29's current-directory lookup
+   index has landed; next implement item 24's minimal `OverrideTimeLimit`
+   mapping, item 27's
    elapsed-time accounting (before D-T3), item 33's direct counter
    restoration, item 34's repository parity fix, and item 19's Latin-1
    echo fix plus text/binary policy. Each new wire surface remains

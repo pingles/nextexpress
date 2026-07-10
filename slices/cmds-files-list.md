@@ -146,21 +146,22 @@ missed across the unit's modules.
 ## Slice D2s — SQLite file metadata store
 
 - **In Scope**
-  - `adapters/files/sqlite_files.rs` per
-    [`designs/FILES.md`](../designs/FILES.md) (WAL,
-    `synchronous = NORMAL`, prepared statements), serving the same
-    three-method `FileRepository` port; a near-copy of
-    `sqlite_user_repository.rs`'s shape.
-  - The `file_storage` config key (reserved by D2's deferral): set,
-    it opens/creates the SQLite store and the in-memory demo
-    catalogue is **not** seeded — demo records never enter real
-    data; unset, the seeded in-memory repository serves as today.
-  - `Result` plumbing through the port (the first fallible adapter).
+  - Establish the accepted unified metadata database/pool and versioned
+    migrations from [`designs/FILES.md`](../designs/FILES.md): WAL with
+    `synchronous = FULL`, stable `FileId` and configuration area keys, one
+    serialized writer/unit-of-work, and a small read pool behind the bounded
+    async application facade.
+  - `adapters/files/sqlite_files.rs` becomes a query facade borrowing the
+    shared metadata read pool; cross-aggregate writes do not live on
+    `FileRepository` or independently transaction-owning adapters.
+  - Durable mode rejects incompatible split `user_storage` / `file_storage`
+    configuration. Ephemeral mode implements the same metadata boundary in
+    memory and may still seed the demo catalogue.
 - **Why deferred from D2**: nothing can write real rows until the
   upload/maintenance slices land, so a SQLite adapter would have
   served only the dummy seed — a schema-growth violation. Scheduled
-  no later than the first file-writer slice; pull forward if a
-  hand-loaded real deployment is wanted sooner.
+  before D-T1 creates the first durable transfer attempt. Repository `Result`
+  plumbing and `FileAreaRef` addressing already landed as SYSTEM item 18.
 
 ## Slice D2b — true single-key pager hotkeys
 
@@ -314,15 +315,15 @@ deliberately distinct from the colourful `F` door.
   stored set. When the restored set is non-empty it emits
   `FLAGGED_FILES_EXIST = b"\r\n** Flagged File(s) Exist **\r\n\x07\r\n"`
   (`express.e:2791-2794`, captured at `ae_tierd_alterflags.txt:77`).
-- **Keying** — `(conference, name)` only; `area` is dropped on save
-  and restored as `0`. A restored flag appears in the logon banner and
-  the `A` listing but will **not** repaint the `[X]` marker on a
-  next-session `F`/`R` scan (the scan keys on the full `(conf, area,
-  name)` tuple) until the file is re-flagged. Documented NextExpress
-  limitation; area-agnostic matching is a later refinement.
+- **Keying** — `(conference, name)` only in both the domain and store. A
+  restored flag appears in the logon banner, the `A` listing, and repaints the
+  `[X]` marker on a later `F`/`R` scan. The former synthetic `area=0` split was
+  removed by the July 2026 identity fix.
 - **Deferred** — `saveHistory()` + the `dump` partial-downloads file
   (file-transfer slice); the `FlagFile`/`UnflagFile` rule layer;
-  the SQLite file-metadata store (slice D2s).
+  the SQLite file-metadata store (slice D2s). SYSTEM item 30 later replaces
+  whole-set logoff saves with command-time deltas and retains resolved
+  `FileId` identity.
 - Verified: adapter + lifecycle unit tests, an in-process
   logoff→logon→banner telnet smoke (`quickwins_smoke.rs` shape),
   mutation-clean (16 caught / 5 unviable / 0 survived), and a manual
@@ -542,6 +543,97 @@ ledger. Clean `G Y` logoff, 1 telnet open.
     verbs at the date prompt, junk at N's Directories prompt, bare
     `N <dir>`'s date source, `mm-dd` year default, calendar-strict
     date validation, `!x` edges.
+
+## Slice D10 — NextScan listed-selection registry — **Done**
+
+- **Stage-3 design (2026-07-10):**
+  [`2026-07-10-d10-listed-selection-design.md`](../designs/2026-07-10-d10-listed-selection-design.md).
+  The judge/refuter pass replaced the initial hash-map proposal with a private
+  dense `Vec<FlaggedKey>` current-directory index, retained the separate
+  ordered current-page `Vec` for redraw geometry, separated row reversal from
+  directory traversal so `FR` cannot change `N R`, and made flag mutation a
+  plan/render/commit operation with no commit on terminal failure. The design
+  is complete. The 2026-07-10 human gate accepted **A/A/A**: preserve the
+  captured/source unchecked whole-line name, retain current/source `FR A`
+  high→low directory order, and permit populated-HOLD numeric selection as an
+  explicitly uncaptured compatibility extrapolation and Allium departure.
+  Stage-4 TDD and all local verification gates are complete. The prepared
+  Stage-5 independent live dual-target comparison is deferred; the operator
+  declined the optional terminal glance at close-out.
+- **Stage-1 gate (2026-07-10): A/A.** Keep the established board-as-shipped
+  AquaScan authority for numeric pager selection and keep D10 bounded; stable
+  duplicate-file identity remains item 30 in its own later worktree.
+- **Track:** full user-facing six-stage pipeline. Although the intended wire
+  text is unchanged, this corrects which file the AquaScan pager's `R <number>`
+  selection flags and therefore can change the `[X]` repaint and later `A` / D
+  state. `F`, `FR`, and `N` are door-shadowed; AquaScan owns the pager wire and
+  the internal `flagPause` source (`amiexpress/express.e:28025-28058`) has no
+  numeric `R` equivalent. The established board-as-shipped authority decision
+  remains explicit.
+- **Stage-2 evidence (2026-07-10):**
+  [`ae_tierd_d10_selection.txt`](../comparison/transcripts/ae_tierd_d10_selection.txt),
+  driven by
+  [`ae_tierd_d10_selection.py`](../comparison/harness/ae_tierd_d10_selection.py)
+  and indexed in
+  [`d10-selection-live-observations.md`](../comparison/evidence-tierD/d10-selection-live-observations.md).
+  The completeness retry is
+  [`ae_tierd_d10_edge_reprobe.py`](../comparison/harness/ae_tierd_d10_edge_reprobe.py)
+  / [`ae_tierd_d10_edge_reprobe.txt`](../comparison/transcripts/ae_tierd_d10_edge_reprobe.txt).
+  The live door proves that `R <number>` resolves against the current
+  directory after forward, reverse, empty-directory and reload transitions;
+  `1 garbage` resolves token `1` and ignores junk token `garbage`; and arbitrary non-empty name input is
+  trimmed/upper-cased and persisted even when no catalogue row exists. The
+  latter agrees with `addFlagToList` (`express.e:12523-12542`) but conflicts
+  with `files.allium:FlagFile`. The capture also refutes the current
+  source-derived `FR A` directory order: the door walks directories 1 then 2
+  while reversing rows within each. Both conflicts are explicit Stage-3 gate
+  decisions. The bounded retry additionally proves whitespace/LF line-read
+  handling, numeric `1 2 1` selection, whole-line name persistence and a
+  changed-data reload selecting its new #1. A populated-HOLD retry timed out;
+  fixtures were restored and the container recycled, so that facet remains
+  unresolved rather than source-guessed.
+- **In Scope**
+  - Replace `ScanState.listed: Vec<ListedRow>` and its first-match linear scan
+    with a focused current-directory displayed-number index, reset at every
+    directory/reload boundary and populated only as numbered rows are emitted.
+  - Reconcile a reload as replacement, not accumulation, so deleted or
+    filtered rows cannot remain addressable through stale numeric state. The
+    live `L` capture re-emitted the unchanged catalogue; an in-memory mutated
+    catalogue test owns the stale-row branch without claiming it was captured.
+  - Implement the captured whitespace-token grammar (`1 garbage` selects
+    number 1 and ignores the separate invalid token; empty, `999` and `abc` do
+    not select) and plural/idempotent grammar
+    (`1 2 1` selects #1 and #2 once, in first-occurrence order).
+  - Preserve the accepted captured + legacy unchecked whole-line name rule,
+    rather than Allium's resolved/downloadable `File` rule. The captured
+    multi-name-looking input is one normalized space-containing flag entry at
+    the legacy `addFlagToList` boundary, not a token list.
+  - Retain current/source `FR A` high-to-low directory order under the accepted
+    authority choice; row reversal inside each directory remains unchanged.
+  - Keep the ordered, pager-bounded current-page `Vec` used for cursor repaint;
+    no listing order, prompt, frame or pagination change.
+  - Add characterization/regression tests for F/FR/N directory transitions,
+    changed-data reload, whitespace-token/plural numeric entries, the chosen name
+    semantics, whitespace/LF line completion, duplicate idempotence, unknown
+    input silence, and current-page-only repaint.
+- **Out of Scope**
+  - Stable duplicate-file identity. D10 preserves the captured name-resolution
+    decision; item 30/D2s later retain a resolved `FileId` where one exists so
+    same-named files in different areas can remain distinct. The seeded live
+    fixture contains no duplicate normalized names, so no duplicate outcome is
+    claimed by D10.
+  - The 1000-entry cap, insertion-ordered persisted flags, command-time flag
+    persistence, active-session purge, and `Right::Download` enforcement
+    (SYSTEM items 30, 32 and 24).
+  - Changes to F/FR/N command grammar, visible wire literals, listing order,
+    `FileRepository`, or file-transfer commands, except for the explicit
+    `FR A` order choice if the Stage-3 gate brings that captured correction into
+    this worktree.
+  - A live-parity claim for populated HOLD numeric selection. The original
+    fixture's `F H` path was empty (`Nothing found!`) and the bounded seeded
+    retry timed out after `R`. The accepted implementation permits selection
+    as an explicitly uncaptured compatibility extrapolation; Allium rejects
+    held flags while legacy name flagging performs no status lookup.
 
 ## Slice D-wire — Tier D (browse) wire-and-smoke
 
