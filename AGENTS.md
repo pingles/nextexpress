@@ -37,7 +37,7 @@ capture transcripts, and discovering files by name.
 ## Key Workflow
 
 **When implementing a new command/slice, prefer the `command-slice` skill**
-(`.claude/skills/command-slice/`). It orchestrates assess → capture → design →
+(`.agents/skills/command-slice/`). It orchestrates assess → capture → design →
 build → compare with model-pinned subagents, drives the live FS-UAE reference and
 the NextExpress server for you, and enforces the project's hardening rules
 (`resources/hardening.md` is the §10 checklist). The steps below are what that skill

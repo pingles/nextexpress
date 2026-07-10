@@ -1,15 +1,15 @@
 # Stage 5 — Compare · full Workflow · GATE
 
 Prove the built command matches the live reference in **behaviour and on-screen
-experience**, double-blind. **All agents in this stage are Opus.** This stage runs a
-`Workflow` inside the stage that returns one comparison report, and *then* the gate fires.
+experience**, double-blind. The configured assessment roles run an orchestration inside the
+stage that returns one comparison report, and *then* the gate fires.
 
 Prereqs: Stage 4 done (`nextest` green, warning-free build, `mutants-diff` clean); the
 NextExpress server booted on the allocated port with a passing health check
 (`board-lifecycle.md`); the FS-UAE board still up from Stage 1. The grammar table from the
 Stage 3 design (§10.4) is the scenario source-of-truth.
 
-## Roles (all Opus)
+## Roles
 
 | Role | Count | Job |
 |---|---|---|
@@ -57,15 +57,15 @@ Tester-A must drive a **character-at-a-time interactive client**, not line-granu
 - Confirm every byte decodes as valid UTF-8 (the wire is always UTF-8; ≥0x80 as `&str`
   code points, never raw Latin-1).
 
-## Workflow sketch
+## Orchestration sketch
 
-> **In this environment** realize each role as `agentType: 'cs-<role>'` (`cs-scenario`,
-> `cs-tester-next`, `cs-tester-ref`, `cs-crossmark` opus/max, `cs-completeness-critic`) — model
-> and effort come from frontmatter. `cs-tester-ref` stays serialized on the singleton board (§10.8).
+> This pseudocode describes dependencies, not a client API. Dispatch each named `cs-*` role via
+> the active client's native mechanism and preserve its configured model and reasoning effort.
+> `cs-tester-ref` stays serialized on the singleton board (§10.8).
 
 ```
 workflow stage5_compare:
-  # 1. serial: author the scenario set (Opus)
+  # 1. serial: author the scenario set (`cs-scenario`)
   scenarios = author_scenarios(grammar_table, happy_path, quarantined_edges)
     # one scenario object per grammar-table row + happy + each edge
 
@@ -85,7 +85,7 @@ workflow stage5_compare:
     CrossMark(log=logs_B[i], reference=logs_A[i]) for i in scenarios
   ]
 
-  # 5. completeness critic (Opus): what did BOTH miss?
+  # 5. completeness critic (`cs-completeness-critic`): what did BOTH miss?
   gaps = CompletenessCritic(scenarios, logs_A, logs_B, grammar_table, edge_battery)
   # cap re-probe rounds (§10.8); on cap -> escalate to gate, don't spin
 

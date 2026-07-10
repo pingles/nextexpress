@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-04
 **Status:** v2 — hardened per the 2026-07-04 design audit; pending spec re-review
-**Deliverable:** a project skill at `.claude/skills/command-slice/` that orchestrates
+**Deliverable:** a project skill at `.agents/skills/command-slice/` that orchestrates
 the end-to-end implementation of one NextExpress command slice, from assessing what to
 build next through to a verified behaviour match against the live AmiExpress reference.
 
@@ -30,7 +30,7 @@ tool. It targets the specific shape of work described in `AGENTS.md` → *Key Wo
 
 ## 2. Placement, name, invocation
 
-- **Location:** `.claude/skills/command-slice/` — a **project** skill, committed to the
+- **Location:** `.agents/skills/command-slice/` — a **project** skill, committed to the
   repo so it travels with `SLICES.md`, `designs/`, `specs/`, and the comparison
   harness it references.
 - **Name:** `command-slice` (matches the repo's "slice" vocabulary).
@@ -272,7 +272,7 @@ caveat) is distilled into `resources/board-lifecycle.md` from the
 ## 6. Skill file structure
 
 ```
-.claude/skills/command-slice/
+.agents/skills/command-slice/
   SKILL.md                     # lean playbook: 6 stages, gates, model map, invariants
   resources/
     board-lifecycle.md         # boot/keep/teardown FS-UAE, clean-state, G Y hazard, ports
@@ -288,12 +288,10 @@ caveat) is distilled into `resources/board-lifecycle.md` from the
 `SKILL.md` stays lean and always-loaded; the `resources/` files are loaded on demand
 by the stage that needs them (the pattern used by the `hexagonal-architecture` skill).
 
-**Role agents.** The per-stage subagents are versioned as `.claude/agents/cs-*.md` (sibling to
-the skill), each pinning its `model:` and `effort:` in frontmatter — the documented, reliable
-way to fix Fable-vs-Opus per role (`code.claude.com` → sub-agents). `subagent-briefs.md` is the
-stage → agent dispatch index. This supersedes the earlier "pass `model=` at call time" sketch
-and the mistaken claim that effort needed the Workflow tool — `effort:` is itself a frontmatter
-field, so the plain Agent-tool path is fully model+effort pinned.
+**Role agents.** The per-stage subagents are versioned in client-specific definitions:
+`.claude/agents/cs-*.md` for Claude Code and `.codex/agents/cs-*.toml` for Codex. The shared
+skill dispatches only the named `cs-*` role; each client preserves the model and effort pinned in
+its own definition. `subagent-briefs.md` is the stage → agent dispatch index.
 
 ---
 
@@ -303,7 +301,7 @@ The skill takes ownership of the live-verification responsibility, so `AGENTS.md
 updated to match:
 
 - **Add** — at the top of *Key Workflow*: "When implementing a new command/slice,
-  **prefer the `command-slice` skill** (`.claude/skills/command-slice/`). It
+  **prefer the `command-slice` skill** (`.agents/skills/command-slice/`). It
   orchestrates assess → capture → design → build → compare with model-pinned
   subagents and drives the live boards for you."
 - **Rewrite item 6** (*Before Committing*): keep the *reason* — scripted byte-equality

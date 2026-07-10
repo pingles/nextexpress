@@ -15,7 +15,7 @@ Golden rule: **one board per run, reference access serialized, every session end
 ## (a) Ports — `allocate_ports.py`
 
 ```sh
-python .claude/skills/command-slice/resources/allocate_ports.py --worktree "$PWD"
+python .agents/skills/command-slice/resources/allocate_ports.py --worktree "$PWD"
 ```
 
 Emits JSON: `board_port`, `server_port` (both free, worktree-derived so parallel

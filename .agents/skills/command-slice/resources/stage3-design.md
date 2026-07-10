@@ -1,8 +1,8 @@
 # Stage 3 — Design workflow shape
 
-Load when running Stage 3. This is the **full-rigour Workflow** that runs *inside* the
-stage and returns **one synthesized design**; the human GATE fires only **after** the
-workflow returns. Prompts per role live in `subagent-briefs.md`; where the output goes
+Load when running Stage 3. This is the **full-rigour orchestration** that runs *inside* the
+stage and returns **one synthesized design**; the human GATE fires only **after** it
+returns. Prompts per role live in `subagent-briefs.md`; where the output goes
 and its literal/encoding rules live in `artifact-conventions.md`; the invariants cited
 below (§10.x) are detailed in `hardening.md`.
 
@@ -15,21 +15,22 @@ below (§10.x) are detailed in `hardening.md`.
 - **Out:** `designs/YYYY-MM-DD-<cmd>-design.md` — one synthesized, refuted, reconciled
   design with an implementation plan. Then → **GATE**.
 
-## Model map (authoritative)
+## Role map (authoritative)
 
-| Role | Model | Effort |
+| Role | Agent | Tier |
 |---|---|---|
-| 2–3 candidate designers (distinct framings) | **Fable** | high |
-| Judge panel (scores candidates) | **Opus** | high |
-| Synthesizer (winner + graft runners-up) | **Opus** | high |
-| Adversarial refuter(s) | **Opus** + one **Fable** | **max** (hardest pass) |
-| Authority reconciler (door-shadowed only) | **Opus** | high |
+| 2–3 candidate designers (distinct framings) | `cs-designer` | generative / high |
+| Judge panel (scores candidates) | `cs-judge` | assessment / high |
+| Synthesizer (winner + graft runners-up) | `cs-judge` | assessment / high |
+| Adversarial refuter(s) | `cs-refuter` | assessment / xhigh |
+| Authority reconciler (door-shadowed only) | `cs-authority` | assessment / high |
 
-Fable does the generative design work; Opus judges, refutes, and reconciles.
+The configured generator does the candidate design work; independent assessment roles judge,
+refute, and reconcile it. See `subagent-briefs.md` for the client-specific agent definitions.
 
 ## The workflow, end to end
 
-1. **Fan out designers (parallel).** 2–3 **Fable** designers, one framing each — do not
+1. **Fan out designers (parallel).** 2–3 `cs-designer` instances, one framing each — do not
    let them converge on the same shape:
    - **minimal-change** — smallest diff that satisfies the captures; reuse existing seams.
    - **cleanest-seam** — the most idiomatic hex-arch port/adapter boundary.
@@ -37,7 +38,7 @@ Fable does the generative design work; Opus judges, refutes, and reconciles.
      faithfully.
    Each emits a candidate design keyed to the Stage-2 grammar rows and the Allium spec.
 
-2. **Judge panel (Opus).** Score every candidate on the five facets, each independently:
+2. **Judge panel (`cs-judge`).** Score every candidate on the five facets, each independently:
 
    | Facet | Question |
    |---|---|
@@ -49,11 +50,11 @@ Fable does the generative design work; Opus judges, refutes, and reconciles.
 
    Judges emit per-facet scores + rationale; no single judge owns the verdict.
 
-3. **Synthesize (Opus).** Pick the winner by aggregate score, then **graft** the best
+3. **Synthesize (`cs-judge`).** Pick the winner by aggregate score, then **graft** the best
    ideas from the runners-up (e.g. minimal-change's diff shape onto cleanest-seam's
    boundary). Produce one merged design.
 
-4. **Adversarial refutation (max — Opus + one Fable).** Skeptics try to *break* the
+4. **Adversarial refutation (`cs-refuter`, xhigh).** Skeptics try to *break* the
    synthesized design — this is where source-derived guesses have historically been wrong:
    - **Violates Allium?** point to the specific obligation it breaks.
    - **Misses a captured edge row?** name the transcript row with no handling (empty/junk,
@@ -78,13 +79,11 @@ Fable does the generative design work; Opus judges, refutes, and reconciles.
 6. **Write `designs/YYYY-MM-DD-<cmd>-design.md`** (template below), then return it. The
    stage's human GATE fires here.
 
-## Workflow-script sketch (adapt per run)
+## Orchestration sketch (adapt per client)
 
-> **In this environment** realize each `agent({...})` as `agent({agentType: 'cs-<role>', ...})` —
-> model and effort come from the agent frontmatter (`cs-designer` fable/high, `cs-judge`
-> opus/high, `cs-refuter` opus/max, `cs-authority` opus/high). The Fable co-refuter is
-> `cs-refuter` called with `model: 'fable'` (overrides its frontmatter for that one call). The
-> `briefs.*` calls below are illustrative — the brief now lives in the agent definition.
+> This pseudocode describes dependencies, not a client API. Dispatch each named `cs-*` role via
+> the active client's native mechanism and preserve the model/effort pin in that role's definition.
+> The `briefs.*` calls below are illustrative — the brief lives in the agent definition.
 
 ```js
 // Stage 3 — returns ONE synthesized design; gate fires after this resolves.
@@ -93,33 +92,27 @@ Fable does the generative design work; Opus judges, refutes, and reconciles.
 const framings = ["minimal-change", "cleanest-seam", "closest-to-legacy"];
 
 const design = await pipeline(
-  // 1. designers fan out in parallel — Fable, distinct framings
+  // 1. designers fan out in parallel — distinct framings
   async (ctx) => parallel(
     framings.map((f) =>
       agent({
-        role: `designer:${f}`,
-        model: "fable",
-        effort: "high",
+        role: "cs-designer",
         brief: briefs.stage3Designer(f, ctx), // subagent-briefs.md
       })
     )
   ),
 
-  // 2. judge panel — Opus, five facets, independent
+  // 2. judge panel — five facets, independent
   async (candidates) => agent({
-    role: "judge-panel",
-    model: "opus",
-    effort: "high",
+    role: "cs-judge",
     brief: briefs.stage3Judge(candidates, {
       facets: ["allium", "capture-parity", "hex-arch", "test-first", "blast-radius"],
     }),
   }),
 
-  // 3. synthesize winner + graft runners-up — Opus
+  // 3. synthesize winner + graft runners-up
   async (scored) => agent({
-    role: "synthesizer",
-    model: "opus",
-    effort: "high",
+    role: "cs-judge",
     brief: briefs.stage3Synthesize(scored),
   }),
 
@@ -128,13 +121,11 @@ const design = await pipeline(
     let design = winner;
     for (let round = 0; round < 2; round++) {
       const objections = await parallel([
-        agent({ role: "refuter:opus",  model: "opus",  effort: "max",
-                brief: briefs.stage3Refute(design, ctx) }),
-        agent({ role: "refuter:fable", model: "fable", effort: "max",
+        agent({ role: "cs-refuter",
                 brief: briefs.stage3Refute(design, ctx) }),
       ]);
       if (objections.every((o) => o.clean)) return design;
-      design = await agent({ role: "synthesizer", model: "opus", effort: "high",
+      design = await agent({ role: "cs-judge",
                              brief: briefs.stage3Revise(design, objections) });
     }
     return escalateToGate(design, "refutation cap hit"); // §10.8 / §10.10
@@ -144,7 +135,7 @@ const design = await pipeline(
   async (design, ctx) => {
     if (!isDoorShadowed(ctx.cmd)) return design;           // F/FR/N/SCAN/NSU/CS/SENT
     const conflict = await agent({
-      role: "authority-reconciler", model: "opus", effort: "high",
+      role: "cs-authority",
       brief: briefs.stage3Authority(design, ctx),          // diff capture vs express.e
     });
     if (conflict.diverges) return haltForAB(conflict, { default: "express.e-wins" }); // §10.3
@@ -155,8 +146,8 @@ const design = await pipeline(
 await writeDesignDoc(design); // designs/<date>-<cmd>-design.md — then GATE
 ```
 
-Escalation on model failure (§10.10): a designer/refuter that won't produce a compilable
-plan → retry once → escalate the failing role Fable→Opus → halt to the gate. The
+Escalation on model failure (§10.10): a designer/refuter that will not produce a compilable
+plan → retry once → use the configured independent assessment role → halt to the gate. The
 least-bad candidate never ships silently.
 
 ## Design-doc template outline

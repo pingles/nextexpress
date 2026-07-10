@@ -37,18 +37,18 @@ track. Do not force a refactor through capture-and-compare.
 
 ## The pipeline
 
-| # | Stage | Model | Gate? | What it produces |
+| # | Stage | Configured role tier | Gate? | What it produces |
 |---|---|---|:---:|---|
-| 1 | Assess & plan | Opus | ✅ | next command + pre-refactors + track, written into `slices/` + `SLICES.md` |
-| 2 | Capture truth | Opus | — | `comparison/harness/<cmd>.py`, `transcripts/<cmd>.txt`, evidence note |
-| 3 | Design | **Fable** design, Opus judge | ✅ | `designs/<date>-<cmd>-design.md` (judge-panel + adversarial refutation) |
-| 4 | Build | **Fable** build, Opus review | — | test-first code, `COMMAND_PARITY.md`, `SYSTEM.md` |
-| 5 | Compare | Opus | ✅ | double-blind NextExpress-vs-FS-UAE comparison report |
-| 6 | Resolve | Opus | ✅ | divergence triage → your decision → loop to 3, or merge |
+| 1 | Assess & plan | assessment | ✅ | next command + pre-refactors + track, written into `slices/` + `SLICES.md` |
+| 2 | Capture truth | assessment | — | `comparison/harness/<cmd>.py`, `transcripts/<cmd>.txt`, evidence note |
+| 3 | Design | generative design, independent assessment | ✅ | `designs/<date>-<cmd>-design.md` (judge-panel + adversarial refutation) |
+| 4 | Build | generative implementation, independent review | — | test-first code, `COMMAND_PARITY.md`, `SYSTEM.md` |
+| 5 | Compare | independent assessment | ✅ | double-blind NextExpress-vs-FS-UAE comparison report |
+| 6 | Resolve | assessment | ✅ | divergence triage → your decision → loop to 3, or merge |
 
-Fable does the generative work (design, implementation); Opus does assessment
-(planning, capture, judging, comparison, triage). Stages 3 and 5 run a **Workflow inside
-the stage** (judge-panel / multi-scenario cross-mark) that returns one artefact, *then*
+The configured generative roles do design and implementation; the configured assessment
+roles do planning, capture, judging, comparison, and triage. Stages 3 and 5 run an
+orchestration inside the stage (judge-panel / multi-scenario cross-mark) that returns one artefact, *then*
 the gate fires. Per-stage detail: `resources/subagent-briefs.md`; workflow shapes:
 `resources/stage3-design.md`, `resources/stage5-comparison.md`.
 
@@ -57,22 +57,21 @@ comparison proceeds to teardown + merge.
 
 ### Dispatching subagents
 
-Every stage role is a **versioned agent definition** in `.claude/agents/cs-*.md` with its
-**`model:` and `effort:` pinned in frontmatter** — the documented, reliable mechanism
-(`model: fable` and `effort: high|max` are both frontmatter fields; `code.claude.com` →
-sub-agents). Dispatch a role by its `subagent_type` (Agent tool) or `agentType` (Workflow);
-**do not** pass a call-time `model=`, which would override the pin (precedence:
-`CLAUDE_CODE_SUBAGENT_MODEL` env → call-time model → frontmatter → session).
-`resources/subagent-briefs.md` is the stage → agent dispatch index.
+Every stage role is a **versioned, client-specific agent definition** with its model and
+reasoning effort pinned by that client:
 
-- **Stages 1, 2, 4, 6** dispatch their `cs-*` agents directly (Agent tool `subagent_type`);
-  the frontmatter carries model **and** effort, so the plain Agent path is fully pinned.
-- **Stages 3 and 5** run a **Workflow** for the fan-out / loop *structure* (judge-panel,
-  refute-until-cap, per-scenario pipeline, cross-mark); its `agent()` calls set
-  `agentType: 'cs-<role>'` — and may specialize, e.g. the Fable co-refuter is `cs-refuter`
-  called with `model: 'fable'`. Workflow is for orchestration, no longer needed just for effort.
-- **Never** dispatch an unpinned generic subagent for a role — that defeats the Fable/Opus
-  split; use the `cs-*` agent.
+- Claude Code: `.claude/agents/cs-*.md`
+- Codex: `.codex/agents/cs-*.toml`
+
+Dispatch the named `cs-*` role using the active client's native subagent mechanism. Do not
+override its configured model or effort at call time. `resources/subagent-briefs.md` is the
+stage-to-role index.
+
+- **Stages 1, 2, 4, and 6** dispatch their listed `cs-*` roles directly.
+- **Stages 3 and 5** orchestrate the listed roles for fan-out, bounded retry loops, and
+  cross-marking; preserve the serialization constraints in the stage references.
+- **Never** substitute an unconfigured generic subagent for a named role. The independent
+  generator/assessor split is intentional.
 
 ## Non-negotiable invariants
 
@@ -108,7 +107,7 @@ Before Stage 2, and torn down after Stage 6 — see `resources/board-lifecycle.m
 1. **Worktree:** resume an in-progress slice if one exists, else create a fresh worktree
    off `origin/main`. Merge to `main` at the end (no PR) — rebase first, never move a
    `main` checked out elsewhere.
-2. **Ports:** `python .claude/skills/command-slice/resources/allocate_ports.py --worktree "$PWD"`
+2. **Ports:** `python .agents/skills/command-slice/resources/allocate_ports.py --worktree "$PWD"`
    picks a free FS-UAE host port + a free NextExpress port and checks nothing we'd corrupt
    is already running.
 3. **Board + server:** boot our own FS-UAE container (per-run name + port; never touch
