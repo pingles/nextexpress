@@ -60,9 +60,9 @@ pub(crate) fn seeded_user_with(
         times_called: 10,
         times_called_today: 7,
         last_call: Some(at(1_000_000)),
-        time_limit_per_call: Duration::from_secs(1800),
-        time_limit_per_day: Duration::from_secs(3600),
-        time_used_today: Duration::from_secs(600),
+        time_limit_per_call: Duration::from_mins(30),
+        time_limit_per_day: Duration::from_hours(1),
+        time_used_today: Duration::from_mins(10),
         location: None,
         phone_number: None,
         email: None,
@@ -156,7 +156,7 @@ pub(crate) fn matched_same_day_bumps_today<R: UserRepository>(make: impl Fn(Vec<
     .expect("match");
     let after = stored(&repo, "alice");
     assert_eq!(after.times_called_today, 8);
-    assert_eq!(after.time_used_today, Duration::from_secs(600));
+    assert_eq!(after.time_used_today, Duration::from_mins(10));
 }
 
 pub(crate) fn matched_rejected_path_leaves_daily_counters<R: UserRepository>(
@@ -174,7 +174,7 @@ pub(crate) fn matched_rejected_path_leaves_daily_counters<R: UserRepository>(
     let after = stored(&repo, "alice");
     assert_eq!(after.invalid_attempts, 0);
     assert_eq!(after.times_called_today, 7);
-    assert_eq!(after.time_used_today, Duration::from_secs(600));
+    assert_eq!(after.time_used_today, Duration::from_mins(10));
 }
 
 pub(crate) fn matched_does_not_unset_force_reset<R: UserRepository>(make: impl Fn(Vec<User>) -> R) {
@@ -220,7 +220,7 @@ pub(crate) fn patch_counters_are_additive<R: UserRepository>(make: impl Fn(Vec<U
     let patch = UserPatch {
         times_called_delta: 1,
         times_called_today_delta: 1,
-        time_used_today_delta: Duration::from_secs(60),
+        time_used_today_delta: Duration::from_mins(1),
         messages_posted_delta: 2,
         ..UserPatch::default()
     };
@@ -229,7 +229,7 @@ pub(crate) fn patch_counters_are_additive<R: UserRepository>(make: impl Fn(Vec<U
     let after = stored(&repo, "alice");
     assert_eq!(after.times_called, 12);
     assert_eq!(after.times_called_today, 9);
-    assert_eq!(after.time_used_today, Duration::from_secs(720));
+    assert_eq!(after.time_used_today, Duration::from_mins(12));
     assert_eq!(after.messages_posted, 7);
 }
 

@@ -336,7 +336,7 @@ mod tests {
         // Date anchor: 2026-01-15T12:00:00Z, independently computed.
         assert_eq!(
             by_name("ANSIPACK.LHA").uploaded_at(),
-            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_768_478_400)
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_hours(491_244)
         );
         // The same-date pair that pins the renderer's butt-join rule.
         assert_eq!(

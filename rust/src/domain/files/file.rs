@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn file_round_trips_the_browse_fields() {
-        let uploaded = SystemTime::UNIX_EPOCH + Duration::from_secs(1_768_996_800);
+        let uploaded = SystemTime::UNIX_EPOCH + Duration::from_hours(491_388);
         let file = File::new(
             "ANSIPACK.LHA".to_string(),
             crate::domain::bytes::Bytes::new(234_567),

@@ -67,8 +67,8 @@ mod tests {
         let epoch = SystemTime::UNIX_EPOCH;
         let clock = ManualClock::set_to(epoch);
         assert_eq!(clock.now(), epoch);
-        clock.advance(Duration::from_secs(60));
-        assert_eq!(clock.now(), epoch + Duration::from_secs(60));
+        clock.advance(Duration::from_mins(1));
+        assert_eq!(clock.now(), epoch + Duration::from_mins(1));
         clock.set(epoch + Duration::from_secs(5));
         assert_eq!(clock.now(), epoch + Duration::from_secs(5));
     }

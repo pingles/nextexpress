@@ -472,9 +472,9 @@ mod tests {
             times_called: 10,
             times_called_today: 7,
             last_call: Some(at(1_000_000)),
-            time_limit_per_call: Duration::from_secs(1800),
-            time_limit_per_day: Duration::from_secs(3600),
-            time_used_today: Duration::from_secs(600),
+            time_limit_per_call: Duration::from_mins(30),
+            time_limit_per_day: Duration::from_hours(1),
+            time_used_today: Duration::from_mins(10),
             location: None,
             phone_number: None,
             email: None,
@@ -497,7 +497,7 @@ mod tests {
         let mut current = snapshot();
         current.times_called += 1;
         current.times_called_today += 1;
-        current.time_used_today += Duration::from_secs(120);
+        current.time_used_today += Duration::from_mins(2);
         current.messages_posted += 2;
         current.last_call = Some(at(2_000_000));
         current.expert_mode = true;
@@ -705,7 +705,7 @@ mod tests {
         }
         .apply_to(&mut snap);
         assert_eq!(snap.times_called_today, 8);
-        assert_eq!(snap.time_used_today, Duration::from_secs(600));
+        assert_eq!(snap.time_used_today, Duration::from_mins(10));
     }
 
     #[test]
@@ -718,7 +718,7 @@ mod tests {
         .apply_to(&mut snap);
         assert_eq!(snap.invalid_attempts, 0);
         assert_eq!(snap.times_called_today, 7);
-        assert_eq!(snap.time_used_today, Duration::from_secs(600));
+        assert_eq!(snap.time_used_today, Duration::from_mins(10));
     }
 
     #[test]
