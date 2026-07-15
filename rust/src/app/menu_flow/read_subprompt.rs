@@ -15,7 +15,7 @@
 //! live.
 
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 use crate::domain::messaging::delete_mail::can_delete;
 use crate::domain::messaging::edit_mail_header::can_edit_header;
 use crate::domain::messaging::mail_store::MailStoreError;
@@ -40,7 +40,7 @@ where
         session: &mut MenuSession,
         next: u32,
         last_displayed: Option<u32>,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let mut next = next;
         let mut last_displayed = last_displayed;
         // `?` / `??` set this so the next loop turn renders the short /
@@ -92,14 +92,7 @@ where
                     can_edit_header(session.user()),
                 ),
             };
-            // A disconnected or idle caller leaves the sub-prompt; the
-            // menu loop's next read applies carrier-loss / idle-timeout,
-            // matching the other interactive handlers.
-            let TerminalRead::Line(line) =
-                self.read_prompted(&prompt, TerminalEcho::Visible).await?
-            else {
-                return Ok(());
-            };
+            let line = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
             session.record_input(self.services.clock.now());
             let trimmed = line.trim();
 
@@ -165,7 +158,7 @@ where
         current: u32,
         next: &mut u32,
         last_displayed: &mut Option<u32>,
-    ) -> Result<bool, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<bool, T::Error> {
         match trimmed.chars().next().map(|c| c.to_ascii_lowercase()) {
             // `Q`uit returns to the menu (`express.e:12226`).
             Some('q') => return Ok(false),
@@ -240,7 +233,7 @@ where
         session: &mut MenuSession,
         next: &mut u32,
         last_displayed: &mut Option<u32>,
-    ) -> Result<bool, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<bool, T::Error> {
         let Some((lowest, highest)) = (match self.current_base_bounds(session).await {
             Ok(bounds) => bounds,
             Err(error) => {

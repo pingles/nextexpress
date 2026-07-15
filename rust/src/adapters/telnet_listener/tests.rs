@@ -7,7 +7,7 @@ use crate::app::registration_flow::{
 use crate::app::wire_text::ANSI_PROMPT;
 
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -240,6 +240,29 @@ async fn listener_binds_and_reports_address() {
 }
 
 #[tokio::test]
+async fn listener_run_waits_for_connections_instead_of_returning() {
+    let listener = TelnetListener::bind(
+        "127.0.0.1:0",
+        test_runtime(
+            &test_config(1),
+            empty_repo(),
+            test_hasher(),
+            test_caller_log(),
+            empty_conferences(),
+        ),
+    )
+    .await
+    .expect("bind listener");
+
+    let result = tokio::time::timeout(Duration::from_millis(50), listener.run()).await;
+
+    assert!(
+        result.is_err(),
+        "a healthy accept loop must remain pending until a listener error"
+    );
+}
+
+#[tokio::test]
 async fn single_connection_sees_fallback_banner() {
     let listener = Arc::new(
         TelnetListener::bind(
@@ -421,7 +444,9 @@ async fn connection_error_after_allocation_releases_the_node() {
     })
     .await;
 
-    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    let error = result.expect_err("the original connection error must escape");
+    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(error.to_string(), "simulated negotiation failure");
     assert_eq!(pool.status_of(1).await, Some(NodeStatus::Idle));
 }
 

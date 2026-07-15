@@ -6,8 +6,12 @@
 //! either dispatch into [`crate::app::registration_flow::RegistrationFlow`],
 //! enter the menu, or finalise the session.
 
+#[cfg(test)]
+mod tests;
+
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, VerifyPasswordFlowError};
+use crate::app::session_terminal::{preserve_phase, SessionFlowResult};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{ANSI_PROMPT, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE};
 use crate::domain::session::typed::{
@@ -94,51 +98,73 @@ where
         Self { terminal, services }
     }
 
-    /// Runs the name-prompt loop until the session reaches a terminal
-    /// outcome (auth result, registration request, retry exhaustion,
-    /// or interrupt).
-    pub(crate) async fn identify(
+    /// Asks the graphics question before the name prompt (legacy
+    /// `amiexpress/express.e:29528`). An answer beginning `n`/`N` selects
+    /// ASCII and turns the terminal's live colour mode off; the default
+    /// (CR / `Y`) keeps ANSI. Returns the continuing session on the
+    /// ordinary path, or the terminal [`LoginOutcome`] when EOF/idle
+    /// closes the session here exactly as they do at the name prompt.
+    async fn ask_graphics_preference(
         &mut self,
-        mut session: IdentifyingSession,
-    ) -> Result<LoginOutcome, T::Error> {
-        // Graphics question, asked at connect before the name prompt
-        // (legacy `amiexpress/express.e:29528`). An answer beginning
-        // `n`/`N` selects ASCII and turns the terminal's live colour
-        // mode off; the default (CR / `Y`) keeps ANSI. EOF / idle here
-        // close the session exactly as they do at the name prompt.
-        match self
-            .read_prompted(ANSI_PROMPT, TerminalEcho::Visible)
-            .await?
-        {
+        session: IdentifyingSession,
+    ) -> SessionFlowResult<Result<IdentifyingSession, LoginOutcome>, T::Error> {
+        let (mut session, ansi_read) = preserve_phase(
+            session,
+            self.read_prompted(ANSI_PROMPT, TerminalEcho::Visible),
+        )
+        .await?;
+        match ansi_read {
             TerminalRead::Line(line) => {
                 session.record_input(self.services.clock.now());
                 if matches!(line.trim().chars().next(), Some('n' | 'N')) {
                     self.terminal.set_ansi_colour(false);
                 }
+                Ok(Ok(session))
             }
-            TerminalRead::Eof => {
-                return Ok(LoginOutcome::LoggingOff(
-                    session.into_active().apply_carrier_loss(),
-                ));
-            }
+            TerminalRead::Eof => Ok(Err(LoginOutcome::LoggingOff(
+                session.into_active().apply_carrier_loss(),
+            ))),
             TerminalRead::IdleTimedOut => {
                 let logoff = session
                     .into_active()
                     .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
-                self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
-                return Ok(LoginOutcome::LoggingOff(logoff));
+                let (logoff, ()) =
+                    preserve_phase(logoff, self.write_and_flush(IDLE_TIMEOUT_LINE)).await?;
+                Ok(Err(LoginOutcome::LoggingOff(logoff)))
             }
         }
+    }
+
+    /// Runs the name-prompt loop until the session reaches a terminal
+    /// outcome (auth result, registration request, retry exhaustion,
+    /// or interrupt).
+    ///
+    /// # Errors
+    /// Returns a phase-carrying terminal failure when a prompt, read,
+    /// response, or flush fails. The retained session is the exact phase
+    /// current at the failed operation.
+    pub(crate) async fn identify(
+        &mut self,
+        mut session: IdentifyingSession,
+    ) -> SessionFlowResult<LoginOutcome, T::Error> {
+        session = match self.ask_graphics_preference(session).await? {
+            Ok(session) => session,
+            Err(outcome) => return Ok(outcome),
+        };
         // Banner / title screen, rendered after the graphics answer so
         // an ASCII caller gets it ANSI-stripped — the legacy
         // `SCREEN_BBSTITLE` order (`amiexpress/express.e:29552`, shown
         // after the `A/r/n` question).
         let banner = self.services.screens.as_ref().banner().await;
-        self.terminal.write(&banner).await?;
+        let (next_session, ()) = preserve_phase(session, self.terminal.write(&banner)).await?;
+        session = next_session;
         loop {
-            let read = self
-                .read_prompted(NAME_PROMPT, TerminalEcho::Visible)
-                .await?;
+            let (next_session, read) = preserve_phase(
+                session,
+                self.read_prompted(NAME_PROMPT, TerminalEcho::Visible),
+            )
+            .await?;
+            session = next_session;
             let line = match read {
                 TerminalRead::Line(line) => {
                     session.record_input(self.services.clock.now());
@@ -153,7 +179,8 @@ where
                     let logoff = session
                         .into_active()
                         .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
-                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    let (logoff, ()) =
+                        preserve_phase(logoff, self.write_and_flush(IDLE_TIMEOUT_LINE)).await?;
                     return Ok(LoginOutcome::LoggingOff(logoff));
                 }
             };
@@ -176,7 +203,8 @@ where
                     return self.authenticate(authenticating).await;
                 }
                 NameTypedTransition::Identifying(retry) => {
-                    self.terminal.write(UNKNOWN_USER_LINE).await?;
+                    let (retry, ()) =
+                        preserve_phase(retry, self.terminal.write(UNKNOWN_USER_LINE)).await?;
                     session = retry;
                 }
                 NameTypedTransition::NewUserRegistering {
@@ -190,13 +218,13 @@ where
                 }
                 NameTypedTransition::Disallowed(logging_off) => {
                     let screen = self.services.screens.as_ref().no_new_users().await;
-                    self.terminal.write(&screen).await?;
-                    self.terminal.flush().await?;
+                    let (logging_off, ()) =
+                        preserve_phase(logging_off, self.write_and_flush(&screen)).await?;
                     return Ok(LoginOutcome::LoggingOff(logging_off));
                 }
                 NameTypedTransition::Ended(ended) => {
-                    self.terminal.write(TOO_MANY_RETRIES_LINE).await?;
-                    self.terminal.flush().await?;
+                    let (ended, ()) =
+                        preserve_phase(ended, self.write_and_flush(TOO_MANY_RETRIES_LINE)).await?;
                     return Ok(LoginOutcome::Ended(ended));
                 }
             }
@@ -206,11 +234,14 @@ where
     async fn authenticate(
         &mut self,
         mut session: AuthenticatingSession,
-    ) -> Result<LoginOutcome, T::Error> {
+    ) -> SessionFlowResult<LoginOutcome, T::Error> {
         loop {
-            let read = self
-                .read_prompted(PASSWORD_PROMPT, TerminalEcho::Masked)
-                .await?;
+            let (next_session, read) = preserve_phase(
+                session,
+                self.read_prompted(PASSWORD_PROMPT, TerminalEcho::Masked),
+            )
+            .await?;
+            session = next_session;
             let password = match read {
                 TerminalRead::Line(line) => {
                     session.record_input(self.services.clock.now());
@@ -225,7 +256,8 @@ where
                     let logoff = session
                         .into_active()
                         .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
-                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    let (logoff, ()) =
+                        preserve_phase(logoff, self.write_and_flush(IDLE_TIMEOUT_LINE)).await?;
                     return Ok(LoginOutcome::LoggingOff(logoff));
                 }
             };
@@ -259,11 +291,13 @@ where
             };
             match transition {
                 VerifyPasswordTransition::Onboarded(onboarded) => {
-                    self.write_and_flush(AUTHENTICATED_LINE).await?;
+                    let (onboarded, ()) =
+                        preserve_phase(onboarded, self.write_and_flush(AUTHENTICATED_LINE)).await?;
                     return Ok(LoginOutcome::Onboarded(onboarded));
                 }
                 VerifyPasswordTransition::Authenticating(retry) => {
-                    self.write_and_flush(WRONG_PASSWORD_LINE).await?;
+                    let (retry, ()) =
+                        preserve_phase(retry, self.write_and_flush(WRONG_PASSWORD_LINE)).await?;
                     session = retry;
                 }
                 VerifyPasswordTransition::LoggingOff {
@@ -277,7 +311,8 @@ where
                         }
                         VerifyPasswordRejectionReason::LogonRejected => LOGON_REJECTED_LINE,
                     };
-                    self.write_and_flush(line).await?;
+                    let (logging_off, ()) =
+                        preserve_phase(logging_off, self.write_and_flush(line)).await?;
                     return Ok(LoginOutcome::LoggingOff(logging_off));
                 }
             }

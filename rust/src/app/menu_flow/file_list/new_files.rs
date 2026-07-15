@@ -41,7 +41,7 @@ where
         &mut self,
         session: &mut MenuSession,
         arg: NewFilesArg,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         match arg {
             NewFilesArg::Invalid => self.new_files_argument_error().await,
             NewFilesArg::Help => {
@@ -49,7 +49,7 @@ where
                 self.terminal
                     .write(wire::NEW_FILES_HELP_SCREEN.as_bytes())
                     .await?;
-                self.terminal.flush().await
+                Ok(self.terminal.flush().await?)
             }
             NewFilesArg::Prompt => self.new_files_prompt(session).await,
             NewFilesArg::Scan(spec) => self.new_files_scan(session, spec).await,
@@ -59,13 +59,15 @@ where
     /// `Argument error! Type 'n ?' for help.` under the help banner —
     /// F's argument-error envelope with the `'n ?'` text (capture N7e,
     /// `N R -1`; single-reset tail).
-    async fn new_files_argument_error(&mut self) -> Result<(), T::Error> {
+    async fn new_files_argument_error(
+        &mut self,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.terminal.write(b"\x1b[0m\r\n").await?;
         self.terminal.write(wire::HELP_BANNER.as_bytes()).await?;
         self.terminal.write(b"\r\n\r\n").await?;
         self.terminal.write(wire::NEW_FILES_ARGUMENT_ERROR).await?;
         self.terminal.write(b"\r\n\r\n\x1b[0m\r\n").await?;
-        self.terminal.flush().await
+        Ok(self.terminal.flush().await?)
     }
 
     /// Bare `N`: banner, the door's `Date: …` prompt, then its
@@ -79,7 +81,10 @@ where
     /// excluded. The inline path counts its preamble instead (N7c);
     /// the two boundaries are deliberately different models, each
     /// carrying its own pin.
-    async fn new_files_prompt(&mut self, session: &mut MenuSession) -> Result<(), T::Error> {
+    async fn new_files_prompt(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
@@ -106,7 +111,7 @@ where
             .await?
         {
             PromptLine::Kept => ScanRequest::SinceLastCall,
-            PromptLine::Aborted => return self.terminal.flush().await,
+            PromptLine::Aborted => return Ok(self.terminal.flush().await?),
             PromptLine::Entered(answer) => match parse_date_answer(&answer) {
                 Some(request) => request,
                 None => return self.error_in_date().await,
@@ -130,14 +135,14 @@ where
             .await?
         {
             PromptLine::Entered(answer) => answer,
-            PromptLine::Aborted => return self.terminal.flush().await,
+            PromptLine::Aborted => return Ok(self.terminal.flush().await?),
             PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
         };
         if answer.is_empty() {
             // Enter = None: blank + a single reset — F's abort tail,
             // byte-identical in the N capture (N1a).
             self.terminal.write(b"\r\n\x1b[0m\r\n").await?;
-            return self.terminal.flush().await;
+            return Ok(self.terminal.flush().await?);
         }
         let Some(span) = crate::app::menu_command::parse_span_token(&answer) else {
             // Junk at the Directories prompt: F's `Error in input!`
@@ -146,7 +151,7 @@ where
             self.terminal.write(CRLF).await?;
             self.terminal.write(wire::ERROR_IN_INPUT).await?;
             self.terminal.write(b"\r\n\r\n\x1b[0m\r\n").await?;
-            return self.terminal.flush().await;
+            return Ok(self.terminal.flush().await?);
         };
 
         // Both prompts have stamped `record_input`, so the flag set
@@ -183,7 +188,7 @@ where
         &mut self,
         session: &mut MenuSession,
         spec: NewFilesSpec,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.areas_in_conference(conference);
         let now = self.services.clock.now();
@@ -221,11 +226,11 @@ where
     /// the literal, blank, one reset — back to the menu. The internal
     /// command's *looping* date prompt is the shadowed stock path
     /// (diff record only).
-    async fn error_in_date(&mut self) -> Result<(), T::Error> {
+    async fn error_in_date(&mut self) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.terminal.write(CRLF).await?;
         self.terminal.write(wire::ERROR_IN_DATE).await?;
         self.terminal.write(b"\r\n\r\n\x1b[0m\r\n").await?;
-        self.terminal.flush().await
+        Ok(self.terminal.flush().await?)
     }
 }
 

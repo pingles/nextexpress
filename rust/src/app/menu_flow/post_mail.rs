@@ -18,7 +18,7 @@ use crate::app::menu_flow::mail_text::{
     render_post_success, MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, POST_ABORTED_LINE,
     POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE, POST_RECIPIENT_NO_ACCESS_LINE,
 };
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 use crate::domain::conference::Conference;
 use crate::domain::messaging::limits::MAX_MAIL_BODY_BYTES;
 use crate::domain::messaging::mail::{BroadcastTo, Mail};
@@ -360,7 +360,7 @@ where
         &mut self,
         session: &mut MenuSession,
         arg: PostArg,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         // Step 1: collect the recipient name. `E <to>` provides it
         // inline; bare `E` prompts. An empty prompt response reroutes
         // to ALL, mirroring legacy `enterMSG`
@@ -370,7 +370,8 @@ where
             PostArg::To(name) => name,
             PostArg::Missing => match self.read_optional_line(session, POST_TO_PROMPT).await? {
                 Some(line) => line,
-                // Idle or EOF — bail out cleanly.
+                // Reserved local-cancellation branch. EOF and idle timeout
+                // propagate from the shared reader as connection exits.
                 None => return Ok(()),
             },
         };
@@ -388,19 +389,11 @@ where
         // EALL forces public visibility regardless of the answer, but
         // the legacy still prompts and the rule will normalise the
         // value.
-        let private = match self
+        let private_line = self
             .read_prompted(POST_PRIVATE_PROMPT, TerminalEcho::Visible)
-            .await?
-        {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                matches!(line.trim().chars().next(), Some('y' | 'Y'))
-            }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                self.write_and_flush(POST_ABORTED_LINE).await?;
-                return Ok(());
-            }
-        };
+            .await?;
+        session.record_input(self.services.clock.now());
+        let private = matches!(private_line.trim().chars().next(), Some('y' | 'Y'));
 
         // Step 4: body via the ruler / numbered-line editor with the
         // `Msg. Options:` save menu (Fix 4). The full-screen editor fork
@@ -435,7 +428,7 @@ where
     pub(super) async fn handle_comment_to_sysop(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some(subject) = self
             .read_required_line(session, POST_SUBJECT_PROMPT, false)
             .await?
@@ -470,7 +463,7 @@ where
         &mut self,
         outcome: PostMailOutcome,
         command_label: &str,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         match &outcome {
             PostMailOutcome::LookupFailed(error) => {
                 eprintln!("{command_label} command: failed to resolve user: {error}");
@@ -491,17 +484,18 @@ where
     }
 
     /// Reads a single non-empty trimmed line in response to `prompt`,
-    /// stamping the idle clock. Returns `None` when the user submits an
-    /// empty line, an EOF, or an idle timeout. `silent = false` writes
-    /// the `Message aborted.` notice on that path (the `E` / `C`
-    /// composer); `silent = true` suppresses it (the `readMSG` sub-prompt
-    /// reply / forward, which abort silently — B6).
+    /// stamping the idle clock. Returns `None` only when the user submits a
+    /// blank line. `silent = false` writes the `Message aborted.` notice for
+    /// that local cancellation (the `E` / `C` composer); `silent = true`
+    /// suppresses it (the `readMSG` sub-prompt reply / forward, which abort
+    /// silently — B6). EOF and idle timeout instead propagate as connection
+    /// exits without a command-specific abort notice.
     pub(super) async fn read_required_line(
         &mut self,
         session: &mut MenuSession,
         prompt: &[u8],
         silent: bool,
-    ) -> Result<Option<String>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<String>, T::Error> {
         let notice = if silent {
             super::AbortNotice::Silent
         } else {
@@ -517,15 +511,15 @@ where
         }
     }
 
-    /// Reads a single trimmed line in response to `prompt`, returning
-    /// the line verbatim even when it's empty (the legacy `To:` reroute
-    /// to ALL relies on the empty case being distinguishable from EOF /
-    /// idle).
+    /// Reads a single trimmed line in response to `prompt`, returning the line
+    /// even when it is empty (the legacy `To:` reroute to ALL relies on that
+    /// local blank answer). EOF and idle timeout do not return `None`; they
+    /// propagate as connection exits.
     async fn read_optional_line(
         &mut self,
         session: &mut MenuSession,
         prompt: &[u8],
-    ) -> Result<Option<String>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<String>, T::Error> {
         match self
             .prompt_line(
                 session,
@@ -544,16 +538,17 @@ where
     /// Drives the `E` / `C` ruler / numbered-line editor (Fix 4):
     /// prints the ruler intro, reads numbered lines until a blank line
     /// ends input, then offers the `Msg. Options:` save menu. Returns
-    /// the assembled body on `S`ave, and `None` on a confirmed `A`bort,
-    /// EOF, idle, or an over-length body — writing the
-    /// `Message aborted.` notice on those paths. `C`ontinue resumes
+    /// the assembled body on `S`ave, and `None` on a confirmed `A`bort or an
+    /// over-length body — writing the `Message aborted.` notice on those
+    /// command-local paths. EOF and idle timeout propagate immediately as
+    /// connection exits without that notice. `C`ontinue resumes
     /// input, `L`ist shows the entered lines, `?` shows the verb help;
     /// `D`/`E`/`F`/`X` are advertised but deferred, and the full-screen
     /// editor fork (`amiexpress/express.e:10095-10100`) is skipped.
     pub(super) async fn read_editor_body(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<Option<String>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<String>, T::Error> {
         self.write_and_flush(EDITOR_INTRO).await?;
         // `lines` drives the numbered prompts and the `L`ist view;
         // `body` is the assembled message, capped by the same helper the
@@ -566,23 +561,16 @@ where
             // (the legacy "(Enter) alone to end").
             loop {
                 let prompt = render_editor_line_prompt(lines.len() + 1);
-                match self.read_prompted(&prompt, TerminalEcho::Visible).await? {
-                    TerminalRead::Line(line) => {
-                        session.record_input(self.services.clock.now());
-                        if line.is_empty() {
-                            break;
-                        }
-                        if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
-                            self.write_and_flush(POST_ABORTED_LINE).await?;
-                            return Ok(None);
-                        }
-                        lines.push(line);
-                    }
-                    TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                        self.write_and_flush(POST_ABORTED_LINE).await?;
-                        return Ok(None);
-                    }
+                let line = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
+                session.record_input(self.services.clock.now());
+                if line.is_empty() {
+                    break;
                 }
+                if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
+                    self.write_and_flush(POST_ABORTED_LINE).await?;
+                    return Ok(None);
+                }
+                lines.push(line);
             }
 
             // Save-menu phase. `?` swaps the next prompt for the verb
@@ -595,35 +583,28 @@ where
                     EDITOR_MSG_OPTIONS_PROMPT
                 };
                 show_help = false;
-                match self.read_prompted(prompt, TerminalEcho::Visible).await? {
-                    TerminalRead::Line(verb) => {
-                        session.record_input(self.services.clock.now());
-                        match verb.trim().chars().next().map(|c| c.to_ascii_lowercase()) {
-                            // S>ave: return the body assembled so far.
-                            Some('s') => return Ok(Some(body)),
-                            // A>bort: confirm, then abandon on a `y`.
-                            Some('a') => {
-                                if self.confirm_editor_abort(session).await? {
-                                    self.write_and_flush(POST_ABORTED_LINE).await?;
-                                    return Ok(None);
-                                }
-                            }
-                            // C>ontinue: resume the input phase.
-                            Some('c') => continue 'editor,
-                            // L>ist the lines entered so far.
-                            Some('l') => {
-                                self.write_and_flush(&render_editor_listing(&lines)).await?;
-                            }
-                            // `?` shows the verb help as the next prompt.
-                            Some('?') => show_help = true,
-                            // D/E/F/X and anything else: deferred — re-prompt.
-                            _ => {}
+                let verb = self.read_prompted(prompt, TerminalEcho::Visible).await?;
+                session.record_input(self.services.clock.now());
+                match verb.trim().chars().next().map(|c| c.to_ascii_lowercase()) {
+                    // S>ave: return the body assembled so far.
+                    Some('s') => return Ok(Some(body)),
+                    // A>bort: confirm, then abandon on a `y`.
+                    Some('a') => {
+                        if self.confirm_editor_abort(session).await? {
+                            self.write_and_flush(POST_ABORTED_LINE).await?;
+                            return Ok(None);
                         }
                     }
-                    TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                        self.write_and_flush(POST_ABORTED_LINE).await?;
-                        return Ok(None);
+                    // C>ontinue: resume the input phase.
+                    Some('c') => continue 'editor,
+                    // L>ist the lines entered so far.
+                    Some('l') => {
+                        self.write_and_flush(&render_editor_listing(&lines)).await?;
                     }
+                    // `?` shows the verb help as the next prompt.
+                    Some('?') => show_help = true,
+                    // D/E/F/X and anything else: deferred — re-prompt.
+                    _ => {}
                 }
             }
         }
@@ -631,67 +612,55 @@ where
 
     /// Reads the `Abort message entry (y/n)?` answer from the save menu
     /// (`amiexpress/express.e:10568`). Returns `true` (abandon) on a
-    /// `y`/`Y` answer or a disconnect; any other answer keeps editing.
-    async fn confirm_editor_abort(&mut self, session: &mut MenuSession) -> Result<bool, T::Error> {
-        match self
+    /// `y`/`Y` answer; any other submitted answer keeps editing. A disconnect
+    /// or idle timeout propagates as a connection exit.
+    async fn confirm_editor_abort(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<bool, T::Error> {
+        let line = self
             .read_prompted(EDITOR_ABORT_CONFIRM_PROMPT, TerminalEcho::Visible)
-            .await?
-        {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                Ok(matches!(line.trim().chars().next(), Some('y' | 'Y')))
-            }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(true),
-        }
+            .await?;
+        session.record_input(self.services.clock.now());
+        Ok(matches!(line.trim().chars().next(), Some('y' | 'Y')))
     }
 
-    /// Drives the line-mode editor's body input loop. Returns the
-    /// concatenated body on `.`-on-its-own-line, and `None` on `/A`, EOF,
-    /// or idle timeout. `silent = false` writes the abort notice on that
-    /// path; `silent = true` suppresses it (the sub-prompt reply — B6).
+    /// Drives the line-mode editor's body input loop. Returns the concatenated
+    /// body on `.`-on-its-own-line, and `None` on `/A` or an over-length body.
+    /// `silent = false` writes the abort notice on those command-local paths;
+    /// `silent = true` suppresses it (the sub-prompt reply — B6). EOF and idle
+    /// timeout propagate as connection exits.
     pub(super) async fn read_post_body(
         &mut self,
         session: &mut MenuSession,
         silent: bool,
-    ) -> Result<Option<String>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<String>, T::Error> {
         self.write_and_flush(POST_BODY_PROMPT).await?;
         let mut body = String::new();
         loop {
-            match self.read_prompted(b"", TerminalEcho::Visible).await? {
-                TerminalRead::Line(line) => {
-                    session.record_input(self.services.clock.now());
-                    let trimmed = line.trim();
-                    if trimmed.eq_ignore_ascii_case("/A") {
-                        self.abort_notice(if silent {
-                            super::AbortNotice::Silent
-                        } else {
-                            super::AbortNotice::MessageAborted
-                        })
-                        .await?;
-                        return Ok(None);
-                    }
-                    if trimmed == "." {
-                        return Ok(Some(body));
-                    }
-                    if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
-                        self.abort_notice(if silent {
-                            super::AbortNotice::Silent
-                        } else {
-                            super::AbortNotice::MessageAborted
-                        })
-                        .await?;
-                        return Ok(None);
-                    }
-                }
-                TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                    self.abort_notice(if silent {
-                        super::AbortNotice::Silent
-                    } else {
-                        super::AbortNotice::MessageAborted
-                    })
-                    .await?;
-                    return Ok(None);
-                }
+            let line = self.read_prompted(b"", TerminalEcho::Visible).await?;
+            session.record_input(self.services.clock.now());
+            let trimmed = line.trim();
+            if trimmed.eq_ignore_ascii_case("/A") {
+                self.abort_notice(if silent {
+                    super::AbortNotice::Silent
+                } else {
+                    super::AbortNotice::MessageAborted
+                })
+                .await?;
+                return Ok(None);
+            }
+            if trimmed == "." {
+                return Ok(Some(body));
+            }
+            if !append_line_with_newline(&mut body, &line, MAX_MAIL_BODY_BYTES) {
+                self.abort_notice(if silent {
+                    super::AbortNotice::Silent
+                } else {
+                    super::AbortNotice::MessageAborted
+                })
+                .await?;
+                return Ok(None);
             }
         }
     }
@@ -700,6 +669,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn line_mode_body_collects_lines_until_the_dot_terminator() {
+        let services = crate::app::menu_flow::test_support::test_services();
+        let mut terminal = crate::app::menu_flow::test_support::CaptureTerminal::with_lines(vec![
+            crate::app::terminal::TerminalRead::Line("first line".to_string()),
+            crate::app::terminal::TerminalRead::Line(".".to_string()),
+        ]);
+        let mut session = crate::app::menu_flow::test_support::menu_session();
+        let mut flow = super::super::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+
+        let body = flow
+            .read_post_body(&mut session, false)
+            .await
+            .expect("scripted terminal is infallible");
+
+        assert_eq!(body.as_deref(), Some("first line\n"));
+        assert_eq!(terminal.output, POST_BODY_PROMPT);
+    }
 
     #[test]
     fn static_post_outcome_lines_pin_the_wire_bytes() {

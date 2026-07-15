@@ -78,7 +78,8 @@ top-level modules under `rust/src/`:
   `edit_mail_header`, `move_mail`, `attach_file_to_mail`), the password
   helpers, caller-log entry shape, and `SessionPolicy`.
 
-- **`adapters/`** — concrete tech: `TelnetListener` (transport),
+- **`adapters/`** — concrete tech: `TelnetListener` (transport; per-session
+  task errors are reported with the peer address rather than discarded),
   `FileConferenceRepository`, `FileScreenRepository` (file-backed assets with
   caching), `FileMailStore` (one JSON file per message),
   `InMemoryMailStores` (registry), `InMemoryUserRepository`,
@@ -97,8 +98,9 @@ top-level modules under `rust/src/`:
   transport-agnostic drivers. Carries application-layer ports
   (`Terminal`, `ScreenRepository`, `MailStores`), configuration types,
   the runtime value (`Runtime` + `AppServices`), the per-connection
-  orchestrator (`SessionDriver`), three sub-flows (`LoginFlow`,
-  `RegistrationFlow`, `MenuFlow`), a command module under
+  orchestrator and sole lifecycle-completion boundary (`SessionDriver`),
+  phase-preserving terminal failures (`session_terminal`), four sub-flows
+  (`LoginFlow`, `RegistrationFlow`, `PasswordResetFlow`, `MenuFlow`), a command module under
   `app/menu_flow/*` for each non-trivial menu command (terminal-free
   core fn + terminal-aware handler in the same file; simple
   toggles/queries dispatch inline in `MenuFlow::dispatch`), and the
@@ -219,17 +221,25 @@ flowchart LR
     AppRun --> Telnet["TelnetListener::bind"]
     Telnet --> Colour["ColourTerminal\n(decorator: strips ANSI\nwhen M-off)"]
     Colour --> Terminal["TelnetTerminal"]
-    Telnet --> Driver["SessionDriver\n(per connection, drives the\nColourTerminal)"]
+    Telnet --> Driver["SessionDriver\n(owns one typed phase; sole\ncompletion/finalisation boundary)"]
 
     Driver --> Start["start (banner + copyright)"]
     Driver --> Login["LoginFlow"]
     Driver --> Registration["RegistrationFlow"]
+    Driver --> PasswordReset["PasswordResetFlow"]
     Driver --> AutoRejoin["auto-rejoin resolution\n(inline in run; + logon conference scan, L1)"]
     Driver --> Menu["MenuFlow"]
     Driver --> Finalise["session_flow::enter_menu /\nfinalise_logoff"]
+    Login --> PhaseFailure["session_terminal\nSessionFlowResult + exact-phase\nSessionTerminalError"]
+    Registration --> PhaseFailure
+    PasswordReset --> PhaseFailure
+    Driver --> PhaseFailure
+    Menu --> MenuExit["MenuExit / MenuFlowError\n(user logoff, carrier loss,\nidle timeout, terminal error)"]
+    MenuExit --> Driver
 
     Login --> Typed["domain::session::typed\n(phase wrappers)"]
     Registration --> Typed
+    PasswordReset --> Typed
     Menu --> Typed
     AutoRejoin --> Typed
     Login --> SF["session_flow\n(typed-only use cases over ports)"]
@@ -284,15 +294,42 @@ compile time:
 (`NewUserRegisteringSession`) → `OnboardedSession` → `MenuSession` →
 `LoggingOffSession` → `EndedSession`.
 
-A ninth construct, the `ActivePhase` enum (`typed.rs:449`), folds the
-four readable phases (`Identifying`/`Authenticating`/
-`NewUserRegistering`/`Menu`, but not `Onboarded`, which the driver
-passes straight through) together so the cross-phase idle-timeout and
-carrier-loss handlers can take one value and return a
+A ninth construct, the `ActivePhase` enum, folds the five phases from
+which carrier loss can occur (`Identifying`/`Authenticating`/
+`NewUserRegistering`/`Onboarded`/`Menu`) together so a connection exit
+can consume the currently owned wrapper and return a `LoggingOffSession`.
+`ConnectingSession` has the corresponding pre-prompt carrier-loss
+transition.
+
+Type safety still governs transition ownership. Genuine phase changes
+consume a wrapper and return the next one; same-phase operations do not.
+In particular, `SessionDriver` owns one `MenuSession`, while `MenuFlow`,
+dispatch and command handlers borrow `&mut MenuSession`. Explicit joins
+mutate that borrowed menu phase and return metadata rather than consuming
+and re-wrapping the session. A confirmed `G` similarly returns a
+`UserRequestedLogoff` intent; only the driver consumes `MenuSession` into
 `LoggingOffSession`.
 
-`SessionDriver::run` threads these wrappers across the sub-flows. There
-are **no** mail/messaging transitions on `Session` (the narrowing
+Terminal failures preserve that ownership too. `app::session_terminal`
+defines `SessionFlowResult` and `SessionTerminalError`, which pair the
+adapter's original error with the exact phase current at the failed
+operation (`Connecting`, an `ActivePhase`, `LoggingOff`, or `Ended`).
+`preserve_phase` wraps individual terminal operations in login,
+registration, password reset and driver-owned rendering. This prevents a
+bare terminal `?` from discarding the only value capable of making the next
+typed transition.
+
+`SessionDriver::run` is the single connection completion/finalisation
+boundary. On a terminal error it applies carrier loss to connecting/active
+ownership, preserves an existing `LoggingOffSession` and its reason, and
+does nothing to an already `EndedSession`; every resulting logging-off
+value is finalised once before the original adapter error is returned.
+Inside the menu tree, EOF and idle timeout are `MenuExit` values propagated
+immediately from any nested prompt. They are never collapsed into a local
+command abort or deferred until the next menu read. A submitted blank line
+remains a distinct, command-local answer according to that prompt's policy.
+
+There are **no** mail/messaging transitions on `Session` (the narrowing
 refactor removed them): the menu use cases obtain `&mut User` via
 `MenuSession::user_mut()` and call the `domain::messaging::*` rules
 directly, so the typed module imports no messaging rules and stays
@@ -401,11 +438,14 @@ lists it (simple toggles/queries are otherwise handled inline in
 
 ### Driver and sub-flow split
 
-`TelnetListener` only binds, accepts streams, runs the IAC negotiation,
-and constructs a per-connection `SessionDriver`. `SessionDriver` is a
-thin orchestrator:
+`TelnetListener` binds, accepts streams, runs the IAC negotiation, and
+constructs a per-connection `SessionDriver`. Its node-release guard runs
+for both success and failure, and the spawned task reports a returned I/O
+error with the peer address instead of discarding it. `SessionDriver` is a
+thin orchestrator and the only lifecycle completion owner:
 
 1. `start` — write banner + copyright, return an `IdentifyingSession`.
+   A failed preamble retains `ConnectingSession` for carrier-loss cleanup.
 2. `LoginFlow::identify` — ask the graphics question (`ANSI_PROMPT`;
    `n`/`N` turns the terminal's live colour mode off so screens render
    with ANSI stripped), then prompt for name, dispatch to register,
@@ -422,8 +462,12 @@ thin orchestrator:
    after the logon scan — the legacy emits it at
    `SUBSTATE_DISPLAY_CONF_BULL`, after `confScan`). No join scan fires
    here: the legacy auto-rejoin carries `FORCE_MAILSCAN_SKIP` because
-   the logon scan (step 5b) covers every flagged base.
-5. `enter_menu` then **logon conference scan** (L1) —
+   the logon scan (step 6) covers every flagged base.
+5. `enter_menu_after_password_reset` — attempt `enter_menu`; when it reports
+   `PasswordResetRequired`, run `PasswordResetFlow` and retry with the returned
+   `OnboardedSession`. Terminal failures retain that exact onboarded/logging-off
+   phase; hashing or persistence failures keep their existing clean-abort path.
+6. **Logon conference scan** (L1) —
    `MenuFlow::run_logon_conference_scan` runs the legacy `confScan`
    before the menu: the same multi-conference `scan_all_mail` walk the
    `MS` command renders (header, per-conference banner, listing, and the
@@ -432,8 +476,18 @@ thin orchestrator:
    driver then **replays** the captured auto-rejoin `JOINED` + name-type
    promotion and renders the user-stats screen (`render_stats_screen`,
    post-`enter_menu` so `times_called` reflects the logon bump).
-6. `MenuFlow::run` — the command loop above, returns `LoggingOffSession`.
-7. `finalise` — apply `session_flow::finalise_logoff` and persist.
+7. `MenuFlow::run` — borrow the driver's `MenuSession` through the command
+   tree. It returns a `MenuExit` (normal-logoff intent, carrier loss or idle
+   timeout), or `MenuFlowError::Terminal`; it never performs a lifecycle
+   transition itself. Nested EOF/idle exits reach the driver immediately,
+   while explicit blank input can still cancel only the current prompt.
+8. Completion — map the menu exit or exact-phase terminal failure to the
+   appropriate typed transition, then apply `session_flow::finalise_logoff`
+   and persist exactly once. For a normal `G`, the driver first consumes
+   `MenuSession -> LoggingOffSession`, then writes the logoff screen and
+   goodbye. Because the transition precedes that fallible tail, a screen,
+   goodbye or flush failure still finalises the normal-logoff state and
+   retains its reason.
 
 Rendering helpers shared by the auto-rejoin and explicit-join paths
 (`render_menu_prompt`, `auto_rejoin_line`, `explicit_join_line`,
@@ -583,7 +637,9 @@ What is already idiomatic:
   behind `Arc`, so per-session clone is a fixed cost and no lifetimes
   leak into flow signatures.
 - **Phase-typed session wrappers**. Eight wrappers turn "session is in
-  state X" assertions into compile errors.
+  state X" assertions into compile errors. Phase-owning terminal flows retain
+  the exact wrapper on failure; same-phase menu handlers borrow the wrapper,
+  and only the driver consumes it for a lifecycle transition.
 - **Tight value-object grouping inside `User`** — six private structs
   group related fields; two of them (`Credentials`, with
   `SaltMatchesAlgorithm`, and `AccountStatus`, with
@@ -1054,7 +1110,8 @@ supersedes the earlier "small menu renderer" idea):
   needs the message number, so only the *static* arms extract; a smaller
   async `match` remains per handler.
 
-> **Fixed (2026-06-23): `EH` edit-header abort bug.**
+> **Fixed (2026-06-23), lifecycle handling superseded 2026-07-13: `EH`
+> edit-header abort bug.**
 > `read_optional_unchanged_line` (`sysop_admin.rs:438`) previously
 > returned `Ok(None)` for **both** a blank line ("keep current") **and**
 > `Eof`/`IdleTimedOut` (abort), while its doc comment claimed a
@@ -1063,16 +1120,14 @@ supersedes the earlier "small menu renderer" idea):
 > `handle_edit_header` (`sysop_admin.rs:330`), fed that `Option` straight
 > into `edit_mail_header`, where `None` means "keep current" — so an idle
 > timeout or dropped carrier during the subject/recipient prompt was
-> silently treated as "keep current" and the header edit proceeded
-> instead of aborting. The reader now returns the three-state
-> `Result<Option<Option<String>>, _>` its doc comment always described,
-> and `handle_edit_header` returns early on the abort case. The abort is
-> **silent**, matching the legacy `editHeader` (`express.e:11602`), whose
-> every prompt does `IF (stat < 0) THEN RETURN stat` with no notice (the
-> same convention as the `R`-sub-prompt reply / forward commands, B6).
-> Pinned by three `#[tokio::test]`s in `sysop_admin.rs` (subject-timeout
-> aborts silently, addressee-timeout aborts silently, blank input still
-> keeps-and-proceeds). The reader-merge dedup above remains open.
+> silently treated as "keep current" and the header edit proceeded instead
+> of aborting. The intermediate fix returned the three-state
+> `Result<Option<Option<String>>, _>` and stopped the handler on the outer
+> `None`. The lifecycle-ownership refactor now makes the distinction at the
+> stronger boundary: blank still returns `Some(None)` (keep), while EOF/idle
+> propagates `MenuFlowError::Exit` immediately and never becomes a field
+> value. The exit remains **silent**, matching the legacy `editHeader`
+> (`express.e:11602`) and its absence of a command-specific notice.
 
 Verified impact: net production LOC is roughly neutral to −25 (the
 finder's −35 to −55 was optimistic — the named wrappers, the
@@ -1121,11 +1176,12 @@ onto it or documented as intentional. The `EmptyMeaning` enum must
 encode join's no-trim/lone-CRLF blank semantics vs post_mail's
 trim+notice. (b) N and FM are the next prompt-heavy slices, so this is
 this item's own "fold into the next slice that touches these files"
-trigger arriving; ~1–1.5 days for the menu_flow scope. The wider
-cross-flow Eof/IdleTimedOut outcome-mapping consolidation
-(login/registration/password-reset) was reviewed and **cut**: Rust's
-exhaustive matching already protects future outcome variants — the
-compiler flags every site when Tier G adds `TimeExpired`.
+trigger arriving; ~1–1.5 days for the menu_flow scope. The wider cross-flow
+`Eof`/`IdleTimedOut` outcome-enum consolidation was reviewed and **cut** in
+that form. The 2026-07-13 lifecycle refactor later solved the underlying
+ownership problem without one shared outcome enum: login, registration and
+password reset use exact-phase `SessionFlowResult`, while the borrowed menu
+tree uses `MenuExit`/`MenuFlowError`.
 
 ### 11. Declarative command listing in `menu_command.rs` (low priority)
 
@@ -1661,10 +1717,10 @@ location, conference, baud, logon_at, quiet_mode}` with
 at join and the `Q` toggle, clear at logoff. Two adjacent fixes ride
 along: the domain transition table REJECTS `LoggedOn → Idle`
 (`node.rs:86-97`) and `release_node_after` discards release errors
-(`telnet_listener/mod.rs:139`) — once nodes really reach LoggedOn, a
-write-error abort (which skips finalise via `?`) would strand the
-node, so add the carrier-loss arc and make `release` clear presence
-and force Idle from any live status. 1–2 days, ~8–12 files.
+(`telnet_listener/mod.rs:149`). Session write errors now pass through the
+driver's completion boundary and finalise the typed session, but release must
+still clear future presence and force Idle from any live node status even if
+that finalisation or release persistence fails. 1–2 days, ~8–12 files.
 **Trigger: immediately before Tier E's WHO slice — E1 (page-sysop
 comment branch) needs none of it, and building it mid-Tier-D would sit
 unconsumed for several slices.**
@@ -1742,10 +1798,11 @@ the whole call and time expiry is unreachable — a live legacy-parity
 gap today, and Tier I's daily accounting would otherwise launch on
 data that was never recorded. Fix without a ticker task or channels:
 track a last-tick timestamp beside `last_input_at` and, at each
-menu-loop iteration, apply `tick_minute` once per whole elapsed
-minute; on `TickMinuteOutcome::TimeExpired`, write the expiry notice
-and return through the existing `DispatchOutcome::LogoffComplete`
-path. Every read is already bounded by the 5-minute input timeout, so
+menu-loop iteration, apply `tick_minute` once per whole elapsed minute; on
+`TickMinuteOutcome::TimeExpired`, return a new lifecycle exit to the driver,
+which consumes `MenuSession` into the appropriate logging-off phase before
+rendering the expiry notice. Every read is already bounded by the 5-minute
+input timeout, so
 expiry fires at worst one idle-timeout late (time spent inside
 sub-flows accrues retroactively on return) — acceptable until Tier G,
 when precise mid-read expiry can ride item 26's select deadline. The
@@ -2066,13 +2123,21 @@ touches the doubles.
 
 ### Historical landing record
 
+- The 2026-07-13 lifecycle-ownership refactor made `SessionDriver::run` the
+  single completion/finalisation boundary. Login, registration and password
+  reset now retain the exact typed phase on terminal failure; menu handlers
+  borrow one driver-owned `MenuSession`; nested EOF/idle exits propagate
+  immediately; and normal-logoff finalisation survives a failed logoff screen,
+  goodbye or flush. The listener reports the original per-session I/O error
+  after its node-release guard runs.
 - Refactorings 3–9 landed in June/July 2026 with the suite and a
   diff-scoped mutants run per commit. The shared reader, clock,
   read-only file-port preparation, scan-engine extraction,
   error-boundary pass and command-style user writes are current code,
   not pending prerequisites.
-- The `EH` abort fix landed 2026-06-23: blank and EOF/idle are distinct,
-  and abort remains silent per `express.e`.
+- The `EH` abort fix landed 2026-06-23: blank and EOF/idle are distinct.
+  Blank keeps the field; EOF/idle now propagates silently as a lifecycle exit,
+  preserving the legacy's absence of a command-specific abort notice.
 - Persistence errors at authentication, menu entry and finalisation no
   longer use `.expect()`; they abort or close cleanly according to the
   session phase.

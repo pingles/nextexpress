@@ -5,6 +5,8 @@
 //! it renders the banner, hands off to the
 //! [`crate::app::login_flow::LoginFlow`] for sign-in, the
 //! [`crate::app::registration_flow::RegistrationFlow`] for new users,
+//! [`crate::app::password_reset_flow::PasswordResetFlow`] for forced
+//! credential rotation,
 //! resolves the auto-rejoin path, drives the
 //! [`crate::app::menu_flow::MenuFlow`] command loop, and finalises the
 //! session.
@@ -18,9 +20,22 @@
 //! from [`crate::domain::session::typed`]. The wrong handle for a given
 //! transition becomes unrepresentable at compile time; the driver no
 //! longer needs to assert "session is in X" after every call.
+//!
+//! Same-phase menu work is deliberately different: the driver retains one
+//! [`MenuSession`] and lends `&mut MenuSession` to [`MenuFlow`] and its command
+//! handlers. Only a genuine lifecycle transition consumes the wrapper.
+//!
+//! ## Completion ownership
+//! [`Self::run`] is the single connection completion and finalisation boundary.
+//! Terminal-driven phase-owning flows return
+//! [`crate::app::session_terminal::SessionTerminalError`], coupling the
+//! adapter's original error with the exact typed phase that owned the failed
+//! operation. The boundary can therefore apply carrier loss to a recoverable
+//! phase, retain an already-selected logoff reason, avoid re-finalising an
+//! ended session, and still return the original terminal error.
 
 use crate::app::login_flow::{LoginFlow, LoginOutcome};
-use crate::app::menu_flow::MenuFlow;
+use crate::app::menu_flow::{MenuExit, MenuFlow, MenuFlowError};
 use crate::app::password_reset_flow::{
     PasswordResetFlow, PasswordResetOutcome, PasswordResetServices,
 };
@@ -30,7 +45,9 @@ use crate::app::session_flow;
 use crate::app::session_presenter::{
     format_auto_rejoin_line, render_name_type_promotion, render_stats_screen,
 };
+use crate::app::session_terminal::{preserve_phase, SessionFlowResult, SessionTerminalError};
 use crate::app::terminal::Terminal;
+use crate::app::wire_text::IDLE_TIMEOUT_LINE;
 use crate::domain::conference::NameType;
 use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
@@ -65,11 +82,13 @@ const NO_CONFERENCE_ACCESS_LINE: &[u8] = b"\r\nNo accessible conferences. Goodby
 
 /// App-layer session workflow over a terminal port.
 ///
-/// The driver does not hold a [`crate::domain::session::Session`]
-/// field; phase wrappers are stack-local as they thread through
-/// [`Self::run`] and the sub-flow structs in
-/// [`crate::app::login_flow`], [`crate::app::registration_flow`] and
-/// [`crate::app::menu_flow`].
+/// The driver does not hold an untyped [`crate::domain::session::Session`]
+/// field. It owns one typed wrapper at a time as stack-local state threaded
+/// through [`Self::run`] and the sub-flow structs in
+/// [`crate::app::login_flow`], [`crate::app::registration_flow`],
+/// [`crate::app::password_reset_flow`] and [`crate::app::menu_flow`]. That
+/// ownership returns to the driver on every normal outcome and every terminal
+/// failure.
 pub(crate) struct SessionDriver<T>
 where
     T: Terminal,
@@ -111,6 +130,12 @@ enum EnterMenuDriverOutcome {
     Aborted,
 }
 
+enum DriverCompletion {
+    LoggingOff(Box<LoggingOffSession>),
+    Ended,
+    Aborted,
+}
+
 impl<T> SessionDriver<T>
 where
     T: Terminal,
@@ -132,9 +157,32 @@ where
         }
     }
 
-    /// Runs the BBS workflow until the terminal closes or the session
-    /// reaches a final logoff path.
+    /// Runs the BBS workflow until the terminal closes or the session reaches
+    /// a final logoff path. This is the sole boundary that finalises a
+    /// logging-off session; each path reaches it at most once.
+    ///
+    /// # Errors
+    /// Returns the terminal adapter's original error after recovering the
+    /// exact phase, applying carrier loss where necessary, and finalising any
+    /// resulting `LoggingOffSession`.
     pub(crate) async fn run(&mut self) -> Result<(), T::Error> {
+        match self.drive().await {
+            Ok(DriverCompletion::LoggingOff(logging_off)) => {
+                self.finalise(*logging_off);
+                Ok(())
+            }
+            Ok(DriverCompletion::Ended | DriverCompletion::Aborted) => Ok(()),
+            Err(failure) => {
+                let (phase, source) = failure.into_parts();
+                if let Some(logging_off) = phase.into_logging_off() {
+                    self.finalise(logging_off);
+                }
+                Err(source)
+            }
+        }
+    }
+
+    async fn drive(&mut self) -> SessionFlowResult<DriverCompletion, T::Error> {
         let connecting =
             ConnectingSession::accept(self.node_number, self.channel, 0, self.services.clock.now())
                 .expect("freshly allocated node has no existing session");
@@ -149,7 +197,7 @@ where
             LoginOutcome::Ended(ended) => SignInResult::Ended(ended),
             // An unrecoverable persistence failure during sign-in: the
             // session is gone and already logged, so just close.
-            LoginOutcome::Aborted => return Ok(()),
+            LoginOutcome::Aborted => return Ok(DriverCompletion::Aborted),
             LoginOutcome::NeedsRegistration {
                 session,
                 password_required,
@@ -198,43 +246,118 @@ where
                         // the legacy runs `confScan` with the user already
                         // fully logged on, before the join announcement.
                         match self.enter_menu_after_password_reset(session).await? {
-                            EnterMenuDriverOutcome::Menu(mut menu) => {
-                                MenuFlow::new(&mut self.terminal, &self.services)
-                                    .run_logon_conference_scan(&mut menu)
-                                    .await?;
-                                // Replay the deferred auto-rejoin
-                                // announcement, then the login stats (read
-                                // after the `enter_menu` bump, matching the
-                                // legacy `statPrintUser` order).
-                                self.announce_auto_rejoin(&announcement).await?;
-                                self.render_login_stats(&menu).await?;
-                                MenuFlow::new(&mut self.terminal, &self.services)
-                                    .restore_flags_and_announce(&mut menu)
-                                    .await?;
-                                MenuFlow::new(&mut self.terminal, &self.services)
-                                    .run(menu)
-                                    .await?
+                            EnterMenuDriverOutcome::Menu(menu) => {
+                                self.drive_menu(menu, &announcement).await?
                             }
                             EnterMenuDriverOutcome::LoggingOff(logging_off) => logging_off,
-                            EnterMenuDriverOutcome::Aborted => return Ok(()),
+                            EnterMenuDriverOutcome::Aborted => {
+                                return Ok(DriverCompletion::Aborted);
+                            }
                         }
                     }
                     // The no-access line tells the user why their session
                     // is closing — the caller-log finalise entry already
                     // records `LogoffReason::NoConferenceAccess`.
                     AutoRejoinTransition::NoAccess(logging_off) => {
-                        self.terminal.write(NO_CONFERENCE_ACCESS_LINE).await?;
-                        self.terminal.flush().await?;
+                        let (logging_off, ()) = preserve_phase(
+                            logging_off,
+                            crate::app::terminal::write_and_flush(
+                                &mut self.terminal,
+                                NO_CONFERENCE_ACCESS_LINE,
+                            ),
+                        )
+                        .await?;
                         logging_off
                     }
                 }
             }
             SignInResult::LoggingOff(logging_off) => logging_off,
-            SignInResult::Ended(_ended) => return Ok(()),
+            SignInResult::Ended(_ended) => return Ok(DriverCompletion::Ended),
         };
 
-        self.finalise(logging_off);
-        Ok(())
+        Ok(DriverCompletion::LoggingOff(Box::new(logging_off)))
+    }
+
+    async fn drive_menu(
+        &mut self,
+        mut menu: MenuSession,
+        announcement: &AutoRejoinAnnouncement,
+    ) -> SessionFlowResult<LoggingOffSession, T::Error> {
+        if let Err(error) = MenuFlow::new(&mut self.terminal, &self.services)
+            .run_logon_conference_scan(&mut menu)
+            .await
+        {
+            return self.complete_menu_error(menu, error).await;
+        }
+
+        // Replay the deferred auto-rejoin announcement, then the login stats
+        // (read after the `enter_menu` bump, matching the legacy
+        // `statPrintUser` order). The driver retains `menu` around every
+        // fallible render.
+        if let Err(source) = self.announce_auto_rejoin(announcement).await {
+            return Err(SessionTerminalError::new(menu, source));
+        }
+        if let Err(source) = self.render_login_stats(&menu).await {
+            return Err(SessionTerminalError::new(menu, source));
+        }
+        if let Err(error) = MenuFlow::new(&mut self.terminal, &self.services)
+            .restore_flags_and_announce(&mut menu)
+            .await
+        {
+            return self.complete_menu_error(menu, error).await;
+        }
+
+        match MenuFlow::new(&mut self.terminal, &self.services)
+            .run(&mut menu)
+            .await
+        {
+            Ok(exit) => self.complete_menu_exit(menu, exit).await,
+            Err(error) => self.complete_menu_error(menu, error).await,
+        }
+    }
+
+    async fn complete_menu_error(
+        &mut self,
+        menu: MenuSession,
+        error: MenuFlowError<T::Error>,
+    ) -> SessionFlowResult<LoggingOffSession, T::Error> {
+        match error {
+            MenuFlowError::Exit(exit) => self.complete_menu_exit(menu, exit).await,
+            MenuFlowError::Terminal(source) => Err(SessionTerminalError::new(menu, source)),
+        }
+    }
+
+    async fn complete_menu_exit(
+        &mut self,
+        menu: MenuSession,
+        exit: MenuExit,
+    ) -> SessionFlowResult<LoggingOffSession, T::Error> {
+        match exit {
+            MenuExit::UserRequestedLogoff => {
+                // The handler returned intent while borrowing MenuSession.
+                // This is the sole consuming normal-logoff transition; the
+                // tail runs only after the typed phase has changed.
+                let logging_off = menu.user_requests_logoff();
+                let (logging_off, ()) = preserve_phase(
+                    logging_off,
+                    MenuFlow::new(&mut self.terminal, &self.services).write_logoff_tail(),
+                )
+                .await?;
+                Ok(logging_off)
+            }
+            MenuExit::CarrierLost => Ok(menu.into_active().apply_carrier_loss()),
+            MenuExit::IdleTimedOut => {
+                let logging_off = menu
+                    .into_active()
+                    .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
+                let (logging_off, ()) = preserve_phase(
+                    logging_off,
+                    crate::app::terminal::write_and_flush(&mut self.terminal, IDLE_TIMEOUT_LINE),
+                )
+                .await?;
+                Ok(logging_off)
+            }
+        }
     }
 
     /// Replays the deferred auto-rejoin announcement — the JOINED line
@@ -271,14 +394,15 @@ where
     async fn start(
         &mut self,
         connecting: ConnectingSession,
-    ) -> Result<IdentifyingSession, T::Error> {
+    ) -> SessionFlowResult<IdentifyingSession, T::Error> {
         // Plain connection preamble (the legacy "Running AmiExpress..."
         // lines, `amiexpress/express.e:29514`), shown before the
         // graphics question. The banner / title screen is rendered
         // afterwards by `LoginFlow` so an ASCII caller gets it
         // ANSI-stripped, mirroring the legacy `SCREEN_BBSTITLE` order
         // (`:29552`, after the `A/r/n` question).
-        self.terminal.write(COPYRIGHT_LINES).await?;
+        let (connecting, ()) =
+            preserve_phase(connecting, self.terminal.write(COPYRIGHT_LINES)).await?;
         Ok(connecting.prompt_for_name())
     }
 
@@ -306,7 +430,7 @@ where
     async fn enter_menu_after_password_reset(
         &mut self,
         mut onboarded: OnboardedSession,
-    ) -> Result<EnterMenuDriverOutcome, T::Error> {
+    ) -> SessionFlowResult<EnterMenuDriverOutcome, T::Error> {
         loop {
             match self.enter_menu(onboarded) {
                 Ok(session_flow::EnterMenuFlowOutcome::Menu(menu)) => {
@@ -361,7 +485,8 @@ where
         }
     }
 
-    /// Finalises the logoff, persisting the user's final state.
+    /// Finalises the logoff, persisting the user's final state. Only
+    /// [`Self::run`] calls this completion boundary.
     ///
     /// A persistence failure here is logged but cannot change the
     /// outcome — the session is already closing — so it does not
@@ -388,7 +513,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
-    use std::convert::Infallible;
+    use std::fmt;
     use std::sync::Arc;
     use std::time::{Duration, SystemTime};
 
@@ -420,7 +545,27 @@ mod tests {
         output: Vec<u8>,
         echo_modes: Vec<TerminalEcho>,
         ansi_colour: bool,
+        fail_write_containing: Option<Vec<u8>>,
+        fail_read_at: Option<usize>,
+        fail_flush_at: Option<usize>,
+        read_count: usize,
+        flush_count: usize,
     }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum FakeTerminalError {
+        Write,
+        Read,
+        Flush,
+    }
+
+    impl fmt::Display for FakeTerminalError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(formatter, "injected terminal {self:?} failure")
+        }
+    }
+
+    impl std::error::Error for FakeTerminalError {}
 
     impl FakeTerminal {
         fn new(inputs: impl IntoIterator<Item = TerminalRead>) -> Self {
@@ -429,7 +574,28 @@ mod tests {
                 output: Vec::new(),
                 echo_modes: Vec::new(),
                 ansi_colour: true,
+                fail_write_containing: None,
+                fail_read_at: None,
+                fail_flush_at: None,
+                read_count: 0,
+                flush_count: 0,
             }
+        }
+
+        fn failing_write_containing(mut self, needle: &[u8]) -> Self {
+            self.fail_write_containing = Some(needle.to_vec());
+            self
+        }
+
+        fn failing_read_at(mut self, operation: usize) -> Self {
+            self.fail_read_at = Some(operation);
+            self
+        }
+
+        #[allow(dead_code)]
+        fn failing_flush_at(mut self, operation: usize) -> Self {
+            self.fail_flush_at = Some(operation);
+            self
         }
 
         fn output(&self) -> &[u8] {
@@ -438,17 +604,29 @@ mod tests {
     }
 
     impl Terminal for FakeTerminal {
-        type Error = Infallible;
+        type Error = FakeTerminalError;
 
         fn write<'a>(&'a mut self, bytes: &'a [u8]) -> TerminalFuture<'a, (), Self::Error> {
             Box::pin(async move {
+                if self.fail_write_containing.as_deref().is_some_and(|needle| {
+                    bytes.windows(needle.len()).any(|window| window == needle)
+                }) {
+                    return Err(FakeTerminalError::Write);
+                }
                 self.output.extend_from_slice(bytes);
                 Ok(())
             })
         }
 
         fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
-            Box::pin(async { Ok(()) })
+            Box::pin(async move {
+                let operation = self.flush_count;
+                self.flush_count += 1;
+                if self.fail_flush_at == Some(operation) {
+                    return Err(FakeTerminalError::Flush);
+                }
+                Ok(())
+            })
         }
 
         fn read_line(
@@ -458,6 +636,11 @@ mod tests {
         ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
             Box::pin(async move {
                 self.echo_modes.push(echo);
+                let operation = self.read_count;
+                self.read_count += 1;
+                if self.fail_read_at == Some(operation) {
+                    return Err(FakeTerminalError::Read);
+                }
                 Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof))
             })
         }
@@ -716,6 +899,240 @@ mod tests {
             }),
             bbs_name: Arc::from("TestBBS"),
         }
+    }
+
+    fn authenticated_fixture() -> (
+        AppServices,
+        Arc<InMemoryUserRepository>,
+        Arc<InMemoryCallerLog>,
+    ) {
+        use crate::domain::conference::{Conference, MessageBase};
+
+        let conferences = vec![Conference::new(
+            1,
+            "Main".to_string(),
+            vec![MessageBase::new(1, 1, "main".to_string())],
+        )
+        .expect("valid")];
+        let mut alice = alice_with_password("secret");
+        crate::app::seed::grant_all_memberships(&mut alice, &conferences);
+        let repo = Arc::new(InMemoryUserRepository::new(vec![alice]));
+        let caller_log = Arc::new(InMemoryCallerLog::new());
+        let mut services = services_with(repo.clone(), conferences);
+        services.caller_log = caller_log.clone();
+        (services, repo, caller_log)
+    }
+
+    fn logoff_entries(caller_log: &InMemoryCallerLog) -> Vec<String> {
+        caller_log
+            .entries()
+            .into_iter()
+            .filter(|entry| entry.text.starts_with("Logoff:"))
+            .map(|entry| entry.text)
+            .collect()
+    }
+
+    fn occurrences(haystack: &[u8], needle: &[u8]) -> usize {
+        haystack
+            .windows(needle.len())
+            .filter(|window| *window == needle)
+            .count()
+    }
+
+    #[tokio::test]
+    async fn preamble_write_failure_finalises_the_connecting_session_once() {
+        let (services, _repo, caller_log) = authenticated_fixture();
+        let terminal = FakeTerminal::new([]).failing_write_containing(b"NextExpress");
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        assert_eq!(driver.run().await, Err(FakeTerminalError::Write));
+
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(
+            entries.len(),
+            1,
+            "the retained Connecting phase must be finalised exactly once"
+        );
+        assert!(entries[0].contains("reason carrier_loss"), "{entries:?}");
+    }
+
+    #[tokio::test]
+    async fn prompt_flush_failure_returns_original_error_and_finalises_once() {
+        let (services, _repo, caller_log) = authenticated_fixture();
+        let terminal = FakeTerminal::new([]).failing_flush_at(0);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        assert_eq!(driver.run().await, Err(FakeTerminalError::Flush));
+
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].contains("reason carrier_loss"), "{entries:?}");
+    }
+
+    #[tokio::test]
+    async fn nested_prompt_eof_is_a_carrier_loss_without_command_abort_or_remenu() {
+        let (services, _repo, caller_log) = authenticated_fixture();
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("E".to_string()),
+            TerminalRead::Eof,
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver.run().await.expect("EOF closes the session cleanly");
+
+        let output = driver.into_terminal().output().to_vec();
+        assert_eq!(
+            occurrences(&output, b"CONFMENU"),
+            1,
+            "EOF inside the E command must not return to the menu"
+        );
+        assert_eq!(
+            occurrences(&output, crate::app::menu_flow::mail_text::POST_ABORTED_LINE),
+            0,
+            "carrier loss is not a command-level message abort"
+        );
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(entries.len(), 1, "carrier loss must finalise exactly once");
+        assert!(entries[0].contains("reason carrier_loss"), "{entries:?}");
+    }
+
+    #[tokio::test]
+    async fn nested_prompt_idle_timeout_finalises_immediately_with_timeout_reason() {
+        let (mut services, _repo, caller_log) = authenticated_fixture();
+        services.session_policy = services.session_policy.with_treat_timeout_as_logoff(true);
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("E".to_string()),
+            TerminalRead::IdleTimedOut,
+        ]);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        driver
+            .run()
+            .await
+            .expect("idle timeout closes the session cleanly");
+
+        let output = driver.into_terminal().output().to_vec();
+        assert_eq!(occurrences(&output, b"CONFMENU"), 1);
+        assert_eq!(
+            occurrences(&output, crate::app::menu_flow::mail_text::POST_ABORTED_LINE),
+            0
+        );
+        assert_eq!(
+            occurrences(&output, crate::app::wire_text::IDLE_TIMEOUT_LINE),
+            1,
+            "idle timeout emits only the standard lifecycle notice"
+        );
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(entries.len(), 1, "idle timeout must finalise exactly once");
+        assert!(entries[0].contains("reason input_timeout"), "{entries:?}");
+    }
+
+    #[tokio::test]
+    async fn terminal_failure_after_menu_mutation_persists_latest_session() {
+        let (services, repo, caller_log) = authenticated_fixture();
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("X".to_string()),
+        ])
+        .failing_write_containing(b"Expert mode enabled");
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        assert_eq!(driver.run().await, Err(FakeTerminalError::Write));
+
+        let alice = match repo.find_by_handle("alice").expect("lookup") {
+            NameLookupResult::Found(user) => user,
+            NameLookupResult::NotFound => panic!("alice should still exist"),
+        };
+        assert!(
+            alice.expert_mode(),
+            "finalisation must persist the mutation made before output failed"
+        );
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].contains("reason carrier_loss"), "{entries:?}");
+    }
+
+    #[tokio::test]
+    async fn terminal_read_failure_returns_original_error_and_finalises_once() {
+        let (services, _repo, caller_log) = authenticated_fixture();
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+        ])
+        .failing_read_at(3);
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        assert_eq!(driver.run().await, Err(FakeTerminalError::Read));
+
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(
+            entries.len(),
+            1,
+            "the menu phase retained at the failed read must finalise once"
+        );
+        assert!(entries[0].contains("reason carrier_loss"), "{entries:?}");
+    }
+
+    #[tokio::test]
+    async fn terminal_failure_with_ended_session_does_not_finalise_again() {
+        let (services, _repo, caller_log) = authenticated_fixture();
+        let mut inputs = vec![TerminalRead::Line("Y".to_string())];
+        inputs.extend((0..5).map(|_| TerminalRead::Line("nobody".to_string())));
+        let terminal =
+            FakeTerminal::new(inputs).failing_write_containing(b"Too many failed login attempts");
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        assert_eq!(driver.run().await, Err(FakeTerminalError::Write));
+        assert!(
+            logoff_entries(&caller_log).is_empty(),
+            "a session already in Ended must not pass through finalise_logoff"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_goodbye_preserves_normal_logoff_and_finalises_once() {
+        let (services, _repo, caller_log) = authenticated_fixture();
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+            TerminalRead::Line("G".to_string()),
+        ])
+        .failing_write_containing(b"Goodbye!");
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        assert_eq!(driver.run().await, Err(FakeTerminalError::Write));
+
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(entries.len(), 1, "normal logoff must finalise exactly once");
+        assert!(entries[0].contains("reason normal_logoff"), "{entries:?}");
+    }
+
+    #[tokio::test]
+    async fn post_login_output_failure_finalises_the_owned_menu_session() {
+        let (services, _repo, caller_log) = authenticated_fixture();
+        let terminal = FakeTerminal::new([
+            TerminalRead::Line("Y".to_string()),
+            TerminalRead::Line("alice".to_string()),
+            TerminalRead::Line("secret".to_string()),
+        ])
+        .failing_write_containing(b"Security Lv");
+        let mut driver = SessionDriver::new(terminal, 1, LogonChannel::Remote, services);
+
+        assert_eq!(driver.run().await, Err(FakeTerminalError::Write));
+
+        let entries = logoff_entries(&caller_log);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].contains("reason carrier_loss"), "{entries:?}");
     }
 
     #[tokio::test]

@@ -16,7 +16,7 @@ pub(super) use self::core::ScanFilter;
 use self::core::{scan_all_mail, BaseScanOutcome};
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::menu_flow::table::{left_field, scan_row_status};
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 use crate::domain::messaging::scan_mail::MailScanRow;
 use crate::domain::session::typed::MenuSession;
 
@@ -113,7 +113,7 @@ where
         &mut self,
         session: &mut MenuSession,
         filter: ScanFilter,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let scans = scan_all_mail(
             session,
             self.services.mail_stores.as_ref(),
@@ -175,7 +175,7 @@ where
         session: &mut MenuSession,
         rows: &[MailScanRow],
         home: Option<(u32, u32)>,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some(first) = rows.first() else {
             return Ok(());
         };
@@ -201,21 +201,20 @@ where
 
     /// Reads the read-it-now answer, mirroring the legacy `yesNo(1)`
     /// default-Yes semantics: an empty line / `y` accepts, only an
-    /// explicit `n`/`N` declines. EOF or idle declines without reading.
+    /// explicit `n`/`N` declines. EOF or idle exits the connection without
+    /// writing the answer's trailing CRLF.
     /// A trailing CRLF follows the answer (the legacy `aePuts('\b\n')`
     /// at `amiexpress/express.e:11741`).
-    async fn prompt_read_it_now(&mut self, session: &mut MenuSession) -> Result<bool, T::Error> {
-        match self
+    async fn prompt_read_it_now(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<bool, T::Error> {
+        let line = self
             .read_prompted(MAIL_SCAN_READ_IT_NOW_PROMPT, TerminalEcho::Visible)
-            .await?
-        {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                self.write_newline().await?;
-                Ok(!matches!(line.trim().chars().next(), Some('n' | 'N')))
-            }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(false),
-        }
+            .await?;
+        session.record_input(self.services.clock.now());
+        self.write_newline().await?;
+        Ok(!matches!(line.trim().chars().next(), Some('n' | 'N')))
     }
 }
 

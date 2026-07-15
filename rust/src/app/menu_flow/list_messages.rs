@@ -13,7 +13,7 @@
 use crate::app::mail_stores::MailStores;
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::menu_flow::table::{left_field, scan_row_status};
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
 use crate::domain::messaging::mail_store::MailStoreError;
 use crate::domain::messaging::scan_mail::MailScanRow;
@@ -134,7 +134,7 @@ where
     pub(super) async fn handle_list_messages(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let listing = match list_mail(session, self.services.mail_stores.as_ref()).await {
             Ok(Some(listing)) => listing,
             Ok(None) => return Ok(()),
@@ -172,26 +172,22 @@ where
 
     /// Renders the `Starting message [<lowest>]: ` prompt
     /// (`express.e:8831`) and reads the reader's choice: a blank line
-    /// defaults to `lowest`, a number selects it, and any non-numeric
-    /// input (or EOF / idle) aborts the listing.
+    /// defaults to `lowest`, a number selects it, and any non-numeric input
+    /// aborts the listing locally. EOF and idle timeout exit the connection.
     async fn read_list_start(
         &mut self,
         session: &mut MenuSession,
         lowest: u32,
-    ) -> Result<Option<u32>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<u32>, T::Error> {
         let mut prompt = b"\x1b[32mStarting message \x1b[33m[\x1b[0m".to_vec();
         prompt.extend_from_slice(lowest.to_string().as_bytes());
         prompt.extend_from_slice(b"\x1b[33m]\x1b[0m: ");
-        match self.read_prompted(&prompt, TerminalEcho::Visible).await? {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    return Ok(Some(lowest));
-                }
-                Ok(trimmed.parse::<u32>().ok())
-            }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => Ok(None),
+        let line = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
+        session.record_input(self.services.clock.now());
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return Ok(Some(lowest));
         }
+        Ok(trimmed.parse::<u32>().ok())
     }
 }

@@ -10,7 +10,7 @@
 //!
 //! [pb]: super::MenuFlow::page_break
 
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 
 /// Per-listing pagination state.
 pub(super) struct Pager {
@@ -29,7 +29,7 @@ pub(super) struct Pager {
 pub(super) enum PageBreak {
     /// Keep listing.
     Continue,
-    /// The reader asked to stop (`n`) or the connection dropped.
+    /// The reader asked to stop (`n`). Connection exits propagate separately.
     Abort,
 }
 
@@ -66,7 +66,10 @@ where
     /// legacy pause prompt and reads the reader's choice
     /// (`express.e:5190-5200`). Returns whether the caller should keep
     /// listing.
-    pub(super) async fn page_break(&mut self, pager: &mut Pager) -> Result<PageBreak, T::Error> {
+    pub(super) async fn page_break(
+        &mut self,
+        pager: &mut Pager,
+    ) -> crate::app::menu_flow::MenuFlowResult<PageBreak, T::Error> {
         if pager.non_stop {
             return Ok(PageBreak::Continue);
         }
@@ -75,14 +78,9 @@ where
             return Ok(PageBreak::Continue);
         }
         pager.lines = 0;
-        let TerminalRead::Line(answer) = self
+        let answer = self
             .read_prompted(b"(Pause)...More(y/n/ns)? ", TerminalEcho::Visible)
-            .await?
-        else {
-            // EOF / idle aborts the listing, like the legacy carrier
-            // loss in `lineInput`.
-            return Ok(PageBreak::Abort);
-        };
+            .await?;
         let mut chars = answer.trim().chars();
         if matches!(chars.next(), Some('n' | 'N')) {
             if matches!(chars.next(), Some('s' | 'S')) {

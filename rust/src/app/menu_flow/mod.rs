@@ -1,5 +1,11 @@
 //! Menu sub-flow: command loop and dispatch.
 //!
+//! The connection driver owns the phase-typed [`MenuSession`]. This flow and
+//! every command handler borrow it for same-phase work, returning only control
+//! metadata. EOF and idle timeout propagate from any nested prompt as a
+//! connection-level [`MenuExit`]; only an explicit blank submission can be a
+//! command-local cancellation.
+//!
 //! Runs once the session is onboarded and joined to a conference.
 //! Reads command lines, dispatches the supported ones (`G` for logoff,
 //! `J <num>` for explicit conference join, `R <num>` for reading a
@@ -35,13 +41,13 @@ use crate::app::mail_stores::{MailStoreGuard, MailStores};
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::{format_menu_prompt, render_stats_screen};
-use crate::app::terminal::{KeyRead, Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{CRLF, IDLE_TIMEOUT_LINE, INVALID_MESSAGE_NUMBER_LINE};
+use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
+use crate::app::wire_text::{CRLF, INVALID_MESSAGE_NUMBER_LINE};
 use crate::app::yes_no::{yes_no, YesNo};
 use crate::domain::conference::{
     find_msgbase_in, AllowedAddressing, Conference, MessageBase, MessageBaseRef,
 };
-use crate::domain::session::typed::{LoggingOffSession, MenuSession};
+use crate::domain::session::typed::MenuSession;
 use crate::domain::user::Right;
 
 /// The invariant tail of the menu prompt rendered by
@@ -253,22 +259,54 @@ fn flag_add(session: &mut MenuSession, name: &str) -> bool {
     session.flagged_files_mut().flag(key)
 }
 
-/// Internal control-flow signal returned by
-/// [`MenuFlow::dispatch`]: either the loop continues with the supplied
-/// live [`MenuSession`], or it terminates with the supplied
-/// [`LoggingOffSession`].
+/// Internal control-flow signal returned by [`MenuFlow::dispatch`].
+///
+/// The session remains borrowed in both cases. A confirmed logoff is an intent
+/// for the driver, which alone consumes [`MenuSession`] into the logging-off
+/// phase.
 enum DispatchOutcome {
-    Continue(MenuSession),
-    LogoffComplete(LoggingOffSession),
+    Continue,
+    UserRequestedLogoff,
 }
+
+/// A lifecycle exit observed anywhere inside the menu command tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MenuExit {
+    /// The caller confirmed a normal `G` / `G Y` logoff.
+    UserRequestedLogoff,
+    /// The terminal reached EOF while the menu or a nested prompt owned input.
+    CarrierLost,
+    /// No input arrived before the session input timeout.
+    IdleTimedOut,
+}
+
+/// Internal error propagated through every nested menu prompt.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MenuFlowError<E> {
+    /// A lifecycle exit, distinct from command-level cancellation.
+    Exit(MenuExit),
+    /// The terminal adapter failed while the menu still owned the session.
+    Terminal(E),
+}
+
+impl<E> From<E> for MenuFlowError<E> {
+    fn from(source: E) -> Self {
+        Self::Terminal(source)
+    }
+}
+
+/// Result type shared by all menu handlers so EOF/idle cannot be collapsed
+/// into a local command abort.
+pub(crate) type MenuFlowResult<T, E> = Result<T, MenuFlowError<E>>;
 
 /// What a blank submission means at a single-line prompt — one of the
 /// two axes the old hand-rolled readers differed on (SYSTEM.md
 /// item 10; the other is [`AbortNotice`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmptyMeaning {
-    /// Blank aborts, exactly like EOF / idle (the composer's
-    /// `read_required_line` semantics).
+    /// Blank aborts the current command locally (the composer's
+    /// `read_required_line` semantics). EOF and idle timeout instead exit the
+    /// connection through [`MenuFlowError::Exit`].
     Abort,
     /// Blank means "keep the current value" (`EH`'s keep branch).
     Keep,
@@ -297,7 +335,8 @@ enum PromptLine {
     Entered(String),
     /// Blank under [`EmptyMeaning::Keep`].
     Kept,
-    /// EOF / idle timeout — or blank under [`EmptyMeaning::Abort`].
+    /// Blank under [`EmptyMeaning::Abort`]. EOF and idle timeout propagate as
+    /// [`MenuFlowError::Exit`] instead.
     Aborted,
 }
 
@@ -308,10 +347,6 @@ enum LeaveFlagged {
     Stay,
     /// `Y` — proceed to logoff.
     Leave,
-    /// The peer dropped mid-confirm (carrier loss).
-    Disconnected,
-    /// No key arrived before the input timeout.
-    TimedOut,
 }
 
 /// Control signal returned by one [`MenuFlow::flag_files_once`] pass to
@@ -319,8 +354,8 @@ enum LeaveFlagged {
 /// mapping the legacy `flagFiles` return code (`stat`).
 enum FlagLoop {
     /// `stat < 0` — `alterFlags` returns at once with no trailing blank
-    /// line: a new file was flagged (`RESULT_FAILURE`, `:12642`) or the
-    /// caller dropped/idled at a prompt (`:12603`).
+    /// line because a new file was flagged (`RESULT_FAILURE`, `:12642`).
+    /// Connection exits bypass this command-local outcome.
     Exit,
     /// `stat = 0` (`RESULT_SUCCESS`) — the REPEAT loop ends; `alterFlags`
     /// emits its trailing blank line (`<CR>`=none, `:12646`/`:12618`).
@@ -349,18 +384,18 @@ where
         Self { terminal, services }
     }
 
-    /// Runs the menu loop until the session reaches a logoff state.
+    /// Runs the menu loop until a lifecycle exit is requested or observed.
     pub(crate) async fn run(
         &mut self,
-        mut session: MenuSession,
-    ) -> Result<LoggingOffSession, T::Error> {
+        session: &mut MenuSession,
+    ) -> MenuFlowResult<MenuExit, T::Error> {
         loop {
             // Tier A quickwin A6: in expert mode the menu screen is not
             // auto-displayed before the prompt — the user requests it
             // with `?` (legacy `displayMenuPrompt` gate at
             // `amiexpress/express.e:28583`).
             if !session.user().expert_mode() {
-                let menu_bytes = self.render_menu_screen(&session).await;
+                let menu_bytes = self.render_menu_screen(session).await;
                 self.terminal.write(&menu_bytes).await?;
             }
             // Tier A quickwin A4: the legacy `displayMenuPrompt`
@@ -372,25 +407,14 @@ where
                 session.current_msgbase(),
                 session.time_remaining(),
             );
-            let read = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
-            let line = match read {
-                TerminalRead::Line(line) => {
-                    session.record_input(self.services.clock.now());
-                    line
-                }
-                TerminalRead::Eof => return Ok(session.into_active().apply_carrier_loss()),
-                TerminalRead::IdleTimedOut => {
-                    let logoff = session
-                        .into_active()
-                        .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
-                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
-                    return Ok(logoff);
-                }
-            };
+            let line = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
+            session.record_input(self.services.clock.now());
             let trimmed = line.trim();
             match self.dispatch(session, parse_menu_command(trimmed)).await? {
-                DispatchOutcome::Continue(next) => session = next,
-                DispatchOutcome::LogoffComplete(logoff) => return Ok(logoff),
+                DispatchOutcome::Continue => {}
+                DispatchOutcome::UserRequestedLogoff => {
+                    return Ok(MenuExit::UserRequestedLogoff);
+                }
             }
         }
     }
@@ -410,7 +434,7 @@ where
     pub(crate) async fn run_logon_conference_scan(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<(), T::Error> {
+    ) -> MenuFlowResult<(), T::Error> {
         if session.quick_logon() {
             return Ok(());
         }
@@ -427,7 +451,7 @@ where
     pub(crate) async fn restore_flags_and_announce(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<(), T::Error> {
+    ) -> MenuFlowResult<(), T::Error> {
         let slot = session.user().slot_number();
         match self.services.flagged_store.load(slot) {
             Ok(restored) => *session.flagged_files_mut() = restored,
@@ -446,16 +470,21 @@ where
     /// line, then loops `flagFiles(NIL)` (`:12659-12662`): each pass shows
     /// the flag set (slice D6a `showFlags`) and prompts. A bare `<CR>`
     /// (=none) or a no-op token ends the loop with a trailing blank line;
-    /// flagging a new file or a dropped caller exits immediately
-    /// (`IF(stat<0) THEN RETURN`, `:12661`); `C` -> `*` clears and loops
+    /// flagging a new file exits immediately (`IF(stat<0) THEN RETURN`,
+    /// `:12661`); a dropped/idle caller exits the connection directly;
+    /// `C` -> `*` clears and loops
     /// (slice D6b). `F`-from and clear-by-name are deferred.
-    async fn handle_alter_flags(&mut self, session: &mut MenuSession) -> Result<(), T::Error> {
+    async fn handle_alter_flags(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         // alterFlags's leading `aePuts('\b\n')` (express.e:12651).
         self.write_and_flush(CRLF).await?;
         loop {
             match self.flag_files_once(session).await? {
-                // stat < 0: a new file was flagged or the caller dropped
-                // — alterFlags returns with no trailing blank line.
+                // stat < 0: a new file was flagged — alterFlags returns
+                // with no trailing blank line. Connection exits propagate
+                // without becoming a FlagLoop value.
                 FlagLoop::Exit => return Ok(()),
                 // stat = 0 (RESULT_SUCCESS): the REPEAT loop ends.
                 FlagLoop::Done => break,
@@ -471,7 +500,10 @@ where
     /// renders the current flag set (`showFlags`), prompts with
     /// [`FLAG_PROMPT`], reads one line, and acts on it. Returns the
     /// control signal for the [`Self::handle_alter_flags`] REPEAT loop.
-    async fn flag_files_once(&mut self, session: &mut MenuSession) -> Result<FlagLoop, T::Error> {
+    async fn flag_files_once(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<FlagLoop, T::Error> {
         // showFlags() (express.e:12598): `<names>` space-joined (or
         // `No file flags`) closed by a blank line — alterFlags's leading
         // `\b\n` already opened the frame.
@@ -487,8 +519,8 @@ where
             .await?
         {
             PromptLine::Entered(answer) => answer,
-            // lineInput < 0 (timeout / carrier loss): RETURN stat — the
-            // menu loop's next read applies the idle/carrier outcome.
+            // Retained for the exhaustive PromptLine match. Verbatim blank
+            // input is `Entered("")`; EOF/idle propagate before this point.
             PromptLine::Aborted => return Ok(FlagLoop::Exit),
             PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
         };
@@ -529,7 +561,7 @@ where
         &mut self,
         session: &mut MenuSession,
         token: &str,
-    ) -> Result<FlagLoop, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<FlagLoop, T::Error> {
         // Inline `C <arg>` (express.e:12610): strip the `C ` prefix.
         let target = if token.len() > 1 {
             token[1..].trim().to_ascii_uppercase()
@@ -569,7 +601,10 @@ where
     /// Renders the baseline user-stats screen — Tier A quickwin A3
     /// (`S`), the `internalCommandS()` layout (`amiexpress/express.e:25540`)
     /// — reading the fields already present on the logged-on user.
-    async fn handle_show_stats(&mut self, session: &MenuSession) -> Result<(), T::Error> {
+    async fn handle_show_stats(
+        &mut self,
+        session: &MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let user = session.user();
         let screen = render_stats_screen(
             user.slot_number(),
@@ -582,39 +617,29 @@ where
         self.write_and_flush(&screen).await
     }
 
-    /// `G` / `G Y`: logoff with the legacy flagged-file confirm.
+    /// `G` / `G Y`: prepare a normal logoff with the legacy flagged-file
+    /// confirm.
     ///
     /// Plain `G` with a non-empty session flag set runs `checkFlagged()`
     /// (`amiexpress/express.e:25053`, `:12667`): `N`/default keeps the
     /// caller in the menu; `Y`, the `G Y` force form (`auto`), or an
-    /// empty flag set fall straight through to logoff. Persisting the
-    /// flags (`saveFlagged`/`saveHistory`) is slice D5.
+    /// empty flag set return a logoff intent. This handler borrows the menu
+    /// session for confirmation and flag persistence; the driver performs the
+    /// consuming `Menu -> LoggingOff` transition.
     async fn handle_logoff(
         &mut self,
-        mut session: MenuSession,
+        session: &mut MenuSession,
         auto: bool,
-    ) -> Result<DispatchOutcome, T::Error> {
+    ) -> MenuFlowResult<DispatchOutcome, T::Error> {
         if !auto && !session.flagged_files_mut().is_empty() {
             match self.confirm_leave_flagged().await? {
                 LeaveFlagged::Stay => {
                     // mystat=0 path: one CRLF, back to the menu
                     // (`amiexpress/express.e:25060`).
                     self.write_newline().await?;
-                    return Ok(DispatchOutcome::Continue(session));
+                    return Ok(DispatchOutcome::Continue);
                 }
                 LeaveFlagged::Leave => {}
-                LeaveFlagged::Disconnected => {
-                    return Ok(DispatchOutcome::LogoffComplete(
-                        session.into_active().apply_carrier_loss(),
-                    ));
-                }
-                LeaveFlagged::TimedOut => {
-                    let logoff = session
-                        .into_active()
-                        .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
-                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
-                    return Ok(DispatchOutcome::LogoffComplete(logoff));
-                }
             }
         }
         // saveFlagged (express.e:25064 -> :2803) runs on every `G`
@@ -626,8 +651,7 @@ where
         // is slice D5-persist.
         self.write_and_flush(AUTOSAVING_FILE_FLAGS).await?;
         // D5-persist: saveFlagged writes the set to the durable store
-        // (express.e:2806). Read slot + set before `user_requests_logoff`
-        // consumes the session. A store error is logged, never fatal.
+        // (express.e:2806). A store error is logged, never fatal.
         let slot = session.user().slot_number();
         if let Err(error) = self
             .services
@@ -636,7 +660,20 @@ where
         {
             eprintln!("saveFlagged: could not persist flags for slot {slot}: {error}");
         }
-        let logging_off = session.user_requests_logoff();
+        Ok(DispatchOutcome::UserRequestedLogoff)
+    }
+
+    /// Writes the normal-logoff screen and goodbye after the driver has
+    /// consumed the menu phase into `LoggingOff`.
+    ///
+    /// The driver retains that `LoggingOffSession` around this operation, so a
+    /// failed screen or goodbye write still reaches the single finalisation
+    /// boundary with the original logoff reason.
+    ///
+    /// # Errors
+    /// Returns the terminal adapter's error when the logoff screen, goodbye,
+    /// or final flush cannot be written.
+    pub(crate) async fn write_logoff_tail(&mut self) -> Result<(), T::Error> {
         // SCREEN_LOGOFF (amiexpress/express.e:6554, displayed at :8187):
         // sysop-supplied pre-goodbye splash. The adapter returns empty
         // bytes when the asset is absent, so this is a no-op on a fresh
@@ -646,40 +683,40 @@ where
         if !logoff_screen.is_empty() {
             self.terminal.write(&logoff_screen).await?;
         }
-        self.write_and_flush(GOODBYE_LINE).await?;
-        Ok(DispatchOutcome::LogoffComplete(logging_off))
+        crate::app::terminal::write_and_flush(self.terminal, GOODBYE_LINE).await
     }
 
-    /// Routes one parsed command to the matching handler. Returns
-    /// either the live [`MenuSession`] (loop continues) or the
-    /// [`LoggingOffSession`] terminal value (loop exits).
+    /// Routes one parsed command to the matching handler while borrowing the
+    /// driver's live [`MenuSession`]. Returns only whether the loop continues
+    /// or the caller requested normal logoff; lifecycle transitions remain
+    /// driver-owned.
     async fn dispatch(
         &mut self,
-        mut session: MenuSession,
+        session: &mut MenuSession,
         command: MenuCommand,
-    ) -> Result<DispatchOutcome, T::Error> {
+    ) -> MenuFlowResult<DispatchOutcome, T::Error> {
         match command {
             MenuCommand::Logoff { auto } => return self.handle_logoff(session, auto).await,
             MenuCommand::Join(arg) => {
                 // Tier C C2: a direct in-range argument joins
                 // immediately; everything else opens the legacy
                 // interactive `Conference Number (1-N): ` prompt
-                // (`amiexpress/express.e:25142-25154`). Both arms
-                // return the session — explicit join never logs the
-                // caller off.
-                session = self.handle_join_command(session, arg).await?;
+                // (`amiexpress/express.e:25142-25154`). Both arms mutate the
+                // borrowed session in place — explicit join never changes
+                // its lifecycle phase.
+                self.handle_join_command(session, arg).await?;
             }
             MenuCommand::PrevConference => {
                 // Tier C C3 (`<`): nearest lower-numbered accessible
                 // conference at its primary message base, or the
                 // interactive join prompt at the bottom edge
                 // (`internalCommandLT`, `amiexpress/express.e:24529-24546`).
-                session = self.handle_prev_conference(session).await?;
+                self.handle_prev_conference(session).await?;
             }
             MenuCommand::NextConference => {
                 // Tier C C3 (`>`): the upward mirror
                 // (`internalCommandGT`, `amiexpress/express.e:24548-24564`).
-                session = self.handle_next_conference(session).await?;
+                self.handle_next_conference(session).await?;
             }
             MenuCommand::JoinMsgBase(arg) => {
                 // Tier C C4a (`JM`): join a message base of the current
@@ -687,33 +724,33 @@ where
                 // `amiexpress/express.e:25185-25237`). Single-base
                 // conferences fail with the legacy notice; an in-range
                 // argument runs the full join sequence.
-                session = self.handle_join_msgbase_command(session, arg).await?;
+                self.handle_join_msgbase_command(session, arg).await?;
             }
             MenuCommand::PrevMsgBase => {
                 // Tier C C4b (`<<`): step to the previous message base
                 // of the current conference, falling into the `JM`
                 // no-arg flow past the bottom (`internalCommandLT2`,
                 // `amiexpress/express.e:24566-24578`).
-                session = self.handle_prev_msgbase(session).await?;
+                self.handle_prev_msgbase(session).await?;
             }
             MenuCommand::NextMsgBase => {
                 // Tier C C4b (`>>`): the upward mirror
                 // (`internalCommandGT2`, `amiexpress/express.e:24580-24592`).
-                session = self.handle_next_msgbase(session).await?;
+                self.handle_next_msgbase(session).await?;
             }
             MenuCommand::Read(arg) => match arg {
-                NumberArg::Number(n) => self.handle_read_mail(&mut session, n).await?,
+                NumberArg::Number(n) => self.handle_read_mail(session, n).await?,
                 // Bare `R` opens the sub-prompt at the read-resume point
                 // (legacy `readMSG` no-arg entry, `express.e:11984-11985`).
-                NumberArg::Missing => self.handle_read_mail_at_pointer(&mut session).await?,
+                NumberArg::Missing => self.handle_read_mail_at_pointer(session).await?,
                 NumberArg::Invalid => self.write_and_flush(INVALID_MESSAGE_NUMBER_LINE).await?,
             },
             MenuCommand::ScanAllMail => {
-                self.handle_scan_all_mail(&mut session, ScanFilter::AllConferences)
+                self.handle_scan_all_mail(session, ScanFilter::AllConferences)
                     .await?;
             }
-            MenuCommand::Post(post) => self.handle_post_mail(&mut session, post).await?,
-            MenuCommand::CommentToSysop => self.handle_comment_to_sysop(&mut session).await?,
+            MenuCommand::Post(post) => self.handle_post_mail(session, post).await?,
+            MenuCommand::CommentToSysop => self.handle_comment_to_sysop(session).await?,
             MenuCommand::ShowTime => {
                 self.write_and_flush(&render_time_line(self.services.clock.now()))
                     .await?;
@@ -732,7 +769,7 @@ where
                 };
                 self.write_and_flush(line).await?;
             }
-            MenuCommand::ShowStats => self.handle_show_stats(&session).await?,
+            MenuCommand::ShowStats => self.handle_show_stats(session).await?,
             MenuCommand::ExpertToggle => {
                 // Tier A quickwin A6 (`X`): flip the user's expert flag
                 // and emit the legacy on/off literal at
@@ -752,7 +789,7 @@ where
                 // has just displayed the menu anyway
                 // (`amiexpress/express.e:24595`).
                 if session.user().expert_mode() {
-                    let menu_bytes = self.render_menu_screen(&session).await;
+                    let menu_bytes = self.render_menu_screen(session).await;
                     self.write_and_flush(&menu_bytes).await?;
                 }
             }
@@ -788,7 +825,7 @@ where
                 // awaiting-validation new user — sees the unknown-command
                 // notice, since `CF` is not part of their menu.
                 if session.user().has_access(Right::EditConferenceFlags) {
-                    self.handle_conference_flags(&mut session).await?;
+                    self.handle_conference_flags(session).await?;
                 } else {
                     self.terminal.write(UNKNOWN_COMMAND_LINE).await?;
                 }
@@ -797,17 +834,17 @@ where
                 // Slice D2 (`F`): the NextScan file lister — AquaScan
                 // door parity with NextScan branding
                 // (`comparison/evidence-tierD/live-observations.md`).
-                self.handle_file_list(&mut session, arg).await?;
+                self.handle_file_list(session, arg).await?;
             }
             // Slice D4 (`Z`): the internal zippy text search — see
             // `file_list::handle_zippy_search` for the parity record.
-            MenuCommand::ZippySearch(arg) => self.handle_zippy_search(&mut session, arg).await?,
+            MenuCommand::ZippySearch(arg) => self.handle_zippy_search(session, arg).await?,
             // Slice D9 (`N`): the NextScan new-files scan — the AquaScan
             // door surface (`comparison/transcripts/ae_tierd_newfiles.txt`).
-            MenuCommand::NewFilesScan(arg) => self.handle_new_files(&mut session, arg).await?,
+            MenuCommand::NewFilesScan(arg) => self.handle_new_files(session, arg).await?,
             // Slices D6a/D6b (`A`): the `alterFlags` flag listing +
             // `Filename(s) to flag:` prompt loop (`amiexpress/express.e:12648`).
-            MenuCommand::AlterFlags => self.handle_alter_flags(&mut session).await?,
+            MenuCommand::AlterFlags => self.handle_alter_flags(session).await?,
             MenuCommand::FileStatus => {
                 // Slice D8 (`FS`): internalCommandFS (`express.e:24871-24874`)
                 // gates on ACS_CONFERENCE_ACCOUNTING and returns
@@ -824,16 +861,20 @@ where
             }
             MenuCommand::Unknown => self.terminal.write(UNKNOWN_COMMAND_LINE).await?,
         }
-        Ok(DispatchOutcome::Continue(session))
+        Ok(DispatchOutcome::Continue)
     }
 
     async fn read_prompted(
         &mut self,
         prompt: &[u8],
         echo: TerminalEcho,
-    ) -> Result<TerminalRead, T::Error> {
+    ) -> MenuFlowResult<String, T::Error> {
         let timeout = self.services.session_policy.input_timeout();
-        crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await
+        match crate::app::terminal::read_prompted(self.terminal, prompt, echo, timeout).await? {
+            TerminalRead::Line(line) => Ok(line),
+            TerminalRead::Eof => Err(MenuFlowError::Exit(MenuExit::CarrierLost)),
+            TerminalRead::IdleTimedOut => Err(MenuFlowError::Exit(MenuExit::IdleTimedOut)),
+        }
     }
 
     /// The single line-prompt reader (SYSTEM.md item 10): writes
@@ -842,40 +883,34 @@ where
     /// fraying — stamps the idle clock on every accepted line, so a
     /// new prompt cannot forget `record_input`. Blank-line meaning and
     /// abort-notice policy are the two axes the old readers differed
-    /// on; everything else is shared.
+    /// on; everything else is shared. EOF and idle timeout do not become a
+    /// [`PromptLine`]: they propagate immediately as a lifecycle exit.
     async fn prompt_line(
         &mut self,
         session: &mut MenuSession,
         prompt: &[u8],
         empty: EmptyMeaning,
         notice: AbortNotice,
-    ) -> Result<PromptLine, T::Error> {
-        match self.read_prompted(prompt, TerminalEcho::Visible).await? {
-            TerminalRead::Line(line) => {
-                session.record_input(self.services.clock.now());
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    match empty {
-                        EmptyMeaning::Abort => {
-                            self.abort_notice(notice).await?;
-                            Ok(PromptLine::Aborted)
-                        }
-                        EmptyMeaning::Keep => Ok(PromptLine::Kept),
-                        EmptyMeaning::Verbatim => Ok(PromptLine::Entered(String::new())),
-                    }
-                } else {
-                    Ok(PromptLine::Entered(trimmed.to_string()))
+    ) -> MenuFlowResult<PromptLine, T::Error> {
+        let line = self.read_prompted(prompt, TerminalEcho::Visible).await?;
+        session.record_input(self.services.clock.now());
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            match empty {
+                EmptyMeaning::Abort => {
+                    self.abort_notice(notice).await?;
+                    Ok(PromptLine::Aborted)
                 }
+                EmptyMeaning::Keep => Ok(PromptLine::Kept),
+                EmptyMeaning::Verbatim => Ok(PromptLine::Entered(String::new())),
             }
-            TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                self.abort_notice(notice).await?;
-                Ok(PromptLine::Aborted)
-            }
+        } else {
+            Ok(PromptLine::Entered(trimmed.to_string()))
         }
     }
 
     /// Writes the abort notice [`AbortNotice`] selects, if any.
-    async fn abort_notice(&mut self, notice: AbortNotice) -> Result<(), T::Error> {
+    async fn abort_notice(&mut self, notice: AbortNotice) -> MenuFlowResult<(), T::Error> {
         match notice {
             AbortNotice::Silent => Ok(()),
             AbortNotice::MessageAborted => self.write_and_flush(mail_text::POST_ABORTED_LINE).await,
@@ -884,11 +919,16 @@ where
 
     /// Flushes pending output, then reads one keystroke in hot-key
     /// mode with the session's input timeout (slice D2b — the
-    /// `NextScan` pager prompts act per key).
-    async fn read_key(&mut self) -> Result<crate::app::terminal::KeyRead, T::Error> {
+    /// `NextScan` pager prompts act per key). EOF and idle timeout propagate
+    /// immediately as a lifecycle exit from any nested hot-key prompt.
+    async fn read_key(&mut self) -> MenuFlowResult<KeyEvent, T::Error> {
         let timeout = self.services.session_policy.input_timeout();
         self.terminal.flush().await?;
-        self.terminal.read_key(timeout).await
+        match self.terminal.read_key(timeout).await? {
+            KeyRead::Key(key) => Ok(key),
+            KeyRead::Eof => Err(MenuFlowError::Exit(MenuExit::CarrierLost)),
+            KeyRead::IdleTimedOut => Err(MenuFlowError::Exit(MenuExit::IdleTimedOut)),
+        }
     }
 
     /// The flagged-file leave confirm: `checkFlagged()`'s prompt
@@ -896,14 +936,10 @@ where
     /// (`:2129`). The hot-key adapter echoes nothing, so this owns the
     /// `Yes`/`No` echo; CR defaults to `No`, and unrecognised keys loop
     /// (the legacy `LOOP`/`readChar` at `:2140`).
-    async fn confirm_leave_flagged(&mut self) -> Result<LeaveFlagged, T::Error> {
+    async fn confirm_leave_flagged(&mut self) -> MenuFlowResult<LeaveFlagged, T::Error> {
         self.write_and_flush(LEAVE_FLAGGED_CONFIRM).await?;
         loop {
-            let key = match self.read_key().await? {
-                KeyRead::Key(key) => key,
-                KeyRead::Eof => return Ok(LeaveFlagged::Disconnected),
-                KeyRead::IdleTimedOut => return Ok(LeaveFlagged::TimedOut),
-            };
+            let key = self.read_key().await?;
             // yesNo(2): CR defaults to No (`amiexpress/express.e:2145`).
             match yes_no(key, YesNo::No) {
                 Some(YesNo::Yes) => {
@@ -920,14 +956,14 @@ where
         }
     }
 
-    async fn write_and_flush(&mut self, bytes: &[u8]) -> Result<(), T::Error> {
-        crate::app::terminal::write_and_flush(self.terminal, bytes).await
+    async fn write_and_flush(&mut self, bytes: &[u8]) -> MenuFlowResult<(), T::Error> {
+        Ok(crate::app::terminal::write_and_flush(self.terminal, bytes).await?)
     }
 
     /// Writes a single line terminator ([`CRLF`]) and flushes — the
     /// common "blank line / end the current line" emit, named so the
     /// bare `b"\r\n"` literal does not recur at call sites.
-    async fn write_newline(&mut self) -> Result<(), T::Error> {
+    async fn write_newline(&mut self) -> MenuFlowResult<(), T::Error> {
         self.write_and_flush(CRLF).await
     }
 
@@ -960,13 +996,13 @@ where
     /// asset if present, or the legacy
     /// `Sorry Help is unavailable at this time.` line when the
     /// adapter returns empty bytes (`amiexpress/express.e:25079-25085`).
-    async fn handle_show_help(&mut self) -> Result<(), T::Error> {
+    async fn handle_show_help(&mut self) -> MenuFlowResult<(), T::Error> {
         let bytes = self.services.screens.as_ref().bbs_help_screen().await;
         if bytes.is_empty() {
             self.write_and_flush(HELP_UNAVAILABLE_LINE).await
         } else {
             self.terminal.write(&bytes).await?;
-            self.terminal.flush().await
+            Ok(self.terminal.flush().await?)
         }
     }
 }

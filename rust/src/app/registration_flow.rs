@@ -6,12 +6,16 @@
 //! [`crate::app::session_flow::NewUserRegistrationFlow::complete`]
 //! and renders the appropriate wire-message for each outcome.
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::BTreeSet;
 
 use crate::app::services::AppServices;
 use crate::app::session_flow::{
     self, is_handle_available_for_registration, NewUserProfile, NewUserRegistrationFlow,
 };
+use crate::app::session_terminal::{preserve_phase, SessionFlowResult};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::{ANSI_PROMPT, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE};
 use crate::domain::session::typed::{
@@ -123,13 +127,18 @@ where
     /// Runs the registration sub-flow from a freshly initialised
     /// `new_user_registering` session through to either an onboarded
     /// account or a logging-off session.
+    ///
+    /// # Errors
+    /// Returns a phase-carrying terminal failure when registration I/O
+    /// fails. EOF remains a successful carrier-loss outcome; idle timeout
+    /// transitions first, so a failed timeout notice carries `LoggingOff`.
     pub(crate) async fn run(
         &mut self,
         session: NewUserRegisteringSession,
         password_required: bool,
-    ) -> Result<RegistrationOutcome, T::Error> {
+    ) -> SessionFlowResult<RegistrationOutcome, T::Error> {
         let screen = self.services.screens.as_ref().new_user_password().await;
-        self.terminal.write(&screen).await?;
+        let (session, ()) = preserve_phase(session, self.terminal.write(&screen)).await?;
         let session = if password_required {
             match self.run_password_gate(session).await? {
                 GateResult::Verified(s) => s,
@@ -184,11 +193,14 @@ where
     async fn run_password_gate(
         &mut self,
         mut session: NewUserRegisteringSession,
-    ) -> Result<GateResult, T::Error> {
+    ) -> SessionFlowResult<GateResult, T::Error> {
         loop {
-            let read = self
-                .read_prompted(NEW_USER_PASSWORD_PROMPT, TerminalEcho::Masked)
-                .await?;
+            let (next_session, read) = preserve_phase(
+                session,
+                self.read_prompted(NEW_USER_PASSWORD_PROMPT, TerminalEcho::Masked),
+            )
+            .await?;
+            session = next_session;
             let typed = match read {
                 TerminalRead::Line(line) => {
                     session.record_input(self.services.clock.now());
@@ -203,7 +215,8 @@ where
                     let logoff = session
                         .into_active()
                         .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
-                    self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                    let (logoff, ()) =
+                        preserve_phase(logoff, self.write_and_flush(IDLE_TIMEOUT_LINE)).await?;
                     return Ok(GateResult::LoggingOff(logoff));
                 }
             };
@@ -217,16 +230,20 @@ where
             .expect("NewUserRegisteringSession + configured gate guarantees flow ok");
             match transition {
                 NewUserPasswordTransition::Verified(s) => {
-                    self.write_and_flush(NEW_USER_PASSWORD_OK_LINE).await?;
+                    let (s, ()) =
+                        preserve_phase(s, self.write_and_flush(NEW_USER_PASSWORD_OK_LINE)).await?;
                     return Ok(GateResult::Verified(s));
                 }
                 NewUserPasswordTransition::Mismatch(s) => {
-                    self.write_and_flush(NEW_USER_INVALID_PASSWORD_LINE).await?;
+                    let (s, ()) =
+                        preserve_phase(s, self.write_and_flush(NEW_USER_INVALID_PASSWORD_LINE))
+                            .await?;
                     session = s;
                 }
                 NewUserPasswordTransition::TooManyFailures(s) => {
-                    self.write_and_flush(NEW_USER_EXCESSIVE_FAILURES_LINE)
-                        .await?;
+                    let (s, ()) =
+                        preserve_phase(s, self.write_and_flush(NEW_USER_EXCESSIVE_FAILURES_LINE))
+                            .await?;
                     return Ok(GateResult::LoggingOff(s));
                 }
             }
@@ -236,7 +253,7 @@ where
     async fn read_handle(
         &mut self,
         mut session: NewUserRegisteringSession,
-    ) -> Result<ReadField<String>, T::Error> {
+    ) -> SessionFlowResult<ReadField<String>, T::Error> {
         let max_attempts = self
             .services
             .session_policy
@@ -244,15 +261,21 @@ where
         let mut attempts: u32 = 0;
         loop {
             if attempts >= max_attempts {
-                self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
-                    .await?;
+                let (session, ()) = preserve_phase(
+                    session,
+                    self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE),
+                )
+                .await?;
                 return Ok(ReadField::LoggingOff(
                     session.into_active().apply_carrier_loss(),
                 ));
             }
-            let read = self
-                .read_prompted(REGISTRATION_HANDLE_PROMPT, TerminalEcho::Visible)
-                .await?;
+            let (next_session, read) = preserve_phase(
+                session,
+                self.read_prompted(REGISTRATION_HANDLE_PROMPT, TerminalEcho::Visible),
+            )
+            .await?;
+            session = next_session;
             let typed = match read {
                 TerminalRead::Line(line) => {
                     session.record_input(self.services.clock.now());
@@ -265,14 +288,19 @@ where
                 Ok(false) => {}
                 Err(error) => {
                     eprintln!("registration: failed to check handle availability: {error}");
-                    self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
-                        .await?;
+                    let (session, ()) = preserve_phase(
+                        session,
+                        self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE),
+                    )
+                    .await?;
                     return Ok(ReadField::LoggingOff(
                         session.into_active().apply_carrier_loss(),
                     ));
                 }
             }
-            self.terminal.write(HANDLE_TAKEN_LINE).await?;
+            let (next_session, ()) =
+                preserve_phase(session, self.terminal.write(HANDLE_TAKEN_LINE)).await?;
+            session = next_session;
             attempts += 1;
         }
     }
@@ -281,8 +309,10 @@ where
         &mut self,
         mut session: NewUserRegisteringSession,
         prompt: &[u8],
-    ) -> Result<ReadField<Option<String>>, T::Error> {
-        let read = self.read_prompted(prompt, TerminalEcho::Visible).await?;
+    ) -> SessionFlowResult<ReadField<Option<String>>, T::Error> {
+        let (next_session, read) =
+            preserve_phase(session, self.read_prompted(prompt, TerminalEcho::Visible)).await?;
+        session = next_session;
         let typed = match read {
             TerminalRead::Line(line) => {
                 session.record_input(self.services.clock.now());
@@ -302,11 +332,14 @@ where
     async fn read_password(
         &mut self,
         mut session: NewUserRegisteringSession,
-    ) -> Result<ReadField<String>, T::Error> {
+    ) -> SessionFlowResult<ReadField<String>, T::Error> {
         loop {
-            let read = self
-                .read_prompted(REGISTRATION_PASSWORD_PROMPT, TerminalEcho::Masked)
-                .await?;
+            let (next_session, read) = preserve_phase(
+                session,
+                self.read_prompted(REGISTRATION_PASSWORD_PROMPT, TerminalEcho::Masked),
+            )
+            .await?;
+            session = next_session;
             let password = match read {
                 TerminalRead::Line(line) => {
                     session.record_input(self.services.clock.now());
@@ -317,9 +350,12 @@ where
             if password.trim().is_empty() {
                 continue;
             }
-            let confirm_read = self
-                .read_prompted(REGISTRATION_PASSWORD_CONFIRM_PROMPT, TerminalEcho::Masked)
-                .await?;
+            let (next_session, confirm_read) = preserve_phase(
+                session,
+                self.read_prompted(REGISTRATION_PASSWORD_CONFIRM_PROMPT, TerminalEcho::Masked),
+            )
+            .await?;
+            session = next_session;
             let confirmed = match confirm_read {
                 TerminalRead::Line(line) => {
                     session.record_input(self.services.clock.now());
@@ -330,18 +366,23 @@ where
             if password == confirmed {
                 return Ok(ReadField::Got(session, password));
             }
-            self.terminal.write(PASSWORDS_DO_NOT_MATCH_LINE).await?;
+            let (next_session, ()) =
+                preserve_phase(session, self.terminal.write(PASSWORDS_DO_NOT_MATCH_LINE)).await?;
+            session = next_session;
         }
     }
 
     async fn read_line_length(
         &mut self,
         mut session: NewUserRegisteringSession,
-    ) -> Result<ReadField<u32>, T::Error> {
+    ) -> SessionFlowResult<ReadField<u32>, T::Error> {
         loop {
-            let read = self
-                .read_prompted(LINE_LENGTH_PROMPT, TerminalEcho::Visible)
-                .await?;
+            let (next_session, read) = preserve_phase(
+                session,
+                self.read_prompted(LINE_LENGTH_PROMPT, TerminalEcho::Visible),
+            )
+            .await?;
+            session = next_session;
             let typed = match read {
                 TerminalRead::Line(line) => {
                     session.record_input(self.services.clock.now());
@@ -358,7 +399,10 @@ where
                     return Ok(ReadField::Got(session, value));
                 }
                 _ => {
-                    self.terminal.write(INVALID_LINE_LENGTH_LINE).await?;
+                    let (next_session, ()) =
+                        preserve_phase(session, self.terminal.write(INVALID_LINE_LENGTH_LINE))
+                            .await?;
+                    session = next_session;
                 }
             }
         }
@@ -367,10 +411,13 @@ where
     async fn read_ansi_colour(
         &mut self,
         mut session: NewUserRegisteringSession,
-    ) -> Result<ReadField<bool>, T::Error> {
-        let read = self
-            .read_prompted(ANSI_PROMPT, TerminalEcho::Visible)
-            .await?;
+    ) -> SessionFlowResult<ReadField<bool>, T::Error> {
+        let (next_session, read) = preserve_phase(
+            session,
+            self.read_prompted(ANSI_PROMPT, TerminalEcho::Visible),
+        )
+        .await?;
+        session = next_session;
         let typed = match read {
             TerminalRead::Line(line) => {
                 session.record_input(self.services.clock.now());
@@ -389,14 +436,15 @@ where
         &mut self,
         session: NewUserRegisteringSession,
         outcome: TerminalRead,
-    ) -> Result<ReadField<TVal>, T::Error> {
+    ) -> SessionFlowResult<ReadField<TVal>, T::Error> {
         let logoff = match outcome {
             TerminalRead::Eof => session.into_active().apply_carrier_loss(),
             TerminalRead::IdleTimedOut => {
                 let logoff = session
                     .into_active()
                     .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
-                self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
+                let (logoff, ()) =
+                    preserve_phase(logoff, self.write_and_flush(IDLE_TIMEOUT_LINE)).await?;
                 logoff
             }
             TerminalRead::Line(_) => unreachable!("interrupt path is for non-Line outcomes"),
@@ -408,7 +456,7 @@ where
         &mut self,
         session: NewUserRegisteringSession,
         profile: NewUserProfile,
-    ) -> Result<RegistrationOutcome, T::Error> {
+    ) -> SessionFlowResult<RegistrationOutcome, T::Error> {
         let flow = NewUserRegistrationFlow::new(
             self.services.user_repo.as_ref(),
             self.services.hasher.as_ref(),
@@ -418,7 +466,9 @@ where
         );
         match flow.complete(session, profile, self.services.clock.now()) {
             Ok(NewUserRegistrationResult::Onboarded(onboarded)) => {
-                self.write_and_flush(REGISTRATION_COMPLETE_LINE).await?;
+                let (onboarded, ()) =
+                    preserve_phase(onboarded, self.write_and_flush(REGISTRATION_COMPLETE_LINE))
+                        .await?;
                 Ok(RegistrationOutcome::Onboarded(onboarded))
             }
             Ok(NewUserRegistrationResult::LoggingOff(logging_off)) => {
@@ -427,7 +477,8 @@ where
                 // with the legacy path: tell the user the logon was
                 // rejected and let the driver's finalise close the
                 // session.
-                self.write_and_flush(LOGON_REJECTED_LINE).await?;
+                let (logging_off, ()) =
+                    preserve_phase(logging_off, self.write_and_flush(LOGON_REJECTED_LINE)).await?;
                 Ok(RegistrationOutcome::LoggingOff(logging_off))
             }
             Err(boxed) => {
@@ -435,8 +486,11 @@ where
                 // Hash, repo, or constructor error. The session is
                 // unchanged (still NewUserRegistering); apply
                 // carrier-loss so finalise can close it cleanly.
-                self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE)
-                    .await?;
+                let (session, ()) = preserve_phase(
+                    session,
+                    self.write_and_flush(REGISTRATION_RETRIES_EXHAUSTED_LINE),
+                )
+                .await?;
                 let logoff = session.into_active().apply_carrier_loss();
                 Ok(RegistrationOutcome::LoggingOff(logoff))
             }

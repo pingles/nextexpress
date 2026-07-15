@@ -78,7 +78,7 @@ where
         &mut self,
         session: &mut MenuSession,
         arg: FileListArg,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         match arg {
             FileListArg::Invalid => self.file_list_argument_error().await,
             FileListArg::Span {
@@ -106,7 +106,7 @@ where
             FileListArg::Help => {
                 // `F ?` (`ae_tierd_aquascan3.txt` S1).
                 self.terminal.write(wire::HELP_SCREEN.as_bytes()).await?;
-                self.terminal.flush().await
+                Ok(self.terminal.flush().await?)
             }
         }
     }
@@ -127,7 +127,7 @@ where
         session: &mut MenuSession,
         reverse: bool,
         fr_banner: bool,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let conference = session.current_conference_number().unwrap_or(0);
         let areas = self.areas_in_conference(conference);
         let max = areas.last().map_or(0, FileArea::number);
@@ -156,20 +156,20 @@ where
             .await?
         {
             super::PromptLine::Entered(answer) => answer,
-            super::PromptLine::Aborted => return self.terminal.flush().await,
+            super::PromptLine::Aborted => return Ok(self.terminal.flush().await?),
             super::PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
         };
         if answer.is_empty() {
             // Enter = None: blank + a single reset (S3 — the abort
             // tail, not the listing tail).
             self.terminal.write(b"\r\n\x1b[0m\r\n").await?;
-            return self.terminal.flush().await;
+            return Ok(self.terminal.flush().await?);
         }
         let Some(span) = crate::app::menu_command::parse_span_token(&answer) else {
             self.terminal.write(CRLF).await?;
             self.terminal.write(wire::ERROR_IN_INPUT).await?;
             self.terminal.write(b"\r\n\r\n\x1b[0m\r\n").await?;
-            return self.terminal.flush().await;
+            return Ok(self.terminal.flush().await?);
         };
         self.terminal.write(CRLF).await?;
         // The chosen span runs forward for bare `F`, reverse for bare
@@ -194,13 +194,15 @@ where
     /// `Argument error! Type 'f ?' for help.` under the help banner —
     /// the captured response to unsupported argument forms
     /// (`ae_tierd_aquascan4.txt` U4; single-reset tail).
-    async fn file_list_argument_error(&mut self) -> Result<(), T::Error> {
+    async fn file_list_argument_error(
+        &mut self,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.terminal.write(b"\x1b[0m\r\n").await?;
         self.terminal.write(wire::HELP_BANNER.as_bytes()).await?;
         self.terminal.write(b"\r\n\r\n").await?;
         self.terminal.write(wire::ARGUMENT_ERROR).await?;
         self.terminal.write(b"\r\n\r\n\x1b[0m\r\n").await?;
-        self.terminal.flush().await
+        Ok(self.terminal.flush().await?)
     }
 
     /// Runs an immediate scan over `span`'s directories under `mode` —
@@ -214,7 +216,7 @@ where
         mode: &ScanMode,
         non_stop: bool,
         fr_banner: bool,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         // Per-task session isolation: the menu loop guarantees a
         // joined conference before any command dispatches.
         let conference = session.current_conference_number().unwrap_or(0);
@@ -270,7 +272,7 @@ where
         &mut self,
         session: &mut MenuSession,
         arg: ZippyArg,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         // express.e:26137 — a blank line precedes the search.
         self.terminal.write(CRLF).await?;
 
@@ -292,7 +294,7 @@ where
                     .await?
                 {
                     super::PromptLine::Entered(answer) => answer,
-                    super::PromptLine::Aborted => return self.terminal.flush().await,
+                    super::PromptLine::Aborted => return Ok(self.terminal.flush().await?),
                     super::PromptLine::Kept => {
                         unreachable!("Verbatim prompts have no keep branch")
                     }
@@ -301,7 +303,7 @@ where
                 self.terminal.write(CRLF).await?;
                 if answer.is_empty() {
                     // express.e:26155-26156 — StrLen=0 returns to the menu.
-                    return self.terminal.flush().await;
+                    return Ok(self.terminal.flush().await?);
                 }
                 (answer, None)
             }
@@ -329,10 +331,10 @@ where
             {
                 super::PromptLine::Entered(answer) if answer.is_empty() => {
                     self.terminal.write(CRLF).await?;
-                    return self.terminal.flush().await;
+                    return Ok(self.terminal.flush().await?);
                 }
                 super::PromptLine::Entered(answer) => answer,
-                super::PromptLine::Aborted => return self.terminal.flush().await,
+                super::PromptLine::Aborted => return Ok(self.terminal.flush().await?),
                 super::PromptLine::Kept => unreachable!("Verbatim prompts have no keep branch"),
             }
         };
@@ -370,17 +372,19 @@ where
 
         // express.e:26211 — trailing blank.
         self.terminal.write(CRLF).await?;
-        self.terminal.flush().await
+        Ok(self.terminal.flush().await?)
     }
 
     /// The internal `getDirSpan` out-of-range error, framed with the
     /// legacy leading and trailing blanks
     /// (`amiexpress/express.e:26905`).
-    async fn zippy_no_such_directory(&mut self) -> Result<(), T::Error> {
+    async fn zippy_no_such_directory(
+        &mut self,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.terminal.write(CRLF).await?;
         self.terminal.write(wire::ZIPPY_NO_SUCH_DIRECTORY).await?;
         self.terminal.write(b"\r\n\r\n").await?;
-        self.terminal.flush().await
+        Ok(self.terminal.flush().await?)
     }
 
     /// Dumps the raw DIR rows of every file in `files` whose block
@@ -392,7 +396,7 @@ where
         &mut self,
         files: &[File],
         needle_upper: &[u8],
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         for file in files {
             let rows = dir_row::dir_row_lines(file);
             if rows.iter().any(|row| row_contains_ci(row, needle_upper)) {

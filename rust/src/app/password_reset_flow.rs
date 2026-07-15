@@ -9,6 +9,7 @@
 use crate::app::clock::Clock;
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, CompletePasswordResetFlowError};
+use crate::app::session_terminal::{preserve_phase, SessionFlowResult};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::IDLE_TIMEOUT_LINE;
 use crate::domain::password::PasswordHasher;
@@ -119,11 +120,18 @@ where
     }
 
     /// Prompts for and applies a forced password reset.
+    ///
+    /// # Errors
+    /// Returns a phase-carrying terminal failure when reset-flow I/O fails.
+    /// Hashing and persistence failures remain represented by
+    /// [`PasswordResetOutcome::Aborted`].
     pub(crate) async fn run(
         &mut self,
         mut session: OnboardedSession,
-    ) -> Result<PasswordResetOutcome, T::Error> {
-        self.write_and_flush(PASSWORD_RESET_REQUIRED_LINE).await?;
+    ) -> SessionFlowResult<PasswordResetOutcome, T::Error> {
+        let (next_session, ()) =
+            preserve_phase(session, self.write_and_flush(PASSWORD_RESET_REQUIRED_LINE)).await?;
+        session = next_session;
         let mut attempts = 0;
         while attempts < MAX_PASSWORD_RESET_ATTEMPTS {
             let candidate = match self.read_password(session, PASSWORD_RESET_PROMPT).await? {
@@ -149,7 +157,10 @@ where
             };
             if candidate != confirm {
                 attempts += 1;
-                self.write_and_flush(PASSWORD_RESET_MISMATCH_LINE).await?;
+                let (next_session, ()) =
+                    preserve_phase(session, self.write_and_flush(PASSWORD_RESET_MISMATCH_LINE))
+                        .await?;
+                session = next_session;
                 continue;
             }
 
@@ -169,14 +180,21 @@ where
                 }
                 Err(CompletePasswordResetFlowError::WeakPassword) => {
                     attempts += 1;
-                    self.write_and_flush(PASSWORD_RESET_WEAK_LINE).await?;
                     session = OnboardedSession::from_session(inner);
+                    let (next_session, ()) =
+                        preserve_phase(session, self.write_and_flush(PASSWORD_RESET_WEAK_LINE))
+                            .await?;
+                    session = next_session;
                 }
                 Err(CompletePasswordResetFlowError::SameAsCurrent) => {
                     attempts += 1;
-                    self.write_and_flush(PASSWORD_RESET_SAME_AS_CURRENT_LINE)
-                        .await?;
                     session = OnboardedSession::from_session(inner);
+                    let (next_session, ()) = preserve_phase(
+                        session,
+                        self.write_and_flush(PASSWORD_RESET_SAME_AS_CURRENT_LINE),
+                    )
+                    .await?;
+                    session = next_session;
                 }
                 Err(CompletePasswordResetFlowError::Hash(error)) => {
                     eprintln!("password reset: failed to hash password: {error}");
@@ -193,7 +211,8 @@ where
             }
         }
 
-        self.write_and_flush(PASSWORD_RESET_EXHAUSTED_LINE).await?;
+        let (session, ()) =
+            preserve_phase(session, self.write_and_flush(PASSWORD_RESET_EXHAUSTED_LINE)).await?;
         Ok(PasswordResetOutcome::LoggingOff(
             session.into_active().apply_carrier_loss(),
         ))
@@ -203,8 +222,11 @@ where
         &mut self,
         mut session: OnboardedSession,
         prompt: &[u8],
-    ) -> Result<PasswordRead, T::Error> {
-        match self.read_prompted(prompt, TerminalEcho::Masked).await? {
+    ) -> SessionFlowResult<PasswordRead, T::Error> {
+        let (next_session, read) =
+            preserve_phase(session, self.read_prompted(prompt, TerminalEcho::Masked)).await?;
+        session = next_session;
+        match read {
             TerminalRead::Line(line) => {
                 session.record_input(self.services.clock.now());
                 if line.trim().is_empty() {
@@ -217,12 +239,12 @@ where
                 session.into_active().apply_carrier_loss(),
             )),
             TerminalRead::IdleTimedOut => {
-                self.write_and_flush(IDLE_TIMEOUT_LINE).await?;
-                Ok(PasswordRead::LoggingOff(
-                    session
-                        .into_active()
-                        .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff()),
-                ))
+                let logoff = session
+                    .into_active()
+                    .apply_idle_timeout(self.services.session_policy.treat_timeout_as_logoff());
+                let (logoff, ()) =
+                    preserve_phase(logoff, self.write_and_flush(IDLE_TIMEOUT_LINE)).await?;
+                Ok(PasswordRead::LoggingOff(logoff))
             }
         }
     }
@@ -254,13 +276,114 @@ mod tests {
 
     use crate::adapters::in_memory_user_repository::InMemoryUserRepository;
     use crate::adapters::pbkdf2_password_hasher::Pbkdf2PasswordHasher;
+    use crate::app::session_terminal::SessionAtTerminalFailure;
     use crate::app::terminal::{TerminalFuture, TerminalRead};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
-    use crate::domain::session::typed::OnboardedSession;
+    use crate::domain::session::typed::{ActivePhase, OnboardedSession};
     use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
     use crate::domain::user::User;
 
     use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Fault {
+        Write,
+    }
+
+    struct FaultTerminal {
+        inputs: VecDeque<TerminalRead>,
+        fail_write_at: Option<usize>,
+        fail_write_containing: Option<Vec<u8>>,
+        write_count: usize,
+    }
+
+    impl FaultTerminal {
+        fn failing_first_write() -> Self {
+            Self {
+                inputs: VecDeque::new(),
+                fail_write_at: Some(0),
+                fail_write_containing: None,
+                write_count: 0,
+            }
+        }
+
+        fn idle_then_fail_timeout_notice() -> Self {
+            Self {
+                inputs: [TerminalRead::IdleTimedOut].into(),
+                fail_write_at: None,
+                fail_write_containing: Some(IDLE_TIMEOUT_LINE.to_vec()),
+                write_count: 0,
+            }
+        }
+    }
+
+    impl Terminal for FaultTerminal {
+        type Error = Fault;
+
+        fn write<'b>(&'b mut self, bytes: &'b [u8]) -> TerminalFuture<'b, (), Self::Error> {
+            Box::pin(async move {
+                let operation = self.write_count;
+                self.write_count += 1;
+                if self.fail_write_at == Some(operation)
+                    || self.fail_write_containing.as_deref().is_some_and(|needle| {
+                        bytes.windows(needle.len()).any(|window| window == needle)
+                    })
+                {
+                    return Err(Fault::Write);
+                }
+                Ok(())
+            })
+        }
+
+        fn flush(&mut self) -> TerminalFuture<'_, (), Self::Error> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn read_line(
+            &mut self,
+            _echo: TerminalEcho,
+            _timeout: Duration,
+        ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
+            Box::pin(async move { Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof)) })
+        }
+    }
+
+    #[tokio::test]
+    async fn opening_notice_failure_retains_the_onboarded_session() {
+        let (fixture, session) = reset_fixture_and_session(SessionPolicy::default());
+        let mut terminal = FaultTerminal::failing_first_write();
+
+        let Err(failure) = PasswordResetFlow::new(&mut terminal, fixture.services())
+            .run(session)
+            .await
+        else {
+            panic!("notice failure must escape with session ownership");
+        };
+
+        let (phase, source) = failure.into_parts();
+        assert_eq!(source, Fault::Write);
+        assert!(matches!(
+            phase,
+            SessionAtTerminalFailure::Active(ActivePhase::Onboarded(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_transitions_before_a_timeout_notice_failure() {
+        let (fixture, session) = reset_fixture_and_session(SessionPolicy::default());
+        let mut terminal = FaultTerminal::idle_then_fail_timeout_notice();
+
+        let Err(failure) = PasswordResetFlow::new(&mut terminal, fixture.services())
+            .run(session)
+            .await
+        else {
+            panic!("timeout notice failure must escape with session ownership");
+        };
+
+        let (phase, source) = failure.into_parts();
+        assert_eq!(source, Fault::Write);
+        assert!(matches!(phase, SessionAtTerminalFailure::LoggingOff(_)));
+    }
 
     struct FakeTerminal {
         inputs: VecDeque<TerminalRead>,

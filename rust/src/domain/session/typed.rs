@@ -139,6 +139,19 @@ impl ConnectingSession {
             session: self.session,
         }
     }
+
+    /// Applies `session.allium:CarrierLost` before the first prompt has
+    /// moved the session into an active phase. This is the connection-
+    /// preamble counterpart to [`ActivePhase::apply_carrier_loss`].
+    #[must_use]
+    pub(crate) fn apply_carrier_loss(mut self) -> LoggingOffSession {
+        self.session
+            .apply_carrier_loss()
+            .expect("Connecting guarantees carrier-loss is permitted");
+        LoggingOffSession {
+            session: self.session,
+        }
+    }
 }
 
 impl_constructor!(ConnectingSession, Connecting);
@@ -364,7 +377,7 @@ impl MenuSession {
     /// (`amiexpress/express.e:25156-25158`).
     #[must_use]
     pub(crate) fn explicit_join_conference(
-        mut self,
+        &mut self,
         target_conference_number: u32,
         requested_msgbase_number: Option<u32>,
         conferences: &[Conference],
@@ -386,17 +399,12 @@ impl MenuSession {
                 show_bulletin,
                 name_type_promoted_to,
             } => ExplicitJoinTransition::Joined {
-                session: Self {
-                    session: self.session,
-                },
                 conference_number,
                 msgbase_number,
                 show_bulletin,
                 name_type_promoted_to,
             },
-            ExplicitJoinOutcome::Denied => ExplicitJoinTransition::Denied(Self {
-                session: self.session,
-            }),
+            ExplicitJoinOutcome::Denied => ExplicitJoinTransition::Denied,
         }
     }
 }
@@ -509,10 +517,9 @@ pub(crate) enum AutoRejoinTransition {
     NoAccess(LoggingOffSession),
 }
 
-/// Outcome of [`MenuSession::explicit_join_conference`] expressed as
-/// next-phase ownership (Slice 32 / Tier C C2). The session stays in
-/// [`SessionState::Menu`] on both arms — explicit join never logs
-/// the user off.
+/// Metadata returned by [`MenuSession::explicit_join_conference`]. The
+/// session is mutated in place and stays in [`SessionState::Menu`] on both
+/// arms — explicit join never logs the user off.
 ///
 /// `show_bulletin` is reserved for the forthcoming slice that
 /// renders conference bulletins driver-side; the present driver
@@ -521,8 +528,6 @@ pub(crate) enum AutoRejoinTransition {
 pub(crate) enum ExplicitJoinTransition {
     /// The session reattached to the requested conference.
     Joined {
-        /// The session, still in [`SessionState::Menu`].
-        session: MenuSession,
         /// 1-indexed number of the conference attached to.
         conference_number: u32,
         /// 1-indexed number of the message base within that
@@ -536,10 +541,10 @@ pub(crate) enum ExplicitJoinTransition {
     },
     /// The requested conference is not accessible (legacy
     /// `checkConfAccess` failure,
-    /// `amiexpress/express.e:25156-25158`). The session is returned
-    /// unchanged; the caller writes the no-access notice and stays
-    /// at the menu.
-    Denied(MenuSession),
+    /// `amiexpress/express.e:25156-25158`). The borrowed session remains
+    /// unchanged; the caller writes the no-access notice and stays at the
+    /// menu.
+    Denied,
 }
 
 /// Outcome of the name-typed flow expressed as next-phase ownership.

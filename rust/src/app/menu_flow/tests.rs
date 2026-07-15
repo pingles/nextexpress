@@ -13,7 +13,6 @@ use crate::app::menu_command::parse_menu_command;
 use crate::app::menu_flow::test_support::{menu_session, test_services, CaptureTerminal};
 use crate::app::services::AppServices;
 use crate::app::terminal::{KeyEvent, KeyRead, TerminalRead};
-use crate::app::wire_text::IDLE_TIMEOUT_LINE;
 use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::files::flagged::FlaggedKey;
 use crate::domain::files::flagged_store::{FlaggedStore, FlaggedStoreError};
@@ -23,8 +22,8 @@ use crate::domain::session::{apply_password_match, LogonChannel, Session, Sessio
 use crate::domain::user::User;
 
 use super::{
-    DispatchOutcome, MenuFlow, AUTOSAVING_FILE_FLAGS, CLEAR_PROMPT, FLAGGED_FILES_EXIST,
-    FLAG_PROMPT, GOODBYE_LINE,
+    DispatchOutcome, MenuExit, MenuFlow, MenuFlowError, AUTOSAVING_FILE_FLAGS, CLEAR_PROMPT,
+    FLAGGED_FILES_EXIST, FLAG_PROMPT,
 };
 
 #[derive(Default)]
@@ -123,19 +122,28 @@ fn quick_logon_menu_session() -> MenuSession {
     MenuSession::from_session(session)
 }
 
-/// Drives one menu command through the real `dispatch`, returning the
-/// outcome. The command is parsed (not hand-built) so the test is
-/// agnostic to the `MenuCommand` shape.
+enum TestDispatchOutcome {
+    Continue(Box<MenuSession>),
+    UserRequestedLogoff,
+    Exit(MenuExit),
+}
+
+/// Drives one menu command through the real borrowed-session `dispatch`.
+/// The command is parsed (not hand-built) so the test is agnostic to the
+/// `MenuCommand` shape.
 async fn dispatch_line(
     services: &AppServices,
     terminal: &mut CaptureTerminal,
-    session: MenuSession,
+    mut session: MenuSession,
     line: &str,
-) -> DispatchOutcome {
+) -> TestDispatchOutcome {
     let mut flow = MenuFlow { terminal, services };
-    flow.dispatch(session, parse_menu_command(line))
-        .await
-        .expect("dispatch")
+    match flow.dispatch(&mut session, parse_menu_command(line)).await {
+        Ok(DispatchOutcome::Continue) => TestDispatchOutcome::Continue(Box::new(session)),
+        Ok(DispatchOutcome::UserRequestedLogoff) => TestDispatchOutcome::UserRequestedLogoff,
+        Err(MenuFlowError::Exit(exit)) => TestDispatchOutcome::Exit(exit),
+        Err(MenuFlowError::Terminal(error)) => match error {},
+    }
 }
 
 /// The genuine `checkFlagged()` + `yesNo(2)` prompt, server bytes,
@@ -155,7 +163,7 @@ async fn plain_g_with_flagged_files_confirms_then_n_stays_at_menu() {
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
 
     assert!(
-        matches!(outcome, DispatchOutcome::Continue(_)),
+        matches!(outcome, TestDispatchOutcome::Continue(_)),
         "answering N must keep the caller in the menu, not log off"
     );
     let mut expected = LEAVE_FLAGGED_CONFIRM.to_vec();
@@ -176,7 +184,7 @@ async fn confirm_default_enter_answer_stays_at_menu() {
     let mut terminal = CaptureTerminal::with_keys(vec![enter_key()]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
 
-    assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    assert!(matches!(outcome, TestDispatchOutcome::Continue(_)));
     let mut expected = LEAVE_FLAGGED_CONFIRM.to_vec();
     expected.extend_from_slice(b"No\r\n\r\n");
     assert_eq!(terminal.output, expected);
@@ -192,13 +200,12 @@ async fn plain_g_with_flagged_files_y_leaves_and_logs_off() {
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
 
     assert!(
-        matches!(outcome, DispatchOutcome::LogoffComplete(_)),
+        matches!(outcome, TestDispatchOutcome::UserRequestedLogoff),
         "answering Y must log the caller off"
     );
     let mut expected = LEAVE_FLAGGED_CONFIRM.to_vec();
     expected.extend_from_slice(b"Yes\r\n");
     expected.extend_from_slice(AUTOSAVING_FILE_FLAGS);
-    expected.extend_from_slice(GOODBYE_LINE);
     assert_eq!(
         terminal.output,
         expected,
@@ -220,9 +227,8 @@ async fn plain_g_without_flagged_files_logs_off_without_confirming() {
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "G").await;
 
-    assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
-    let mut expected = AUTOSAVING_FILE_FLAGS.to_vec();
-    expected.extend_from_slice(GOODBYE_LINE);
+    assert!(matches!(outcome, TestDispatchOutcome::UserRequestedLogoff));
+    let expected = AUTOSAVING_FILE_FLAGS.to_vec();
     assert_eq!(
         terminal.output,
         expected,
@@ -241,9 +247,8 @@ async fn g_y_forces_logoff_past_the_flagged_confirm() {
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G Y").await;
 
-    assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
-    let mut expected = AUTOSAVING_FILE_FLAGS.to_vec();
-    expected.extend_from_slice(GOODBYE_LINE);
+    assert!(matches!(outcome, TestDispatchOutcome::UserRequestedLogoff));
+    let expected = AUTOSAVING_FILE_FLAGS.to_vec();
     assert_eq!(
         terminal.output,
         expected,
@@ -260,13 +265,12 @@ async fn confirm_ignores_unrecognised_keys_until_a_yes_or_no() {
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'x'), char_key(b'Y')]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
 
-    assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
+    assert!(matches!(outcome, TestDispatchOutcome::UserRequestedLogoff));
     // The `x` produced no echo — only the prompt, the `Yes`, the
     // autosave banner (flag set non-empty), then the goodbye tail.
     let mut expected = LEAVE_FLAGGED_CONFIRM.to_vec();
     expected.extend_from_slice(b"Yes\r\n");
     expected.extend_from_slice(AUTOSAVING_FILE_FLAGS);
-    expected.extend_from_slice(GOODBYE_LINE);
     assert_eq!(
         terminal.output,
         expected,
@@ -291,7 +295,7 @@ async fn fs_denies_unconditionally_with_the_higher_access_line() {
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "FS").await;
 
     assert!(
-        matches!(outcome, DispatchOutcome::Continue(_)),
+        matches!(outcome, TestDispatchOutcome::Continue(_)),
         "the deny must keep the caller at the menu, not log off"
     );
     // Restated single-line literal, independent of HIGHER_ACCESS_LINE.
@@ -310,13 +314,15 @@ async fn a_with_no_flags_lists_no_file_flags() {
     // `\b\n`, then the flag prompt. Live: ae_tierd_alterflags.txt
     // `* -> cleared, empty listing`. Here the prompt's lineInput hits
     // EOF (carrier loss, stat<0), so alterFlags returns with no trailing
-    // blank line; the caller stays in the menu (Continue), which detects
-    // the dropped carrier on its next read.
+    // blank line and the lifecycle exit propagates immediately.
     let services = test_services();
     let mut terminal = CaptureTerminal::default(); // read_line -> Eof
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
 
-    assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    assert!(matches!(
+        outcome,
+        TestDispatchOutcome::Exit(MenuExit::CarrierLost)
+    ));
     let mut expected = b"\r\nNo file flags\r\n".to_vec();
     expected.extend_from_slice(FLAG_PROMPT);
     assert_eq!(
@@ -345,7 +351,10 @@ async fn a_lists_flagged_names_uppercased_and_space_joined() {
     let mut terminal = CaptureTerminal::default();
     let outcome = dispatch_line(&services, &mut terminal, session, "A").await;
 
-    assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    assert!(matches!(
+        outcome,
+        TestDispatchOutcome::Exit(MenuExit::CarrierLost)
+    ));
     let mut expected = b"\r\nMYDEMO.DMS TERMV48.LHA\r\n".to_vec();
     expected.extend_from_slice(FLAG_PROMPT);
     assert_eq!(
@@ -368,7 +377,7 @@ async fn a_flag_prompt_then_enter_returns_to_menu() {
     let mut terminal = CaptureTerminal::with_lines(vec![line("")]);
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
 
-    assert!(matches!(outcome, DispatchOutcome::Continue(_)));
+    assert!(matches!(outcome, TestDispatchOutcome::Continue(_)));
     let mut expected = b"\r\nNo file flags\r\n".to_vec();
     expected.extend_from_slice(FLAG_PROMPT);
     expected.extend_from_slice(b"\r\n");
@@ -391,7 +400,7 @@ async fn a_flagging_a_typed_name_exits_to_the_menu() {
     let mut terminal = CaptureTerminal::with_lines(vec![line("mydemo.dms")]);
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
 
-    let DispatchOutcome::Continue(session) = outcome else {
+    let TestDispatchOutcome::Continue(session) = outcome else {
         panic!("flagging a name returns to the menu");
     };
     assert_eq!(
@@ -419,7 +428,7 @@ async fn a_single_char_token_is_a_no_op_that_ends_the_loop() {
     let mut terminal = CaptureTerminal::with_lines(vec![line("x")]);
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
 
-    let DispatchOutcome::Continue(session) = outcome else {
+    let TestDispatchOutcome::Continue(session) = outcome else {
         panic!("a no-op token stays in the menu");
     };
     assert!(
@@ -448,7 +457,7 @@ async fn a_clear_all_empties_the_set_and_reprompts() {
     let mut terminal = CaptureTerminal::with_lines(vec![line("C"), line("*"), line("")]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "A").await;
 
-    let DispatchOutcome::Continue(session) = outcome else {
+    let TestDispatchOutcome::Continue(session) = outcome else {
         panic!("clearing stays in the menu");
     };
     assert!(
@@ -481,7 +490,7 @@ async fn a_inline_clear_star_skips_the_subprompt() {
     let mut terminal = CaptureTerminal::with_lines(vec![line("C *"), line("")]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "A").await;
 
-    let DispatchOutcome::Continue(session) = outcome else {
+    let TestDispatchOutcome::Continue(session) = outcome else {
         panic!("clearing stays in the menu");
     };
     assert!(
@@ -512,7 +521,7 @@ async fn a_clear_by_name_is_deferred_and_leaves_the_set_intact() {
     let mut terminal = CaptureTerminal::with_lines(vec![line("C"), line("mydemo.dms"), line("")]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "A").await;
 
-    let DispatchOutcome::Continue(session) = outcome else {
+    let TestDispatchOutcome::Continue(session) = outcome else {
         panic!("stays in the menu");
     };
     assert_eq!(
@@ -531,7 +540,10 @@ async fn confirm_disconnect_mid_prompt_logs_off_without_a_goodbye() {
     let mut terminal = CaptureTerminal::with_keys(Vec::new()); // read_key -> Eof
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
 
-    assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
+    assert!(matches!(
+        outcome,
+        TestDispatchOutcome::Exit(MenuExit::CarrierLost)
+    ));
     assert_eq!(
         terminal.output,
         LEAVE_FLAGGED_CONFIRM,
@@ -541,16 +553,19 @@ async fn confirm_disconnect_mid_prompt_logs_off_without_a_goodbye() {
 }
 
 #[tokio::test]
-async fn confirm_idle_timeout_mid_prompt_logs_off_with_the_timeout_line() {
-    // An idle timeout at the confirm logs off with the dedicated
-    // timeout notice, distinct from a clean carrier loss.
+async fn confirm_idle_timeout_mid_prompt_propagates_to_the_driver() {
+    // The menu reports the idle timeout without writing a command-specific
+    // line. The driver first applies the lifecycle transition, then owns the
+    // standard timeout notice and finalisation.
     let services = test_services();
     let mut terminal = CaptureTerminal::with_keys(vec![KeyRead::IdleTimedOut]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G").await;
 
-    assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
-    let mut expected = LEAVE_FLAGGED_CONFIRM.to_vec();
-    expected.extend_from_slice(IDLE_TIMEOUT_LINE);
+    assert!(matches!(
+        outcome,
+        TestDispatchOutcome::Exit(MenuExit::IdleTimedOut)
+    ));
+    let expected = LEAVE_FLAGGED_CONFIRM.to_vec();
     assert_eq!(
         terminal.output,
         expected,
@@ -651,11 +666,11 @@ async fn flag_prompt_stamps_the_idle_clock() {
     services.clock = Arc::new(crate::adapters::system_clock::ManualClock::set_to(stamp));
     let mut terminal = CaptureTerminal::with_lines(vec![TerminalRead::Line(String::new())]);
     let outcome = dispatch_line(&services, &mut terminal, menu_session(), "A").await;
-    let DispatchOutcome::Continue(session) = outcome else {
+    let TestDispatchOutcome::Continue(session) = outcome else {
         panic!("a blank flag-prompt line returns to the menu");
     };
     assert_eq!(
-        session.into_inner().last_input_at(),
+        (*session).into_inner().last_input_at(),
         stamp,
         "the accepted flag-prompt line stamps the idle clock"
     );
@@ -732,7 +747,7 @@ async fn logoff_saves_the_flag_set_for_the_user_slot() {
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G Y").await;
 
-    assert!(matches!(outcome, DispatchOutcome::LogoffComplete(_)));
+    assert!(matches!(outcome, TestDispatchOutcome::UserRequestedLogoff));
     let saved = spy.saved.lock().unwrap();
     assert_eq!(saved.len(), 1, "save called exactly once on logoff");
     assert_eq!(
@@ -752,7 +767,7 @@ async fn logoff_proceeds_when_the_flag_save_fails() {
     let mut terminal = CaptureTerminal::with_keys(vec![char_key(b'N')]);
     let outcome = dispatch_line(&services, &mut terminal, session_with_flagged_file(), "G Y").await;
     assert!(
-        matches!(outcome, DispatchOutcome::LogoffComplete(_)),
+        matches!(outcome, TestDispatchOutcome::UserRequestedLogoff),
         "a save failure must not block logoff"
     );
 }

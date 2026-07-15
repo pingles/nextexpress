@@ -1172,7 +1172,13 @@ async fn failed_row_or_crlf_write_does_not_register_the_row() {
             menu.emit_scan_line(&mut state, row, &mut flagged).await
         };
 
-        assert_eq!(result, Err(InjectedWriteFailure), "write {fail_on}");
+        assert_eq!(
+            result,
+            Err(crate::app::menu_flow::MenuFlowError::Terminal(
+                InjectedWriteFailure
+            )),
+            "write {fail_on}"
+        );
         assert_eq!(state.displayed.resolve(1), None, "write {fail_on}");
         assert!(state.page.is_empty(), "write {fail_on}");
         assert_eq!(state.emitted, 0, "write {fail_on}");
@@ -1277,7 +1283,13 @@ async fn flag_is_not_committed_when_any_post_plan_redraw_write_fails() {
             .await
         };
 
-        assert_eq!(result, Err(InjectedWriteFailure), "{fail_at:?}");
+        assert_eq!(
+            result,
+            Err(crate::app::menu_flow::MenuFlowError::Terminal(
+                InjectedWriteFailure
+            )),
+            "{fail_at:?}"
+        );
         assert!(
             session.flagged_files_mut().is_empty(),
             "{fail_at:?} must not commit any key",
@@ -1288,6 +1300,11 @@ async fn flag_is_not_committed_when_any_post_plan_redraw_write_fails() {
 #[tokio::test]
 async fn flag_entry_eof_or_idle_timeout_does_not_commit() {
     for abort in [KeyRead::Eof, KeyRead::IdleTimedOut] {
+        let expected_exit = match abort {
+            KeyRead::Eof => crate::app::menu_flow::MenuExit::CarrierLost,
+            KeyRead::IdleTimedOut => crate::app::menu_flow::MenuExit::IdleTimedOut,
+            KeyRead::Key(_) => unreachable!("fixture contains only terminal exits"),
+        };
         let services = services_with_demo_catalogue();
         let mut session = menu_session();
         let mut terminal = keyed_terminal(vec![key(b'R'), abort]);
@@ -1296,18 +1313,22 @@ async fn flag_entry_eof_or_idle_timeout_does_not_commit() {
                 terminal: &mut terminal,
                 services: &services,
             };
-            flow.handle_file_list(
-                &mut session,
-                FileListArg::Span {
-                    span: FileSpan::Dir(1),
-                    non_stop: false,
-                    reverse: false,
-                    quick: false,
-                    fr_banner: false,
-                },
-            )
-            .await
-            .expect("carrier/idle exits the listing cleanly");
+            let result = flow
+                .handle_file_list(
+                    &mut session,
+                    FileListArg::Span {
+                        span: FileSpan::Dir(1),
+                        non_stop: false,
+                        reverse: false,
+                        quick: false,
+                        fr_banner: false,
+                    },
+                )
+                .await;
+            assert_eq!(
+                result,
+                Err(crate::app::menu_flow::MenuFlowError::Exit(expected_exit))
+            );
         }
         assert!(session.flagged_files_mut().is_empty(), "{abort:?}");
     }

@@ -269,7 +269,7 @@ where
         &mut self,
         session: &mut MenuSession,
         number: u32,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some(line) = self
             .read_required_line(session, CONFIRM_DELETE_PROMPT, false)
             .await?
@@ -305,7 +305,7 @@ where
         &mut self,
         session: &mut MenuSession,
         number: u32,
-    ) -> Result<bool, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<bool, T::Error> {
         let Some(conf_line) = self
             .read_required_line(session, MOVE_TARGET_CONFERENCE_PROMPT, false)
             .await?
@@ -367,7 +367,7 @@ where
         &mut self,
         session: &mut MenuSession,
         number: u32,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some(new_subject) = self
             .read_optional_unchanged_line(session, EDIT_HEADER_SUBJECT_PROMPT)
             .await?
@@ -415,21 +415,30 @@ where
         Ok(())
     }
 
-    async fn render_delete_error(&mut self, err: DeleteMailError) -> Result<(), T::Error> {
+    async fn render_delete_error(
+        &mut self,
+        err: DeleteMailError,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         if let DeleteMailError::Store(store) = &err {
             eprintln!("K command: store error: {store}");
         }
         self.write_and_flush(delete_error_line(&err)).await
     }
 
-    async fn render_move_error(&mut self, err: MoveMailError) -> Result<(), T::Error> {
+    async fn render_move_error(
+        &mut self,
+        err: MoveMailError,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         if let MoveMailError::Store(store) = &err {
             eprintln!("MV command: store error: {store}");
         }
         self.write_and_flush(move_error_line(&err)).await
     }
 
-    async fn render_edit_header_error(&mut self, err: EditMailHeaderError) -> Result<(), T::Error> {
+    async fn render_edit_header_error(
+        &mut self,
+        err: EditMailHeaderError,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         if let EditMailHeaderError::Store(store) = &err {
             eprintln!("EH command: store error: {store}");
         }
@@ -442,14 +451,15 @@ where
     ///
     /// * `Some(None)` — blank input: keep the current field value.
     /// * `Some(Some(value))` — a new value was supplied.
-    /// * `None` — EOF / idle timeout: the edit is **aborted**.
+    /// * `None` — reserved command-local abort outcome.
     ///
-    /// A dropped carrier or idle timeout must abort the whole edit rather
-    /// than silently keep the field and commit. The legacy `editHeader`
-    /// (`express.e:11602`) does `IF (stat < 0) THEN RETURN stat` on every
-    /// prompt's `lineInput` timeout — a *silent* return, distinct from the
-    /// blank-line keep branch — so the abort writes nothing here (the same
-    /// convention as the `R`-sub-prompt reply / forward commands, B6).
+    /// A dropped carrier or idle timeout propagates as a connection exit
+    /// rather than silently keeping the field and committing. The legacy
+    /// `editHeader` (`express.e:11602`) does `IF (stat < 0) THEN RETURN stat`
+    /// on every prompt's `lineInput` timeout — a *silent* return, distinct
+    /// from the blank-line keep branch — so no command-specific abort notice
+    /// is written (the same convention as the `R`-sub-prompt reply / forward
+    /// commands, B6).
     ///
     /// # Errors
     /// Returns the concrete terminal error if a write, flush, or read fails.
@@ -457,7 +467,7 @@ where
         &mut self,
         session: &mut MenuSession,
         prompt: &[u8],
-    ) -> Result<Option<Option<String>>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<Option<String>>, T::Error> {
         match self
             .prompt_line(
                 session,
@@ -692,9 +702,13 @@ mod tests {
                 terminal: &mut terminal,
                 services: &services,
             };
-            flow.handle_edit_header(&mut session, 1)
-                .await
-                .expect("handle_edit_header");
+            let result = flow.handle_edit_header(&mut session, 1).await;
+            assert!(matches!(
+                result,
+                Err(super::super::MenuFlowError::Exit(
+                    super::super::MenuExit::IdleTimedOut
+                ))
+            ));
         }
         assert_eq!(
             terminal.output.as_slice(),
@@ -721,9 +735,13 @@ mod tests {
                 terminal: &mut terminal,
                 services: &services,
             };
-            flow.handle_edit_header(&mut session, 1)
-                .await
-                .expect("handle_edit_header");
+            let result = flow.handle_edit_header(&mut session, 1).await;
+            assert!(matches!(
+                result,
+                Err(super::super::MenuFlowError::Exit(
+                    super::super::MenuExit::IdleTimedOut
+                ))
+            ));
         }
         let expected = [EDIT_HEADER_SUBJECT_PROMPT, EDIT_HEADER_TO_PROMPT].concat();
         assert_eq!(

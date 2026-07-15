@@ -3,8 +3,8 @@
 //!
 //! `app` is the BBS's behaviour expressed in terms of trait-object
 //! ports. It owns the per-connection driver
-//! ([`session_driver::SessionDriver`]), the login/registration/menu
-//! sub-flows, the menu use-case modules, the application-port traits
+//! ([`session_driver::SessionDriver`]), the login/registration/password-reset/
+//! menu sub-flows, the menu use-case modules, the application-port traits
 //! ([`terminal::Terminal`], [`screens::ScreenRepository`],
 //! [`mail_stores::MailStores`]), the services container
 //! ([`services::AppServices`]) and the runtime composition value
@@ -34,6 +34,7 @@ pub mod services;
 pub mod session_driver;
 pub mod session_flow;
 pub mod session_presenter;
+pub(crate) mod session_terminal;
 pub mod terminal;
 pub mod wire_text;
 pub(crate) mod yes_no;

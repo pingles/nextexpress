@@ -18,7 +18,7 @@ use crate::app::menu_flow::mail_text::{
     POST_ABORTED_LINE, POST_ACCESS_DENIED_LINE, POST_ADDRESSING_NOT_ALLOWED_LINE,
     POST_RECIPIENT_NO_ACCESS_LINE, SOURCE_NOT_FOUND_LINE,
 };
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 use crate::domain::conference::Conference;
 use crate::domain::messaging::forward_mail::{
     forward_mail as forward_mail_rule, ForwardMailError, ForwardMailRequest,
@@ -205,7 +205,7 @@ where
         &mut self,
         session: &mut MenuSession,
         source_number: u32,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some(body) = self.read_post_body(session, true).await? else {
             return Ok(());
         };
@@ -236,7 +236,7 @@ where
         &mut self,
         session: &mut MenuSession,
         source_number: u32,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some(typed_to) = self
             .read_required_line(session, FORWARD_TO_PROMPT, true)
             .await?
@@ -267,7 +267,7 @@ where
         &mut self,
         outcome: ReplyForwardOutcome,
         command_label: &str,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         match outcome {
             ReplyForwardOutcome::NoMailBase => {
                 self.write_and_flush(NO_MAIL_BASE_LINE).await?;
@@ -304,7 +304,7 @@ where
         &mut self,
         err: PostMailError,
         command_label: &str,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         match err {
             PostMailError::AccessDenied => {
                 self.write_and_flush(POST_ACCESS_DENIED_LINE).await?;
@@ -336,35 +336,29 @@ where
     async fn read_forward_note(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<Option<String>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<String>, T::Error> {
         self.write_and_flush(FORWARD_NOTE_PROMPT).await?;
         let mut note = String::new();
         let mut first_line = true;
         loop {
-            // The sub-prompt forward aborts silently (B6), so `/A`,
-            // an oversize note, EOF and idle all return no-note without a
-            // `Message aborted.` notice.
-            match self.read_prompted(b"", TerminalEcho::Visible).await? {
-                TerminalRead::Line(line) => {
-                    session.record_input(self.services.clock.now());
-                    let trimmed = line.trim();
-                    if trimmed.eq_ignore_ascii_case("/A") {
-                        return Ok(None);
-                    }
-                    if trimmed == "." {
-                        return Ok(if note.is_empty() { None } else { Some(note) });
-                    }
-                    if first_line && trimmed.is_empty() {
-                        return Ok(None);
-                    }
-                    first_line = false;
-                    if !append_line_with_newline(&mut note, &line, MAX_MAIL_BODY_BYTES) {
-                        return Ok(None);
-                    }
-                }
-                TerminalRead::Eof | TerminalRead::IdleTimedOut => {
-                    return Ok(None);
-                }
+            // The sub-prompt forward aborts silently (B6), so `/A` and an
+            // oversize note return no-note without a `Message aborted.`
+            // notice. EOF and idle exit the connection directly.
+            let line = self.read_prompted(b"", TerminalEcho::Visible).await?;
+            session.record_input(self.services.clock.now());
+            let trimmed = line.trim();
+            if trimmed.eq_ignore_ascii_case("/A") {
+                return Ok(None);
+            }
+            if trimmed == "." {
+                return Ok(if note.is_empty() { None } else { Some(note) });
+            }
+            if first_line && trimmed.is_empty() {
+                return Ok(None);
+            }
+            first_line = false;
+            if !append_line_with_newline(&mut note, &line, MAX_MAIL_BODY_BYTES) {
+                return Ok(None);
             }
         }
     }
@@ -377,7 +371,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::app::menu_flow::mail_text::POST_ABORTED_LINE;
-    use crate::app::menu_flow::test_support::test_services;
+    use crate::app::menu_flow::test_support::{menu_session, test_services};
     use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
     use crate::domain::messaging::post_mail::PostMailError;
 
@@ -408,6 +402,34 @@ mod tests {
         ) -> TerminalFuture<'_, TerminalRead, Self::Error> {
             Box::pin(async move { Ok(self.inputs.pop_front().unwrap_or(TerminalRead::Eof)) })
         }
+    }
+
+    #[tokio::test]
+    async fn forward_note_collects_through_an_interior_blank_until_dot() {
+        let services = test_services();
+        let mut terminal = CaptureTerminal {
+            output: Vec::new(),
+            inputs: [
+                TerminalRead::Line("intro".to_string()),
+                TerminalRead::Line(String::new()),
+                TerminalRead::Line("tail".to_string()),
+                TerminalRead::Line(".".to_string()),
+            ]
+            .into(),
+        };
+        let mut session = menu_session();
+        let note = {
+            let mut flow = super::super::MenuFlow {
+                terminal: &mut terminal,
+                services: &services,
+            };
+            flow.read_forward_note(&mut session)
+                .await
+                .expect("scripted terminal is infallible")
+        };
+
+        assert_eq!(note.as_deref(), Some("intro\n\ntail\n"));
+        assert_eq!(terminal.output, super::FORWARD_NOTE_PROMPT);
     }
 
     #[tokio::test]

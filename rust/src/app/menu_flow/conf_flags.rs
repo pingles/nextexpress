@@ -12,7 +12,7 @@
 //! echo (`<key>\r\n`) is identical either way.
 
 use crate::app::menu_flow::table::left_field;
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 use crate::domain::conference_flags::{
     apply_scan_flag_edit, conf_flag_rows, parse_scan_flag_mask, parse_scan_flag_selection,
 };
@@ -99,7 +99,7 @@ where
     pub(super) async fn handle_conference_flags(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         loop {
             // Redraw the listing. The bytes are computed up-front so the
             // immutable user / conferences borrows are released before the
@@ -113,14 +113,11 @@ where
             };
             self.terminal.write(&listing).await?;
 
-            // Mask key. A disconnected / idle caller, or a non-M/A/F/Z key
-            // (including a bare `<CR>`), leaves the editor for the menu.
-            let TerminalRead::Line(mask_line) = self
+            // Mask key. A non-M/A/F/Z key (including a bare `<CR>`) leaves
+            // the editor for the menu; EOF/idle exits the session.
+            let mask_line = self
                 .read_prompted(CONF_FLAGS_MASK_PROMPT, TerminalEcho::Visible)
-                .await?
-            else {
-                return Ok(());
-            };
+                .await?;
             session.record_input(self.services.clock.now());
             let Some(flag) = parse_scan_flag_mask(&mask_line) else {
                 return Ok(());
@@ -128,12 +125,9 @@ where
 
             // Conference-selection expression. An empty line returns to the
             // menu (legacy `StrLen(confNums)=0 -> RETURN`, `:24773`).
-            let TerminalRead::Line(expr_line) = self
+            let expr_line = self
                 .read_prompted(CONF_FLAGS_EXPR_PROMPT, TerminalEcho::Visible)
-                .await?
-            else {
-                return Ok(());
-            };
+                .await?;
             session.record_input(self.services.clock.now());
             let Some(selection) = parse_scan_flag_selection(&expr_line) else {
                 return Ok(());

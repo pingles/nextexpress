@@ -238,13 +238,14 @@ fn menu_session(with_visit: bool) -> MenuSession {
 async fn run_join(
     services: &AppServices,
     terminal: &mut ScriptTerminal,
-    session: MenuSession,
+    mut session: MenuSession,
     arg: JoinArg,
 ) -> MenuSession {
     let mut flow = super::super::MenuFlow { terminal, services };
-    flow.handle_join_command(session, arg)
+    flow.handle_join_command(&mut session, arg)
         .await
-        .expect("join command")
+        .expect("join command");
+    session
 }
 
 fn join_arg(line: &str) -> JoinArg {
@@ -260,13 +261,17 @@ fn join_arg(line: &str) -> JoinArg {
 async fn run_command(
     services: &AppServices,
     terminal: &mut ScriptTerminal,
-    session: MenuSession,
+    mut session: MenuSession,
     command: MenuCommand,
 ) -> MenuSession {
     let mut flow = super::super::MenuFlow { terminal, services };
-    match flow.dispatch(session, command).await.expect("dispatch") {
-        super::super::DispatchOutcome::Continue(session) => session,
-        super::super::DispatchOutcome::LogoffComplete(_) => {
+    match flow
+        .dispatch(&mut session, command)
+        .await
+        .expect("dispatch")
+    {
+        super::super::DispatchOutcome::Continue => session,
+        super::super::DispatchOutcome::UserRequestedLogoff => {
             panic!("conference navigation must never log the caller off")
         }
     }
@@ -297,16 +302,29 @@ async fn join_prompt_blank_abort_is_byte_exact_and_stays_put() {
 }
 
 #[tokio::test]
-async fn join_prompt_eof_returns_to_menu_silently() {
-    // Eof / idle at the sub-prompt writes nothing extra; the menu
-    // loop's next read applies the carrier/idle transitions (the
-    // CF precedent).
+async fn join_prompt_eof_exits_the_menu_silently() {
+    // EOF at a nested prompt is a connection-level exit. It writes
+    // nothing beyond the prompt and propagates immediately so the
+    // driver can apply the carrier-loss transition.
     let dir = tempfile::tempdir().expect("tempdir");
     let conferences = three_conferences();
     let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
     let mut terminal = ScriptTerminal::new([]);
-    let session = menu_session_attached(&conferences, alice_with_grants(&[1, 2, 3]));
-    let session = run_join(&services, &mut terminal, session, JoinArg::Missing).await;
+    let mut session = menu_session_attached(&conferences, alice_with_grants(&[1, 2, 3]));
+    let result = {
+        let mut flow = super::super::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.handle_join_command(&mut session, JoinArg::Missing)
+            .await
+    };
+    assert!(matches!(
+        result,
+        Err(super::super::MenuFlowError::Exit(
+            super::super::MenuExit::CarrierLost
+        ))
+    ));
     assert_eq!(terminal.output, b"Conference Number (1-3): ");
     assert_eq!(session.current_conference_number(), Some(1));
 }
@@ -638,17 +656,29 @@ async fn join_msgbase_prompt_in_range_answer_joins_that_base() {
 }
 
 #[tokio::test]
-async fn join_msgbase_prompt_eof_returns_to_menu_silently() {
-    // Eof / idle at the message-base prompt writes nothing extra
-    // (`amiexpress/express.e:25175` propagates the status); the
-    // menu loop's next read applies the carrier/idle transitions —
-    // the conference-prompt precedent.
+async fn join_msgbase_prompt_eof_exits_the_menu_silently() {
+    // EOF at the message-base prompt writes nothing extra
+    // (`amiexpress/express.e:25175` propagates the status) and exits
+    // immediately so the driver can apply carrier loss.
     let dir = tempfile::tempdir().expect("tempdir");
     let conferences = vec![conference(1, "One"), conference(2, "Two")];
     let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
     let mut terminal = ScriptTerminal::new([]);
-    let session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
-    let session = run_join(&services, &mut terminal, session, join_arg("J 1 2")).await;
+    let mut session = menu_session_attached(&conferences, alice_last_joined_two(&[1, 2]));
+    let result = {
+        let mut flow = super::super::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.handle_join_command(&mut session, join_arg("J 1 2"))
+            .await
+    };
+    assert!(matches!(
+        result,
+        Err(super::super::MenuFlowError::Exit(
+            super::super::MenuExit::CarrierLost
+        ))
+    ));
     assert_eq!(terminal.output, b"Message Base Number (1-1): ");
     assert_eq!(session.current_msgbase(), Some((2, 1)));
 }
@@ -877,11 +907,11 @@ async fn jm_prompt_answer_below_range_clamps_to_base_one() {
 }
 
 #[tokio::test]
-async fn jm_prompt_blank_aborts_with_one_crlf_and_stays_put() {
+async fn jm_prompt_blank_aborts_but_eof_exits_the_menu() {
     // Blank input at the `JM` prompt aborts silently
     // (`amiexpress/express.e:25228`) — the only wire output is
     // `lineInput`'s trailing CRLF (`:2378`); the session keeps its
-    // base. Eof writes nothing at all.
+    // base. EOF writes nothing at all and propagates a carrier exit.
     let dir = tempfile::tempdir().expect("tempdir");
     let conferences = vec![multi_base_conference(1, "One")];
     let services = services_with(conferences.clone(), InMemoryMailStores::new(), dir.path());
@@ -893,8 +923,20 @@ async fn jm_prompt_blank_aborts_with_one_crlf_and_stays_put() {
     assert_eq!(session.current_msgbase(), Some((1, 1)));
 
     let mut terminal = ScriptTerminal::new([]);
-    let session = menu_session_attached(&conferences, alice_with_grants(&[1]));
-    let session = run_command(&services, &mut terminal, session, parse_menu_command("JM")).await;
+    let mut session = menu_session_attached(&conferences, alice_with_grants(&[1]));
+    let result = {
+        let mut flow = super::super::MenuFlow {
+            terminal: &mut terminal,
+            services: &services,
+        };
+        flow.dispatch(&mut session, parse_menu_command("JM")).await
+    };
+    assert!(matches!(
+        result,
+        Err(super::super::MenuFlowError::Exit(
+            super::super::MenuExit::CarrierLost
+        ))
+    ));
     assert_eq!(terminal.output, b"Message Base Number (1-2): ".to_vec());
     assert_eq!(session.current_msgbase(), Some((1, 1)));
 }

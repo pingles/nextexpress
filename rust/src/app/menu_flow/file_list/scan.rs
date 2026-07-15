@@ -14,7 +14,7 @@
 use std::collections::BTreeSet;
 
 use crate::app::menu_command::FileSpan;
-use crate::app::terminal::{KeyEvent, KeyRead, Terminal};
+use crate::app::terminal::{KeyEvent, Terminal};
 use crate::app::wire_text::CRLF;
 use crate::domain::files::area::{FileArea, FileAreaRef};
 use crate::domain::files::file::File;
@@ -174,7 +174,7 @@ where
         state: &mut ScanState,
         banner: &[u8],
         flagged: &mut FlaggedFiles,
-    ) -> Result<ScanFlow, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<ScanFlow, T::Error> {
         for line in [&b"\x1b[0m"[..], banner, b""] {
             // `SkipDir`/`ReloadDir` at a preamble More? have no dir to
             // act on yet — they fall through as a resume (provisional;
@@ -203,7 +203,7 @@ where
         areas: &[FileArea],
         flagged: &mut FlaggedFiles,
         mode: &ScanMode,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.walk_span(state, conference, span, areas, flagged, mode)
             .await?;
         self.finish_listing().await
@@ -221,7 +221,7 @@ where
         areas: &[FileArea],
         flagged: &mut FlaggedFiles,
         mode: &ScanMode,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let max = areas.last().map_or(0, FileArea::number);
         let mut dirs: Vec<u32> = match span {
             FileSpan::Dir(n) => {
@@ -302,7 +302,7 @@ where
         conference: u32,
         flagged: &mut FlaggedFiles,
         mode: &ScanMode,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         // Hold is a single-dir span: `ReloadDir` restarts it, every
         // other verb ends the listing here.
         loop {
@@ -398,7 +398,7 @@ where
         &mut self,
         state: &mut ScanState,
         flagged: &mut FlaggedFiles,
-    ) -> Result<ScanFlow, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<ScanFlow, T::Error> {
         if state.non_stop {
             return Ok(ScanFlow::Continue);
         }
@@ -420,7 +420,7 @@ where
         files: &[File],
         flagged: &mut FlaggedFiles,
         mode: &ScanMode,
-    ) -> Result<ScanFlow, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<ScanFlow, T::Error> {
         let flow = self
             .emit_scan_line(state, ScanLine::raw(Vec::new()), flagged)
             .await?;
@@ -451,7 +451,7 @@ where
         state: &mut ScanState,
         line: ScanLine,
         flagged: &mut FlaggedFiles,
-    ) -> Result<ScanFlow, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<ScanFlow, T::Error> {
         self.terminal.write(&line.bytes).await?;
         self.terminal.write(CRLF).await?;
         // A numbered row becomes selectable only after both writes
@@ -498,15 +498,11 @@ where
         &mut self,
         state: &mut ScanState,
         flagged: &mut FlaggedFiles,
-    ) -> Result<ScanFlow, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<ScanFlow, T::Error> {
         self.terminal.write(wire::MORE_PROMPT).await?;
         let mut held_n = false;
         loop {
-            let read = self.read_key().await?;
-            let KeyRead::Key(mut key) = read else {
-                // Carrier loss / idle at the pager aborts the listing.
-                return Ok(ScanFlow::Quit);
-            };
+            let mut key = self.read_key().await?;
             if held_n {
                 held_n = false;
                 match key {
@@ -518,9 +514,6 @@ where
                         self.terminal.write(&more_overprint_clear()).await?;
                         self.terminal.write(wire::NS_CONFIRM_PROMPT).await?;
                         let confirm = self.read_key().await?;
-                        let KeyRead::Key(confirm) = confirm else {
-                            return Ok(ScanFlow::Quit);
-                        };
                         self.terminal.write(&more_overprint_clear()).await?;
                         if matches!(confirm, KeyEvent::Char(b'y' | b'Y')) {
                             state.non_stop = true;
@@ -633,7 +626,7 @@ where
         state: &ScanState,
         flagged: &mut FlaggedFiles,
         by_number: bool,
-    ) -> Result<ScanFlow, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<ScanFlow, T::Error> {
         let prompt: &[u8] = if by_number {
             wire::FLAG_BY_NUMBER_PROMPT
         } else {
@@ -641,9 +634,7 @@ where
         };
         self.terminal.write(&more_overprint_clear()).await?;
         self.terminal.write(prompt).await?;
-        let Some(entry) = self.read_flag_entry().await? else {
-            return Ok(ScanFlow::Quit);
-        };
+        let entry = self.read_flag_entry().await?;
         let newly = plan_flags(
             &entry,
             by_number,
@@ -682,7 +673,7 @@ where
         &mut self,
         state: &ScanState,
         newly: &[FlaggedKey],
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         if newly.is_empty() || !self.terminal.ansi_colour() {
             return Ok(());
         }
@@ -709,19 +700,16 @@ where
     /// finishes WITHOUT a terminator echo (the captured exchange has
     /// no CRLF before the 79-space overprint,
     /// `ae_tierd_aquascan3.txt` S4). The entry caps at
-    /// `MAX_TERMINAL_LINE_BYTES`; further printables are dropped
-    /// unechoed (a `NextExpress` bound, not captured). `None` = carrier
-    /// loss / idle timeout.
-    async fn read_flag_entry(&mut self) -> Result<Option<String>, T::Error> {
+    /// `MAX_TERMINAL_LINE_BYTES`; further printables are dropped unechoed (a
+    /// `NextExpress` bound, not captured). EOF and idle timeout propagate as
+    /// connection exits instead of returning a command-local value.
+    async fn read_flag_entry(&mut self) -> crate::app::menu_flow::MenuFlowResult<String, T::Error> {
         let mut entry: Vec<u8> = Vec::new();
         loop {
-            let read = self.read_key().await?;
-            let KeyRead::Key(key) = read else {
-                return Ok(None);
-            };
+            let key = self.read_key().await?;
             match key {
                 KeyEvent::Enter => {
-                    return Ok(Some(String::from_utf8_lossy(&entry).into_owned()));
+                    return Ok(String::from_utf8_lossy(&entry).into_owned());
                 }
                 KeyEvent::Backspace => {
                     if entry.pop().is_some() {
@@ -740,9 +728,11 @@ where
     }
 
     /// The two-reset listing exit tail + flush.
-    pub(super) async fn finish_listing(&mut self) -> Result<(), T::Error> {
+    pub(super) async fn finish_listing(
+        &mut self,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.terminal.write(LISTING_EXIT_TAIL).await?;
-        self.terminal.flush().await
+        Ok(self.terminal.flush().await?)
     }
 }
 

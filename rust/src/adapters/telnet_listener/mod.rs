@@ -108,40 +108,51 @@ impl TelnetListener {
 /// path the task lives until the client closes the connection. On the
 /// busy path it writes the busy line and exits.
 async fn handle_connection(mut stream: TcpStream, runtime: Runtime) -> io::Result<()> {
-    let pool = runtime.pool();
-    let Some(node_number) = pool.allocate().await else {
-        stream.write_all(BUSY_LINE).await?;
-        stream.flush().await?;
-        return Ok(());
-    };
+    let peer = stream.peer_addr().ok();
+    let result = async {
+        let pool = runtime.pool();
+        let Some(node_number) = pool.allocate().await else {
+            stream.write_all(BUSY_LINE).await?;
+            stream.flush().await?;
+            return Ok(());
+        };
 
-    // The session's signal lane (July 2026 review, item 26): the
-    // sender lives in the pool so other tasks can address this node;
-    // the receiver rides inside the terminal, raced against the
-    // socket. `release_node_after` clears the pool slot on the way
-    // out, dropping the last sender.
-    let (signal_tx, signal_rx) = mpsc::unbounded_channel();
-    pool.attach_signal_sender(node_number, signal_tx).await;
+        // The session's signal lane (July 2026 review, item 26): the
+        // sender lives in the pool so other tasks can address this node;
+        // the receiver rides inside the terminal, raced against the
+        // socket. `release_node_after` clears the pool slot on the way
+        // out, dropping the last sender.
+        let (signal_tx, signal_rx) = mpsc::unbounded_channel();
+        pool.attach_signal_sender(node_number, signal_tx).await;
 
-    // Boxed for the same `large_futures` reason as the spawn site:
-    // the driver future carries every sub-flow's locals inline.
-    release_node_after(
-        pool.clone(),
-        node_number,
-        Box::pin(async {
-            stream.write_all(IAC_INIT).await?;
-            // Wrap the transport terminal so the `M` command (Tier A
-            // quickwin A8) can strip ANSI colour from output; a fresh
-            // connection starts with colour on.
-            let terminal =
-                ColourTerminal::new(TelnetTerminal::new(&mut stream, Some(signal_rx)), true);
-            let services: AppServices = runtime.services().clone();
-            let mut driver =
-                SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
-            driver.run().await
-        }),
-    )
-    .await
+        // Boxed for the same `large_futures` reason as the spawn site:
+        // the driver future carries every sub-flow's locals inline.
+        release_node_after(
+            pool.clone(),
+            node_number,
+            Box::pin(async {
+                stream.write_all(IAC_INIT).await?;
+                // Wrap the transport terminal so the `M` command (Tier A
+                // quickwin A8) can strip ANSI colour from output; a fresh
+                // connection starts with colour on.
+                let terminal =
+                    ColourTerminal::new(TelnetTerminal::new(&mut stream, Some(signal_rx)), true);
+                let services: AppServices = runtime.services().clone();
+                let mut driver =
+                    SessionDriver::new(terminal, node_number, LogonChannel::Remote, services);
+                driver.run().await
+            }),
+        )
+        .await
+    }
+    .await;
+    if let Err(error) = &result {
+        match peer {
+            Some(peer) => eprintln!("telnet session from {peer} ended with an I/O error: {error}"),
+            None => eprintln!("telnet session ended with an I/O error: {error}"),
+        }
+    }
+    result
 }
 
 async fn release_node_after<F, T>(pool: Arc<NodePool>, node_number: u32, operation: F) -> T

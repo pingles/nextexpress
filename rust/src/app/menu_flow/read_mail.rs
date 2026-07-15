@@ -237,7 +237,7 @@ where
         &mut self,
         session: &mut MenuSession,
         number: u32,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         // `R <num>` is read-first (legacy `passItIN` -> `goNextMsg`,
         // `express.e:12003-12004`): the message is displayed, then the
         // sub-prompt loop opens with the pointer advanced past it. The
@@ -267,7 +267,7 @@ where
     pub(super) async fn handle_read_mail_at_pointer(
         &mut self,
         session: &mut MenuSession,
-    ) -> Result<(), T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some((conference, msgbase)) = session.current_msgbase() else {
             return self.write_and_flush(NO_MAIL_BASE_LINE).await;
         };
@@ -312,7 +312,7 @@ where
         &mut self,
         session: &mut MenuSession,
         number: u32,
-    ) -> Result<bool, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<bool, T::Error> {
         match read_mail(
             session,
             self.services.mail_stores.as_ref(),

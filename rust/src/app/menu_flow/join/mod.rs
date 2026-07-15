@@ -27,7 +27,7 @@
 use crate::app::menu_command::{val_prefix, JoinArg, MsgBaseArg};
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::session_presenter::{format_explicit_join_line, render_name_type_promotion};
-use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
+use crate::app::terminal::{Terminal, TerminalEcho};
 use crate::domain::conference::{find_msgbase_in, Conference, MessageBase};
 use crate::domain::conference_visit::{
     next_accessible_conference_after, prev_accessible_conference_before, resolve_explicit_join,
@@ -60,16 +60,16 @@ where
     /// prompt, `:25169-25180`) — interim it returns to the menu
     /// silently.
     ///
-    /// Returns the session in both outcomes: explicit join never
-    /// logs the caller off (they already hold a conference).
+    /// Mutates the borrowed session in place: explicit join changes its
+    /// conference visit, never its lifecycle phase.
     ///
     /// # Errors
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_join_command(
         &mut self,
-        mut session: MenuSession,
+        session: &mut MenuSession,
         arg: JoinArg,
-    ) -> Result<MenuSession, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let conferences = self.services.conferences.as_ref();
         let highest = highest_conference_number(conferences);
         let (requested_conference, requested_msgbase) = match arg {
@@ -85,12 +85,9 @@ where
             .filter(|&n| (1..=highest).contains(&n));
         let target = match direct_target {
             Some(n) => n,
-            None => match self
-                .prompt_for_conference_number(&mut session, highest)
-                .await?
-            {
+            None => match self.prompt_for_conference_number(session, highest).await? {
                 Some(n) => n,
-                None => return Ok(session),
+                None => return Ok(()),
             },
         };
         let Some(msgbase) = requested_msgbase else {
@@ -112,7 +109,7 @@ where
         let Some((granted_base, base_count)) = base_info else {
             self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
                 .await?;
-            return Ok(session);
+            return Ok(());
         };
         match granted_base {
             Some(base) => self.handle_explicit_join(session, target, Some(base)).await,
@@ -123,11 +120,8 @@ where
                 // even on a single-base conference (`J 1 2` yields the
                 // `(1-1)` prompt; the single-base notice is JM-only).
                 // N is the TARGET conference's base count (`:25167`).
-                match self
-                    .prompt_for_msgbase_number(&mut session, base_count)
-                    .await?
-                {
-                    None => Ok(session),
+                match self.prompt_for_msgbase_number(session, base_count).await? {
+                    None => Ok(()),
                     Some(value) => {
                         // J's prompt answer is NOT clamped
                         // (`amiexpress/express.e:25179`): `joinConf`
@@ -171,9 +165,9 @@ where
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_join_msgbase_command(
         &mut self,
-        mut session: MenuSession,
+        session: &mut MenuSession,
         arg: MsgBaseArg,
-    ) -> Result<MenuSession, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let conferences = self.services.conferences.as_ref();
         // Defensive: a menu session without an open visit (or one
         // pointing outside the catalogue) has no current conference
@@ -182,11 +176,11 @@ where
             .current_conference_number()
             .and_then(|n| conferences.iter().find(|c| c.number() == n))
         else {
-            return Ok(session);
+            return Ok(());
         };
         if conference.msgbases().len() == 1 {
             self.write_and_flush(SINGLE_MSGBASE_CONFERENCE_LINE).await?;
-            return Ok(session);
+            return Ok(());
         }
         let current = conference.number();
         let base_count = msgbase_count_of(conference);
@@ -205,11 +199,8 @@ where
                 // Missing / out-of-range arguments open the JoinMsgBase
                 // screen and the `Message Base Number (1-N): ` prompt
                 // (`amiexpress/express.e:25220-25230`).
-                match self
-                    .prompt_for_msgbase_number(&mut session, base_count)
-                    .await?
-                {
-                    None => Ok(session),
+                match self.prompt_for_msgbase_number(session, base_count).await? {
+                    None => Ok(()),
                     Some(value) => {
                         // JM's prompt answer IS clamped into `1..=N`
                         // (`amiexpress/express.e:25233-25234`) — the
@@ -243,8 +234,8 @@ where
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_prev_conference(
         &mut self,
-        session: MenuSession,
-    ) -> Result<MenuSession, T::Error> {
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let target = session.current_conference_number().and_then(|current| {
             prev_accessible_conference_before(
                 session.user(),
@@ -273,8 +264,8 @@ where
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_next_conference(
         &mut self,
-        session: MenuSession,
-    ) -> Result<MenuSession, T::Error> {
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let target = session.current_conference_number().and_then(|current| {
             next_accessible_conference_after(
                 session.user(),
@@ -305,8 +296,8 @@ where
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_prev_msgbase(
         &mut self,
-        session: MenuSession,
-    ) -> Result<MenuSession, T::Error> {
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.step_msgbase(session, -1).await
     }
 
@@ -320,8 +311,8 @@ where
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_next_msgbase(
         &mut self,
-        session: MenuSession,
-    ) -> Result<MenuSession, T::Error> {
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         self.step_msgbase(session, 1).await
     }
 
@@ -333,9 +324,9 @@ where
     /// full range check is equivalent).
     async fn step_msgbase(
         &mut self,
-        session: MenuSession,
+        session: &mut MenuSession,
         delta: i64,
-    ) -> Result<MenuSession, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let conferences = self.services.conferences.as_ref();
         let target = session.current_msgbase().and_then(|(conf, base)| {
             let stepped = i64::from(base) + delta;
@@ -372,11 +363,10 @@ where
     /// into `1..=N`, `:25233-25234`; `internalCommandJ` passes the
     /// raw value to `joinConf`, which resets a base the conference
     /// does not hold to the primary, `:25179` + `:4995`), so the
-    /// decision stays with them. Returns `None` when the caller
-    /// aborted: a blank line (exact emptiness, no trimming) writes
-    /// the lone CRLF the legacy `lineInput` emits (`:2378`); Eof /
-    /// idle timeout return silently and the menu loop's next read
-    /// applies the carrier-loss / idle transitions.
+    /// decision stays with them. Returns `None` only for a local blank-line
+    /// abort (exact emptiness, no trimming), after writing the lone CRLF the
+    /// legacy `lineInput` emits (`:2378`). EOF and idle timeout write no
+    /// command-specific tail and propagate immediately as connection exits.
     ///
     /// # Errors
     /// Propagates terminal I/O errors.
@@ -384,7 +374,7 @@ where
         &mut self,
         session: &mut MenuSession,
         msgbase_count: u32,
-    ) -> Result<Option<i64>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<i64>, T::Error> {
         let screen = match session.current_conference_number() {
             Some(current) => {
                 self.services
@@ -399,10 +389,7 @@ where
             self.terminal.write(&screen).await?;
         }
         let prompt = render_msgbase_number_prompt(msgbase_count);
-        let TerminalRead::Line(line) = self.read_prompted(&prompt, TerminalEcho::Visible).await?
-        else {
-            return Ok(None);
-        };
+        let line = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
         session.record_input(self.services.clock.now());
         if line.is_empty() {
             // Blank aborts silently (`amiexpress/express.e:25228`);
@@ -420,13 +407,12 @@ where
     /// one line of input — the legacy never re-prompts.
     ///
     /// Returns `Some(number)` (the `Val` of the line clamped into
-    /// `1..=N`, `:25153-25154`) for a non-empty line. Returns `None`
-    /// when the caller aborted: a blank line (exact emptiness, no
-    /// trimming — a whitespace-only line `Val`s to 0 and clamps to
-    /// conference 1 instead) writes the lone CRLF the legacy
-    /// `lineInput` always emits (`:2378`); Eof / idle timeout return
-    /// silently and the menu loop's next read applies the
-    /// carrier-loss / idle transitions.
+    /// `1..=N`, `:25153-25154`) for a non-empty line. Returns `None` only
+    /// for a local blank-line abort (exact emptiness, no trimming — a
+    /// whitespace-only line `Val`s to 0 and clamps to conference 1 instead),
+    /// after writing the lone CRLF the legacy `lineInput` emits (`:2378`).
+    /// EOF and idle timeout write no command-specific tail and propagate
+    /// immediately as connection exits.
     ///
     /// # Errors
     /// Propagates terminal I/O errors.
@@ -434,7 +420,7 @@ where
         &mut self,
         session: &mut MenuSession,
         highest_conference_number: u32,
-    ) -> Result<Option<u32>, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<Option<u32>, T::Error> {
         // SCREEN_JOINCONF (`amiexpress/express.e:25143`): renders
         // only when the sysop installed `Screens/JoinConf.txt` — the
         // adapter returns empty bytes when the asset is absent,
@@ -444,10 +430,7 @@ where
             self.terminal.write(&screen).await?;
         }
         let prompt = render_conference_number_prompt(highest_conference_number);
-        let TerminalRead::Line(line) = self.read_prompted(&prompt, TerminalEcho::Visible).await?
-        else {
-            return Ok(None);
-        };
+        let line = self.read_prompted(&prompt, TerminalEcho::Visible).await?;
         session.record_input(self.services.clock.now());
         if line.is_empty() {
             // Blank aborts silently (`amiexpress/express.e:25148`);
@@ -490,10 +473,10 @@ where
     /// Propagates terminal I/O errors.
     pub(super) async fn handle_explicit_join(
         &mut self,
-        session: MenuSession,
+        session: &mut MenuSession,
         target_conference_number: u32,
         requested_msgbase_number: Option<u32>,
-    ) -> Result<MenuSession, T::Error> {
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let conferences = self.services.conferences.as_ref();
         match session.explicit_join_conference(
             target_conference_number,
@@ -502,7 +485,6 @@ where
             self.services.clock.now(),
         ) {
             ExplicitJoinTransition::Joined {
-                mut session,
                 conference_number,
                 msgbase_number,
                 name_type_promoted_to,
@@ -520,13 +502,13 @@ where
                     name_type_promoted_to,
                 )
                 .await?;
-                self.scan_mail_on_join(&mut session).await?;
-                Ok(session)
+                self.scan_mail_on_join(session).await?;
+                Ok(())
             }
-            ExplicitJoinTransition::Denied(session) => {
+            ExplicitJoinTransition::Denied => {
                 self.write_and_flush(NO_ACCESS_TO_REQUESTED_CONFERENCE_LINE)
                     .await?;
-                Ok(session)
+                Ok(())
             }
         }
     }
@@ -541,7 +523,10 @@ where
     /// is silent; a store error is logged to stderr and degraded to the
     /// generic mail-store-error notice — the session continues either
     /// way.
-    async fn scan_mail_on_join(&mut self, session: &mut MenuSession) -> Result<(), T::Error> {
+    async fn scan_mail_on_join(
+        &mut self,
+        session: &mut MenuSession,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some((visit_msgbase, guard)) =
             super::lock_current_base(session, self.services.mail_stores.as_ref()).await
         else {
