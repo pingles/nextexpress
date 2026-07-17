@@ -18,7 +18,7 @@ use crate::domain::files::flagged::FlaggedKey;
 use crate::domain::files::flagged_store::{FlaggedStore, FlaggedStoreError};
 use crate::domain::password::PasswordHashKind;
 use crate::domain::session::typed::MenuSession;
-use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+use crate::domain::session::{apply_password_match, CallId, LogonChannel, Session, SessionPolicy};
 use crate::domain::user::User;
 
 use super::{
@@ -115,6 +115,7 @@ fn quick_logon_menu_session() -> MenuSession {
         &mut session,
         SessionPolicy::default(),
         SystemTime::UNIX_EPOCH,
+        CallId::new(1),
     )
     .expect("password match");
     session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");

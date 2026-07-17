@@ -26,9 +26,10 @@ use crate::domain::session::typed::{
 };
 use crate::domain::session::{
     apply_password_change, apply_password_match, apply_password_mismatch, daily_budget_outcome,
-    CompleteNewUserRegistrationError, CompletePasswordResetError, EnterMenuError, NameTypedOutcome,
-    NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPolicy, SessionState,
-    SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError, VerifyPasswordOutcome,
+    CallId, CompleteNewUserRegistrationError, CompletePasswordResetError, EnterMenuError,
+    NameTypedOutcome, NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPolicy,
+    SessionState, SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError,
+    VerifyPasswordOutcome,
 };
 use crate::domain::user::{AuthOutcome, NewUserDraft, PasswordChange, RatioMode, UserFlag};
 use crate::domain::user_repository::{
@@ -307,7 +308,10 @@ where
         .map_err(VerifyPasswordError::HashKindUnsupported)?;
 
     let outcome = if matches {
-        let (outcome, rejection) = apply_password_match(&mut inner, policy, now)?;
+        // The call's durable identity is stamped here, at the moment of
+        // successful authentication (designs/FILES.md: CallId).
+        let (outcome, rejection) =
+            apply_password_match(&mut inner, policy, now, CallId::new(rand::random()))?;
         let auth = {
             let user = inner.user().expect("password match leaves the user bound");
             // `last_call` only mutates at finalise, so this is still
@@ -647,7 +651,12 @@ where
             now,
         };
         let user = self.user_repo.create_user(draft)?;
-        let rejection = session.complete_new_user_registration(user, self.policy, now)?;
+        let rejection = session.complete_new_user_registration(
+            user,
+            self.policy,
+            now,
+            CallId::new(rand::random()),
+        )?;
         if let Some(entry) = rejection {
             self.caller_log.append(entry);
         }
@@ -1314,7 +1323,13 @@ mod tests {
         let mut s = Session::new(1, LogonChannel::Remote, 9_600, SystemTime::UNIX_EPOCH);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         s
     }
 
@@ -1411,6 +1426,7 @@ mod tests {
             &mut session,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
+            CallId::new(1),
         )
         .unwrap();
         // Flag NOT set on this user.

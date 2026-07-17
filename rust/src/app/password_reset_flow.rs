@@ -280,7 +280,9 @@ mod tests {
     use crate::app::terminal::{TerminalFuture, TerminalRead};
     use crate::domain::password::{PasswordHashKind, PasswordHasher};
     use crate::domain::session::typed::{ActivePhase, OnboardedSession};
-    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+    use crate::domain::session::{
+        apply_password_match, CallId, LogonChannel, Session, SessionPolicy,
+    };
     use crate::domain::user::User;
 
     use super::*;
@@ -514,6 +516,7 @@ mod tests {
             &mut session,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
+            CallId::new(1),
         )
         .expect("matched");
         (fixture, OnboardedSession::from_session(session))

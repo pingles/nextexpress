@@ -12,6 +12,7 @@ use crate::domain::files::flagged::FlaggedFiles;
 use crate::domain::user::{PersistedUser, User, UserPatch};
 
 mod budget;
+mod call;
 mod conference_activity;
 mod conferencing;
 mod errors;
@@ -27,10 +28,12 @@ pub(crate) mod typed;
 #[cfg(test)]
 mod tests;
 
+use call::{AuthenticatedCall, CallSalvage};
 use conference_activity::ConferenceActivity;
 
 pub use crate::domain::session_policy::{PasswordFailureDecision, SessionPolicy};
 pub use budget::{daily_budget_outcome, initialise_daily_budget, tick_minute};
+pub use call::CallId;
 pub use errors::{
     AcceptConnectionError, AutoRejoinError, CarrierLostError, CompleteNewUserRegistrationError,
     CompletePasswordResetError, EnterMenuError, ForcePasswordResetError, IdleTimeoutError,
@@ -192,27 +195,19 @@ enum SessionPhase {
         password_attempts: u32,
     },
     Onboarded {
-        user: User,
-        authenticated_at: SystemTime,
-        time_remaining: Duration,
+        call: AuthenticatedCall,
     },
     Menu {
-        user: User,
-        authenticated_at: SystemTime,
-        time_remaining: Duration,
+        call: AuthenticatedCall,
     },
     LoggingOff {
-        user: Option<User>,
-        authenticated_at: Option<SystemTime>,
+        call: CallSalvage,
         reason: Option<LogoffReason>,
-        time_remaining: Duration,
     },
     Ended {
-        user: Option<User>,
-        authenticated_at: Option<SystemTime>,
+        call: CallSalvage,
         reason: Option<LogoffReason>,
         logoff_at: Option<SystemTime>,
-        time_remaining: Duration,
     },
 }
 
@@ -232,20 +227,18 @@ impl SessionPhase {
 
     fn user(&self) -> Option<&User> {
         match self {
-            Self::Authenticating { user, .. }
-            | Self::Onboarded { user, .. }
-            | Self::Menu { user, .. } => Some(user),
-            Self::LoggingOff { user, .. } | Self::Ended { user, .. } => user.as_ref(),
+            Self::Authenticating { user, .. } => Some(user),
+            Self::Onboarded { call } | Self::Menu { call } => Some(&call.user),
+            Self::LoggingOff { call, .. } | Self::Ended { call, .. } => call.user(),
             Self::Connecting | Self::Identifying { .. } | Self::NewUserRegistering { .. } => None,
         }
     }
 
     fn user_mut(&mut self) -> Option<&mut User> {
         match self {
-            Self::Authenticating { user, .. }
-            | Self::Onboarded { user, .. }
-            | Self::Menu { user, .. } => Some(user),
-            Self::LoggingOff { user, .. } | Self::Ended { user, .. } => user.as_mut(),
+            Self::Authenticating { user, .. } => Some(user),
+            Self::Onboarded { call } | Self::Menu { call } => Some(&mut call.user),
+            Self::LoggingOff { call, .. } | Self::Ended { call, .. } => call.user_mut(),
             Self::Connecting | Self::Identifying { .. } | Self::NewUserRegistering { .. } => None,
         }
     }
@@ -276,18 +269,8 @@ impl SessionPhase {
 
     fn authenticated_at(&self) -> Option<SystemTime> {
         match self {
-            Self::Onboarded {
-                authenticated_at, ..
-            }
-            | Self::Menu {
-                authenticated_at, ..
-            } => Some(*authenticated_at),
-            Self::LoggingOff {
-                authenticated_at, ..
-            }
-            | Self::Ended {
-                authenticated_at, ..
-            } => *authenticated_at,
+            Self::Onboarded { call } | Self::Menu { call } => Some(call.authenticated_at),
+            Self::LoggingOff { call, .. } | Self::Ended { call, .. } => call.authenticated_at(),
             Self::Connecting
             | Self::Identifying { .. }
             | Self::Authenticating { .. }
@@ -302,6 +285,17 @@ impl SessionPhase {
         }
     }
 
+    fn call_id(&self) -> Option<CallId> {
+        match self {
+            Self::Onboarded { call } | Self::Menu { call } => Some(call.call_id),
+            Self::LoggingOff { call, .. } | Self::Ended { call, .. } => call.call_id(),
+            Self::Connecting
+            | Self::Identifying { .. }
+            | Self::Authenticating { .. }
+            | Self::NewUserRegistering { .. } => None,
+        }
+    }
+
     fn logoff_reason(&self) -> Option<LogoffReason> {
         match self {
             Self::LoggingOff { reason, .. } | Self::Ended { reason, .. } => *reason,
@@ -311,10 +305,8 @@ impl SessionPhase {
 
     fn time_remaining(&self) -> Duration {
         match self {
-            Self::Onboarded { time_remaining, .. }
-            | Self::Menu { time_remaining, .. }
-            | Self::LoggingOff { time_remaining, .. }
-            | Self::Ended { time_remaining, .. } => *time_remaining,
+            Self::Onboarded { call } | Self::Menu { call } => call.time_remaining,
+            Self::LoggingOff { call, .. } | Self::Ended { call, .. } => call.time_remaining(),
             Self::Connecting
             | Self::Identifying { .. }
             | Self::Authenticating { .. }
@@ -531,6 +523,16 @@ impl Session {
         self.phase.logoff_at()
     }
 
+    /// Returns the opaque identity of this call, stamped when
+    /// authentication completed. `None` before authentication and for
+    /// sessions that never authenticated; survives teardown so the
+    /// logoff path can persist it (the D-T1 transfer ledger's
+    /// `call_id` column).
+    #[must_use]
+    pub fn call_id(&self) -> Option<CallId> {
+        self.phase.call_id()
+    }
+
     /// Returns the reason recorded for the session ending, if any.
     #[must_use]
     pub fn logoff_reason(&self) -> Option<LogoffReason> {
@@ -600,79 +602,25 @@ impl Session {
 
     fn move_to_logging_off(&mut self, reason: Option<LogoffReason>) {
         let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
-        let (user, authenticated_at, time_remaining) = match previous {
-            SessionPhase::Connecting
-            | SessionPhase::Identifying { .. }
-            | SessionPhase::NewUserRegistering { .. } => (None, None, Duration::ZERO),
-            SessionPhase::Authenticating { user, .. } => (Some(user), None, Duration::ZERO),
-            SessionPhase::Onboarded {
-                user,
-                authenticated_at,
-                time_remaining,
-            }
-            | SessionPhase::Menu {
-                user,
-                authenticated_at,
-                time_remaining,
-            } => (Some(user), Some(authenticated_at), time_remaining),
-            SessionPhase::LoggingOff {
-                user,
-                authenticated_at,
-                time_remaining,
-                ..
-            }
-            | SessionPhase::Ended {
-                user,
-                authenticated_at,
-                time_remaining,
-                ..
-            } => (user, authenticated_at, time_remaining),
-        };
         self.phase = SessionPhase::LoggingOff {
-            user,
-            authenticated_at,
+            call: CallSalvage::from_phase(previous),
             reason,
-            time_remaining,
         };
     }
 
     fn move_to_ended(&mut self, logoff_at: Option<SystemTime>) {
         let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
-        let (user, authenticated_at, reason, time_remaining) = match previous {
-            SessionPhase::Connecting
-            | SessionPhase::Identifying { .. }
-            | SessionPhase::NewUserRegistering { .. } => (None, None, None, Duration::ZERO),
-            SessionPhase::Authenticating { user, .. } => (Some(user), None, None, Duration::ZERO),
-            SessionPhase::Onboarded {
-                user,
-                authenticated_at,
-                time_remaining,
-            }
-            | SessionPhase::Menu {
-                user,
-                authenticated_at,
-                time_remaining,
-            } => (Some(user), Some(authenticated_at), None, time_remaining),
-            SessionPhase::LoggingOff {
-                user,
-                authenticated_at,
-                reason,
-                time_remaining,
-            }
-            | SessionPhase::Ended {
-                user,
-                authenticated_at,
-                reason,
-                time_remaining,
-                ..
-            } => (user, authenticated_at, reason, time_remaining),
+        // Teardown phases keep their recorded reason; ending straight
+        // from an active phase records none.
+        let (call, reason) = match previous {
+            SessionPhase::LoggingOff { call, reason }
+            | SessionPhase::Ended { call, reason, .. } => (call, reason),
+            other => (CallSalvage::from_phase(other), None),
         };
         self.phase = SessionPhase::Ended {
-            user,
-            authenticated_at,
+            call,
             reason,
             logoff_at,
-            time_remaining,
         };
     }
 

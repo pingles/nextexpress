@@ -71,20 +71,15 @@ pub fn initialise_daily_budget(
     now: SystemTime,
     daily_reset_offset: Duration,
 ) -> Result<(), InitialiseDailyBudgetError> {
-    let SessionPhase::Onboarded {
-        user,
-        time_remaining,
-        ..
-    } = &mut session.phase
-    else {
+    let SessionPhase::Onboarded { call } = &mut session.phase else {
         return Err(InitialiseDailyBudgetError::WrongState(session.state()));
     };
 
-    match daily_budget_outcome(user.last_call(), now, daily_reset_offset) {
-        DailyBudgetOutcome::NewDay => user.reset_daily_counters(),
-        DailyBudgetOutcome::SameDay => user.bump_times_called_today(),
+    match daily_budget_outcome(call.user.last_call(), now, daily_reset_offset) {
+        DailyBudgetOutcome::NewDay => call.user.reset_daily_counters(),
+        DailyBudgetOutcome::SameDay => call.user.bump_times_called_today(),
     }
-    *time_remaining = user.time_limit_per_call();
+    call.time_remaining = call.user.time_limit_per_call();
     Ok(())
 }
 
@@ -101,19 +96,10 @@ pub fn initialise_daily_budget(
 /// in [`super::SessionState::Onboarded`] or [`super::SessionState::Menu`].
 pub fn tick_minute(session: &mut Session) -> Result<TickMinuteOutcome, TickMinuteError> {
     let expired = match &mut session.phase {
-        SessionPhase::Onboarded {
-            user,
-            time_remaining,
-            ..
-        }
-        | SessionPhase::Menu {
-            user,
-            time_remaining,
-            ..
-        } => {
-            user.add_time_used_today(Duration::from_mins(1));
-            *time_remaining = time_remaining.saturating_sub(Duration::from_mins(1));
-            time_remaining.is_zero()
+        SessionPhase::Onboarded { call } | SessionPhase::Menu { call } => {
+            call.user.add_time_used_today(Duration::from_mins(1));
+            call.time_remaining = call.time_remaining.saturating_sub(Duration::from_mins(1));
+            call.time_remaining.is_zero()
         }
         _ => return Err(TickMinuteError::WrongState(session.state())),
     };

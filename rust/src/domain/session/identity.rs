@@ -1,12 +1,12 @@
 //! Name-prompt and handle-resolution transitions for [`Session`].
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use crate::domain::user::User;
 
 use super::{
-    LogoffReason, NameTypedError, NameTypedOutcome, Session, SessionPhase, SessionState,
-    SessionTransitionError,
+    CallSalvage, LogoffReason, NameTypedError, NameTypedOutcome, Session, SessionPhase,
+    SessionState, SessionTransitionError,
 };
 
 /// Maximum number of unknown handle entries before a session is ended.
@@ -83,11 +83,9 @@ impl Session {
         *name_retry_count += 1;
         if *name_retry_count >= MAX_NAME_RETRIES {
             self.phase = SessionPhase::Ended {
-                user: None,
-                authenticated_at: None,
+                call: CallSalvage::Unidentified,
                 reason: Some(LogoffReason::NewUserRejected),
                 logoff_at: Some(now),
-                time_remaining: Duration::ZERO,
             };
             Ok(NameTypedOutcome::SessionEnded)
         } else {

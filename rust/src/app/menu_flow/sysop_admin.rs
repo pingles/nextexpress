@@ -494,7 +494,9 @@ mod tests {
     use crate::app::terminal::{Terminal, TerminalEcho, TerminalFuture, TerminalRead};
     use crate::domain::password::PasswordHashKind;
     use crate::domain::session::typed::MenuSession;
-    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+    use crate::domain::session::{
+        apply_password_match, CallId, LogonChannel, Session, SessionPolicy,
+    };
     use crate::domain::user::{NewUserDraft, RatioMode, User};
 
     use super::{EDIT_HEADER_SUBJECT_PROMPT, EDIT_HEADER_TO_PROMPT, NO_MAIL_BASE_LINE};
@@ -673,6 +675,7 @@ mod tests {
             &mut session,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
+            CallId::new(1),
         )
         .expect("password match");
         session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");

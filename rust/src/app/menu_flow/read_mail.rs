@@ -383,7 +383,9 @@ mod tests {
     use crate::app::mail_stores::MailStores;
     use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
     use crate::domain::session::typed::MenuSession;
-    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+    use crate::domain::session::{
+        apply_password_match, CallId, LogonChannel, Session, SessionPolicy,
+    };
     use crate::domain::user::User;
 
     use super::{read_mail, render_mail_body, render_mail_header, ReadMailOutcome};
@@ -411,6 +413,7 @@ mod tests {
             &mut session,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
+            CallId::new(1),
         )
         .expect("password match");
         session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");
@@ -475,6 +478,7 @@ mod tests {
             &mut session,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
+            CallId::new(1),
         )
         .expect("password match");
         session

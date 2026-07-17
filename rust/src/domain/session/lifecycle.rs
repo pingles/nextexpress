@@ -154,27 +154,18 @@ impl Session {
     /// [`EnterMenuError::PasswordResetPending`] when the bound user
     /// has `force_password_reset` set (Slice 15).
     pub fn enter_menu(&mut self, now: SystemTime) -> Result<CallerLog, EnterMenuError> {
-        let SessionPhase::Onboarded { user, .. } = &mut self.phase else {
+        let SessionPhase::Onboarded { call } = &mut self.phase else {
             return Err(EnterMenuError::WrongState(self.state()));
         };
-        if user.force_password_reset() {
+        if call.user.force_password_reset() {
             return Err(EnterMenuError::PasswordResetPending);
         }
-        user.bump_times_called();
+        call.user.bump_times_called();
         let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
-        let SessionPhase::Onboarded {
-            user,
-            authenticated_at,
-            time_remaining,
-        } = previous
-        else {
+        let SessionPhase::Onboarded { call } = previous else {
             unreachable!("phase checked above");
         };
-        self.phase = SessionPhase::Menu {
-            user,
-            authenticated_at,
-            time_remaining,
-        };
+        self.phase = SessionPhase::Menu { call };
         let line = format_logon_line(self);
         Ok(CallerLog {
             session_node: self.shared.node_number,

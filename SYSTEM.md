@@ -23,7 +23,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 8 | **Error-boundary pass** (2 remainder) | **Landed** 2026-07-03 (`UserRepositoryError` folds into row 9) | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
 | 9 | **Command-style user writes** (1) | **Landed** 2026-07-03 (pulled ahead of N — disjoint file sets, and two of its fixes were live defects: the bare-save tear and same-account lost updates) | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
 | 10 | **SQLite schema migrations** (22) | Before D2s or any schema change | No mechanism can alter an existing `users.db`; D-T2's first new column would break every login after upgrade, and D2s must not launch another unversioned durable schema. Versioned migrations make later accounting and `row_version` changes routine. | 3–5 | 0.5–1 day |
-| 11 | **`AuthenticatedCall` struct** (23a) | Before D-T1 | The per-call payload is duplicated in `Onboarded`/`Menu` and represented as separate options in terminal phases, with two 8-arm salvage matches; every new field costs ~7 sites. The accepted opaque `CallId`, created after authentication, and D/U per-call state become single-site additions after extraction. | ~6–7 | 0.5–1 day |
+| 11 | **`AuthenticatedCall` struct** (23a) | **Landed** 2026-07-16 | The per-call payload was duplicated in `Onboarded`/`Menu` and Option-scattered across the terminal phases, with two 8-arm salvage matches; every new field cost ~7 sites. Now `Onboarded`/`Menu` carry one `AuthenticatedCall` and `LoggingOff`/`Ended` carry the `CallSalvage` enum (`Unidentified \| Identified(User) \| Authenticated(AuthenticatedCall)`), so a per-call field is a single-site addition — proven by the first one, the opaque `CallId` stamped at authentication (app-generated entropy passed in like `now`; `Session::call_id()` survives teardown for the D-T1 ledger). | ~6–7 + ~10 test files (call-site sweep) | 0.5–1 day |
 | 12 | **UTF-8 policy re-scope + echo-hole fix** (19) | Before D-T1 | The accepted contract keeps interactive text valid UTF-8 and permits arbitrary bytes only in a negotiated binary-transfer window. Implement it in AGENTS/tests before the first Zmodem frame and close today's Latin-1 echo hole. | ~4 (2 docs + codec + test) | ~0.5 day |
 | 13 | **Raw binary channel on `Terminal`** (20) | Opening sub-slice of D-T1 | The stack destroys binary in both directions (lossy decode, dropped `IAC IAC`, no 0xFF doubling, ANSI stripping). `read_bytes`/`write_raw` with BINARY negotiation is the one seam all transfer slices flow through. | ~5–8 | 1–3 days |
 | 14 | **Sans-IO Zmodem engine** (21) | Shapes D-T1 | The accepted sans-IO shape keeps frame/state logic independent of sockets and lets the smoke harness use the same engine as an embedded peer. Porting `zmodem.e`'s callback-into-serial shape would weld protocol logic to live I/O and force a second implementation. | engine lands inside D-T1..T5 | 1–2 wks in-slice |
@@ -50,7 +50,8 @@ than treating terminal delivery as session control; rows 24–25 are
 independent current correctness tidies; rows 26–28 wait for their named
 consumers. Row 9 landed
 schema-free as its dependency note required (10 had not landed
-first). Rows 10–14 and 18–22 form the pre-transfer block; row 23 waits
+first). Rows 10–14 and 18–22 form the pre-transfer block (row 11
+landed 2026-07-16); row 23 waits
 for its first state-changing cross-session consumer.
 
 ## Current Shape
@@ -300,6 +301,17 @@ which carrier loss can occur (`Identifying`/`Authenticating`/
 can consume the currently owned wrapper and return a `LoggingOffSession`.
 `ConnectingSession` has the corresponding pre-prompt carrier-loss
 transition.
+
+Inside the entity, the authenticated phases share one payload
+(item 23a, `domain/session/call.rs`): `Onboarded`/`Menu` carry an
+`AuthenticatedCall` (`call_id`, `user`, `authenticated_at`,
+`time_remaining` — the `CallId` is stamped at authentication from
+caller-supplied entropy, like `now`), and `LoggingOff`/`Ended` carry
+the `CallSalvage` enum (`Unidentified | Identified(User) |
+Authenticated(AuthenticatedCall)`), so an authentication timestamp
+without a user is unrepresentable and a new per-call field is a
+single-site addition. `Session::call_id()` exposes the identity
+through teardown for the future D-T1 transfer ledger.
 
 Type safety still governs transition ownership. Genuine phase changes
 consume a wrapper and return the next one; same-phase operations do not.
@@ -1627,26 +1639,27 @@ alters the existing user schema.**
 
 ### 23. Pre-commit the transfer-accounting domain shape
 
-Two halves. (a) **`AuthenticatedCall` struct — standalone, cheap.**
+Two halves. (a) **`AuthenticatedCall` struct — LANDED 2026-07-16.**
 The authenticated-call triple
-`(user, authenticated_at, time_remaining)` is duplicated verbatim
+`(user, authenticated_at, time_remaining)` was duplicated verbatim
 across `SessionPhase::Onboarded` and `::Menu` and Option-scattered
-across `::LoggingOff`/`::Ended` (`session/mod.rs:188-211` — the latter
-pair encode authenticated-ness by convention via independently
-nullable Options), with two hand-rolled 8-variant salvage matches
-(`:565-601`, `:603-641`) and an 8-variant `time_remaining` accessor
-(`:306-317`); every new per-call field costs ~7 destructure/rebuild
-sites (lockout, lifecycle's enter_menu `mem::replace` dance,
-`tick_minute`, registration). Fold the triple into
-`struct AuthenticatedCall` carried by Onboarded/Menu, with
-LoggingOff/Ended carrying a salvage enum (`Unidentified |
-Identified(User) | Authenticated(AuthenticatedCall)`); accessors keep
-signatures so flows don't change, and a new per-call field becomes a
-single-site addition. The first such field should be the durable
-opaque `CallId` created after successful authentication as selected in
-`designs/FILES.md`, rather than a reused node number.
-0.5–1 day; fits the tidy cadence. **Trigger: before D-T1 creates the
-first durable transfer attempt and therefore needs `CallId`.**
+across `::LoggingOff`/`::Ended` (the latter pair encoded
+authenticated-ness by convention via independently nullable Options),
+with two hand-rolled 8-variant salvage matches and an 8-variant
+`time_remaining` accessor; every new per-call field cost ~7
+destructure/rebuild sites. As landed (`domain/session/call.rs`): the
+triple plus `call_id` folded into `struct AuthenticatedCall` carried
+by Onboarded/Menu; LoggingOff/Ended carry the `CallSalvage` enum
+(`Unidentified | Identified(User) | Authenticated(AuthenticatedCall)`),
+whose `from_phase` constructor replaced both salvage matches; accessors
+kept signatures so flows didn't change. The first per-call field is the
+durable opaque `CallId` selected in `designs/FILES.md` (never a reused
+node number): `apply_password_match` and
+`complete_new_user_registration` take it as a parameter — entropy is a
+caller-supplied input like `now`, so the domain rules stay
+deterministic — and `session_flow` generates it via `rand` at the two
+authentication-success sites. `Session::call_id()` survives teardown
+salvage, ready for the D-T1 transfer ledger's `call_id` column.
 (b) **Design pre-commitments, zero code now** (a note to attach to
 slices/cmds-files-transfer.md): byte accounting lands as a NEW
 `TransferAccounting` value object on `User` (fields typed as `Bytes`),
@@ -2077,11 +2090,10 @@ binary transfer window; and a provisional sysop-only time override.
    restoration, item 34's repository parity fix, and item 19's Latin-1
    echo fix plus text/binary policy. Each new wire surface remains
    capture-pinned.
-2. **Prepare persisted and per-call state.** Land item 22's SQLite
-   migrations and uniform connection setup, then item 23a's
-   `AuthenticatedCall` plus its post-authentication `CallId`. Migrations precede
-   D2s; `AuthenticatedCall`/`CallId` precede D-T1. Their relative order is
-   otherwise independent.
+2. **Prepare persisted and per-call state.** Item 23a's
+   `AuthenticatedCall` plus its post-authentication `CallId` landed
+   2026-07-16; item 22's SQLite migrations and uniform connection setup
+   remain (they precede D2s).
 3. **Install the bounded adapter boundary.** Implement item 31's async
    application facade, serialized metadata writer, small read pool and
    separately bounded CPU/filesystem workers before D2s copies today's
@@ -2123,6 +2135,12 @@ touches the doubles.
 
 ### Historical landing record
 
+- Item 23a landed 2026-07-16: `AuthenticatedCall` (with the `CallId`
+  stamped at authentication as its first field) carried by
+  `Onboarded`/`Menu`, and the `CallSalvage` enum carried by
+  `LoggingOff`/`Ended` in place of the two 8-arm salvage matches.
+  Item 23b (the transfer-accounting shape) remains a design
+  pre-commitment executed inside D-T1..D-T4b.
 - The 2026-07-13 lifecycle-ownership refactor made `SessionDriver::run` the
   single completion/finalisation boundary. Login, registration and password
   reset now retain the exact typed phase on terminal failure; menu handlers

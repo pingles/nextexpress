@@ -54,6 +54,11 @@ mod fixtures {
         .expect("valid registration")
     }
 
+    /// Fixed call identity for tests that don't assert on it.
+    pub(super) fn test_call_id() -> CallId {
+        CallId::new(0xCA11)
+    }
+
     pub(super) fn authenticated_session() -> Session {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
@@ -86,9 +91,12 @@ mod fixtures {
     pub(super) fn session_at_onboarded_with(user: User) -> Session {
         let mut s = new_session(LogonChannel::Remote);
         s.phase = SessionPhase::Onboarded {
-            user,
-            authenticated_at: SystemTime::UNIX_EPOCH,
-            time_remaining: Duration::ZERO,
+            call: AuthenticatedCall {
+                call_id: test_call_id(),
+                user,
+                authenticated_at: SystemTime::UNIX_EPOCH,
+                time_remaining: Duration::ZERO,
+            },
         };
         s
     }
@@ -96,7 +104,13 @@ mod fixtures {
     /// Drives a session from connecting to menu via the rule chain.
     pub(super) fn session_at_menu() -> Session {
         let mut s = authenticated_session();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
         s
     }
@@ -239,6 +253,7 @@ mod state_basics {
             &mut session,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
+            CallId::new(1),
         )
         .unwrap();
         assert!(session.is_authenticated());
@@ -601,7 +616,12 @@ mod new_user_registration {
             .unwrap();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
         let rejection = s
-            .complete_new_user_registration(fresh_new_user(now), SessionPolicy::default(), now)
+            .complete_new_user_registration(
+                fresh_new_user(now),
+                SessionPolicy::default(),
+                now,
+                CallId::new(1),
+            )
             .expect("valid");
         assert!(rejection.is_none(), "fresh new user should not be rejected");
         assert_eq!(s.state(), SessionState::Onboarded);
@@ -621,6 +641,7 @@ mod new_user_registration {
                 fresh_new_user(SystemTime::UNIX_EPOCH),
                 SessionPolicy::default(),
                 SystemTime::UNIX_EPOCH,
+                CallId::new(1),
             )
             .expect_err("gate not verified should error");
         assert_eq!(err, CompleteNewUserRegistrationError::GateNotVerified);
@@ -636,8 +657,13 @@ mod new_user_registration {
         s.apply_new_user_password_attempt(true, 3, SystemTime::UNIX_EPOCH)
             .unwrap();
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        s.complete_new_user_registration(fresh_new_user(now), SessionPolicy::default(), now)
-            .expect("valid after gate passes");
+        s.complete_new_user_registration(
+            fresh_new_user(now),
+            SessionPolicy::default(),
+            now,
+            CallId::new(1),
+        )
+        .expect("valid after gate passes");
         assert_eq!(s.state(), SessionState::Onboarded);
     }
 
@@ -649,6 +675,7 @@ mod new_user_registration {
                 fresh_new_user(SystemTime::UNIX_EPOCH),
                 SessionPolicy::default(),
                 SystemTime::UNIX_EPOCH,
+                CallId::new(1),
             )
             .expect_err("must be in new_user_registering");
         assert!(matches!(
@@ -672,7 +699,7 @@ mod authentication {
         let mut s = authenticated_session();
         let now = SystemTime::UNIX_EPOCH + Duration::from_mins(1);
         let (outcome, rejection) =
-            apply_password_match(&mut s, SessionPolicy::default(), now).unwrap();
+            apply_password_match(&mut s, SessionPolicy::default(), now, CallId::new(1)).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::Authenticated);
         assert!(rejection.is_none());
         assert_eq!(s.state(), SessionState::Onboarded);
@@ -684,7 +711,13 @@ mod authentication {
     fn verify_password_match_clears_user_attempts() {
         let mut s = authenticated_session();
         authenticating_user_mut(&mut s).bump_invalid_attempts();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         assert_eq!(s.user().unwrap().invalid_attempts(), 0);
     }
 
@@ -695,7 +728,13 @@ mod authentication {
         let mut user = alice();
         user.set_time_limits(Duration::from_mins(30), Duration::from_hours(1));
         s.record_identified_user("alice", user).unwrap();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         assert_eq!(s.time_remaining(), Duration::from_mins(30));
     }
 
@@ -786,9 +825,98 @@ mod authentication {
     #[test]
     fn verify_password_outside_authenticating_errors() {
         let mut s = new_session(LogonChannel::Remote);
-        let err = apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH)
-            .expect_err("must be authenticating");
+        let err = apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .expect_err("must be authenticating");
         assert!(matches!(err, VerifyPasswordError::WrongState(_)));
+    }
+}
+
+mod call_identity {
+    use std::time::SystemTime;
+
+    use super::super::*;
+    use super::fixtures::{authenticated_session, fresh_new_user, new_session};
+
+    #[test]
+    fn no_call_id_before_authentication() {
+        let s = authenticated_session();
+        assert_eq!(s.call_id(), None);
+    }
+
+    #[test]
+    fn apply_password_match_stamps_the_supplied_call_id() {
+        let mut s = authenticated_session();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(7),
+        )
+        .unwrap();
+        assert_eq!(s.call_id(), Some(CallId::new(7)));
+    }
+
+    #[test]
+    fn call_id_survives_menu_entry_and_teardown() {
+        let mut s = authenticated_session();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(9),
+        )
+        .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(s.call_id(), Some(CallId::new(9)));
+        s.user_requests_logoff().unwrap();
+        assert_eq!(s.call_id(), Some(CallId::new(9)));
+        s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(s.call_id(), Some(CallId::new(9)));
+    }
+
+    #[test]
+    fn registration_stamps_the_supplied_call_id() {
+        let now = SystemTime::UNIX_EPOCH;
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, false, now).unwrap();
+        s.complete_new_user_registration(
+            fresh_new_user(now),
+            SessionPolicy::default(),
+            now,
+            CallId::new(11),
+        )
+        .unwrap();
+        assert_eq!(s.call_id(), Some(CallId::new(11)));
+    }
+
+    #[test]
+    fn unauthenticated_teardown_carries_no_call_id() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.apply_carrier_loss().unwrap();
+        assert_eq!(s.call_id(), None);
+        s.finalise_logoff(SystemTime::UNIX_EPOCH).unwrap();
+        assert_eq!(s.call_id(), None);
+    }
+
+    #[test]
+    fn call_id_displays_as_32_digit_zero_padded_lowercase_hex() {
+        // The TEXT form the D-T1 transfer ledger will persist
+        // (designs/FILES.md `transfers.call_id`).
+        assert_eq!(
+            CallId::new(1).to_string(),
+            "00000000000000000000000000000001"
+        );
+        assert_eq!(
+            CallId::new(u128::MAX).to_string(),
+            "ffffffffffffffffffffffffffffffff"
+        );
     }
 }
 
@@ -816,7 +944,13 @@ mod persist_baseline {
     #[test]
     fn enter_menu_shows_up_as_a_times_called_delta() {
         let mut s = authenticated_session();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         // The flow persists the auth outcome and rebaselines here.
         s.rebaseline_persisted();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
@@ -857,6 +991,7 @@ mod persist_baseline {
             super::fixtures::fresh_new_user(now),
             SessionPolicy::default(),
             now,
+            CallId::new(1),
         )
         .expect("registration completes");
         let (slot, patch) = s.pending_user_patch().expect("user bound");
@@ -886,7 +1021,13 @@ mod lifecycle {
     #[test]
     fn enter_menu_advances_state_and_logs() {
         let mut s = authenticated_session();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         let now = SystemTime::UNIX_EPOCH + Duration::from_mins(2);
         let entry = s.enter_menu(now).unwrap();
         assert_eq!(s.state(), SessionState::Menu);
@@ -919,7 +1060,13 @@ mod lifecycle {
     #[test]
     fn user_requests_logoff_from_onboarded_is_allowed() {
         let mut s = authenticated_session();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         s.user_requests_logoff().unwrap();
         assert_eq!(s.state(), SessionState::LoggingOff);
     }
@@ -1215,7 +1362,7 @@ mod password_reset {
         s.record_identified_user("alice", user).unwrap();
         let policy = SessionPolicy::default().with_password_expiry_days(1);
         let now = UNIX_EPOCH + Duration::from_hours(168);
-        apply_password_match(&mut s, policy, now).unwrap();
+        apply_password_match(&mut s, policy, now, CallId::new(1)).unwrap();
         assert!(s.user().unwrap().force_password_reset());
     }
 
@@ -1359,8 +1506,13 @@ mod access_rejection {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        let (outcome, rejection) =
-            apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        let (outcome, rejection) = apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::LogonRejected);
         assert!(rejection.is_some());
         assert_eq!(s.state(), SessionState::LoggingOff);
@@ -1375,7 +1527,13 @@ mod access_rejection {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         assert_eq!(s.time_remaining(), Duration::ZERO);
     }
 
@@ -1386,7 +1544,13 @@ mod access_rejection {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         assert_ne!(s.state(), SessionState::Menu);
         let err = s
             .enter_menu(SystemTime::UNIX_EPOCH)
@@ -2097,7 +2261,13 @@ mod quiet {
         let mut user = alice();
         user.set_time_limits(Duration::from_mins(45), Duration::from_hours(2));
         s.record_identified_user("alice", user).unwrap();
-        apply_password_match(&mut s, SessionPolicy::default(), SystemTime::UNIX_EPOCH).unwrap();
+        apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
         s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
 
         let menu = MenuSession::from_session(s);

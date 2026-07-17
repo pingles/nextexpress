@@ -20,13 +20,15 @@ use crate::domain::caller_log::CallerLog;
 use crate::domain::password::PasswordHashKind;
 
 use super::{
-    CompletePasswordResetError, ForcePasswordResetError, LogoffReason, PasswordFailureDecision,
-    Session, SessionPhase, SessionPolicy, VerifyPasswordError, VerifyPasswordOutcome,
+    AuthenticatedCall, CallId, CompletePasswordResetError, ForcePasswordResetError, LogoffReason,
+    PasswordFailureDecision, Session, SessionPhase, SessionPolicy, VerifyPasswordError,
+    VerifyPasswordOutcome,
 };
 
 /// Applies the matching branch of `session.allium:VerifyPassword`.
 ///
-/// Clears `user.invalid_attempts`, sets `authenticated_at`, and
+/// Clears `user.invalid_attempts`, sets `authenticated_at`, stamps the
+/// caller-supplied `call_id` as the call's durable identity, and
 /// transitions to [`SessionState::Onboarded`], then fires the
 /// `state becomes onboarded` rule cluster.
 ///
@@ -46,6 +48,7 @@ pub fn apply_password_match(
     session: &mut Session,
     policy: SessionPolicy,
     now: SystemTime,
+    call_id: CallId,
 ) -> Result<(VerifyPasswordOutcome, Option<CallerLog>), VerifyPasswordError> {
     let SessionPhase::Authenticating { user, .. } = &mut session.phase else {
         return Err(VerifyPasswordError::WrongState(session.state()));
@@ -56,9 +59,12 @@ pub fn apply_password_match(
         unreachable!("phase checked above");
     };
     session.phase = SessionPhase::Onboarded {
-        user,
-        authenticated_at: now,
-        time_remaining: Duration::ZERO,
+        call: AuthenticatedCall {
+            call_id,
+            user,
+            authenticated_at: now,
+            time_remaining: Duration::ZERO,
+        },
     };
     let rejection = session.on_enter_onboarded(policy, now);
     let outcome = if rejection.is_some() {
@@ -136,9 +142,10 @@ pub fn force_password_reset_if_due(
     password_expiry_days: u32,
     now: SystemTime,
 ) -> Result<(), ForcePasswordResetError> {
-    let SessionPhase::Onboarded { user, .. } = &mut session.phase else {
+    let SessionPhase::Onboarded { call } = &mut session.phase else {
         return Err(ForcePasswordResetError::WrongState(session.state()));
     };
+    let user = &mut call.user;
     if user.is_account_locked() {
         return Ok(());
     }
@@ -174,9 +181,10 @@ pub fn apply_password_change(
     kind: PasswordHashKind,
     now: SystemTime,
 ) -> Result<(), CompletePasswordResetError> {
-    let SessionPhase::Onboarded { user, .. } = &mut session.phase else {
+    let SessionPhase::Onboarded { call } = &mut session.phase else {
         return Err(CompletePasswordResetError::WrongState(session.state()));
     };
+    let user = &mut call.user;
     if !user.force_password_reset() {
         return Err(CompletePasswordResetError::ResetNotPending);
     }

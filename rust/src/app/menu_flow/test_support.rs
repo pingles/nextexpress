@@ -32,7 +32,7 @@ use crate::app::terminal::{
 use crate::domain::conference::{Conference, ConferenceMembership, MessageBase};
 use crate::domain::password::{PasswordHashKind, PasswordHasher};
 use crate::domain::session::typed::MenuSession;
-use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+use crate::domain::session::{apply_password_match, CallId, LogonChannel, Session, SessionPolicy};
 use crate::domain::user::{RatioMode, User};
 
 /// The default [`AppServices`] test fixture: in-memory ports, an empty
@@ -219,6 +219,7 @@ pub(crate) fn menu_session_with_user(user: User) -> MenuSession {
         &mut session,
         SessionPolicy::default(),
         SystemTime::UNIX_EPOCH,
+        CallId::new(1),
     )
     .expect("password match");
     session

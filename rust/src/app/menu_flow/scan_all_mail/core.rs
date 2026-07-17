@@ -194,7 +194,9 @@ mod tests {
     use crate::domain::messaging::mail_store::MailStore;
     use crate::domain::password::PasswordHashKind;
     use crate::domain::session::typed::MenuSession;
-    use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+    use crate::domain::session::{
+        apply_password_match, CallId, LogonChannel, Session, SessionPolicy,
+    };
     use crate::domain::user::User;
 
     use super::{scan_all_mail, BaseScanOutcome, ScanFilter};
@@ -226,6 +228,7 @@ mod tests {
             &mut session,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
+            CallId::new(1),
         )
         .expect("password match");
         session.enter_menu(SystemTime::UNIX_EPOCH).expect("menu");

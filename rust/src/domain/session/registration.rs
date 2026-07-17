@@ -6,9 +6,9 @@ use crate::domain::caller_log::CallerLog;
 use crate::domain::user::User;
 
 use super::{
-    CompleteNewUserRegistrationError, LogoffReason, NameTypedError, NewUserPasswordOutcome,
-    NewUserRequestOutcome, Session, SessionPhase, SessionPolicy, SessionState,
-    VerifyNewUserPasswordError,
+    AuthenticatedCall, CallId, CompleteNewUserRegistrationError, LogoffReason, NameTypedError,
+    NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPhase, SessionPolicy,
+    SessionState, VerifyNewUserPasswordError,
 };
 
 impl Session {
@@ -113,7 +113,8 @@ impl Session {
     /// Applies `session.allium:CompleteNewUserRegistration`
     /// (Slice 20).
     ///
-    /// Binds the freshly built `user`, sets `authenticated_at`,
+    /// Binds the freshly built `user`, sets `authenticated_at`, stamps
+    /// the caller-supplied `call_id` as the call's durable identity,
     /// transitions [`SessionState::NewUserRegistering`] to
     /// [`SessionState::Onboarded`], then fires the
     /// `state becomes onboarded` rule cluster via
@@ -141,6 +142,7 @@ impl Session {
         user: User,
         policy: SessionPolicy,
         now: SystemTime,
+        call_id: CallId,
     ) -> Result<Option<CallerLog>, CompleteNewUserRegistrationError> {
         let password_verified = match &self.phase {
             SessionPhase::NewUserRegistering {
@@ -156,9 +158,12 @@ impl Session {
         // post-onboarded rules mutate the aggregate.
         self.persist_baseline = Some(Box::new(user.to_persisted()));
         self.phase = SessionPhase::Onboarded {
-            user,
-            authenticated_at: now,
-            time_remaining: Duration::ZERO,
+            call: AuthenticatedCall {
+                call_id,
+                user,
+                authenticated_at: now,
+                time_remaining: Duration::ZERO,
+            },
         };
         Ok(self.on_enter_onboarded(policy, now))
     }

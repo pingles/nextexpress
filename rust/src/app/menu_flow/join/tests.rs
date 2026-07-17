@@ -17,7 +17,7 @@ use crate::domain::messaging::mail_store::test_support::InMemoryMailStore;
 use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::session::typed::MenuSession;
-use crate::domain::session::{apply_password_match, LogonChannel, Session, SessionPolicy};
+use crate::domain::session::{apply_password_match, CallId, LogonChannel, Session, SessionPolicy};
 use crate::domain::user::User;
 
 /// Write-capturing terminal with a scripted input queue
@@ -201,6 +201,7 @@ fn menu_session_attached(conferences: &[Conference], user: User) -> MenuSession 
         &mut session,
         SessionPolicy::default(),
         SystemTime::UNIX_EPOCH,
+        CallId::new(1),
     )
     .expect("password match");
     session
@@ -222,6 +223,7 @@ fn menu_session(with_visit: bool) -> MenuSession {
         &mut session,
         SessionPolicy::default(),
         SystemTime::UNIX_EPOCH,
+        CallId::new(1),
     )
     .expect("password match");
     if with_visit {
