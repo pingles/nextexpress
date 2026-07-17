@@ -27,7 +27,6 @@
 use std::time::SystemTime;
 
 use crate::domain::messaging::mail::{Mail, MailVisibility};
-use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::user::{Right, User};
 
 /// Errors raised by [`read_mail`]. Each variant corresponds to one
@@ -61,7 +60,7 @@ pub enum ReadMailError {
 #[must_use]
 pub fn can_read(user: &User, mail: &Mail) -> bool {
     if user.is_sysop() {
-        return !matches!(mail.visibility(), MailVisibility::Deleted);
+        return !mail.is_deleted();
     }
     let is_author = mail.author_slot() == user.slot_number();
     let is_addressee = mail.addressee_slot() == Some(user.slot_number());
@@ -89,16 +88,17 @@ pub fn can_read(user: &User, mail: &Mail) -> bool {
 /// `ReadMail`'s `requires` clauses fail.
 ///
 /// # Panics
-/// Panics with a debug-assert message if the lazy-create branch
-/// runs and the user has no granted membership for the mail's
-/// conference — the membership check earlier in the function
-/// guarantees this is unreachable, so reaching the assertion is
-/// an internal bug.
+/// Debug builds assert that [`User::advance_last_read`] found a
+/// membership row to attach the pointer advance to — the membership
+/// check earlier in the function guarantees it, so a failed
+/// assertion is an internal bug.
+///
+/// [`ReadPointers`]: crate::domain::messaging::read_pointers::ReadPointers
 pub fn read_mail(user: &mut User, mail: &mut Mail, now: SystemTime) -> Result<(), ReadMailError> {
     if !user.has_access(Right::ReadMessage) {
         return Err(ReadMailError::AccessDenied);
     }
-    if matches!(mail.visibility(), MailVisibility::Deleted) {
+    if mail.is_deleted() {
         return Err(ReadMailError::Deleted);
     }
     if !can_read(user, mail) {
@@ -110,31 +110,16 @@ pub fn read_mail(user: &mut User, mail: &mut Mail, now: SystemTime) -> Result<()
         return Err(ReadMailError::NoMembership);
     }
 
-    // ensures: if mail.is_unread and mail.addressee = session.user:
-    //              mail.received_at = now
-    if mail.received_at().is_none() && mail.addressee_slot() == Some(user.slot_number()) {
-        mail.mark_received(now)
-            .expect("not deleted: we already rejected MailVisibility::Deleted above");
-    }
+    mail.record_read_by(user.slot_number(), now);
 
     // ensures: if pointers != null and mail.number > pointers.last_read:
     //              pointers.last_read = mail.number
     //
-    // We lazily create the row on first read for a base; the spec's
+    // The row is lazily created on first read for a base; the spec's
     // null-check just defends against a missing row, not the absence
     // of the rule firing.
-    let mail_number = mail.number();
-    if let Some(existing) = user.read_pointers_for_mut(msgbase) {
-        existing.advance_last_read(mail_number);
-    } else {
-        let mut fresh = ReadPointers::fresh(msgbase.msgbase_number(), now);
-        fresh.advance_last_read(mail_number);
-        let upserted = user.upsert_read_pointers(fresh, msgbase.conference_number());
-        debug_assert!(
-            upserted,
-            "membership existence was checked above; upsert must succeed",
-        );
-    }
+    let advanced = user.advance_last_read(msgbase, mail.number(), now);
+    debug_assert!(advanced, "membership existence was checked above");
     Ok(())
 }
 

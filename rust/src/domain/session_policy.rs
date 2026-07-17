@@ -2,14 +2,11 @@
 //!
 //! Lifted out of `session.rs` so the module that owns the Session
 //! state-machine doesn't also own its tunable knobs. The struct is a
-//! pure value type; the only `Session`-coupled member is the
-//! [`SessionPolicy::password_failure_decision`] helper, which reads two
-//! counters off a session and decides whether to continue, end the
-//! session, or lock the account.
+//! pure value type; [`SessionPolicy::password_failure_decision`] takes
+//! the two failure counters the session recorded and decides whether
+//! to continue, end the session, or lock the account.
 
 use std::time::Duration;
-
-use crate::domain::session::Session;
 
 /// Default consecutive bad-password attempts before a session ends or
 /// account lockout applies.
@@ -196,28 +193,30 @@ impl SessionPolicy {
     }
 
     /// Decides what should happen after a password failure has been
-    /// recorded on `session`.
+    /// recorded.
     ///
     /// The account-level lockout decision wins over the session-level
     /// end decision when both counters have reached the configured
     /// limit.
     ///
     /// # Parameters
-    /// - `session`: the session whose password-failure counters should
-    ///   be assessed.
+    /// - `user_invalid_attempts`: the bound user's persistent
+    ///   failed-attempt counter, after the failure was recorded.
+    /// - `password_retry_count`: the session's bad-password strike
+    ///   counter, after the failure was recorded.
     ///
     /// # Returns
     /// A [`PasswordFailureDecision`] describing whether the session
     /// may continue, should end, or should lock the bound account.
     #[must_use]
-    pub fn password_failure_decision(&self, session: &Session) -> PasswordFailureDecision {
-        let user_failures = session
-            .user()
-            .map(crate::domain::user::User::invalid_attempts)
-            .unwrap_or_default();
-        if user_failures >= self.max_password_failures {
+    pub fn password_failure_decision(
+        &self,
+        user_invalid_attempts: u32,
+        password_retry_count: u32,
+    ) -> PasswordFailureDecision {
+        if user_invalid_attempts >= self.max_password_failures {
             PasswordFailureDecision::LockAccount
-        } else if session.password_retry_count() >= self.max_password_failures {
+        } else if password_retry_count >= self.max_password_failures {
             PasswordFailureDecision::EndSession
         } else {
             PasswordFailureDecision::Continue

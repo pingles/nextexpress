@@ -124,11 +124,10 @@ pub trait MailStore {
     /// Propagates any [`MailStoreError`] raised by the underlying
     /// scan.
     fn lowest_undeleted_message(&self) -> Result<u32, MailStoreError> {
-        use crate::domain::messaging::mail::MailVisibility;
         let highest = self.highest_message();
         for number in 1..=highest {
             match self.load(number) {
-                Ok(Some(mail)) if !matches!(mail.visibility(), MailVisibility::Deleted) => {
+                Ok(Some(mail)) if !mail.is_deleted() => {
                     return Ok(number);
                 }
                 Ok(_) => {}

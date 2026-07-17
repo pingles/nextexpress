@@ -1,14 +1,14 @@
 //! New-user registration gate and completion rules for [`Session`].
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use crate::domain::caller_log::CallerLog;
 use crate::domain::user::User;
 
 use super::{
     AuthenticatedCall, CallId, CompleteNewUserRegistrationError, LogoffReason, NameTypedError,
-    NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPhase, SessionPolicy,
-    SessionState, VerifyNewUserPasswordError,
+    NewUserGate, NewUserPasswordOutcome, NewUserRequestOutcome, OnboardedEntry, Session,
+    SessionPhase, SessionPolicy, SessionState, VerifyNewUserPasswordError,
 };
 
 impl Session {
@@ -50,8 +50,7 @@ impl Session {
         }
         // InitialiseNewUserGate.
         self.phase = SessionPhase::NewUserRegistering {
-            password_verified: !password_required,
-            password_attempts: 0,
+            gate: NewUserGate::new(password_required),
         };
         Ok(NewUserRequestOutcome::Initialised { password_required })
     }
@@ -81,33 +80,25 @@ impl Session {
         max_attempts: u32,
         now: SystemTime,
     ) -> Result<(NewUserPasswordOutcome, Option<CallerLog>), VerifyNewUserPasswordError> {
-        let SessionPhase::NewUserRegistering {
-            password_verified,
-            password_attempts,
-        } = &mut self.phase
-        else {
+        let SessionPhase::NewUserRegistering { gate } = &mut self.phase else {
             return Err(VerifyNewUserPasswordError::WrongState(self.state()));
         };
-        if *password_verified {
-            return Err(VerifyNewUserPasswordError::AlreadyVerified);
+        let outcome = gate
+            .record_attempt(matches, max_attempts)
+            .map_err(|_| VerifyNewUserPasswordError::AlreadyVerified)?;
+        if outcome == NewUserPasswordOutcome::Verified {
+            return Ok((outcome, None));
         }
-        if matches {
-            *password_verified = true;
-            return Ok((NewUserPasswordOutcome::Verified, None));
-        }
-        *password_attempts = (*password_attempts).saturating_add(1);
         let entry = CallerLog {
             session_node: self.shared.node_number,
             at: now,
             text: "New-user password failure".to_string(),
             is_password_failure: true,
         };
-        if *password_attempts >= max_attempts {
+        if outcome == NewUserPasswordOutcome::TooManyFailures {
             self.move_to_logging_off(Some(LogoffReason::NewUserRejected));
-            Ok((NewUserPasswordOutcome::TooManyFailures, Some(entry)))
-        } else {
-            Ok((NewUserPasswordOutcome::Mismatch, Some(entry)))
         }
+        Ok((outcome, Some(entry)))
     }
 
     /// Applies `session.allium:CompleteNewUserRegistration`
@@ -126,7 +117,7 @@ impl Session {
     /// post-onboarded cluster. Practically this never fires for a
     /// freshly registered new user (`access_level = 2`,
     /// `account_locked = false`); the result type carries it for
-    /// consistency with [`Session::apply_password_match`] and so
+    /// consistency with [`super::apply_password_match`] and so
     /// future access-level configuration changes don't surprise the
     /// caller.
     ///
@@ -144,13 +135,11 @@ impl Session {
         now: SystemTime,
         call_id: CallId,
     ) -> Result<Option<CallerLog>, CompleteNewUserRegistrationError> {
-        let password_verified = match &self.phase {
-            SessionPhase::NewUserRegistering {
-                password_verified, ..
-            } => *password_verified,
+        let verified = match &self.phase {
+            SessionPhase::NewUserRegistering { gate } => gate.verified(),
             _ => return Err(CompleteNewUserRegistrationError::WrongState(self.state())),
         };
-        if !password_verified {
+        if !verified {
             return Err(CompleteNewUserRegistrationError::GateNotVerified);
         }
         // The created user was just persisted verbatim by
@@ -158,13 +147,14 @@ impl Session {
         // post-onboarded rules mutate the aggregate.
         self.persist_baseline = Some(Box::new(user.to_persisted()));
         self.phase = SessionPhase::Onboarded {
-            call: AuthenticatedCall {
-                call_id,
-                user,
-                authenticated_at: now,
-                time_remaining: Duration::ZERO,
-            },
+            call: AuthenticatedCall::new(call_id, user, now),
         };
-        Ok(self.on_enter_onboarded(policy, now))
+        // A fresh registration persists the created user verbatim via
+        // `create_user`, so the daily outcome the Admitted entry
+        // carries has no persistence command to feed — discard it.
+        Ok(match self.on_enter_onboarded(policy, now) {
+            OnboardedEntry::Rejected(entry) => Some(entry),
+            OnboardedEntry::Admitted { .. } => None,
+        })
     }
 }

@@ -18,7 +18,7 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
-use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag};
+use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag, ScanFlagSettings};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::user::{PersistedUser, UserFlag};
@@ -82,25 +82,6 @@ pub struct PasswordChange {
     pub kind: PasswordHashKind,
     /// When the change happened; becomes `password_last_updated`.
     pub changed_at: SystemTime,
-}
-
-/// The per-conference scan-preference flags as one value (the M/A/F/Z
-/// columns of the `CF` command), carried whole because the flags are
-/// edited as a set and last-writer-wins is acceptable for them.
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "mirrors the membership row's four independent flag columns"
-)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ScanFlagSettings {
-    /// `M` — include in the new-mail scan.
-    pub mail_scan: bool,
-    /// `A` — scan all messages, not just those addressed to the caller.
-    pub mailscan_all: bool,
-    /// `F` — include in the new-files scan.
-    pub file_scan: bool,
-    /// `Z` — include in the ZOOM/QWK gather.
-    pub zoom_scan: bool,
 }
 
 /// One read-pointer row to merge. `last_read` / `last_scanned` merge
@@ -406,31 +387,27 @@ impl MembershipPatch {
             membership.set_granted(granted);
         }
         if let Some(flags) = self.scan_flags {
-            membership.set_scan_flag(ScanFlag::MailScan, flags.mail_scan);
-            membership.set_scan_flag(ScanFlag::MailScanAll, flags.mailscan_all);
-            membership.set_scan_flag(ScanFlag::FileScan, flags.file_scan);
-            membership.set_scan_flag(ScanFlag::Zoom, flags.zoom_scan);
+            membership.set_scan_flags(flags);
         }
-        for _ in 0..self.messages_posted_delta {
-            membership.bump_messages_posted();
-        }
+        // The patch carries a DELTA, never an absolute count — an
+        // absolute restore here would clobber posts recorded by a
+        // concurrent same-account session.
+        membership.add_messages_posted(self.messages_posted_delta);
         for patch in &self.pointers {
-            let merged = match membership.pointers_for(patch.msgbase_number) {
-                Some(existing) => ReadPointers::new(
-                    patch.msgbase_number,
-                    existing.last_read().max(patch.last_read),
-                    existing.last_scanned().max(patch.last_scanned),
-                    existing.new_since(),
-                ),
-                None => ReadPointers::new(
-                    patch.msgbase_number,
-                    patch.last_read,
-                    patch.last_scanned,
-                    patch.new_since,
-                ),
+            // The owner's monotonic mergers implement the pairwise-MAX
+            // merge for both branches: a fresh row starts at 0/0 with
+            // `new_since = patch.new_since`, so advancing lands exactly
+            // on the patch values, while an existing row keeps its own
+            // `new_since` (mirroring the SQL `DO UPDATE` that omits it).
+            if membership.pointers_for(patch.msgbase_number).is_none() {
+                membership
+                    .upsert_pointers(ReadPointers::fresh(patch.msgbase_number, patch.new_since));
             }
-            .expect("pairwise MAX of valid pointer rows keeps last_read <= last_scanned");
-            membership.upsert_pointers(merged);
+            let row = membership
+                .pointers_for_mut(patch.msgbase_number)
+                .expect("row exists or was just created");
+            row.advance_last_read(patch.last_read);
+            row.advance_last_scanned(patch.last_scanned);
         }
     }
 }
@@ -628,6 +605,36 @@ mod tests {
         patch.apply_to(&mut snap);
         let row = snap.memberships[0].pointers_for(1).expect("row exists");
         assert_eq!((row.last_read(), row.last_scanned()), (5, 12));
+        assert_eq!(row.new_since(), at(500));
+    }
+
+    #[test]
+    fn pointer_merge_lifts_last_scanned_for_a_hand_built_invalid_patch() {
+        // `PointerPatch` fields are `pub`, so a hand-built patch can
+        // carry `last_read > last_scanned`. The owner's monotonic
+        // mergers absorb it gracefully: `advance_last_read` lifts
+        // `last_scanned` to keep `ReadDoesNotExceedScanned` instead of
+        // panicking on a failed reconstruction.
+        let mut snap = snapshot(); // stored row: (5, 9), new_since at(500)
+        let patch = UserPatch {
+            memberships: vec![MembershipPatch {
+                conference_number: 1,
+                create_if_missing: false,
+                granted: None,
+                messages_posted_delta: 0,
+                scan_flags: None,
+                pointers: vec![PointerPatch {
+                    msgbase_number: 1,
+                    last_read: 12,
+                    last_scanned: 3,
+                    new_since: EPOCH,
+                }],
+            }],
+            ..UserPatch::default()
+        };
+        patch.apply_to(&mut snap);
+        let row = snap.memberships[0].pointers_for(1).expect("row exists");
+        assert_eq!((row.last_read(), row.last_scanned()), (12, 12));
         assert_eq!(row.new_since(), at(500));
     }
 

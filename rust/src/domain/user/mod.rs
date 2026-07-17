@@ -9,7 +9,9 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
-use crate::domain::conference::{Conference, ConferenceMembership, MessageBase, MessageBaseRef};
+use crate::domain::conference::{
+    Conference, ConferenceMembership, MessageBase, MessageBaseRef, ScanFlag,
+};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
 
@@ -37,9 +39,12 @@ use ratio_policy::RatioPolicy;
 use usage_accounting::UsageAccounting;
 
 pub use commands::{
-    AuthOutcome, DailyBudgetOutcome, MembershipPatch, PasswordChange, PointerPatch,
-    ScanFlagSettings, UserPatch,
+    AuthOutcome, DailyBudgetOutcome, MembershipPatch, PasswordChange, PointerPatch, UserPatch,
 };
+// `ScanFlagSettings` moved to `domain::conference` (it is membership
+// state, not a user-command shape); re-exported here so existing
+// `domain::user::ScanFlagSettings` imports keep compiling.
+pub use crate::domain::conference::ScanFlagSettings;
 pub use draft::NewUserDraft;
 pub use persisted::PersistedUser;
 
@@ -542,6 +547,23 @@ impl User {
         self.credentials.set_reset_required(value);
     }
 
+    /// `session.allium:ForcePasswordReset` (Slice 15): flags the
+    /// account for a forced password change when the stored password
+    /// is older than `expiry_days` days at `now`.
+    ///
+    /// The comparison is strict (exactly `expiry_days` days elapsed is
+    /// not yet expired) and clock skew counts as not expired. An
+    /// already-set [`Self::force_password_reset`] flag is preserved —
+    /// this rule never clears it.
+    ///
+    /// # Parameters
+    /// - `expiry_days`: `core/config.password_expiry_days`; `0`
+    ///   disables expiry.
+    /// - `now`: the time of the check.
+    pub fn flag_password_reset_if_expired(&mut self, expiry_days: u32, now: SystemTime) {
+        self.credentials.flag_reset_if_expired(expiry_days, now);
+    }
+
     /// Returns whether this user is censored
     /// (`core.allium:User.censored`, Slice 47). Read by
     /// `messaging.allium:PostMail`'s visibility selector to force
@@ -669,9 +691,12 @@ impl User {
     }
 
     /// Returns a mutable slice over the user's per-conference
-    /// membership rows. Used by `messaging.allium:PostMail` (Slice 42)
-    /// to bump the per-membership `messages_posted` counter without
-    /// dropping the surrounding borrow on `self`.
+    /// membership rows. Used by the `CF` scan-flag editor
+    /// (`conferences.allium:EditConferenceScanFlags`) to apply flag
+    /// edits across the selected rows in place. Counter updates should
+    /// go through the intention-revealing methods
+    /// ([`Self::record_message_posted`], [`Self::advance_last_read`],
+    /// [`Self::advance_last_scanned`]) rather than this raw slice.
     pub fn memberships_mut(&mut self) -> &mut [ConferenceMembership] {
         self.conferences.memberships_mut()
     }
@@ -723,6 +748,29 @@ impl User {
             .has_granted_membership_for(conference_number)
     }
 
+    /// Returns whether the per-conference [`ScanFlag`] is set on this
+    /// user's membership row for `conference_number` — the legacy
+    /// `checkMailConfScan` question the logon mail-scan walk asks per
+    /// conference.
+    ///
+    /// # Parameters
+    /// - `conference_number`: the conference whose membership row to
+    ///   consult.
+    /// - `flag`: which of the M/A/F/Z scan preferences to read.
+    ///
+    /// # Returns
+    /// `false` when the user has no membership row for the conference.
+    /// The lookup is grant-agnostic: revoked rows are retained in this
+    /// model and keep their scan preferences (see
+    /// [`ConferenceMembership::new`]), so a revoked row with the flag
+    /// set reads `true` — callers gate *access* separately (e.g. via
+    /// `next_accessible_conference_after`), keeping access and
+    /// preference distinct.
+    #[must_use]
+    pub fn scan_flag_for(&self, conference_number: u32, flag: ScanFlag) -> bool {
+        self.conferences.scan_flag_for(conference_number, flag)
+    }
+
     /// Returns the user's last-joined (conference, msgbase) pair, if
     /// any. Mirrors the `last_joined_conference` /
     /// `last_joined_msgbase` pair on `core.allium:User`. They are
@@ -749,7 +797,9 @@ impl User {
     /// but no rule has yet caused a [`ReadPointers`] row to be created
     /// for `msgbase`. The two cases share a return value because all
     /// of `ReadMail`, `ScanMail`, and `ScanMailOnJoin` treat them
-    /// equivalently — they lazily create a fresh row before mutating.
+    /// equivalently — [`Self::advance_last_read`] /
+    /// [`Self::advance_last_scanned`] lazily create a fresh row before
+    /// mutating.
     #[must_use]
     pub fn read_pointers_for(&self, msgbase: MessageBaseRef) -> Option<&ReadPointers> {
         self.conferences.read_pointers_for(msgbase)
@@ -760,6 +810,72 @@ impl User {
     /// [`Self::read_pointers_for`].
     pub fn read_pointers_for_mut(&mut self, msgbase: MessageBaseRef) -> Option<&mut ReadPointers> {
         self.conferences.read_pointers_for_mut(msgbase)
+    }
+
+    /// Advances this user's `last_read` pointer for `msgbase` toward
+    /// `to`, mirroring `messaging.allium:ReadMail`'s
+    /// `if mail.number > pointers.last_read: pointers.last_read = mail.number`
+    /// consequent. The [`ReadPointers`] row is lazily created (with
+    /// `new_since = now`) on the first read for a base; an existing row
+    /// keeps its own `new_since`. Movement is monotonic forward, and
+    /// `last_scanned` is lifted if needed to keep the
+    /// `ReadDoesNotExceedScanned` invariant.
+    ///
+    /// # Parameters
+    /// - `msgbase`: the (conference, msgbase) pair whose pointer row to
+    ///   advance.
+    /// - `to`: the message number just read.
+    /// - `now`: timestamp stamped onto a lazily created row's
+    ///   `new_since`; ignored when the row already exists.
+    ///
+    /// # Returns
+    /// `false` when the user has no membership row for
+    /// `msgbase.conference_number()` — a legitimate state (nothing is
+    /// mutated); callers that have already verified the membership may
+    /// `debug_assert!` on the result.
+    #[must_use = "a false return means the user has no membership row and nothing was advanced"]
+    pub fn advance_last_read(&mut self, msgbase: MessageBaseRef, to: u32, now: SystemTime) -> bool {
+        self.conferences.advance_last_read(msgbase, to, now)
+    }
+
+    /// Advances this user's `last_scanned` pointer for `msgbase`
+    /// toward `to`, mirroring `messaging.allium:ScanMail`'s
+    /// `pointers.last_scanned = max_of(pointers.last_scanned, msgbase.highest_message)`
+    /// consequent. The [`ReadPointers`] row is lazily created (with
+    /// `new_since = now`) on the first scan for a base; an existing row
+    /// keeps its own `new_since`. Movement is monotonic forward;
+    /// `last_read` is never touched.
+    ///
+    /// # Parameters
+    /// - `msgbase`: the (conference, msgbase) pair whose pointer row to
+    ///   advance.
+    /// - `to`: the highest message number the scan covered.
+    /// - `now`: timestamp stamped onto a lazily created row's
+    ///   `new_since`; ignored when the row already exists.
+    ///
+    /// # Returns
+    /// `false` when the user has no membership row for
+    /// `msgbase.conference_number()` — a legitimate state (nothing is
+    /// mutated); callers that have already verified the membership may
+    /// `debug_assert!` on the result.
+    #[must_use = "a false return means the user has no membership row and nothing was advanced"]
+    pub fn advance_last_scanned(
+        &mut self,
+        msgbase: MessageBaseRef,
+        to: u32,
+        now: SystemTime,
+    ) -> bool {
+        self.conferences.advance_last_scanned(msgbase, to, now)
+    }
+
+    /// Returns the `last_scanned` pointer this user holds for
+    /// `msgbase`, or `0` when no [`ReadPointers`] row exists — the
+    /// spec's "nothing scanned yet" default that
+    /// `messaging.allium:ScanMail` resolves `from_message = 0` against.
+    #[must_use]
+    pub fn last_scanned_for(&self, msgbase: MessageBaseRef) -> u32 {
+        self.read_pointers_for(msgbase)
+            .map_or(0, ReadPointers::last_scanned)
     }
 
     /// Inserts or replaces a [`ReadPointers`] row for `msgbase` on the
@@ -781,10 +897,35 @@ impl User {
         self.conferences.messages_posted()
     }
 
-    /// Increments [`Self::messages_posted`] by one. Used by
-    /// `messaging.allium:PostMail` (Slice 42).
-    pub fn bump_messages_posted(&mut self) {
+    /// Increments [`Self::messages_posted`] by one **without** touching
+    /// any per-membership tally. Production posts go through
+    /// [`Self::record_message_posted`] so the two counters move
+    /// together; this raw bump exists only for test fixtures seeding
+    /// the total.
+    #[cfg(test)]
+    pub(crate) fn bump_messages_posted(&mut self) {
         self.conferences.bump_messages_posted();
+    }
+
+    /// Records one posted message against this user, per the
+    /// `messaging.allium:PostMail` consequents: the cross-conference
+    /// [`Self::messages_posted`] total is bumped unconditionally, and
+    /// the [`ConferenceMembership::messages_posted`] tally for
+    /// `conference_number` is bumped when a row exists (matched by
+    /// conference number only — the spec says `if exists membership`,
+    /// not "granted membership"; access gating belongs to the calling
+    /// rule).
+    ///
+    /// # Parameters
+    /// - `conference_number`: the conference the message was posted in.
+    ///
+    /// # Returns
+    /// `true` when a membership row was found and its tally bumped;
+    /// `false` when the user has no row for `conference_number` (the
+    /// total still moves). Callers that have already verified the
+    /// membership may `debug_assert!` on the result.
+    pub fn record_message_posted(&mut self, conference_number: u32) -> bool {
+        self.conferences.record_message_posted(conference_number)
     }
 
     /// Returns a [`PersistedUser`] snapshot of every field the durable
@@ -947,6 +1088,65 @@ mod tests {
         assert!(user.is_account_locked());
         // LockoutClearsAttempts invariant.
         assert_eq!(user.invalid_attempts(), 0);
+    }
+
+    #[test]
+    fn flag_password_reset_if_expired_sets_flag_after_expiry() {
+        // password_last_updated is UNIX_EPOCH; 8 days later with a
+        // 7-day expiry is past the boundary.
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.flag_password_reset_if_expired(
+            7,
+            SystemTime::UNIX_EPOCH + Duration::from_hours(8 * 24),
+        );
+        assert!(user.force_password_reset());
+    }
+
+    #[test]
+    fn flag_password_reset_if_expired_is_strict_at_the_boundary() {
+        // Exactly `expiry_days` days elapsed is NOT expired — the rule
+        // requires elapsed > expiry, mirroring the legacy comparison.
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.flag_password_reset_if_expired(
+            7,
+            SystemTime::UNIX_EPOCH + Duration::from_hours(7 * 24),
+        );
+        assert!(!user.force_password_reset());
+    }
+
+    #[test]
+    fn flag_password_reset_if_expired_disabled_at_zero_days() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.flag_password_reset_if_expired(
+            0,
+            SystemTime::UNIX_EPOCH + Duration::from_hours(1_000 * 24),
+        );
+        assert!(!user.force_password_reset());
+    }
+
+    #[test]
+    fn flag_password_reset_if_expired_tolerates_clock_skew() {
+        // `now` before password_last_updated counts as not expired.
+        let mut user = User::new(
+            2,
+            "alice".to_string(),
+            PasswordHashKind::Pbkdf210000,
+            "hash".to_string(),
+            Some("salt".to_string()),
+            SystemTime::UNIX_EPOCH + Duration::from_hours(10 * 24),
+            100,
+        )
+        .unwrap();
+        user.flag_password_reset_if_expired(7, SystemTime::UNIX_EPOCH);
+        assert!(!user.force_password_reset());
+    }
+
+    #[test]
+    fn flag_password_reset_if_expired_keeps_an_already_set_flag() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.set_force_password_reset(true);
+        user.flag_password_reset_if_expired(7, SystemTime::UNIX_EPOCH);
+        assert!(user.force_password_reset());
     }
 
     #[test]
@@ -1396,6 +1596,124 @@ mod tests {
     }
 
     #[test]
+    fn advance_last_read_returns_false_without_membership() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        let advanced = user.advance_last_read(MessageBaseRef::new(7, 1), 4, SystemTime::UNIX_EPOCH);
+        assert!(!advanced, "no membership row: the advance must refuse");
+        assert!(user.memberships().is_empty());
+    }
+
+    #[test]
+    fn advance_last_read_lazily_creates_the_pointer_row() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        let when = SystemTime::UNIX_EPOCH + Duration::from_secs(50);
+
+        assert!(user.advance_last_read(MessageBaseRef::new(7, 1), 4, when));
+
+        let row = user
+            .read_pointers_for(MessageBaseRef::new(7, 1))
+            .expect("lazily created");
+        assert_eq!(row.last_read(), 4);
+        assert_eq!(row.last_scanned(), 4, "invariant lift on the fresh row");
+        assert_eq!(row.new_since(), when);
+    }
+
+    #[test]
+    fn advance_last_read_advances_existing_row_and_keeps_new_since() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        let when = SystemTime::UNIX_EPOCH + Duration::from_secs(50);
+        assert!(user.upsert_read_pointers(ReadPointers::new(1, 2, 6, when).expect("valid"), 7));
+
+        let later = SystemTime::UNIX_EPOCH + Duration::from_secs(500);
+        assert!(user.advance_last_read(MessageBaseRef::new(7, 1), 4, later));
+
+        let row = user
+            .read_pointers_for(MessageBaseRef::new(7, 1))
+            .expect("present");
+        assert_eq!(row.last_read(), 4);
+        assert_eq!(
+            row.last_scanned(),
+            6,
+            "scan pointer untouched below its value"
+        );
+        assert_eq!(
+            row.new_since(),
+            when,
+            "`now` seeds only a lazily created row; an existing row keeps its new_since",
+        );
+    }
+
+    #[test]
+    fn advance_last_scanned_returns_false_without_membership() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        let advanced =
+            user.advance_last_scanned(MessageBaseRef::new(7, 1), 9, SystemTime::UNIX_EPOCH);
+        assert!(!advanced, "no membership row: the advance must refuse");
+        assert!(user.memberships().is_empty());
+    }
+
+    #[test]
+    fn advance_last_scanned_lazily_creates_the_pointer_row() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        let when = SystemTime::UNIX_EPOCH + Duration::from_secs(50);
+
+        assert!(user.advance_last_scanned(MessageBaseRef::new(7, 1), 9, when));
+
+        let row = user
+            .read_pointers_for(MessageBaseRef::new(7, 1))
+            .expect("lazily created");
+        assert_eq!(row.last_scanned(), 9);
+        assert_eq!(row.last_read(), 0, "ScanMail never touches last_read");
+        assert_eq!(row.new_since(), when);
+    }
+
+    #[test]
+    fn advance_last_scanned_advances_existing_row_in_place() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        let when = SystemTime::UNIX_EPOCH + Duration::from_secs(50);
+        assert!(user.upsert_read_pointers(ReadPointers::new(1, 2, 6, when).expect("valid"), 7));
+
+        assert!(user.advance_last_scanned(
+            MessageBaseRef::new(7, 1),
+            9,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(500),
+        ));
+
+        let row = user
+            .read_pointers_for(MessageBaseRef::new(7, 1))
+            .expect("present");
+        assert_eq!(row.last_scanned(), 9);
+        assert_eq!(row.last_read(), 2, "ScanMail never touches last_read");
+        assert_eq!(row.new_since(), when);
+    }
+
+    #[test]
+    fn last_scanned_for_defaults_to_zero_without_a_row() {
+        // Spec `messaging.allium:ScanMail`: a missing pointer row means
+        // nothing has been scanned yet, so the scan starts from 0 + 1.
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        assert_eq!(user.last_scanned_for(MessageBaseRef::new(7, 1)), 0);
+        // A membership without pointer rows reads the same.
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        assert_eq!(user.last_scanned_for(MessageBaseRef::new(7, 1)), 0);
+    }
+
+    #[test]
+    fn last_scanned_for_reads_the_existing_row() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        assert!(user.upsert_read_pointers(
+            ReadPointers::new(1, 2, 6, SystemTime::UNIX_EPOCH).expect("valid"),
+            7,
+        ));
+        assert_eq!(user.last_scanned_for(MessageBaseRef::new(7, 1)), 6);
+    }
+
+    #[test]
     fn new_user_starts_with_zero_messages_posted() {
         // Spec core.allium:User.messages_posted is initialised to 0 by
         // `session.allium:CompleteNewUserRegistration` (line 532). For
@@ -1420,6 +1738,110 @@ mod tests {
         user.bump_messages_posted();
         user.bump_messages_posted();
         assert_eq!(user.messages_posted(), 2);
+    }
+
+    #[test]
+    fn scan_flag_for_reads_the_membership_flag() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        // Fresh rows default mail_scan on and zoom off (design D2).
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        assert!(user.scan_flag_for(7, ScanFlag::MailScan));
+        assert!(!user.scan_flag_for(7, ScanFlag::Zoom));
+
+        // A cleared flag reads back false (the CF editor's effect).
+        let membership = user
+            .memberships_mut()
+            .iter_mut()
+            .find(|m| m.conference_number() == 7)
+            .expect("present");
+        membership.set_scan_flag(ScanFlag::MailScan, false);
+        assert!(!user.scan_flag_for(7, ScanFlag::MailScan));
+    }
+
+    #[test]
+    fn scan_flag_for_returns_false_without_a_membership_row() {
+        // Legacy `checkMailConfScan`: no membership row means the
+        // conference is not scanned.
+        let user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(!user.scan_flag_for(7, ScanFlag::MailScan));
+    }
+
+    #[test]
+    fn scan_flag_for_reads_flags_on_a_revoked_row() {
+        // Revoked rows are retained and keep their scan preferences;
+        // the lookup is grant-agnostic (callers gate access
+        // separately).
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, false));
+        assert!(user.scan_flag_for(7, ScanFlag::MailScan));
+    }
+
+    #[test]
+    fn scan_flag_for_does_not_read_another_conferences_row() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        assert!(!user.scan_flag_for(8, ScanFlag::MailScan));
+    }
+
+    #[test]
+    fn record_message_posted_bumps_total_and_membership_tally_together() {
+        // Spec messaging.allium:PostMail consequents:
+        //   session.user.messages_posted += 1
+        //   if exists membership: membership.messages_posted += 1
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+
+        assert!(user.record_message_posted(7));
+
+        assert_eq!(user.messages_posted(), 1);
+        let membership = user
+            .memberships()
+            .iter()
+            .find(|m| m.conference_number() == 7)
+            .expect("present");
+        assert_eq!(membership.messages_posted(), 1);
+    }
+
+    #[test]
+    fn record_message_posted_without_membership_still_bumps_the_total() {
+        // The spec's total bump is unconditional; only the membership
+        // tally is guarded by `if exists membership`.
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        assert!(!user.record_message_posted(7));
+        assert_eq!(user.messages_posted(), 1);
+    }
+
+    #[test]
+    fn record_message_posted_matches_membership_by_number_not_grant() {
+        // Rows are unique per conference and matched by number only —
+        // the spec consequent says `if exists membership`, not "granted
+        // membership" (access gating happens in the calling rule).
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, false));
+
+        assert!(user.record_message_posted(7));
+
+        assert_eq!(user.messages_posted(), 1);
+        assert_eq!(user.memberships()[0].messages_posted(), 1);
+    }
+
+    #[test]
+    fn record_message_posted_only_bumps_the_matching_conference() {
+        let mut user = make_user(2, Some("salt".to_string())).unwrap();
+        user.upsert_membership(ConferenceMembership::new(7, true));
+        user.upsert_membership(ConferenceMembership::new(8, true));
+
+        assert!(user.record_message_posted(8));
+
+        let tally = |conf: u32| {
+            user.memberships()
+                .iter()
+                .find(|m| m.conference_number() == conf)
+                .expect("present")
+                .messages_posted()
+        };
+        assert_eq!(tally(7), 0);
+        assert_eq!(tally(8), 1);
     }
 
     #[test]

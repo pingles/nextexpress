@@ -56,6 +56,32 @@ impl Pager {
             self.lines += lines;
         }
     }
+
+    /// Counts one emitted line against the page (the counting half of the
+    /// legacy `checkForPause`, `express.e:5181-5189`).
+    ///
+    /// Returns `true` when this line fills the page — the counter resets
+    /// to zero, so the caller sees `true` exactly once per page and should
+    /// pause. Always returns `false` once the pager is non-stop (the
+    /// counter freezes, mirroring [`Pager::add_lines`]).
+    pub(super) fn count_line(&mut self) -> bool {
+        if self.non_stop {
+            return false;
+        }
+        self.lines += 1;
+        if self.lines < self.page_length {
+            return false;
+        }
+        self.lines = 0;
+        true
+    }
+
+    /// Latches the pager non-stop — the reader answered `ns` at the pause
+    /// prompt (`express.e:5195`), so no further pauses occur for this
+    /// listing.
+    pub(super) fn go_non_stop(&mut self) {
+        self.non_stop = true;
+    }
 }
 
 impl<T> super::MenuFlow<'_, T>
@@ -70,21 +96,16 @@ where
         &mut self,
         pager: &mut Pager,
     ) -> crate::app::menu_flow::MenuFlowResult<PageBreak, T::Error> {
-        if pager.non_stop {
+        if !pager.count_line() {
             return Ok(PageBreak::Continue);
         }
-        pager.lines += 1;
-        if pager.lines < pager.page_length {
-            return Ok(PageBreak::Continue);
-        }
-        pager.lines = 0;
         let answer = self
             .read_prompted(b"(Pause)...More(y/n/ns)? ", TerminalEcho::Visible)
             .await?;
         let mut chars = answer.trim().chars();
         if matches!(chars.next(), Some('n' | 'N')) {
             if matches!(chars.next(), Some('s' | 'S')) {
-                pager.non_stop = true;
+                pager.go_non_stop();
             } else {
                 // `n` aborts and leaves the prompt on screen — the legacy
                 // returns immediately at `express.e:5197`, before the
@@ -146,6 +167,31 @@ mod tests {
 
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    #[test]
+    fn count_line_reports_page_full_and_resets() {
+        let mut pager = Pager::new(3);
+        assert!(!pager.count_line(), "line 1 of 3 must not fill the page");
+        assert!(!pager.count_line(), "line 2 of 3 must not fill the page");
+        assert!(pager.count_line(), "line 3 fills the page");
+        // Filling the page resets the counter, so the next page counts
+        // from zero again.
+        assert!(!pager.count_line(), "line 1 of the next page");
+        assert!(!pager.count_line(), "line 2 of the next page");
+        assert!(pager.count_line(), "line 3 fills the next page too");
+    }
+
+    #[test]
+    fn count_line_never_fills_once_non_stop() {
+        let mut pager = Pager::new(1);
+        pager.go_non_stop();
+        for _ in 0..3 {
+            assert!(
+                !pager.count_line(),
+                "a non-stop pager must never report a full page"
+            );
+        }
     }
 
     #[tokio::test]

@@ -1073,7 +1073,9 @@ async fn page_boundary_row_is_registered_before_more_accepts_numeric_selection()
         key(b'Q'),
     ]);
     let mut state = super::ScanState::new(false, 1);
-    state.emitted = super::PAGE_LINES - 1;
+    for _ in 1..super::PAGE_LINES {
+        assert!(!state.record_line(super::ScanLine::raw(Vec::new())));
+    }
     state.displayed.record(&super::ListedRow {
         key: FlaggedKey::new(1, "EARLIER.LHA"),
         number: Some(1),
@@ -2326,4 +2328,107 @@ async fn run_span_full_reverse_mode_lists_newest_first_through_the_engine_api() 
         String::from_utf8_lossy(&terminal.output),
         String::from_utf8_lossy(&expected),
     );
+}
+
+// ---- ScanState unit tests: the pager's counted-page invariant lives
+// ---- on the owner (record_line / end_page / begin_reloaded_page).
+
+#[test]
+fn record_line_reports_the_fill_at_the_page_boundary() {
+    let mut state = super::ScanState::new(false, 1);
+    for line in 1..=super::PAGE_LINES {
+        let filled = state.record_line(super::ScanLine::raw(Vec::new()));
+        assert_eq!(
+            filled,
+            line == super::PAGE_LINES,
+            "the captured More? boundary is exactly {} lines (line {line})",
+            super::PAGE_LINES,
+        );
+    }
+    assert_eq!(
+        state.page.len(),
+        super::PAGE_LINES as usize,
+        "the filled page must survive its own boundary for the ? redraw",
+    );
+    // The fill stays due until end_page reports the More? outcome:
+    // a caller that ignores it is told again on the next line.
+    assert!(state.record_line(super::ScanLine::raw(Vec::new())));
+}
+
+#[test]
+fn record_line_is_inert_in_non_stop_mode() {
+    let mut state = super::ScanState::new(true, 1);
+    assert!(state.non_stop());
+    for _ in 0..=super::PAGE_LINES {
+        assert!(!state.record_line(super::ScanLine::raw(Vec::new())));
+    }
+    assert!(
+        state.page.is_empty(),
+        "non-stop mode pages nothing and buffers no redraw page",
+    );
+}
+
+#[test]
+fn go_non_stop_suppresses_further_page_fills() {
+    let mut state = super::ScanState::new(false, 1);
+    assert!(!state.non_stop());
+    state.go_non_stop();
+    assert!(state.non_stop());
+    for _ in 0..=super::PAGE_LINES {
+        assert!(!state.record_line(super::ScanLine::raw(Vec::new())));
+    }
+}
+
+#[test]
+fn end_page_starts_a_fresh_page_without_clearing_the_shown_one() {
+    // The buffer clear is deliberately lazy: the just-shown page must
+    // survive its boundary More? because the `?` verb redraws from it.
+    for flow in [
+        super::ScanFlow::Continue,
+        super::ScanFlow::Quit,
+        super::ScanFlow::SkipDir,
+    ] {
+        let mut state = super::ScanState::new(false, 1);
+        for line in 1..=super::PAGE_LINES {
+            let filled = state.record_line(super::ScanLine::raw(Vec::new()));
+            assert_eq!(filled, line == super::PAGE_LINES, "{flow:?} line {line}");
+        }
+        state.end_page(flow);
+        assert_eq!(
+            state.page.len(),
+            super::PAGE_LINES as usize,
+            "{flow:?}: the shown page survives the counter reset",
+        );
+        assert!(!state.record_line(super::ScanLine::raw(Vec::new())));
+        assert_eq!(
+            state.page.len(),
+            1,
+            "{flow:?}: the first line of the fresh page replaces the buffer",
+        );
+    }
+}
+
+#[test]
+fn begin_reloaded_page_restarts_the_buffer_for_the_cleared_screen() {
+    let mut state = super::ScanState::new(false, 1);
+    assert!(!state.record_line(super::ScanLine::raw(b"old".to_vec())));
+    state.begin_reloaded_page();
+    assert!(
+        state.page.is_empty(),
+        "the form feed cleared the screen, so the redraw buffer restarts",
+    );
+}
+
+#[test]
+fn end_page_preserves_the_reload_pre_count() {
+    // PL's captured boundary: the reload's form-feed line pre-counts,
+    // so the reloaded page's More? fires after 28 further lines —
+    // end_page must not drop that pre-count on the ReloadDir flow.
+    let mut state = super::ScanState::new(false, 1);
+    state.begin_reloaded_page();
+    state.end_page(super::ScanFlow::ReloadDir);
+    for line in 1..super::PAGE_LINES {
+        let filled = state.record_line(super::ScanLine::raw(Vec::new()));
+        assert_eq!(filled, line == super::PAGE_LINES - 1, "line {line}");
+    }
 }

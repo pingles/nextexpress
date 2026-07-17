@@ -399,15 +399,11 @@ where
         state: &mut ScanState,
         flagged: &mut FlaggedFiles,
     ) -> crate::app::menu_flow::MenuFlowResult<ScanFlow, T::Error> {
-        if state.non_stop {
+        if state.non_stop() {
             return Ok(ScanFlow::Continue);
         }
         let flow = self.scan_more_prompt(state, flagged).await?;
-        // A reload has already pre-counted its form-feed line —
-        // resetting here would drop it (PL's captured boundary).
-        if flow != ScanFlow::ReloadDir {
-            state.emitted = 0;
-        }
+        state.end_page(flow);
         Ok(flow)
     }
 
@@ -459,19 +455,12 @@ where
         if let Some(listed) = &line.listed {
             state.displayed.record(listed);
         }
-        if state.non_stop {
-            return Ok(ScanFlow::Continue);
+        if state.record_line(line) {
+            let flow = self.scan_more_prompt(state, flagged).await?;
+            state.end_page(flow);
+            return Ok(flow);
         }
-        if state.emitted == 0 {
-            state.page.clear();
-        }
-        state.page.push(line);
-        state.emitted += 1;
-        if state.emitted < PAGE_LINES {
-            return Ok(ScanFlow::Continue);
-        }
-        state.emitted = 0;
-        self.scan_more_prompt(state, flagged).await
+        Ok(ScanFlow::Continue)
     }
 
     /// One `More?` interaction — true hotkeys (slice D2b): every verb
@@ -516,7 +505,7 @@ where
                         let confirm = self.read_key().await?;
                         self.terminal.write(&more_overprint_clear()).await?;
                         if matches!(confirm, KeyEvent::Char(b'y' | b'Y')) {
-                            state.non_stop = true;
+                            state.go_non_stop();
                             return Ok(ScanFlow::Continue);
                         }
                         // Declined: More? redraws and paging stays on
@@ -568,13 +557,10 @@ where
                 KeyEvent::Char(b'l' | b'L') => {
                     // Reload dir (PL): form feed + CRLF, then the walk
                     // restarts the current dir from its header. The FF
-                    // line counts toward the fresh page (the door's
-                    // More? fires 28 lines after it — PL's boundary),
-                    // and the page buffer restarts with the cleared
-                    // screen so `?`-redraw/repaint geometry stays true.
+                    // line pre-counts toward the fresh page — see
+                    // [`ScanState::begin_reloaded_page`].
                     self.terminal.write(b"\x0c\r\n").await?;
-                    state.page.clear();
-                    state.emitted = 1;
+                    state.begin_reloaded_page();
                     return Ok(ScanFlow::ReloadDir);
                 }
                 KeyEvent::CtrlC => {
@@ -850,6 +836,81 @@ impl ScanState {
             conference,
             page: Vec::new(),
             displayed: DisplayedSelectionIndex::default(),
+        }
+    }
+
+    /// Whether the pager is in non-stop mode — no `More?` pauses and
+    /// no page bookkeeping (the `NS` argument, S7 repr :490, or an
+    /// `ns` confirm at `More?`).
+    ///
+    /// # Returns
+    /// `true` when every pause is suppressed.
+    fn non_stop(&self) -> bool {
+        self.non_stop
+    }
+
+    /// Switches the pager to non-stop mode: the `ns` verb's
+    /// Are-you-sure confirm at `More?` (`ae_tierd_aquascan4.txt` U3).
+    /// Every later [`Self::record_line`] is inert and no further
+    /// `More?` fires.
+    fn go_non_stop(&mut self) {
+        self.non_stop = true;
+    }
+
+    /// Counts one written listing line toward the captured 29-line
+    /// page (`ae_tierd_aquascan3.txt:212`; [`PAGE_LINES`]) and buffers
+    /// it for the `?` verb's page redraw.
+    ///
+    /// The redraw buffer clears lazily — on the first line of a fresh
+    /// page, not when the counter resets — because the page must
+    /// survive its own boundary `More?`: the `?` verb redraws from it
+    /// and the flag repaint measures cursor-up offsets against it.
+    ///
+    /// # Parameters
+    /// - `line`: the line just written to the terminal.
+    ///
+    /// # Returns
+    /// `true` when the page has just filled: the caller must run the
+    /// `More?` interaction and report its outcome via
+    /// [`Self::end_page`] — until then the fill stays due. Always
+    /// `false` in non-stop mode, which pages nothing.
+    #[must_use]
+    fn record_line(&mut self, line: ScanLine) -> bool {
+        if self.non_stop {
+            return false;
+        }
+        if self.emitted == 0 {
+            self.page.clear();
+        }
+        self.page.push(line);
+        self.emitted += 1;
+        self.emitted >= PAGE_LINES
+    }
+
+    /// Restarts the pager for the `L` (reload-dir) verb, whose form
+    /// feed cleared the screen: the redraw buffer empties so
+    /// `?`-redraw/repaint cursor geometry stays true to the cleared
+    /// screen, and the form-feed line the caller just wrote
+    /// pre-counts toward the fresh page — the door counts what it
+    /// prints, so PL's captured `More?` fires 28 lines after the FF.
+    fn begin_reloaded_page(&mut self) {
+        self.page.clear();
+        self.emitted = 1;
+    }
+
+    /// Ends a page at its `More?`: resets the line counter so the
+    /// next line starts a fresh page — unless `flow` is
+    /// [`ScanFlow::ReloadDir`], whose [`Self::begin_reloaded_page`]
+    /// already pre-counted the form-feed line (resetting would drop
+    /// it and shift PL's captured 28-line boundary). The redraw
+    /// buffer is deliberately not cleared — see
+    /// [`Self::record_line`]'s lazy clear.
+    ///
+    /// # Parameters
+    /// - `flow`: the `More?` interaction's outcome.
+    fn end_page(&mut self, flow: ScanFlow) {
+        if flow != ScanFlow::ReloadDir {
+            self.emitted = 0;
         }
     }
 }

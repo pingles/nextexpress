@@ -122,11 +122,7 @@ where
             after = conference.number();
             let include = match filter {
                 ScanFilter::AllConferences => true,
-                ScanFilter::MailScanFlagged => user
-                    .memberships()
-                    .iter()
-                    .find(|membership| membership.conference_number() == after)
-                    .is_some_and(|membership| membership.scan_flag(ScanFlag::MailScan)),
+                ScanFilter::MailScanFlagged => user.scan_flag_for(after, ScanFlag::MailScan),
             };
             if include {
                 numbers.push(after);

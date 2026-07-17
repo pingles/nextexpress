@@ -8,8 +8,7 @@
 //! Every flow takes a [`crate::domain::session::typed`] phase wrapper
 //! by value and returns the appropriate next-phase wrapper or
 //! transition enum, so the wrong-state failure mode is unrepresentable
-//! at the call sites. (`complete_password_reset` still drives the raw
-//! [`Session`]; its driver path lands with the password-reset slice.)
+//! at the call sites.
 
 use std::collections::BTreeSet;
 use std::time::SystemTime;
@@ -25,11 +24,10 @@ use crate::domain::session::typed::{
     VerifyPasswordTransition,
 };
 use crate::domain::session::{
-    apply_password_change, apply_password_match, apply_password_mismatch, daily_budget_outcome,
-    CallId, CompleteNewUserRegistrationError, CompletePasswordResetError, EnterMenuError,
-    NameTypedOutcome, NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPolicy,
-    SessionState, SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError,
-    VerifyPasswordOutcome,
+    apply_password_change, apply_password_match, apply_password_mismatch, CallId,
+    CompleteNewUserRegistrationError, CompletePasswordResetError, EnterMenuError, NameTypedOutcome,
+    NewUserPasswordOutcome, NewUserRequestOutcome, Session, SessionPolicy, SessionState,
+    SessionTransitionError, VerifyNewUserPasswordError, VerifyPasswordError, VerifyPasswordOutcome,
 };
 use crate::domain::user::{AuthOutcome, NewUserDraft, PasswordChange, RatioMode, UserFlag};
 use crate::domain::user_repository::{
@@ -309,23 +307,11 @@ where
 
     let outcome = if matches {
         // The call's durable identity is stamped here, at the moment of
-        // successful authentication (designs/FILES.md: CallId).
-        let (outcome, rejection) =
+        // successful authentication (designs/FILES.md: CallId). The
+        // domain rule reports the AuthOutcome it implies, so nothing
+        // is re-derived here.
+        let (outcome, rejection, auth) =
             apply_password_match(&mut inner, policy, now, CallId::new(rand::random()))?;
-        let auth = {
-            let user = inner.user().expect("password match leaves the user bound");
-            // `last_call` only mutates at finalise, so this is still
-            // the stored pre-session value — the same input
-            // `initialise_daily_budget` used inside the match rule.
-            // On the rejected path the budget rule never ran, so the
-            // command must leave the daily counters alone.
-            let daily = (!matches!(outcome, VerifyPasswordOutcome::LogonRejected))
-                .then(|| daily_budget_outcome(user.last_call(), now, policy.daily_reset_offset()));
-            AuthOutcome::Matched {
-                daily,
-                force_password_reset: user.force_password_reset(),
-            }
-        };
         record_auth_and_rebaseline(&mut inner, user_repo, &auth)?;
         if let Some(entry) = rejection {
             caller_log.append(entry);
@@ -667,18 +653,13 @@ where
 /// Errors returned by [`complete_password_reset`].
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CompletePasswordResetFlowError {
-    /// The session is not at [`SessionState::Onboarded`], no user is
-    /// bound, or `force_password_reset` isn't set.
+    /// The bound user has no pending reset
+    /// ([`CompletePasswordResetError::ResetNotPending`]). The
+    /// wrong-state / user-missing variants are unrepresentable: the
+    /// flow consumes an [`OnboardedSession`], which guarantees both
+    /// invariants.
     #[error(transparent)]
     Session(#[from] CompletePasswordResetError),
-    /// The candidate password doesn't satisfy the configured length
-    /// or category thresholds.
-    #[error("candidate password is too weak")]
-    WeakPassword,
-    /// The candidate matches the user's current password. The spec
-    /// requires the new password to differ from the old one.
-    #[error("new password must differ from old")]
-    SameAsCurrent,
     /// The hasher rejected the user's stored hash kind, or refused
     /// to compute a fresh hash for the spec's default kind.
     #[error(transparent)]
@@ -688,6 +669,38 @@ pub enum CompletePasswordResetFlowError {
     Save(#[from] UserRepositoryError),
 }
 
+/// Outcome of [`complete_password_reset`] expressed as next-phase
+/// ownership, mirroring the sibling transition enums
+/// ([`VerifyPasswordTransition`], [`EnterMenuFlowOutcome`]). Both arms
+/// stay in [`SessionState::Onboarded`] — a reset never changes phase.
+pub(crate) enum CompletePasswordResetTransition {
+    /// Credentials rotated and persisted; the session is still
+    /// onboarded and may retry menu entry.
+    Reset(OnboardedSession),
+    /// The candidate was rejected; the session is unchanged and still
+    /// onboarded, so the caller may re-prompt within its retry
+    /// budget.
+    Rejected {
+        /// The unchanged, still-onboarded session.
+        session: OnboardedSession,
+        /// Why the candidate was rejected.
+        reason: PasswordResetRejection,
+    },
+}
+
+/// Retryable rejection reasons carried by
+/// [`CompletePasswordResetTransition::Rejected`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PasswordResetRejection {
+    /// The candidate doesn't satisfy the configured
+    /// `min_password_length` / `min_password_categories` thresholds
+    /// ([`meets_password_strength`]).
+    WeakPassword,
+    /// The candidate matches the user's current password. The spec
+    /// requires the new password to differ from the old one.
+    SameAsCurrent,
+}
+
 /// Handles `session.allium:CompletePasswordReset`.
 ///
 /// Runs the strength check (`min_password_length`,
@@ -695,36 +708,34 @@ pub enum CompletePasswordResetFlowError {
 /// differs from the user's current password via `hasher`, computes a
 /// fresh hash with the spec's default
 /// [`crate::domain::password::PasswordHashKind`], applies the
-/// state mutation through [`Session::apply_password_change`], and
-/// saves the updated user.
+/// state mutation through
+/// [`crate::domain::session::apply_password_change`], and saves the
+/// updated user. Retryable rejections (weak candidate, or same as the
+/// current password) return the still-onboarded session in
+/// [`CompletePasswordResetTransition::Rejected`] rather than an
+/// error.
 ///
 /// # Errors
-/// Returns [`CompletePasswordResetFlowError::WeakPassword`] when
-/// `candidate` doesn't pass [`meets_password_strength`],
-/// [`CompletePasswordResetFlowError::SameAsCurrent`] when it matches
-/// the existing password, [`CompletePasswordResetFlowError::Hash`]
-/// when the hasher errors,
-/// [`CompletePasswordResetFlowError::Session`] when the session
-/// guards (state, user, flag) are wrong, or
-/// [`CompletePasswordResetFlowError::Save`] when persistence fails.
-pub fn complete_password_reset<R, H>(
-    session: &mut Session,
+/// Returns [`CompletePasswordResetFlowError::Session`] when the bound
+/// user has no pending reset
+/// ([`CompletePasswordResetError::ResetNotPending`]),
+/// [`CompletePasswordResetFlowError::Hash`] when the hasher errors,
+/// or [`CompletePasswordResetFlowError::Save`] when persistence
+/// fails. The wrong-state / user-missing failure modes cannot fire:
+/// the [`OnboardedSession`] wrapper guarantees both invariants.
+pub(crate) fn complete_password_reset<R, H>(
+    session: OnboardedSession,
     candidate: &str,
     user_repo: &R,
     hasher: &H,
     policy: SessionPolicy,
     now: SystemTime,
-) -> Result<(), CompletePasswordResetFlowError>
+) -> Result<CompletePasswordResetTransition, CompletePasswordResetFlowError>
 where
     R: UserRepository + ?Sized,
     H: PasswordHasher + ?Sized,
 {
-    if session.state() != SessionState::Onboarded {
-        return Err(CompletePasswordResetError::WrongState(session.state()).into());
-    }
-    let user = session
-        .user()
-        .ok_or(CompletePasswordResetError::UserMissing)?;
+    let user = session.user();
     let slot = user.slot_number();
     if !user.force_password_reset() {
         return Err(CompletePasswordResetError::ResetNotPending.into());
@@ -734,10 +745,16 @@ where
         policy.min_password_length(),
         policy.min_password_categories(),
     ) {
-        return Err(CompletePasswordResetFlowError::WeakPassword);
+        return Ok(CompletePasswordResetTransition::Rejected {
+            session,
+            reason: PasswordResetRejection::WeakPassword,
+        });
     }
     if hasher.verify_password(user, candidate)? {
-        return Err(CompletePasswordResetFlowError::SameAsCurrent);
+        return Ok(CompletePasswordResetTransition::Rejected {
+            session,
+            reason: PasswordResetRejection::SameAsCurrent,
+        });
     }
 
     // Re-hash under the spec's current default kind, irrespective of
@@ -753,10 +770,13 @@ where
         kind,
         changed_at: now,
     };
-    apply_password_change(session, computed.hash, computed.salt, kind, now)?;
+    let mut inner = session.into_inner();
+    apply_password_change(&mut inner, computed.hash, computed.salt, kind, now)?;
     user_repo.record_password_change(slot, &change)?;
-    session.rebaseline_persisted();
-    Ok(())
+    inner.rebaseline_persisted();
+    Ok(CompletePasswordResetTransition::Reset(
+        OnboardedSession::from_session(inner),
+    ))
 }
 
 #[cfg(test)]
@@ -1337,25 +1357,22 @@ mod tests {
     fn complete_password_reset_happy_path_rotates_credentials() {
         let user = alice_with_reset_pending();
         let repo = TestRepo::new(vec![user.clone()]);
-        let session = session_at_onboarded_with_reset_pending();
+        let session = OnboardedSession::from_session(session_at_onboarded_with_reset_pending());
         // Confirm setup precondition.
-        assert!(session.user().unwrap().force_password_reset());
+        assert!(session.user().force_password_reset());
 
-        let mut session = session;
         let policy = SessionPolicy::default()
             .with_min_password_length(6)
             .with_min_password_categories(2);
         let later = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
-        complete_password_reset(
-            &mut session,
-            "Newpass123",
-            &repo,
-            &good_hasher(),
-            policy,
-            later,
-        )
-        .expect("success");
+        let transition =
+            complete_password_reset(session, "Newpass123", &repo, &good_hasher(), policy, later)
+                .expect("success");
+        let CompletePasswordResetTransition::Reset(onboarded) = transition else {
+            panic!("expected Reset transition");
+        };
 
+        let session = onboarded.into_inner();
         assert!(!session.user().unwrap().force_password_reset());
         assert_eq!(
             session.user().unwrap().password_last_updated(),
@@ -1371,37 +1388,49 @@ mod tests {
     fn complete_password_reset_rejects_weak_password() {
         let user = alice_with_reset_pending();
         let repo = TestRepo::new(vec![user]);
-        let mut session = session_at_onboarded_with_reset_pending();
+        let session = OnboardedSession::from_session(session_at_onboarded_with_reset_pending());
         let policy = SessionPolicy::default().with_min_password_length(8);
-        let err = complete_password_reset(
-            &mut session,
+        let transition = complete_password_reset(
+            session,
             "short",
             &repo,
             &good_hasher(),
             policy,
             SystemTime::UNIX_EPOCH,
         )
-        .expect_err("weak should reject");
-        assert!(matches!(err, CompletePasswordResetFlowError::WeakPassword));
-        assert!(session.user().unwrap().force_password_reset());
+        .expect("a weak candidate is a retryable rejection, not a hard error");
+        let CompletePasswordResetTransition::Rejected { session, reason } = transition else {
+            panic!("expected Rejected transition");
+        };
+        assert_eq!(reason, PasswordResetRejection::WeakPassword);
+        assert!(
+            session.user().force_password_reset(),
+            "the still-onboarded session keeps the reset pending for a retry"
+        );
     }
 
     #[test]
     fn complete_password_reset_rejects_same_as_current() {
         let user = alice_with_reset_pending();
         let repo = TestRepo::new(vec![user]);
-        let mut session = session_at_onboarded_with_reset_pending();
-        let err = complete_password_reset(
-            &mut session,
+        let session = OnboardedSession::from_session(session_at_onboarded_with_reset_pending());
+        let transition = complete_password_reset(
+            session,
             "secret",
             &repo,
             &good_hasher(),
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
         )
-        .expect_err("same as old should reject");
-        assert!(matches!(err, CompletePasswordResetFlowError::SameAsCurrent));
-        assert!(session.user().unwrap().force_password_reset());
+        .expect("a same-as-current candidate is a retryable rejection, not a hard error");
+        let CompletePasswordResetTransition::Rejected { session, reason } = transition else {
+            panic!("expected Rejected transition");
+        };
+        assert_eq!(reason, PasswordResetRejection::SameAsCurrent);
+        assert!(
+            session.user().force_password_reset(),
+            "the still-onboarded session keeps the reset pending for a retry"
+        );
     }
 
     #[test]
@@ -1430,15 +1459,16 @@ mod tests {
         )
         .unwrap();
         // Flag NOT set on this user.
-        let err = complete_password_reset(
-            &mut session,
+        let Err(err) = complete_password_reset(
+            OnboardedSession::from_session(session),
             "Newpass123",
             &repo,
             &good_hasher(),
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
-        )
-        .expect_err("flag not set");
+        ) else {
+            panic!("a session without a pending reset must be a hard error");
+        };
         assert!(matches!(
             err,
             CompletePasswordResetFlowError::Session(CompletePasswordResetError::ResetNotPending)

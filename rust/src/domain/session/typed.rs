@@ -29,8 +29,8 @@
 
 use std::time::SystemTime;
 
-use crate::domain::conference::{Conference, NameType};
-use crate::domain::files::flagged::FlaggedFiles;
+use crate::domain::conference::{Conference, MessageBaseRef, NameType};
+use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};
 use crate::domain::session::{
     AcceptConnectionError, AutoRejoinOutcome, ExplicitJoinOutcome, LogonChannel, Session,
     SessionState,
@@ -227,7 +227,6 @@ impl OnboardedSession {
 
     /// Returns the bound user. Always `Some` in this phase.
     #[must_use]
-    #[allow(dead_code)]
     pub(crate) fn user(&self) -> &User {
         self.session
             .user()
@@ -303,20 +302,50 @@ impl MenuSession {
         self.session.quick_logon()
     }
 
-    /// Points the open visit at `(conference_number, msgbase_number)`
-    /// so the read flow targets that base. The `MS` read-it-now path
-    /// attaches the base it found mail in, runs the read sub-prompt,
-    /// then re-attaches the caller's home coordinate — the legacy
-    /// transient `currentConf:=cn ... :=oldcn`
+    /// Begins the `MS` read-it-now detour: captures the open visit's
+    /// coordinate as the home to return to, then points the visit at
+    /// `coord` so the read flow targets the base the scan found mail
+    /// in. The legacy recaptures `oldcn := currentConf` immediately
+    /// before each detour and restores it right after the read
+    /// sub-prompt — the transient `currentConf:=cn ... :=oldcn`
     /// (`amiexpress/express.e:11750-11758`).
-    pub(crate) fn attach_read_visit(
+    ///
+    /// # Parameters
+    /// - `coord`: the message base the detour reads.
+    /// - `now`: timestamp recorded on the detour visit.
+    ///
+    /// # Returns
+    /// A [`ReadDetour`] token carrying the captured home coordinate;
+    /// pass it to [`Self::end_read_detour`] to restore the caller's
+    /// home once the read flow finishes.
+    pub(crate) fn begin_read_detour(
         &mut self,
-        conference_number: u32,
-        msgbase_number: u32,
+        coord: MessageBaseRef,
         now: SystemTime,
-    ) {
+    ) -> ReadDetour {
+        let home = self.current_msgbase();
         self.session
-            .attach_visit(conference_number, msgbase_number, now);
+            .attach_visit(coord.conference_number(), coord.msgbase_number(), now);
+        ReadDetour { home }
+    }
+
+    /// Ends a read detour begun with [`Self::begin_read_detour`],
+    /// re-attaching the captured home coordinate — the legacy
+    /// `currentConf := oldcn` (`amiexpress/express.e:11758`).
+    ///
+    /// When the session had no open visit at `begin` (the defensive
+    /// Menu-phase case documented on
+    /// [`Self::current_conference_number`]) there is no home to return
+    /// to, so the detour visit is left attached.
+    ///
+    /// # Parameters
+    /// - `detour`: the token minted by the matching `begin`.
+    /// - `now`: timestamp recorded on the restored home visit.
+    #[allow(clippy::needless_pass_by_value)] // the token is deliberately spent: a detour cannot be ended twice
+    pub(crate) fn end_read_detour(&mut self, detour: ReadDetour, now: SystemTime) {
+        if let Some((conference, msgbase)) = detour.home {
+            self.session.attach_visit(conference, msgbase, now);
+        }
     }
 
     /// Toggles the session's quiet-mode flag and returns the new
@@ -334,6 +363,33 @@ impl MenuSession {
     /// flag listed files into it (slice D2f).
     pub(crate) fn flagged_files_mut(&mut self) -> &mut FlaggedFiles {
         self.session.flagged_files_mut()
+    }
+
+    /// `addFlagToList` (`amiexpress/express.e:12523`): flags `name`
+    /// under the session's current conference. The legacy keys flags
+    /// by `(confNum, fileName)` with no area, so a name typed at the
+    /// `A` prompt carries no catalogue area — the key couples the open
+    /// visit's conference number (`0` in the defensive no-open-visit
+    /// case) with the trimmed name.
+    ///
+    /// # Parameters
+    /// - `name`: the file name as typed; leading/trailing whitespace
+    ///   is trimmed before the length gate and key derivation.
+    ///
+    /// # Returns
+    /// `true` when a new file was flagged (legacy `RETURN 2`); `false`
+    /// for a no-op — a trimmed name of one character or less (the
+    /// `StrLen(fileName)>1` gate, `:12532`) or one already flagged
+    /// (`isInFlaggedList`, `:12534`).
+    pub(crate) fn flag_file(&mut self, name: &str) -> bool {
+        let name = name.trim();
+        if name.len() <= 1 {
+            return false;
+        }
+        let conference = self.current_conference_number().unwrap_or(0);
+        self.session
+            .flagged_files_mut()
+            .flag(FlaggedKey::new(conference, name))
     }
 
     /// The session's flagged-file set, read-only — the `A` listing
@@ -411,6 +467,18 @@ impl MenuSession {
 
 impl_constructor!(MenuSession, Menu);
 impl_active_phase!(MenuSession, Menu);
+
+/// Token minted by [`MenuSession::begin_read_detour`], carrying the
+/// home coordinate open before the detour. `#[must_use]` so a detour
+/// that is never closed with [`MenuSession::end_read_detour`] —
+/// leaving the session parked on the detour base — is a compiler
+/// warning rather than a silent visit leak.
+#[must_use = "end the detour with `MenuSession::end_read_detour` to restore the home visit"]
+pub(crate) struct ReadDetour {
+    /// The `(conference_number, msgbase_number)` pair open before the
+    /// detour; `None` in the defensive no-open-visit case.
+    home: Option<(u32, u32)>,
+}
 
 /// Wraps a [`Session`] in [`SessionState::LoggingOff`]. Ready for
 /// `finalise_logoff`.

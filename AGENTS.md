@@ -101,6 +101,21 @@ or intentionally deferred.
    buys parity with the binary's argv/config-load path, which is covered
    by its own startup tests. The existing `tests/quickwins_smoke.rs` is the
    reference shape for new command-family smokes.
+7. **Tell, don't ask — behaviour lives on the struct that owns the data.**
+   If a call site reads another struct's fields, computes, and writes results
+   back (or re-derives a decision the owner could answer), move that logic
+   onto the owner as an intention-revealing method and have the caller state
+   intent: `call.consume_minute()`, not three lines of field arithmetic on
+   `call.user` / `call.time_remaining`. An invariant that couples two or more
+   fields (counters that move together, a budget and its limit, a page buffer
+   and its count) is enforced in exactly one impl — the owner's — never at
+   call sites. Symptoms that code wants this treatment: read-modify-write of
+   a foreign field; an `.expect()` re-proving an invariant the owner already
+   protects; the same field-manipulation cluster at two call sites; state
+   restored by replaying event mutators in a loop instead of a
+   `from_persisted`-style rehydration constructor. The payoff is information
+   hiding: once no caller touches the fields, the representation — and the
+   invariant's enforcement — is free to change without touching callers.
 
 ## Wire encoding
 

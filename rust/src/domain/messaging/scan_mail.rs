@@ -34,6 +34,7 @@
 //!
 //! [`MailStore`]: crate::domain::messaging::mail_store::MailStore
 //! [`Mail::number`]: crate::domain::messaging::mail::Mail::number
+//! [`ReadPointers`]: crate::domain::messaging::read_pointers::ReadPointers
 
 use std::time::SystemTime;
 
@@ -42,7 +43,6 @@ use crate::domain::conference::MessageBaseRef;
 use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
 use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 use crate::domain::messaging::read_mail::can_read;
-use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::user::User;
 
 /// One row in a mail-scan listing (spec: `messaging.allium:MailScanRow`).
@@ -232,29 +232,18 @@ where
         return Err(ScanMailError::NoMembership(msgbase.conference_number()));
     }
 
-    let last_scanned = user
-        .read_pointers_for(msgbase)
-        .map_or(0, ReadPointers::last_scanned);
     let from = if from_message > 0 {
         from_message
     } else {
-        last_scanned.saturating_add(1)
+        user.last_scanned_for(msgbase).saturating_add(1)
     };
 
     let summary = walk(user, store, msgbase, scope, from)?;
 
-    let target_last_scanned = summary.highest_message.max(last_scanned);
-    if let Some(existing) = user.read_pointers_for_mut(msgbase) {
-        existing.advance_last_scanned(target_last_scanned);
-    } else {
-        let mut fresh = ReadPointers::fresh(msgbase.msgbase_number(), now);
-        fresh.advance_last_scanned(target_last_scanned);
-        let upserted = user.upsert_read_pointers(fresh, msgbase.conference_number());
-        debug_assert!(
-            upserted,
-            "membership existence was checked above; upsert must succeed",
-        );
-    }
+    // `advance_last_scanned` is monotonic, so passing the store's
+    // `highest_message` directly cannot drag the pointer backwards.
+    let advanced = user.advance_last_scanned(msgbase, summary.highest_message, now);
+    debug_assert!(advanced, "membership existence was checked above");
 
     Ok(summary)
 }
@@ -319,7 +308,7 @@ where
 /// slice.
 fn is_unread_for(user: &User, mail: &Mail, scope: AllScanScope) -> bool {
     let _ = scope;
-    if matches!(mail.visibility(), MailVisibility::Deleted) {
+    if mail.is_deleted() {
         return false;
     }
     if !can_read(user, mail) {
@@ -327,9 +316,7 @@ fn is_unread_for(user: &User, mail: &Mail, scope: AllScanScope) -> bool {
     }
     match mail.broadcast_to() {
         BroadcastTo::All | BroadcastTo::Eall => true,
-        BroadcastTo::None => {
-            mail.addressee_slot() == Some(user.slot_number()) && mail.received_at().is_none()
-        }
+        BroadcastTo::None => mail.is_unread_addressed_to(user.slot_number()),
     }
 }
 

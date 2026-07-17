@@ -1,8 +1,12 @@
 //! Lockout / password-failure policy applied to a [`Session`].
 //!
 //! Free functions (rather than methods on [`Session`]) so the
-//! domain entity stops growing as more policies land. Each function
-//! takes `&mut Session` and runs the spec rule cluster:
+//! domain entity stops growing as more policies land. Phase
+//! *transitions* stay on [`Session`] (e.g.
+//! `Session::complete_authentication`, `Session::move_to_logging_off`);
+//! the free functions here own the policy decisions and outcome
+//! mapping around them. Each function takes `&mut Session` and runs
+//! the spec rule cluster:
 //!
 //! - [`apply_password_match`] handles the matching branch of
 //!   `session.allium:VerifyPassword` and runs the post-onboarded
@@ -14,13 +18,14 @@
 //! - [`apply_password_change`] applies the credential update spec'd
 //!   by `session.allium:CompletePasswordReset` (Slice 15).
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use crate::domain::caller_log::CallerLog;
 use crate::domain::password::PasswordHashKind;
+use crate::domain::user::AuthOutcome;
 
 use super::{
-    AuthenticatedCall, CallId, CompletePasswordResetError, ForcePasswordResetError, LogoffReason,
+    CallId, CompletePasswordResetError, ForcePasswordResetError, LogoffReason, OnboardedEntry,
     PasswordFailureDecision, Session, SessionPhase, SessionPolicy, VerifyPasswordError,
     VerifyPasswordOutcome,
 };
@@ -30,7 +35,8 @@ use super::{
 /// Clears `user.invalid_attempts`, sets `authenticated_at`, stamps the
 /// caller-supplied `call_id` as the call's durable identity, and
 /// transitions to [`SessionState::Onboarded`], then fires the
-/// `state becomes onboarded` rule cluster.
+/// `state becomes onboarded` rule cluster (via
+/// [`Session::complete_authentication`]).
 ///
 /// # Returns
 /// A tuple of:
@@ -39,40 +45,56 @@ use super::{
 ///   `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
 ///   short-circuited the post-auth cluster;
 /// - an optional [`CallerLog`] entry the rejection rule emits.
-///   The caller is responsible for appending this to the log.
+///   The caller is responsible for appending this to the log;
+/// - the [`AuthOutcome`] to persist via `record_auth_outcome`. It
+///   carries the [`DailyBudgetOutcome`](crate::domain::user::DailyBudgetOutcome)
+///   the budget rule actually applied (`None` on the rejected path,
+///   where the rule never ran) and the bound user's
+///   `force_password_reset` flag after the expiry rule — assembled
+///   here, from the rules' own outputs, so the persisted command
+///   cannot drift from the in-session mutation.
 ///
 /// # Errors
 /// Returns [`VerifyPasswordError::WrongState`] if the session is
 /// not in [`SessionState::Authenticating`].
+///
+/// # Panics
+/// Panics if the session has no bound user after the transition —
+/// unreachable in practice, since a successful
+/// `complete_authentication` always leaves the user bound (on both
+/// the admitted and rejected paths).
 pub fn apply_password_match(
     session: &mut Session,
     policy: SessionPolicy,
     now: SystemTime,
     call_id: CallId,
-) -> Result<(VerifyPasswordOutcome, Option<CallerLog>), VerifyPasswordError> {
-    let SessionPhase::Authenticating { user, .. } = &mut session.phase else {
-        return Err(VerifyPasswordError::WrongState(session.state()));
-    };
-    user.clear_invalid_attempts();
-    let previous = std::mem::replace(&mut session.phase, SessionPhase::Connecting);
-    let SessionPhase::Authenticating { user, .. } = previous else {
-        unreachable!("phase checked above");
-    };
-    session.phase = SessionPhase::Onboarded {
-        call: AuthenticatedCall {
-            call_id,
-            user,
-            authenticated_at: now,
-            time_remaining: Duration::ZERO,
-        },
-    };
-    let rejection = session.on_enter_onboarded(policy, now);
-    let outcome = if rejection.is_some() {
-        VerifyPasswordOutcome::LogonRejected
-    } else {
-        VerifyPasswordOutcome::Authenticated
-    };
-    Ok((outcome, rejection))
+) -> Result<(VerifyPasswordOutcome, Option<CallerLog>, AuthOutcome), VerifyPasswordError> {
+    let entry = session.complete_authentication(policy, now, call_id)?;
+    // Correct on both paths: post-rule state when admitted, the
+    // untouched stored flag when rejected (the command's one-way
+    // merge never clears the flag either way).
+    let force_password_reset = session
+        .user()
+        .expect("password match leaves the user bound")
+        .force_password_reset();
+    Ok(match entry {
+        OnboardedEntry::Admitted { daily } => (
+            VerifyPasswordOutcome::Authenticated,
+            None,
+            AuthOutcome::Matched {
+                daily: Some(daily),
+                force_password_reset,
+            },
+        ),
+        OnboardedEntry::Rejected(log) => (
+            VerifyPasswordOutcome::LogonRejected,
+            Some(log),
+            AuthOutcome::Matched {
+                daily: None,
+                force_password_reset,
+            },
+        ),
+    })
 }
 
 /// Applies the non-matching branch of `session.allium:VerifyPassword`.
@@ -90,16 +112,10 @@ pub fn apply_password_mismatch(
     policy: SessionPolicy,
     now: SystemTime,
 ) -> Result<(VerifyPasswordOutcome, CallerLog), VerifyPasswordError> {
-    let SessionPhase::Authenticating {
-        user,
-        password_retry_count,
-        ..
-    } = &mut session.phase
-    else {
+    let SessionPhase::Authenticating { attempt } = &mut session.phase else {
         return Err(VerifyPasswordError::WrongState(session.state()));
     };
-    user.bump_invalid_attempts();
-    *password_retry_count = (*password_retry_count).saturating_add(1);
+    attempt.record_password_failure();
 
     let entry = CallerLog {
         session_node: session.shared.node_number,
@@ -108,12 +124,13 @@ pub fn apply_password_mismatch(
         is_password_failure: true,
     };
 
-    let outcome = match policy.password_failure_decision(session) {
+    let decision = policy.password_failure_decision(
+        attempt.user.invalid_attempts(),
+        attempt.password_retry_count,
+    );
+    let outcome = match decision {
         PasswordFailureDecision::LockAccount => {
-            let SessionPhase::Authenticating { user, .. } = &mut session.phase else {
-                unreachable!("phase checked before password failure decision");
-            };
-            user.lock_account();
+            attempt.user.lock_account();
             session.move_to_logging_off(Some(LogoffReason::LockedAccount));
             VerifyPasswordOutcome::AccountLocked
         }
@@ -149,14 +166,7 @@ pub fn force_password_reset_if_due(
     if user.is_account_locked() {
         return Ok(());
     }
-    let already_flagged = user.force_password_reset();
-    let expired = password_expiry_days > 0
-        && now
-            .duration_since(user.password_last_updated())
-            .is_ok_and(|d| d > Duration::from_secs(u64::from(password_expiry_days) * 86_400));
-    if expired || already_flagged {
-        user.set_force_password_reset(true);
-    }
+    user.flag_password_reset_if_expired(password_expiry_days, now);
     Ok(())
 }
 

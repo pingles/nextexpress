@@ -8,7 +8,9 @@
 
 use crate::app::clock::Clock;
 use crate::app::services::AppServices;
-use crate::app::session_flow::{self, CompletePasswordResetFlowError};
+use crate::app::session_flow::{
+    self, CompletePasswordResetFlowError, CompletePasswordResetTransition, PasswordResetRejection,
+};
 use crate::app::session_terminal::{preserve_phase, SessionFlowResult};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
 use crate::app::wire_text::IDLE_TIMEOUT_LINE;
@@ -164,36 +166,30 @@ where
                 continue;
             }
 
-            let mut inner = session.into_inner();
             match session_flow::complete_password_reset(
-                &mut inner,
+                session,
                 &candidate,
                 self.services.user_repo,
                 self.services.hasher,
                 self.services.session_policy,
                 self.services.clock.now(),
             ) {
-                Ok(()) => {
-                    return Ok(PasswordResetOutcome::Onboarded(
-                        OnboardedSession::from_session(inner),
-                    ));
+                Ok(CompletePasswordResetTransition::Reset(onboarded)) => {
+                    return Ok(PasswordResetOutcome::Onboarded(onboarded));
                 }
-                Err(CompletePasswordResetFlowError::WeakPassword) => {
+                Ok(CompletePasswordResetTransition::Rejected {
+                    session: rejected,
+                    reason,
+                }) => {
                     attempts += 1;
-                    session = OnboardedSession::from_session(inner);
+                    let notice = match reason {
+                        PasswordResetRejection::WeakPassword => PASSWORD_RESET_WEAK_LINE,
+                        PasswordResetRejection::SameAsCurrent => {
+                            PASSWORD_RESET_SAME_AS_CURRENT_LINE
+                        }
+                    };
                     let (next_session, ()) =
-                        preserve_phase(session, self.write_and_flush(PASSWORD_RESET_WEAK_LINE))
-                            .await?;
-                    session = next_session;
-                }
-                Err(CompletePasswordResetFlowError::SameAsCurrent) => {
-                    attempts += 1;
-                    session = OnboardedSession::from_session(inner);
-                    let (next_session, ()) = preserve_phase(
-                        session,
-                        self.write_and_flush(PASSWORD_RESET_SAME_AS_CURRENT_LINE),
-                    )
-                    .await?;
+                        preserve_phase(rejected, self.write_and_flush(notice)).await?;
                     session = next_session;
                 }
                 Err(CompletePasswordResetFlowError::Hash(error)) => {
@@ -284,6 +280,7 @@ mod tests {
         apply_password_match, CallId, LogonChannel, Session, SessionPolicy,
     };
     use crate::domain::user::User;
+    use crate::domain::user_repository::NameLookupResult;
 
     use super::*;
 
@@ -484,6 +481,61 @@ mod tests {
         );
         assert_contains(terminal.output(), PASSWORD_RESET_EXHAUSTED_LINE);
         assert_eq!(terminal.echo_modes, vec![TerminalEcho::Masked; 6]);
+    }
+
+    #[tokio::test]
+    async fn same_as_current_candidate_writes_the_notice_and_retries() {
+        let (fixture, session) = reset_fixture_and_session(SessionPolicy::default());
+        // "secret" is alice's current password; the confirmed candidate
+        // is rejected with the same-as-current notice, then the retry
+        // prompt hits EOF and the connection logs off.
+        let mut terminal = FakeTerminal::new([line("secret"), line("secret")]);
+
+        let outcome = PasswordResetFlow::new(&mut terminal, fixture.services())
+            .run(session)
+            .await
+            .expect("flow completes");
+
+        assert!(matches!(outcome, PasswordResetOutcome::LoggingOff(_)));
+        assert_eq!(
+            count_occurrences(terminal.output(), PASSWORD_RESET_SAME_AS_CURRENT_LINE),
+            1
+        );
+        assert_eq!(
+            count_occurrences(terminal.output(), PASSWORD_RESET_WEAK_LINE),
+            0,
+            "a same-as-current rejection must not render the weak-password notice"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_reset_returns_onboarded_and_clears_the_flag() {
+        let (fixture, session) = reset_fixture_and_session(SessionPolicy::default());
+        let mut terminal = FakeTerminal::new([line("Newpass123"), line("Newpass123")]);
+
+        let outcome = PasswordResetFlow::new(&mut terminal, fixture.services())
+            .run(session)
+            .await
+            .expect("flow completes");
+
+        let PasswordResetOutcome::Onboarded(onboarded) = outcome else {
+            panic!("expected Onboarded outcome");
+        };
+        assert!(
+            !onboarded.user().force_password_reset(),
+            "the rotated credentials clear the pending reset"
+        );
+        let NameLookupResult::Found(saved) = fixture
+            .user_repo
+            .find_by_handle("alice")
+            .expect("repo lookup")
+        else {
+            panic!("alice must exist");
+        };
+        assert!(
+            !saved.force_password_reset(),
+            "the cleared flag reaches storage"
+        );
     }
 
     struct ResetFixture {

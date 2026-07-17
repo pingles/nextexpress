@@ -11,12 +11,13 @@
 
 use crate::app::screens::ScreenRepository;
 use crate::app::terminal::Terminal;
-use crate::domain::conference::{Conference, MessageBase, NameType};
+use crate::domain::conference::{Conference, NameType};
 
 /// Resolves `(conference_name, msgbase_name)` for the wire-format
 /// helpers. The `msgbase_name` is `Some(_)` only when the
 /// conference holds more than one message base, mirroring the
-/// `getConfMsgBaseCount(conf)>1` branch in legacy `joinConf`.
+/// `getConfMsgBaseCount(conf)>1` branch in legacy `joinConf` (the
+/// [`Conference::disambiguating_msgbase_name`] rule).
 #[must_use]
 pub(crate) fn resolve_conference_strings(
     conferences: &[Conference],
@@ -26,16 +27,10 @@ pub(crate) fn resolve_conference_strings(
     let Some(conference) = conferences.iter().find(|c| c.number() == conference_number) else {
         return ("?", None);
     };
-    let msgbase_name = if conference.msgbases().len() > 1 {
-        conference
-            .msgbases()
-            .iter()
-            .find(|m| m.number() == msgbase_number)
-            .map(MessageBase::name)
-    } else {
-        None
-    };
-    (conference.name(), msgbase_name)
+    (
+        conference.name(),
+        conference.disambiguating_msgbase_name(msgbase_number),
+    )
 }
 
 /// Looks up `conference_number` in `conferences` and renders the

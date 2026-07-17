@@ -1,17 +1,19 @@
-//! Per-call payload types for the authenticated session phases.
+//! Phase payload types for the `SessionPhase` variants.
 //!
 //! [`AuthenticatedCall`] groups the state that exists from successful
 //! authentication until teardown. The authenticated phases carry it
 //! whole and [`CallSalvage`] preserves it through `LoggingOff`/`Ended`,
 //! so adding a per-call field is a single-site change instead of an
 //! edit to every `SessionPhase` variant and salvage match.
+//! [`AuthenticatingAttempt`] carries the pre-authentication payload
+//! the same way (item 23a's pattern applied to `Authenticating`).
 
 use std::fmt;
 use std::time::{Duration, SystemTime};
 
-use crate::domain::user::User;
+use crate::domain::user::{DailyBudgetOutcome, User};
 
-use super::SessionPhase;
+use super::{NewUserPasswordOutcome, SessionPhase};
 
 /// Opaque, durable identity of one authenticated call.
 ///
@@ -64,6 +66,216 @@ pub(super) struct AuthenticatedCall {
     pub(super) time_remaining: Duration,
 }
 
+impl AuthenticatedCall {
+    /// Binds `user` to a freshly authenticated call.
+    ///
+    /// # Parameters
+    /// - `call_id`: the call's durable identity, stamped at
+    ///   authentication.
+    /// - `user`: the authenticated user the call carries.
+    /// - `authenticated_at`: when authentication completed.
+    ///
+    /// # Returns
+    /// A call whose `time_remaining` starts at [`Duration::ZERO`] —
+    /// the budget is not an authentication concern, so it stays zero
+    /// until `session.allium:InitialiseDailyBudget` resets it via
+    /// [`Self::reset_time_budget`].
+    #[must_use]
+    pub(super) fn new(call_id: CallId, user: User, authenticated_at: SystemTime) -> Self {
+        Self {
+            call_id,
+            user,
+            authenticated_at,
+            time_remaining: Duration::ZERO,
+        }
+    }
+
+    /// `session.allium:InitialiseDailyBudget` (Slice 14): rolls the
+    /// bound user's daily counters across the accounting-day boundary
+    /// and resets the per-call time budget.
+    ///
+    /// Delegates the day-boundary decision to
+    /// [`super::budget::daily_budget_outcome`] — the same function the
+    /// `record_auth_outcome` persistence command uses — so the
+    /// in-session mutation and the persisted command cannot drift.
+    /// Note the legacy quirk the outcome documents: a new day *resets*
+    /// the counters without bumping `times_called_today`.
+    ///
+    /// # Parameters
+    /// - `now`: the current logon time.
+    /// - `daily_reset_offset`: how far past midnight UTC the
+    ///   accounting day rolls over (legacy default: six hours).
+    ///
+    /// # Returns
+    /// The [`DailyBudgetOutcome`] the rule applied — threaded back to
+    /// the caller so the `record_auth_outcome` persistence command
+    /// carries the very decision that mutated the counters.
+    pub(super) fn begin_daily_budget(
+        &mut self,
+        now: SystemTime,
+        daily_reset_offset: Duration,
+    ) -> DailyBudgetOutcome {
+        let outcome =
+            super::budget::daily_budget_outcome(self.user.last_call(), now, daily_reset_offset);
+        match outcome {
+            DailyBudgetOutcome::NewDay => self.user.reset_daily_counters(),
+            DailyBudgetOutcome::SameDay => self.user.bump_times_called_today(),
+        }
+        self.reset_time_budget();
+        outcome
+    }
+
+    /// Resets the per-call time budget to the user's configured
+    /// per-call limit.
+    ///
+    /// Each call starts with a fresh allowance; invoked by
+    /// [`Self::begin_daily_budget`] on the `authenticating ->
+    /// onboarded` transition (`session.allium:InitialiseDailyBudget`).
+    pub(super) fn reset_time_budget(&mut self) {
+        self.time_remaining = self.user.time_limit_per_call();
+    }
+
+    /// Applies one elapsed minute to the call: accumulates it against
+    /// the user's daily total and decrements the per-call budget,
+    /// saturating at zero.
+    ///
+    /// # Returns
+    /// `true` when the per-call budget is now exhausted, so the caller
+    /// must begin logging off (`session.allium:UpdateTimeUsed` +
+    /// `TimeExpired`).
+    pub(super) fn consume_minute(&mut self) -> bool {
+        let minute = Duration::from_mins(1);
+        self.user.add_time_used_today(minute);
+        self.time_remaining = self.time_remaining.saturating_sub(minute);
+        self.time_remaining.is_zero()
+    }
+}
+
+/// Marker error returned by [`NewUserGate::record_attempt`] when the
+/// gate has already passed — the caller should stop prompting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct GateAlreadyVerified;
+
+/// Payload of `SessionPhase::NewUserRegistering`: the new-user
+/// password gate's per-session progress
+/// (`session.allium:VerifyNewUserPassword`, Slice 20a).
+///
+/// Deliberately close in name to the app-layer `NewUserGateConfig`
+/// (`app::session_flow`): the config carries the gate's *policy
+/// inputs* (secret, attempt cap), while this value object owns the
+/// *per-session state* those inputs gate. The cap stays a per-call
+/// parameter of [`Self::record_attempt`] — duplicating config into
+/// gate state would create a second source of truth.
+#[derive(Debug, Clone)]
+pub(super) struct NewUserGate {
+    /// Whether the gate has passed (or was never armed).
+    verified: bool,
+    /// Incorrect password attempts recorded against this session.
+    attempts: u32,
+}
+
+impl NewUserGate {
+    /// `session.allium:InitialiseNewUserGate` (Slice 20a): arms the
+    /// gate for a fresh registration sub-flow.
+    ///
+    /// # Parameters
+    /// - `password_required`: mirrors `core/config.new_user_password
+    ///   != null`. When `false` no gate runs, so the flag starts
+    ///   verified.
+    ///
+    /// # Returns
+    /// A gate with zero attempts, already verified when no password
+    /// is required.
+    #[must_use]
+    pub(super) fn new(password_required: bool) -> Self {
+        Self {
+            verified: !password_required,
+            attempts: 0,
+        }
+    }
+
+    /// `session.allium:VerifyNewUserPassword` (Slice 20a): records one
+    /// gate attempt, owning the verify / bump / threshold rules.
+    ///
+    /// # Parameters
+    /// - `matches`: whether the typed candidate matched
+    ///   `core/config.new_user_password` — the comparison is the
+    ///   application layer's, keeping presentation and hash-storage
+    ///   decisions out of the gate.
+    /// - `max_attempts`: `core/config.max_new_user_password_attempts`
+    ///   (the `SessionRetriesBounded` invariant's bound).
+    ///
+    /// # Returns
+    /// [`NewUserPasswordOutcome::Verified`] on a match. On a mismatch
+    /// the attempt counter climbs (saturating) and the outcome is
+    /// [`NewUserPasswordOutcome::TooManyFailures`] once the counter
+    /// reaches `max_attempts`, otherwise
+    /// [`NewUserPasswordOutcome::Mismatch`].
+    ///
+    /// # Errors
+    /// [`GateAlreadyVerified`] when the gate has already passed.
+    pub(super) fn record_attempt(
+        &mut self,
+        matches: bool,
+        max_attempts: u32,
+    ) -> Result<NewUserPasswordOutcome, GateAlreadyVerified> {
+        if self.verified {
+            return Err(GateAlreadyVerified);
+        }
+        if matches {
+            self.verified = true;
+            return Ok(NewUserPasswordOutcome::Verified);
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        if self.attempts >= max_attempts {
+            Ok(NewUserPasswordOutcome::TooManyFailures)
+        } else {
+            Ok(NewUserPasswordOutcome::Mismatch)
+        }
+    }
+
+    /// Whether the gate has passed — `CompleteNewUserRegistration`'s
+    /// `GateNotVerified` precondition and the
+    /// `Session::new_user_password_verified` accessor read this.
+    #[must_use]
+    pub(super) fn verified(&self) -> bool {
+        self.verified
+    }
+
+    /// Incorrect attempts recorded so far — the
+    /// `Session::new_user_password_attempts` accessor reads this.
+    #[must_use]
+    pub(super) fn attempts(&self) -> u32 {
+        self.attempts
+    }
+}
+
+/// Payload of `SessionPhase::Authenticating`: the identified user and
+/// the per-session password bookkeeping that exists only while a
+/// password is being verified.
+#[derive(Debug, Clone)]
+pub(super) struct AuthenticatingAttempt {
+    /// The handle exactly as the user typed it at the identify prompt.
+    pub(super) typed_name: String,
+    /// The user the typed handle resolved to.
+    pub(super) user: User,
+    /// Bad-password strikes accumulated on this session.
+    pub(super) password_retry_count: u32,
+}
+
+impl AuthenticatingAttempt {
+    /// Records one failed password attempt (the non-matching branch of
+    /// `session.allium:VerifyPassword`, Slice 11): bumps the user's
+    /// persistent `invalid_attempts` and the per-session
+    /// `password_retry_count` together. The two counters feed
+    /// `SessionPolicy::password_failure_decision` and must advance in
+    /// lockstep — that pairing is the invariant this method owns.
+    pub(super) fn record_password_failure(&mut self) {
+        self.user.bump_invalid_attempts();
+        self.password_retry_count = self.password_retry_count.saturating_add(1);
+    }
+}
+
 /// What the session still knows about its caller once teardown begins —
 /// the payload `LoggingOff` and `Ended` retain.
 ///
@@ -89,7 +301,7 @@ impl CallSalvage {
             SessionPhase::Connecting
             | SessionPhase::Identifying { .. }
             | SessionPhase::NewUserRegistering { .. } => Self::Unidentified,
-            SessionPhase::Authenticating { user, .. } => Self::Identified(user),
+            SessionPhase::Authenticating { attempt } => Self::Identified(attempt.user),
             SessionPhase::Onboarded { call } | SessionPhase::Menu { call } => {
                 Self::Authenticated(call)
             }

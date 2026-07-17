@@ -16,7 +16,7 @@
 use std::time::SystemTime;
 
 use crate::domain::conference::{AllowedAddressing, MessageBaseRef};
-use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
+use crate::domain::messaging::mail::{BroadcastTo, Mail};
 use crate::domain::messaging::mail_store::MailStore;
 use crate::domain::messaging::post_mail::{post_mail, PostMailDraft, PostMailError};
 use crate::domain::messaging::read_mail::can_read;
@@ -103,7 +103,7 @@ pub fn reply_to_mail(
     source: &Mail,
     draft: ReplyToMailDraft,
 ) -> Result<Mail, ReplyToMailError> {
-    if matches!(source.visibility(), MailVisibility::Deleted) {
+    if source.is_deleted() {
         return Err(ReplyToMailError::SourceDeleted);
     }
     if !can_read(user, source) {

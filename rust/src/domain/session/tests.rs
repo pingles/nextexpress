@@ -68,17 +68,7 @@ mod fixtures {
 
     pub(super) fn authenticating_user_mut(session: &mut Session) -> &mut User {
         match &mut session.phase {
-            SessionPhase::Authenticating { user, .. } => user,
-            other => panic!("expected authenticating phase, got {:?}", other.state()),
-        }
-    }
-
-    pub(super) fn set_authenticating_password_retry_count(session: &mut Session, count: u32) {
-        match &mut session.phase {
-            SessionPhase::Authenticating {
-                password_retry_count,
-                ..
-            } => *password_retry_count = count,
+            SessionPhase::Authenticating { attempt } => &mut attempt.user,
             other => panic!("expected authenticating phase, got {:?}", other.state()),
         }
     }
@@ -91,12 +81,7 @@ mod fixtures {
     pub(super) fn session_at_onboarded_with(user: User) -> Session {
         let mut s = new_session(LogonChannel::Remote);
         s.phase = SessionPhase::Onboarded {
-            call: AuthenticatedCall {
-                call_id: test_call_id(),
-                user,
-                authenticated_at: SystemTime::UNIX_EPOCH,
-                time_remaining: Duration::ZERO,
-            },
+            call: AuthenticatedCall::new(test_call_id(), user, SystemTime::UNIX_EPOCH),
         };
         s
     }
@@ -528,6 +513,44 @@ mod identification {
     }
 
     #[test]
+    fn new_user_gate_starts_verified_only_when_no_password_required() {
+        assert!(NewUserGate::new(false).verified());
+        assert!(!NewUserGate::new(true).verified());
+        assert_eq!(NewUserGate::new(true).attempts(), 0);
+    }
+
+    #[test]
+    fn new_user_gate_match_verifies_and_stops_counting() {
+        let mut gate = NewUserGate::new(true);
+        assert_eq!(
+            gate.record_attempt(true, 3),
+            Ok(NewUserPasswordOutcome::Verified)
+        );
+        assert!(gate.verified());
+        assert!(gate.record_attempt(true, 3).is_err());
+        assert_eq!(gate.attempts(), 0);
+    }
+
+    #[test]
+    fn new_user_gate_counts_mismatches_to_the_threshold() {
+        let mut gate = NewUserGate::new(true);
+        assert_eq!(
+            gate.record_attempt(false, 3),
+            Ok(NewUserPasswordOutcome::Mismatch)
+        );
+        assert_eq!(
+            gate.record_attempt(false, 3),
+            Ok(NewUserPasswordOutcome::Mismatch)
+        );
+        assert_eq!(gate.attempts(), 2);
+        assert!(!gate.verified());
+        assert_eq!(
+            gate.record_attempt(false, 3),
+            Ok(NewUserPasswordOutcome::TooManyFailures)
+        );
+    }
+
+    #[test]
     fn apply_new_user_password_attempt_match_marks_verified() {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
@@ -668,6 +691,27 @@ mod new_user_registration {
     }
 
     #[test]
+    fn complete_new_user_registration_rejects_a_below_threshold_user() {
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        s.record_new_user_request(true, false, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        // Access level 1 is below the minimum non-locked tier, so
+        // RejectLockedOrInsufficientAccess short-circuits the
+        // post-onboarded cluster and the rejection entry surfaces.
+        let rejection = s
+            .complete_new_user_registration(
+                super::fixtures::user_with_access_level(1),
+                SessionPolicy::default(),
+                SystemTime::UNIX_EPOCH,
+                CallId::new(1),
+            )
+            .expect("transition applies");
+        assert!(rejection.is_some());
+        assert_eq!(s.state(), SessionState::LoggingOff);
+    }
+
+    #[test]
     fn complete_new_user_registration_outside_new_user_registering_errors() {
         let mut s = new_session(LogonChannel::Remote);
         let err = s
@@ -689,22 +733,110 @@ mod authentication {
     use std::time::{Duration, SystemTime};
 
     use super::super::*;
-    use super::fixtures::{
-        alice, authenticated_session, authenticating_user_mut, new_session,
-        set_authenticating_password_retry_count,
-    };
+    use super::fixtures::{alice, authenticated_session, authenticating_user_mut, new_session};
 
     #[test]
     fn verify_password_match_advances_to_onboarded() {
         let mut s = authenticated_session();
         let now = SystemTime::UNIX_EPOCH + Duration::from_mins(1);
-        let (outcome, rejection) =
+        let (outcome, rejection, _auth) =
             apply_password_match(&mut s, SessionPolicy::default(), now, CallId::new(1)).unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::Authenticated);
         assert!(rejection.is_none());
         assert_eq!(s.state(), SessionState::Onboarded);
         assert_eq!(s.authenticated_at(), Some(now));
         assert!(s.is_authenticated());
+    }
+
+    #[test]
+    fn apply_password_match_reports_the_same_day_outcome_it_applied() {
+        use crate::domain::user::{AuthOutcome, DailyBudgetOutcome};
+        let mut s = new_session(LogonChannel::Remote);
+        s.prompt_for_name().unwrap();
+        let mut user = alice();
+        // Last call earlier in the same accounting day (six-hour
+        // offset): the budget rule decides SameDay, and the returned
+        // AuthOutcome must carry that same decision.
+        user.record_last_call(SystemTime::UNIX_EPOCH + Duration::from_hours(7));
+        s.record_identified_user("alice", user).unwrap();
+        let (_, _, auth) = apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH + Duration::from_hours(20),
+            CallId::new(1),
+        )
+        .unwrap();
+        assert_eq!(
+            auth,
+            AuthOutcome::Matched {
+                daily: Some(DailyBudgetOutcome::SameDay),
+                force_password_reset: false,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_password_match_reports_a_new_day_outcome_for_a_first_call() {
+        use crate::domain::user::{AuthOutcome, DailyBudgetOutcome};
+        let mut s = authenticated_session();
+        let (_, _, auth) = apply_password_match(
+            &mut s,
+            SessionPolicy::default(),
+            SystemTime::UNIX_EPOCH,
+            CallId::new(1),
+        )
+        .unwrap();
+        assert_eq!(
+            auth,
+            AuthOutcome::Matched {
+                daily: Some(DailyBudgetOutcome::NewDay),
+                force_password_reset: false,
+            }
+        );
+    }
+
+    #[test]
+    fn apply_password_match_reports_force_password_reset_after_expiry() {
+        use crate::domain::user::AuthOutcome;
+        let mut s = authenticated_session();
+        let policy = SessionPolicy::default().with_password_expiry_days(1);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_hours(168);
+        let (_, _, auth) = apply_password_match(&mut s, policy, now, CallId::new(1)).unwrap();
+        assert!(matches!(
+            auth,
+            AuthOutcome::Matched {
+                force_password_reset: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn complete_authentication_moves_to_onboarded_and_clears_attempts() {
+        let mut s = authenticated_session();
+        authenticating_user_mut(&mut s).bump_invalid_attempts();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_mins(1);
+        let entry = s
+            .complete_authentication(SessionPolicy::default(), now, CallId::new(3))
+            .unwrap();
+        assert!(matches!(entry, OnboardedEntry::Admitted { .. }));
+        assert_eq!(s.state(), SessionState::Onboarded);
+        assert_eq!(s.authenticated_at(), Some(now));
+        assert_eq!(s.call_id(), Some(CallId::new(3)));
+        assert_eq!(s.user().unwrap().invalid_attempts(), 0);
+    }
+
+    #[test]
+    fn complete_authentication_outside_authenticating_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        let err = s
+            .complete_authentication(
+                SessionPolicy::default(),
+                SystemTime::UNIX_EPOCH,
+                CallId::new(1),
+            )
+            .expect_err("must be authenticating");
+        assert!(matches!(err, VerifyPasswordError::WrongState(_)));
     }
 
     #[test]
@@ -752,38 +884,41 @@ mod authentication {
     }
 
     #[test]
-    fn session_policy_continues_below_password_failure_limit() {
-        let mut s = authenticated_session();
-        set_authenticating_password_retry_count(&mut s, 1);
-        authenticating_user_mut(&mut s).bump_invalid_attempts();
+    fn record_password_failure_advances_both_counters_in_lockstep() {
+        let mut attempt = AuthenticatingAttempt {
+            typed_name: "alice".to_string(),
+            user: alice(),
+            password_retry_count: 0,
+        };
+        attempt.record_password_failure();
+        assert_eq!(attempt.user.invalid_attempts(), 1);
+        assert_eq!(attempt.password_retry_count, 1);
+        attempt.record_password_failure();
+        assert_eq!(attempt.user.invalid_attempts(), 2);
+        assert_eq!(attempt.password_retry_count, 2);
+    }
 
+    #[test]
+    fn session_policy_continues_below_password_failure_limit() {
         assert_eq!(
-            SessionPolicy::new(3).password_failure_decision(&s),
+            SessionPolicy::new(3).password_failure_decision(1, 1),
             PasswordFailureDecision::Continue
         );
     }
 
     #[test]
     fn session_policy_locks_account_when_user_failures_reach_limit() {
-        let mut s = authenticated_session();
-        set_authenticating_password_retry_count(&mut s, 3);
-        for _ in 0..3 {
-            authenticating_user_mut(&mut s).bump_invalid_attempts();
-        }
-
+        // Lockout wins over session end when both counters trip.
         assert_eq!(
-            SessionPolicy::new(3).password_failure_decision(&s),
+            SessionPolicy::new(3).password_failure_decision(3, 3),
             PasswordFailureDecision::LockAccount
         );
     }
 
     #[test]
     fn session_policy_ends_session_when_session_failures_reach_limit() {
-        let mut s = authenticated_session();
-        set_authenticating_password_retry_count(&mut s, 3);
-
         assert_eq!(
-            SessionPolicy::new(3).password_failure_decision(&s),
+            SessionPolicy::new(3).password_failure_decision(0, 3),
             PasswordFailureDecision::EndSession
         );
     }
@@ -1166,12 +1301,43 @@ mod time_budget {
     }
 
     #[test]
+    fn begin_daily_budget_same_day_bumps_and_resets_the_call_budget() {
+        use crate::domain::user::DailyBudgetOutcome;
+        let mut user = user_with_time_limits(Duration::from_mins(30), Duration::from_hours(1));
+        user.record_last_call(UNIX_EPOCH + Duration::from_hours(7));
+        let mut call = AuthenticatedCall::new(super::fixtures::test_call_id(), user, UNIX_EPOCH);
+        let outcome =
+            call.begin_daily_budget(UNIX_EPOCH + Duration::from_hours(20), DAILY_RESET_OFFSET);
+        assert_eq!(outcome, DailyBudgetOutcome::SameDay);
+        assert_eq!(call.user.times_called_today(), 1);
+        assert_eq!(call.time_remaining, Duration::from_mins(30));
+    }
+
+    #[test]
+    fn begin_daily_budget_new_day_resets_the_daily_counters() {
+        use crate::domain::user::DailyBudgetOutcome;
+        let mut user = user_with_time_limits(Duration::from_mins(30), Duration::from_hours(1));
+        user.record_last_call(UNIX_EPOCH + Duration::from_hours(10));
+        user.add_time_used_today(Duration::from_mins(15));
+        user.bump_times_called_today();
+        let mut call = AuthenticatedCall::new(super::fixtures::test_call_id(), user, UNIX_EPOCH);
+        let outcome =
+            call.begin_daily_budget(UNIX_EPOCH + Duration::from_hours(36), DAILY_RESET_OFFSET);
+        assert_eq!(outcome, DailyBudgetOutcome::NewDay);
+        assert_eq!(call.user.times_called_today(), 0);
+        assert_eq!(call.user.time_used_today(), Duration::ZERO);
+        assert_eq!(call.time_remaining, Duration::from_mins(30));
+    }
+
+    #[test]
     fn initialise_daily_budget_first_call_treats_as_new_day() {
         let mut s = session_at_onboarded_with(user_with_time_limits(
             Duration::from_mins(30),
             Duration::from_hours(1),
         ));
-        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
+        let outcome =
+            initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
+        assert_eq!(outcome, crate::domain::user::DailyBudgetOutcome::NewDay);
         assert_eq!(s.user().unwrap().times_called_today(), 0);
         assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
         assert_eq!(s.time_remaining(), Duration::from_mins(30));
@@ -1187,7 +1353,8 @@ mod time_budget {
         let mut s = session_at_onboarded_with(user);
 
         let later_today = UNIX_EPOCH + Duration::from_hours(20);
-        initialise_daily_budget(&mut s, later_today, DAILY_RESET_OFFSET).unwrap();
+        let outcome = initialise_daily_budget(&mut s, later_today, DAILY_RESET_OFFSET).unwrap();
+        assert_eq!(outcome, crate::domain::user::DailyBudgetOutcome::SameDay);
         assert_eq!(s.user().unwrap().times_called_today(), 2);
         assert_eq!(s.user().unwrap().time_used_today(), Duration::from_mins(2));
         assert_eq!(s.time_remaining(), Duration::from_mins(30));
@@ -1506,7 +1673,7 @@ mod access_rejection {
         let mut s = new_session(LogonChannel::Remote);
         s.prompt_for_name().unwrap();
         s.record_identified_user("alice", user).unwrap();
-        let (outcome, rejection) = apply_password_match(
+        let (outcome, rejection, auth) = apply_password_match(
             &mut s,
             SessionPolicy::default(),
             SystemTime::UNIX_EPOCH,
@@ -1515,6 +1682,15 @@ mod access_rejection {
         .unwrap();
         assert_eq!(outcome, VerifyPasswordOutcome::LogonRejected);
         assert!(rejection.is_some());
+        // The budget rule never ran, so the persisted command must
+        // leave the daily counters untouched.
+        assert_eq!(
+            auth,
+            crate::domain::user::AuthOutcome::Matched {
+                daily: None,
+                force_password_reset: false,
+            }
+        );
         assert_eq!(s.state(), SessionState::LoggingOff);
         assert_eq!(s.logoff_reason(), Some(LogoffReason::LockedAccount));
     }
@@ -2279,7 +2455,70 @@ mod flagging {
     use std::time::SystemTime;
 
     use super::super::typed::MenuSession;
-    use super::fixtures::{make_conf, session_at_onboarded_with, user_with_grants};
+    use super::fixtures::{
+        make_conf, session_at_menu, session_at_onboarded_with, user_with_grants,
+    };
+    use crate::domain::files::flagged::FlaggedKey;
+
+    /// A Menu-phase session attached to conference 2 (the shape every
+    /// `flag_file` call sees in production: an open visit set by the
+    /// auto-rejoin).
+    fn menu_at_conference_2() -> MenuSession {
+        let confs = vec![make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[2]));
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        MenuSession::from_session(s)
+    }
+
+    #[test]
+    fn flag_file_keys_by_the_current_conference() {
+        // addFlagToList (amiexpress/express.e:12523): flags are keyed
+        // by (confNum, fileName) where confNum is the session's
+        // CURRENT conference — a name typed at the prompt carries no
+        // catalogue area.
+        let mut menu = menu_at_conference_2();
+
+        assert!(
+            menu.flag_file(" termv48.lha "),
+            "a fresh name is newly flagged (legacy RETURN 2), whitespace trimmed"
+        );
+        assert!(menu
+            .flagged_files()
+            .contains(&FlaggedKey::new(2, "TERMV48.LHA")));
+        assert!(
+            !menu.flag_file("termv48.lha"),
+            "re-flagging is a no-op (isInFlaggedList, express.e:12534)"
+        );
+    }
+
+    #[test]
+    fn flag_file_rejects_names_of_one_character_or_less() {
+        // The StrLen(fileName)>1 gate (amiexpress/express.e:12532):
+        // one character or less never flags — including all-whitespace
+        // input that trims to nothing.
+        let mut menu = menu_at_conference_2();
+
+        assert!(!menu.flag_file("a"));
+        assert!(!menu.flag_file(" b "));
+        assert!(!menu.flag_file(""));
+        assert!(!menu.flag_file("   "));
+        assert!(menu.flagged_files().is_empty());
+    }
+
+    #[test]
+    fn flag_file_defaults_to_conference_zero_without_an_open_visit() {
+        // The defensive Menu-without-visit case: flags land under
+        // conference 0 rather than panicking.
+        let mut menu = MenuSession::from_session(session_at_menu());
+        assert!(menu.current_conference_number().is_none());
+
+        assert!(menu.flag_file("termv48.lha"));
+        assert!(menu
+            .flagged_files()
+            .contains(&FlaggedKey::new(0, "TERMV48.LHA")));
+    }
 
     #[test]
     fn menu_session_exposes_the_flag_set() {
@@ -2296,6 +2535,70 @@ mod flagging {
         let key = crate::domain::files::flagged::FlaggedKey::new(2, "TERMV48.LHA");
         assert!(menu.flagged_files_mut().flag(key.clone()));
         assert!(menu.flagged_files_mut().contains(&key));
+    }
+}
+
+mod read_detour {
+    use std::time::SystemTime;
+
+    use super::super::typed::MenuSession;
+    use super::fixtures::{
+        make_conf, session_at_menu, session_at_onboarded_with, user_with_grants,
+    };
+    use crate::domain::conference::MessageBaseRef;
+
+    /// A Menu-phase session whose auto-rejoin attached conference 2's
+    /// primary base — the home coordinate the detour must return to.
+    fn menu_at_conference_2() -> MenuSession {
+        let confs = vec![make_conf(2)];
+        let mut s = session_at_onboarded_with(user_with_grants(&[2]));
+        s.auto_rejoin_conference(&confs, SystemTime::UNIX_EPOCH)
+            .unwrap();
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        MenuSession::from_session(s)
+    }
+
+    #[test]
+    fn begin_attaches_the_detour_base_and_end_restores_home() {
+        // The legacy per-detour `oldcn := currentConf ... currentConf
+        // := oldcn` (amiexpress/express.e:11750-11758): the read flow
+        // targets the found base, then the caller's home coordinate
+        // comes back.
+        let mut menu = menu_at_conference_2();
+        assert_eq!(menu.current_msgbase(), Some((2, 1)), "home before");
+
+        let detour = menu.begin_read_detour(MessageBaseRef::new(5, 3), SystemTime::UNIX_EPOCH);
+        assert_eq!(
+            menu.current_msgbase(),
+            Some((5, 3)),
+            "the detour points the open visit at the found base"
+        );
+
+        menu.end_read_detour(detour, SystemTime::UNIX_EPOCH);
+        assert_eq!(
+            menu.current_msgbase(),
+            Some((2, 1)),
+            "ending the detour restores the home coordinate"
+        );
+    }
+
+    #[test]
+    fn end_without_a_home_leaves_the_detour_visit_attached() {
+        // The defensive Menu-without-visit case: there is no home to
+        // return to, so ending the detour leaves the detour visit in
+        // place rather than detaching to nowhere.
+        let mut menu = MenuSession::from_session(session_at_menu());
+        assert_eq!(menu.current_msgbase(), None, "no open visit");
+
+        let detour = menu.begin_read_detour(MessageBaseRef::new(5, 3), SystemTime::UNIX_EPOCH);
+        assert_eq!(menu.current_msgbase(), Some((5, 3)));
+
+        menu.end_read_detour(detour, SystemTime::UNIX_EPOCH);
+        assert_eq!(
+            menu.current_msgbase(),
+            Some((5, 3)),
+            "the detour visit stays attached when no home was open"
+        );
     }
 }
 

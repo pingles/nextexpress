@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag};
+use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag, ScanFlagSettings};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::user::{
@@ -473,15 +473,11 @@ impl SqliteUserRepository {
         conn: &Connection,
         slot_number: u32,
     ) -> rusqlite::Result<Vec<ConferenceMembership>> {
-        #[allow(clippy::struct_excessive_bools)] // mirrors the row's flag columns
         struct MembershipRow {
             conference_number: u32,
             granted: bool,
             messages_posted: u32,
-            mail_scan: bool,
-            mailscan_all: bool,
-            file_scan: bool,
-            zoom_scan: bool,
+            scan_flags: ScanFlagSettings,
         }
         let mut stmt = conn.prepare(
             "SELECT conference_number, granted, messages_posted,
@@ -496,28 +492,26 @@ impl SqliteUserRepository {
                     conference_number: row.get::<_, u32>(0)?,
                     granted: row.get::<_, i64>(1)? != 0,
                     messages_posted: row.get::<_, u32>(2)?,
-                    mail_scan: row.get::<_, i64>(3)? != 0,
-                    mailscan_all: row.get::<_, i64>(4)? != 0,
-                    file_scan: row.get::<_, i64>(5)? != 0,
-                    zoom_scan: row.get::<_, i64>(6)? != 0,
+                    scan_flags: ScanFlagSettings {
+                        mail_scan: row.get::<_, i64>(3)? != 0,
+                        mailscan_all: row.get::<_, i64>(4)? != 0,
+                        file_scan: row.get::<_, i64>(5)? != 0,
+                        zoom_scan: row.get::<_, i64>(6)? != 0,
+                    },
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut memberships = Vec::with_capacity(raw_rows.len());
         for row in raw_rows {
-            let mut membership = ConferenceMembership::new(row.conference_number, row.granted);
-            for _ in 0..row.messages_posted {
-                membership.bump_messages_posted();
-            }
-            membership.set_scan_flag(ScanFlag::MailScan, row.mail_scan);
-            membership.set_scan_flag(ScanFlag::MailScanAll, row.mailscan_all);
-            membership.set_scan_flag(ScanFlag::FileScan, row.file_scan);
-            membership.set_scan_flag(ScanFlag::Zoom, row.zoom_scan);
-            for pointer in Self::load_pointers(conn, slot_number, row.conference_number)? {
-                membership.upsert_pointers(pointer);
-            }
-            memberships.push(membership);
+            let pointers = Self::load_pointers(conn, slot_number, row.conference_number)?;
+            memberships.push(ConferenceMembership::from_persisted(
+                row.conference_number,
+                row.granted,
+                row.messages_posted,
+                row.scan_flags,
+                pointers,
+            ));
         }
         Ok(memberships)
     }

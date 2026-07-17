@@ -14,7 +14,7 @@ use crate::app::mail_stores::MailStores;
 use crate::app::menu_flow::mail_text::MAIL_STORE_ERROR_LINE;
 use crate::app::menu_flow::table::{left_field, scan_row_status};
 use crate::app::terminal::{Terminal, TerminalEcho};
-use crate::domain::messaging::mail::{BroadcastTo, Mail, MailVisibility};
+use crate::domain::messaging::mail::{BroadcastTo, Mail};
 use crate::domain::messaging::mail_store::MailStoreError;
 use crate::domain::messaging::scan_mail::MailScanRow;
 use crate::domain::session::typed::MenuSession;
@@ -72,7 +72,7 @@ where
 /// (mirrors the `toName` test at `express.e:8854`, in `NextExpress`'s
 /// slot / broadcast model).
 fn addressed_to_reader(reader_slot: u32, mail: &Mail) -> bool {
-    if matches!(mail.visibility(), MailVisibility::Deleted) {
+    if mail.is_deleted() {
         return false;
     }
     mail.addressee_slot() == Some(reader_slot)

@@ -28,8 +28,9 @@ pub(crate) mod typed;
 #[cfg(test)]
 mod tests;
 
-use call::{AuthenticatedCall, CallSalvage};
+use call::{AuthenticatedCall, AuthenticatingAttempt, CallSalvage, NewUserGate};
 use conference_activity::ConferenceActivity;
+use lifecycle::OnboardedEntry;
 
 pub use crate::domain::session_policy::{PasswordFailureDecision, SessionPolicy};
 pub use budget::{daily_budget_outcome, initialise_daily_budget, tick_minute};
@@ -186,13 +187,10 @@ enum SessionPhase {
         name_retry_count: u32,
     },
     Authenticating {
-        typed_name: String,
-        user: User,
-        password_retry_count: u32,
+        attempt: AuthenticatingAttempt,
     },
     NewUserRegistering {
-        password_verified: bool,
-        password_attempts: u32,
+        gate: NewUserGate,
     },
     Onboarded {
         call: AuthenticatedCall,
@@ -227,7 +225,7 @@ impl SessionPhase {
 
     fn user(&self) -> Option<&User> {
         match self {
-            Self::Authenticating { user, .. } => Some(user),
+            Self::Authenticating { attempt } => Some(&attempt.user),
             Self::Onboarded { call } | Self::Menu { call } => Some(&call.user),
             Self::LoggingOff { call, .. } | Self::Ended { call, .. } => call.user(),
             Self::Connecting | Self::Identifying { .. } | Self::NewUserRegistering { .. } => None,
@@ -236,7 +234,7 @@ impl SessionPhase {
 
     fn user_mut(&mut self) -> Option<&mut User> {
         match self {
-            Self::Authenticating { user, .. } => Some(user),
+            Self::Authenticating { attempt } => Some(&mut attempt.user),
             Self::Onboarded { call } | Self::Menu { call } => Some(&mut call.user),
             Self::LoggingOff { call, .. } | Self::Ended { call, .. } => call.user_mut(),
             Self::Connecting | Self::Identifying { .. } | Self::NewUserRegistering { .. } => None,
@@ -245,7 +243,7 @@ impl SessionPhase {
 
     fn typed_name(&self) -> Option<&str> {
         match self {
-            Self::Authenticating { typed_name, .. } => Some(typed_name),
+            Self::Authenticating { attempt } => Some(&attempt.typed_name),
             _ => None,
         }
     }
@@ -259,10 +257,7 @@ impl SessionPhase {
 
     fn password_retry_count(&self) -> u32 {
         match self {
-            Self::Authenticating {
-                password_retry_count,
-                ..
-            } => *password_retry_count,
+            Self::Authenticating { attempt } => attempt.password_retry_count,
             _ => 0,
         }
     }
@@ -316,18 +311,14 @@ impl SessionPhase {
 
     fn new_user_password_verified(&self) -> bool {
         match self {
-            Self::NewUserRegistering {
-                password_verified, ..
-            } => *password_verified,
+            Self::NewUserRegistering { gate } => gate.verified(),
             _ => false,
         }
     }
 
     fn new_user_password_attempts(&self) -> u32 {
         match self {
-            Self::NewUserRegistering {
-                password_attempts, ..
-            } => *password_attempts,
+            Self::NewUserRegistering { gate } => gate.attempts(),
             _ => 0,
         }
     }

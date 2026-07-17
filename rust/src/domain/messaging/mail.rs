@@ -275,6 +275,45 @@ impl Mail {
         }
     }
 
+    /// Extracts this mail's header and body into a [`MailDraft`] —
+    /// the faithful inverse of [`Self::from_draft`], carrying the
+    /// real `visibility` (spec `messaging.allium:MoveMail`'s
+    /// `visibility: mail.visibility` consequent) plus every other
+    /// draft field.
+    ///
+    /// The store-assigned coordinates (`msgbase`, `number`) and the
+    /// fields a [`MailDraft`] cannot express (`received_at`,
+    /// `attachments`) are not carried — see
+    /// [`Self::carry_state_from`] for the latter.
+    #[must_use]
+    pub fn to_draft(&self) -> MailDraft {
+        MailDraft {
+            visibility: self.visibility,
+            from_name: self.from_name.clone(),
+            to_name: self.to_name.clone(),
+            broadcast_to: self.broadcast_to,
+            subject: self.subject.clone(),
+            posted_at: self.posted_at,
+            author_slot: self.author_slot,
+            addressee_slot: self.addressee_slot,
+            body: self.body.clone(),
+        }
+    }
+
+    /// Copies from `source` the two fields a [`MailDraft`] cannot
+    /// express — `received_at` and `attachments` — onto this mail
+    /// (spec `messaging.allium:MoveMail`'s `received_at:
+    /// mail.received_at` and `for a in mail.attachments:
+    /// MailAttachment.created` consequents).
+    ///
+    /// A `Deleted` source carries `received_at = None` by the
+    /// `DeletedMessagesHaveNoActiveReceived` invariant, so the copy
+    /// stays legal whatever its own visibility.
+    pub fn carry_state_from(&mut self, source: &Mail) {
+        self.received_at = source.received_at;
+        self.attachments.clone_from(&source.attachments);
+    }
+
     /// Returns the parent message base coordinate.
     #[must_use]
     pub fn msgbase(&self) -> MessageBaseRef {
@@ -330,6 +369,18 @@ impl Mail {
     #[must_use]
     pub fn visibility(&self) -> MailVisibility {
         self.visibility
+    }
+
+    /// True when this mail has been soft-deleted (spec
+    /// `messaging.allium:Mail`'s derived attribute `is_deleted:
+    /// visibility = deleted`).
+    ///
+    /// This is the owner predicate behind the spec's `requires: not
+    /// mail.is_deleted` clauses and the
+    /// `DeletedMessagesHaveNoActiveReceived` invariant.
+    #[must_use]
+    pub fn is_deleted(&self) -> bool {
+        matches!(self.visibility, MailVisibility::Deleted)
     }
 
     /// Returns the author's display name as recorded at post time.
@@ -419,11 +470,80 @@ impl Mail {
         // Spec invariant DeletedMessagesHaveNoActiveReceived: a deleted
         // mail has no live received_at. The legacy DeleteMail flow
         // discards messages regardless of read state, so cascade-clear
-        // rather than reject the transition.
-        if matches!(new_visibility, MailVisibility::Deleted) {
+        // rather than reject the transition. This check must follow
+        // the visibility assignment above: the mail is now deleted,
+        // so cascade-clear received_at.
+        if self.is_deleted() {
             self.received_at = None;
         }
         Ok(())
+    }
+
+    /// Soft-deletes this mail (spec `messaging.allium:DeleteMail`
+    /// consequents, owned by the entity): transitions `visibility` to
+    /// [`MailVisibility::Deleted`] and strips every attachment row
+    /// (the spec's `for a in mail.attachments: not exists a`).
+    /// `received_at` is cleared by the transition's cascade, keeping
+    /// the `DeletedMessagesHaveNoActiveReceived` invariant.
+    ///
+    /// Transition-matrix rationale, recorded once here: every
+    /// non-deleted visibility (`public`, `private`,
+    /// `private_to_sysop`) may transition to `deleted`; only a
+    /// `Deleted` receiver errors.
+    ///
+    /// # Errors
+    /// Returns [`MailError::AlreadyDeleted`] when the mail is already
+    /// soft-deleted — `deleted` is terminal in the spec's
+    /// `transitions visibility` matrix.
+    ///
+    /// # Panics
+    /// Never in practice: the `AlreadyDeleted` guard filters the only
+    /// visibility (`Deleted`) the transition matrix rejects from
+    /// moving to `deleted`, so the internal transition cannot fail.
+    pub fn soft_delete(&mut self) -> Result<(), MailError> {
+        if self.is_deleted() {
+            return Err(MailError::AlreadyDeleted);
+        }
+        self.transition_to(MailVisibility::Deleted)
+            .expect("every non-deleted visibility may transition to deleted");
+        self.clear_attachments();
+        Ok(())
+    }
+
+    /// True when this mail is unread (`received_at = None`, the spec's
+    /// `is_unread` derived attribute) *and* addressed to `reader_slot`
+    /// — the conjunction `mail.is_unread and mail.addressee =
+    /// session.user` shared by `messaging.allium:ReadMail`'s ensures
+    /// clause and the mail scan's unread test.
+    ///
+    /// A soft-deleted mail has `received_at = None` (the
+    /// `DeletedMessagesHaveNoActiveReceived` invariant), so it
+    /// vacuously counts as unread here — callers that must exclude
+    /// deleted mail gate on [`Self::is_deleted`] first, as
+    /// [`Self::record_read_by`] does.
+    #[must_use]
+    pub fn is_unread_addressed_to(&self, reader_slot: u32) -> bool {
+        self.received_at.is_none() && self.addressee_slot == Some(reader_slot)
+    }
+
+    /// Records that the reader at `reader_slot` read this mail at `now`
+    /// (spec `messaging.allium:ReadMail`'s `ensures: if mail.is_unread
+    /// and mail.addressee = session.user: received_at = now`).
+    ///
+    /// Infallible: no-ops unless all of the following hold —
+    /// - the mail is not soft-deleted (preserves
+    ///   `DeletedMessagesHaveNoActiveReceived`; a deleted mail has
+    ///   `received_at = None` and would otherwise pass the unread
+    ///   check);
+    /// - the mail is unread (first-read wins — a second read never
+    ///   overwrites the original timestamp);
+    /// - the mail is addressed to `reader_slot` (broadcasts have no
+    ///   addressee and are never marked).
+    pub fn record_read_by(&mut self, reader_slot: u32, now: SystemTime) {
+        if self.is_deleted() || !self.is_unread_addressed_to(reader_slot) {
+            return;
+        }
+        self.received_at = Some(now);
     }
 
     /// Marks the message as received at `when`
@@ -435,7 +555,7 @@ impl Mail {
     /// upstream via `requires: not mail.is_deleted`, but the entity
     /// guards against the invariant being broken anyway.
     pub fn mark_received(&mut self, when: SystemTime) -> Result<(), MailError> {
-        if matches!(self.visibility, MailVisibility::Deleted) {
+        if self.is_deleted() {
             return Err(MailError::AlreadyDeleted);
         }
         self.received_at = Some(when);
@@ -529,6 +649,19 @@ mod tests {
     }
 
     #[test]
+    fn non_deleted_transition_preserves_received_at() {
+        // The DeletedMessagesHaveNoActiveReceived cascade in
+        // `transition_to` fires only on arrival at `deleted` — a
+        // received mail moving public -> private keeps its read
+        // timestamp.
+        let mut mail = Mail::new(sample(1));
+        mail.mark_received(t(200)).expect("public mail is markable");
+        mail.transition_to(MailVisibility::Private)
+            .expect("public -> private is a legal transition");
+        assert_eq!(mail.received_at(), Some(t(200)));
+    }
+
+    #[test]
     fn transition_matrix_matches_spec() {
         // Spec messaging.allium:Mail `transitions visibility`:
         //   public -> deleted
@@ -590,6 +723,31 @@ mod tests {
     }
 
     #[test]
+    fn is_deleted_reflects_visibility() {
+        // Spec messaging.allium:Mail derived attribute:
+        //   is_deleted: visibility = deleted
+        // Only the Deleted variant satisfies the predicate.
+        use MailVisibility::{Deleted, Private, PrivateToSysop, Public};
+        for (visibility, expected) in [
+            (Public, false),
+            (Private, false),
+            (PrivateToSysop, false),
+            (Deleted, true),
+        ] {
+            // Direct field assignment in tests, as in
+            // `transition_matrix_matches_spec` — production paths
+            // arrive at each state via legal transitions.
+            let mut mail = Mail::new(sample(1));
+            mail.visibility = visibility;
+            assert_eq!(
+                mail.is_deleted(),
+                expected,
+                "is_deleted() for {visibility:?}",
+            );
+        }
+    }
+
+    #[test]
     fn mark_received_on_deleted_mail_is_rejected() {
         // Defensive: ReadMail's upstream `requires: not mail.is_deleted`
         // makes this unreachable through the rule, but the entity must
@@ -602,6 +760,53 @@ mod tests {
             .expect_err("deleted mail must not accept a received_at");
         assert_eq!(err, MailError::AlreadyDeleted);
         assert_eq!(mail.received_at(), None);
+    }
+
+    #[test]
+    fn soft_delete_deletes_strips_attachments_and_clears_received_at() {
+        // Spec messaging.allium:DeleteMail consequents, owned by the
+        // entity: visibility = deleted, `for a in mail.attachments:
+        // not exists a`, and (via the transition cascade)
+        // DeletedMessagesHaveNoActiveReceived.
+        let mut mail = Mail::new(sample(1));
+        mail.mark_received(t(500))
+            .expect("undeleted mail accepts received_at");
+        mail.push_attachment(MailAttachment::new(
+            "a.txt".to_string(),
+            crate::domain::bytes::Bytes::new(3),
+        ));
+
+        mail.soft_delete().expect("public mail can be soft-deleted");
+
+        assert_eq!(mail.visibility(), MailVisibility::Deleted);
+        assert!(mail.attachments().is_empty());
+        assert_eq!(mail.received_at(), None);
+    }
+
+    #[test]
+    fn soft_delete_on_deleted_mail_returns_already_deleted() {
+        // Spec DeleteMail `requires: not mail.is_deleted` — deleted is
+        // terminal, so a second soft-delete is rejected by the owner.
+        let mut mail = Mail::new(sample(1));
+        mail.soft_delete().expect("first soft-delete succeeds");
+        let err = mail
+            .soft_delete()
+            .expect_err("deleted mail must reject a second soft-delete");
+        assert_eq!(err, MailError::AlreadyDeleted);
+    }
+
+    #[test]
+    fn soft_delete_works_from_every_non_deleted_visibility() {
+        // Transition-matrix rationale, pinned once at the owner: every
+        // non-deleted visibility may transition to deleted.
+        use MailVisibility::{Private, PrivateToSysop, Public};
+        for visibility in [Public, Private, PrivateToSysop] {
+            let mut mail = Mail::new(sample(1));
+            mail.visibility = visibility;
+            mail.soft_delete()
+                .unwrap_or_else(|err| panic!("{visibility:?} soft-delete failed: {err:?}"));
+            assert_eq!(mail.visibility(), MailVisibility::Deleted);
+        }
     }
 
     #[test]
@@ -621,6 +826,131 @@ mod tests {
             None,
             "received_at must be cleared when message becomes deleted",
         );
+    }
+
+    #[test]
+    fn to_draft_is_the_faithful_inverse_of_from_draft() {
+        // MoveMail consequent `visibility: mail.visibility` — the
+        // draft must carry the real visibility. A PrivateToSysop mail
+        // cannot be rebuilt via a Public draft plus a transition,
+        // since Public -> PrivateToSysop is outside the matrix.
+        let mut mail = Mail::new(sample(7));
+        mail.visibility = MailVisibility::PrivateToSysop;
+
+        let draft = mail.to_draft();
+
+        assert_eq!(draft.visibility, MailVisibility::PrivateToSysop);
+        assert_eq!(draft.from_name, "Sysop");
+        assert_eq!(draft.to_name, "alice");
+        assert_eq!(draft.broadcast_to, BroadcastTo::None);
+        assert_eq!(draft.subject, "Welcome");
+        assert_eq!(draft.posted_at, t(100));
+        assert_eq!(draft.author_slot, 1);
+        assert_eq!(draft.addressee_slot, Some(2));
+        assert_eq!(draft.body, "Hello, alice!");
+        // Round trip: rebuilding from the draft reproduces the mail
+        // (received_at / attachments are not draft-expressible and
+        // are None / empty on both sides here).
+        assert_eq!(Mail::from_draft(mail.msgbase(), mail.number(), draft), mail);
+    }
+
+    #[test]
+    fn carry_state_from_copies_received_at_and_attachments() {
+        // MoveMail consequents `received_at: mail.received_at` and
+        // `for a in mail.attachments: MailAttachment.created` — the
+        // two fields a MailDraft cannot express.
+        let mut source = Mail::new(sample(1));
+        source
+            .mark_received(t(500))
+            .expect("undeleted mail accepts received_at");
+        source.push_attachment(MailAttachment::new("a.txt".to_string(), Bytes::new(3)));
+
+        let mut copy = Mail::new(sample(2));
+        copy.carry_state_from(&source);
+
+        assert_eq!(copy.received_at(), Some(t(500)));
+        assert_eq!(copy.attachments(), source.attachments());
+    }
+
+    #[test]
+    fn carry_state_from_a_deleted_source_keeps_received_at_none() {
+        // A Deleted source has received_at = None by
+        // DeletedMessagesHaveNoActiveReceived, so the carried copy
+        // stays legal (and unread) — and a previously-set timestamp
+        // on the copy is overwritten, not merged.
+        let mut source = Mail::new(sample(1));
+        source.mark_received(t(500)).unwrap();
+        source.soft_delete().expect("public mail soft-deletes");
+
+        let mut copy = Mail::new(sample(2));
+        copy.mark_received(t(900)).unwrap();
+        copy.carry_state_from(&source);
+
+        assert_eq!(copy.received_at(), None);
+        assert!(copy.attachments().is_empty());
+    }
+
+    #[test]
+    fn record_read_by_sets_received_at_for_unread_addressee() {
+        // Spec messaging.allium:ReadMail ensures: if mail.is_unread
+        // and mail.addressee = session.user: received_at = now.
+        // sample() addresses slot 2.
+        let mut mail = Mail::new(sample(1));
+        mail.record_read_by(2, t(100));
+        assert_eq!(mail.received_at(), Some(t(100)));
+    }
+
+    #[test]
+    fn record_read_by_keeps_the_first_read_timestamp() {
+        // First-read wins: a second read must not overwrite the
+        // original received_at.
+        let mut mail = Mail::new(sample(1));
+        mail.record_read_by(2, t(100));
+        mail.record_read_by(2, t(200));
+        assert_eq!(mail.received_at(), Some(t(100)));
+    }
+
+    #[test]
+    fn record_read_by_ignores_a_reader_who_is_not_the_addressee() {
+        // The `mail.addressee = session.user` clause fails for any
+        // other slot — including broadcasts (addressee_slot = None).
+        let mut mail = Mail::new(sample(1));
+        mail.record_read_by(9, t(100));
+        assert_eq!(mail.received_at(), None);
+
+        let mut broadcast = Mail::new(NewMail {
+            broadcast_to: BroadcastTo::All,
+            to_name: "ALL".to_string(),
+            addressee_slot: None,
+            ..sample(1)
+        });
+        broadcast.record_read_by(2, t(100));
+        assert_eq!(broadcast.received_at(), None);
+    }
+
+    #[test]
+    fn record_read_by_on_deleted_mail_leaves_received_at_none() {
+        // Defensive: ReadMail's `requires: not mail.is_deleted` makes
+        // this unreachable through the rule, but the entity must not
+        // break DeletedMessagesHaveNoActiveReceived when called
+        // directly — a deleted mail has received_at = None and would
+        // otherwise satisfy the unread-addressee predicate.
+        let mut mail = Mail::new(sample(1));
+        mail.transition_to(MailVisibility::Deleted).unwrap();
+        mail.record_read_by(2, t(100));
+        assert_eq!(mail.received_at(), None);
+    }
+
+    #[test]
+    fn is_unread_addressed_to_requires_unread_and_matching_slot() {
+        // Spec conjunction `mail.is_unread and mail.addressee =
+        // session.user`, shared by ReadMail's ensure and the scan's
+        // unread test. sample() addresses slot 2.
+        let mut mail = Mail::new(sample(1));
+        assert!(mail.is_unread_addressed_to(2));
+        assert!(!mail.is_unread_addressed_to(9), "wrong slot");
+        mail.mark_received(t(100)).unwrap();
+        assert!(!mail.is_unread_addressed_to(2), "already read");
     }
 
     #[test]

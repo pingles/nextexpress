@@ -12,7 +12,7 @@
 //! Phase 10's job.
 
 use crate::domain::bytes::Bytes;
-use crate::domain::messaging::mail::{Mail, MailAttachment, MailVisibility};
+use crate::domain::messaging::mail::{Mail, MailAttachment};
 use crate::domain::user::{Right, User};
 
 /// Errors raised by [`attach_file_to_mail`]. Each variant
@@ -53,7 +53,7 @@ pub fn attach_file_to_mail(
     if !user.is_sysop() && user.slot_number() != mail.author_slot() {
         return Err(AttachFileToMailError::NotAuthorOrSysop);
     }
-    if matches!(mail.visibility(), MailVisibility::Deleted) {
+    if mail.is_deleted() {
         return Err(AttachFileToMailError::Deleted);
     }
     if !user.has_access(Right::AttachFiles) {

@@ -123,11 +123,6 @@ where
         )
         .await;
 
-        // The caller's home conference/base, restored after every
-        // read-it-now detour so the menu prompt that follows `MS` shows
-        // where the caller actually is (`amiexpress/express.e:25270`).
-        let home = session.current_msgbase();
-
         self.write_and_flush(MAIL_SCAN_ALL_HEADER).await?;
         for conference in &scans {
             self.write_and_flush(&render_scan_conference_banner(&conference.conference_name))
@@ -144,7 +139,7 @@ where
                     BaseScanOutcome::Listing(rows) => {
                         self.write_and_flush(&render_scan_listing_table(rows))
                             .await?;
-                        self.offer_read_it_now(session, rows, home).await?;
+                        self.offer_read_it_now(session, rows).await?;
                     }
                     // Nothing new since the user's last scan.
                     BaseScanOutcome::NothingNew => {
@@ -167,14 +162,17 @@ where
     /// matched unread mail and, on Yes, drops into the read/reply
     /// sub-prompt for the found messages — the legacy `searchNewMail`
     /// getOUT branch (`amiexpress/express.e:11738-11765`). The found
-    /// base is attached as a transient read visit and the caller's
-    /// `home` coordinate restored afterwards, mirroring the legacy
-    /// `currentConf:=cn ... :=oldcn`.
+    /// base is attached as a transient read detour
+    /// ([`MenuSession::begin_read_detour`]) and the caller's home
+    /// coordinate restored afterwards — on the error path too,
+    /// mirroring the legacy per-detour `oldcn := currentConf ...
+    /// currentConf := oldcn` around `displayMessage`/`replyPrompt`, so
+    /// the menu prompt that follows `MS` shows where the caller
+    /// actually is (`amiexpress/express.e:25270`).
     async fn offer_read_it_now(
         &mut self,
         session: &mut MenuSession,
         rows: &[MailScanRow],
-        home: Option<(u32, u32)>,
     ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         let Some(first) = rows.first() else {
             return Ok(());
@@ -182,19 +180,24 @@ where
         if !self.prompt_read_it_now(session).await? {
             return Ok(());
         }
-        let coord = first.msgbase;
-        let start = first.number;
-        session.attach_read_visit(
-            coord.conference_number(),
-            coord.msgbase_number(),
-            self.services.clock.now(),
-        );
+        let detour = session.begin_read_detour(first.msgbase, self.services.clock.now());
+        let outcome = self.read_found_mail(session, first.number).await;
+        session.end_read_detour(detour, self.services.clock.now());
+        outcome
+    }
+
+    /// The detour body of [`Self::offer_read_it_now`]: renders the
+    /// found message and, when it rendered, runs the read sub-prompt
+    /// from the next number. Split out so the caller can end the read
+    /// detour on the success and error paths alike.
+    async fn read_found_mail(
+        &mut self,
+        session: &mut MenuSession,
+        start: u32,
+    ) -> crate::app::menu_flow::MenuFlowResult<(), T::Error> {
         if self.read_and_render(session, start).await? {
             self.run_read_subprompt(session, start + 1, Some(start))
                 .await?;
-        }
-        if let Some((conference, msgbase)) = home {
-            session.attach_read_visit(conference, msgbase, self.services.clock.now());
         }
         Ok(())
     }

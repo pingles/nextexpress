@@ -135,11 +135,9 @@ pub enum PostMailError {
 /// gate fails or the store rejects the write.
 ///
 /// # Panics
-/// Panics if the membership-lookup branch runs after the granted
-/// membership check fails to find a row — this is unreachable because
-/// the membership existence is verified earlier in the same function;
-/// the panic guards against a future refactor breaking that
-/// invariant.
+/// Debug builds assert that [`User::record_message_posted`] found the
+/// membership row whose existence was verified earlier in the same
+/// function; a failed assertion is an internal bug.
 pub fn post_mail(
     user: &mut User,
     msgbase: MessageBaseRef,
@@ -233,16 +231,8 @@ pub(crate) fn apply_post_mail(
     // Spec PostMail consequents:
     //   session.user.messages_posted += 1
     //   if exists membership: membership.messages_posted += 1
-    //
-    // The membership existence check above guarantees a granted row
-    // exists, so the lookup must succeed here.
-    user.bump_messages_posted();
-    let membership = user
-        .memberships_mut()
-        .iter_mut()
-        .find(|m| m.conference_number() == msgbase.conference_number())
-        .expect("membership existence was checked above");
-    membership.bump_messages_posted();
+    let membership_bumped = user.record_message_posted(msgbase.conference_number());
+    debug_assert!(membership_bumped, "membership existence was checked above");
 
     Ok(mail)
 }

@@ -1,14 +1,14 @@
 //! [`delete_mail`] rule (spec: `messaging.allium:DeleteMail`).
 //!
-//! Phase 8, Slice 49. Soft-deletes a mail: drives the visibility
-//! transition to [`MailVisibility::Deleted`], strips any
-//! attachments (the spec's `for a in mail.attachments: not exists
-//! a` consequent), and persists the result. The
+//! Phase 8, Slice 49. Soft-deletes a mail via
+//! [`Mail::soft_delete`] (which owns the visibility transition and
+//! the spec's `for a in mail.attachments: not exists a`
+//! consequent), and persists the result. The
 //! `lowest_undeleted_message` bump is observed via the store's
 //! derived getter — every read recomputes from the live
 //! visibility set, so the consequent is automatically honoured.
 
-use crate::domain::messaging::mail::{Mail, MailVisibility};
+use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 use crate::domain::user::User;
 
@@ -38,8 +38,8 @@ pub enum DeleteMailError {
 /// Applies `messaging.allium:DeleteMail` to `(user, store, number)`.
 ///
 /// Looks up the mail by `number` in the bound store, checks the
-/// spec's `requires` clauses, transitions visibility to
-/// [`MailVisibility::Deleted`], strips attachments, and persists
+/// spec's `requires` clauses, applies [`Mail::soft_delete`]
+/// (visibility to deleted, attachments stripped), and persists
 /// the row.
 ///
 /// # Errors
@@ -48,10 +48,9 @@ pub enum DeleteMailError {
 /// state is mutated on error.
 ///
 /// # Panics
-/// Panics if `mail.transition_to(Deleted)` is rejected — that
-/// branch is structurally unreachable because the `not deleted`
-/// gate above filters every visibility the spec's transition
-/// matrix forbids from going to Deleted.
+/// Panics if [`Mail::soft_delete`] is rejected — structurally
+/// unreachable because the `not deleted` gate above already
+/// filtered the only state (`Deleted`) it errors on.
 pub fn delete_mail(
     user: &User,
     store: &mut dyn MailStore,
@@ -60,19 +59,16 @@ pub fn delete_mail(
     let Some(mut mail) = store.load(number)? else {
         return Err(DeleteMailError::NotFound(number));
     };
-    if matches!(mail.visibility(), MailVisibility::Deleted) {
+    if mail.is_deleted() {
         return Err(DeleteMailError::AlreadyDeleted);
     }
     if !can_delete(user, &mail) {
         return Err(DeleteMailError::NotPermitted);
     }
-    // Spec consequents:
-    //   ensures: mail.visibility = deleted
-    //   ensures: for a in mail.attachments: not exists a
-    //   (`mark_received` is implicitly cleared by transition_to)
-    mail.transition_to(MailVisibility::Deleted)
-        .expect("public/private/private_to_sysop can always transition to deleted");
-    mail.clear_attachments();
+    // Spec consequents (visibility = deleted, attachments stripped,
+    // received_at cascade-cleared) are owned by `Mail::soft_delete`.
+    mail.soft_delete()
+        .expect("already-deleted gate above filters Deleted");
     store.save(&mail)?;
     Ok(())
 }

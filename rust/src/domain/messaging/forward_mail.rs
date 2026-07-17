@@ -117,7 +117,7 @@ pub fn forward_mail(
     source: &Mail,
     request: ForwardMailRequest,
 ) -> Result<Mail, ForwardMailError> {
-    if matches!(source.visibility(), MailVisibility::Deleted) {
+    if source.is_deleted() {
         return Err(ForwardMailError::SourceDeleted);
     }
     if !can_read(user, source) {

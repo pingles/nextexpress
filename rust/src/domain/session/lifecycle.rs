@@ -3,12 +3,32 @@
 use std::time::SystemTime;
 
 use crate::domain::caller_log::CallerLog;
+use crate::domain::user::DailyBudgetOutcome;
 
 use super::log_format::{format_logoff_line, format_logon_line};
 use super::{
-    budget, lockout, CarrierLostError, EnterMenuError, IdleTimeoutError, LogoffReason, Session,
-    SessionPhase, SessionPolicy, SessionState, SessionTransitionError,
+    budget, lockout, AuthenticatedCall, CallId, CarrierLostError, EnterMenuError, IdleTimeoutError,
+    LogoffReason, Session, SessionPhase, SessionPolicy, SessionState, SessionTransitionError,
+    VerifyPasswordError,
 };
+
+/// What entering [`SessionState::Onboarded`] produced — the result of
+/// [`Session::on_enter_onboarded`]'s rule cluster.
+#[derive(Debug, Clone)]
+pub(super) enum OnboardedEntry {
+    /// `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
+    /// short-circuited the cluster: the session is logging off and
+    /// the caller must append the rejection entry to the caller log.
+    Rejected(CallerLog),
+    /// The cluster ran to completion.
+    Admitted {
+        /// The day-boundary decision `InitialiseDailyBudget` applied
+        /// to the user's counters — threaded out from the rule that
+        /// made it so the `record_auth_outcome` persistence command
+        /// carries the identical decision (no re-derivation, no drift).
+        daily: DailyBudgetOutcome,
+    },
+}
 
 impl Session {
     /// Updates [`Self::last_input_at`] to `at`.
@@ -175,11 +195,62 @@ impl Session {
         })
     }
 
+    /// Applies the phase transition of the matching branch of
+    /// `session.allium:VerifyPassword` (Slice 11): clears the bound
+    /// user's `invalid_attempts`, stamps `call_id` and
+    /// `authenticated_at`, moves [`SessionState::Authenticating`] to
+    /// [`SessionState::Onboarded`], and fires the `state becomes
+    /// onboarded` rule cluster via [`Session::on_enter_onboarded`] —
+    /// so every entry into `Onboarded` runs the cluster structurally.
+    /// The policy decisions around the transition (outcome mapping,
+    /// failure escalation) stay in the free functions of
+    /// `super::lockout`; [`super::apply_password_match`] is the
+    /// public entry point.
+    ///
+    /// # Parameters
+    /// - `policy`: session policy consumed by the post-onboarded rule
+    ///   cluster.
+    /// - `now`: timestamp of the successful verification; becomes
+    ///   `authenticated_at`.
+    /// - `call_id`: the call's durable identity, stamped at
+    ///   authentication.
+    ///
+    /// # Returns
+    /// The [`OnboardedEntry`] the rule cluster produced:
+    /// [`OnboardedEntry::Rejected`] carrying the caller-log entry when
+    /// `session.allium:RejectLockedOrInsufficientAccess` (Slice 16)
+    /// short-circuited the cluster (the caller appends it), or
+    /// [`OnboardedEntry::Admitted`] with the applied
+    /// [`DailyBudgetOutcome`].
+    ///
+    /// # Errors
+    /// Returns [`VerifyPasswordError::WrongState`] if the session is
+    /// not in [`SessionState::Authenticating`].
+    pub(super) fn complete_authentication(
+        &mut self,
+        policy: SessionPolicy,
+        now: SystemTime,
+        call_id: CallId,
+    ) -> Result<OnboardedEntry, VerifyPasswordError> {
+        if !matches!(self.phase, SessionPhase::Authenticating { .. }) {
+            return Err(VerifyPasswordError::WrongState(self.state()));
+        }
+        let previous = std::mem::replace(&mut self.phase, SessionPhase::Connecting);
+        let SessionPhase::Authenticating { mut attempt } = previous else {
+            unreachable!("phase checked above");
+        };
+        attempt.user.clear_invalid_attempts();
+        self.phase = SessionPhase::Onboarded {
+            call: AuthenticatedCall::new(call_id, attempt.user, now),
+        };
+        Ok(self.on_enter_onboarded(policy, now))
+    }
+
     /// Fires every spec rule whose `when` clause is the transition
     /// into [`SessionState::Onboarded`].
     ///
     /// Called by every code path that drives a session into
-    /// `Onboarded`: [`Session::apply_password_match`] and
+    /// `Onboarded`: [`Session::complete_authentication`] and
     /// [`Session::complete_new_user_registration`] today; later,
     /// sysop direct logon (Slice 22) and local logon (Slice 23).
     /// Rules fire in spec order:
@@ -193,9 +264,10 @@ impl Session {
     /// 3. `session.allium:ForcePasswordReset` (Slice 15).
     ///
     /// # Returns
-    /// `Some(entry)` when rule 1 fired, otherwise `None`. The caller
-    /// uses the presence of an entry as the signal to append it to
-    /// the caller log.
+    /// [`OnboardedEntry::Rejected`] when rule 1 fired (the caller
+    /// appends the carried entry to the caller log), otherwise
+    /// [`OnboardedEntry::Admitted`] carrying the
+    /// [`DailyBudgetOutcome`] rule 2 applied.
     ///
     /// # Panics
     /// Panics if called outside [`SessionState::Onboarded`] or with no
@@ -206,7 +278,7 @@ impl Session {
         &mut self,
         policy: SessionPolicy,
         now: SystemTime,
-    ) -> Option<CallerLog> {
+    ) -> OnboardedEntry {
         assert_eq!(
             self.state(),
             SessionState::Onboarded,
@@ -217,13 +289,13 @@ impl Session {
             "on_enter_onboarded called without a bound user"
         );
         if let Some(entry) = self.reject_locked_or_insufficient_access(now) {
-            return Some(entry);
+            return OnboardedEntry::Rejected(entry);
         }
-        budget::initialise_daily_budget(self, now, policy.daily_reset_offset())
+        let daily = budget::initialise_daily_budget(self, now, policy.daily_reset_offset())
             .expect("guards hold immediately after transition to Onboarded");
         lockout::force_password_reset_if_due(self, policy.password_expiry_days(), now)
             .expect("guards hold immediately after transition to Onboarded");
-        None
+        OnboardedEntry::Admitted { daily }
     }
 
     /// `session.allium:RejectLockedOrInsufficientAccess` rule

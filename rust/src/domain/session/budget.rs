@@ -63,6 +63,11 @@ pub fn daily_budget_outcome(
 /// UTC (the legacy `AmiExpress` default is six hours, so the day
 /// rolls over at 06:00 UTC).
 ///
+/// # Returns
+/// The [`DailyBudgetOutcome`] the rule applied to the bound user's
+/// counters, so callers persisting an `AuthOutcome` carry the same
+/// decision instead of re-deriving it.
+///
 /// # Errors
 /// Returns [`InitialiseDailyBudgetError::WrongState`] when the
 /// session is not in [`super::SessionState::Onboarded`].
@@ -70,17 +75,11 @@ pub fn initialise_daily_budget(
     session: &mut Session,
     now: SystemTime,
     daily_reset_offset: Duration,
-) -> Result<(), InitialiseDailyBudgetError> {
+) -> Result<DailyBudgetOutcome, InitialiseDailyBudgetError> {
     let SessionPhase::Onboarded { call } = &mut session.phase else {
         return Err(InitialiseDailyBudgetError::WrongState(session.state()));
     };
-
-    match daily_budget_outcome(call.user.last_call(), now, daily_reset_offset) {
-        DailyBudgetOutcome::NewDay => call.user.reset_daily_counters(),
-        DailyBudgetOutcome::SameDay => call.user.bump_times_called_today(),
-    }
-    call.time_remaining = call.user.time_limit_per_call();
-    Ok(())
+    Ok(call.begin_daily_budget(now, daily_reset_offset))
 }
 
 /// `session.allium:UpdateTimeUsed` + `TimeExpired` rules (Slice 14).
@@ -96,11 +95,7 @@ pub fn initialise_daily_budget(
 /// in [`super::SessionState::Onboarded`] or [`super::SessionState::Menu`].
 pub fn tick_minute(session: &mut Session) -> Result<TickMinuteOutcome, TickMinuteError> {
     let expired = match &mut session.phase {
-        SessionPhase::Onboarded { call } | SessionPhase::Menu { call } => {
-            call.user.add_time_used_today(Duration::from_mins(1));
-            call.time_remaining = call.time_remaining.saturating_sub(Duration::from_mins(1));
-            call.time_remaining.is_zero()
-        }
+        SessionPhase::Onboarded { call } | SessionPhase::Menu { call } => call.consume_minute(),
         _ => return Err(TickMinuteError::WrongState(session.state())),
     };
     if expired {

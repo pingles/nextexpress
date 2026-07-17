@@ -69,7 +69,7 @@ impl ConferenceVisit {
     /// conference. The
     /// `VisitedMsgBaseBelongsToVisitedConference` invariant is
     /// guaranteed at construction time by
-    /// [`primary_msgbase_of`] returning a [`MessageBase`] whose
+    /// [`Conference::primary_msgbase`] returning a [`MessageBase`] whose
     /// `conference_number` equals the visited conference's
     /// `number` (enforced in turn by [`Conference::new`]).
     #[must_use]
@@ -240,29 +240,6 @@ pub fn prev_accessible_conference_before<'a>(
         .find(|c| user.has_membership(c))
 }
 
-/// Returns a [`MessageBase`] in `conference` with `number == 1`, or
-/// the first declared base when no number-1 base exists. Mirrors the
-/// spec's `primary_msgbase_of(conference)` helper.
-///
-/// `Conference::new` enforces `AtLeastOneMessageBase`, so the
-/// fallback is reachable only on legacy conferences that number their
-/// bases starting at something other than 1.
-///
-/// # Panics
-/// Panics if `conference` somehow exposes an empty `msgbases()`
-/// slice. The [`Conference`] constructor guarantees this never
-/// happens, so the panic is a domain invariant guard rather than a
-/// reachable error path.
-#[must_use]
-pub fn primary_msgbase_of(conference: &Conference) -> &MessageBase {
-    conference
-        .msgbases()
-        .iter()
-        .find(|m| m.number() == 1)
-        .or_else(|| conference.msgbases().first())
-        .expect("AtLeastOneMessageBase guarantees a non-empty msgbases collection")
-}
-
 /// Resolves the `JoinConference` rule for the auto-rejoin path
 /// (spec: `conferences.allium:JoinConference`, `reason = auto_rejoin`).
 ///
@@ -285,7 +262,7 @@ pub fn resolve_auto_rejoin<'a>(user: &User, conferences: &'a [Conference]) -> Jo
         None => JoinResolution::NoAccess,
         Some(conference) => JoinResolution::Resolved {
             conference,
-            msgbase: primary_msgbase_of(conference),
+            msgbase: conference.primary_msgbase(),
         },
     }
 }
@@ -324,7 +301,7 @@ pub fn resolve_explicit_join<'a>(
         .map_or(ExplicitJoinResolution::Denied, |conference| {
             let msgbase = requested_msgbase_number
                 .and_then(|n| conference.find_msgbase(n))
-                .unwrap_or_else(|| primary_msgbase_of(conference));
+                .unwrap_or_else(|| conference.primary_msgbase());
             ExplicitJoinResolution::Granted {
                 conference,
                 msgbase,
@@ -410,24 +387,6 @@ mod tests {
         v.close(t(300));
         // First close wins; second is a no-op.
         assert_eq!(v.left_at(), Some(t(200)));
-    }
-
-    #[test]
-    fn primary_msgbase_returns_number_one_when_present() {
-        let conf = make_conf_with_bases(3, vec![(1, "main"), (2, "tech")]);
-        let mb = primary_msgbase_of(&conf);
-        assert_eq!(mb.number(), 1);
-        assert_eq!(mb.name(), "main");
-    }
-
-    #[test]
-    fn primary_msgbase_falls_back_to_first_when_no_number_one_base() {
-        // Defensive fallback for legacy conferences that number from
-        // 2 upward; AtLeastOneMessageBase guarantees `.first()` is
-        // safe.
-        let conf = make_conf_with_bases(3, vec![(7, "weird"), (8, "even-weirder")]);
-        let mb = primary_msgbase_of(&conf);
-        assert_eq!(mb.number(), 7);
     }
 
     fn assert_resolved(outcome: &JoinResolution<'_>, expected_conf: u32, expected_mb: u32) {
@@ -627,7 +586,7 @@ mod tests {
     fn explicit_join_msgbase_reset_lands_on_the_declared_primary() {
         // The reset goes to the *primary* base, which for legacy data
         // numbering from something other than 1 is the first declared
-        // base (the `primary_msgbase_of` fallback).
+        // base (the `Conference::primary_msgbase` fallback).
         let confs = vec![make_conf_with_bases(
             1,
             vec![(7, "weird"), (8, "even-weirder")],

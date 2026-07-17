@@ -5,8 +5,8 @@ use std::time::SystemTime;
 use crate::domain::user::User;
 
 use super::{
-    CallSalvage, LogoffReason, NameTypedError, NameTypedOutcome, Session, SessionPhase,
-    SessionState, SessionTransitionError,
+    AuthenticatingAttempt, CallSalvage, LogoffReason, NameTypedError, NameTypedOutcome, Session,
+    SessionPhase, SessionState, SessionTransitionError,
 };
 
 /// Maximum number of unknown handle entries before a session is ended.
@@ -58,9 +58,11 @@ impl Session {
         // changes made after the bind.
         self.persist_baseline = Some(Box::new(user.to_persisted()));
         self.phase = SessionPhase::Authenticating {
-            typed_name: typed.to_string(),
-            user,
-            password_retry_count: 0,
+            attempt: AuthenticatingAttempt {
+                typed_name: typed.to_string(),
+                user,
+                password_retry_count: 0,
+            },
         };
         Ok(NameTypedOutcome::Authenticated)
     }

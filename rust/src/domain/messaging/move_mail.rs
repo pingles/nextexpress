@@ -13,7 +13,7 @@
 //! responsibility — the domain rule only sees the visibility flip
 //! and trusts the store to clean up.
 
-use crate::domain::messaging::mail::{Mail, MailAttachment, MailDraft, MailVisibility};
+use crate::domain::messaging::mail::Mail;
 use crate::domain::messaging::mail_store::{MailStore, MailStoreError};
 use crate::domain::user::{Right, User};
 
@@ -62,13 +62,11 @@ pub enum MoveMailError {
 /// On error no state is mutated on either store.
 ///
 /// # Panics
-/// Panics if [`Mail::mark_received`] or
-/// [`Mail::transition_to`] rejects an inputs that this function
-/// has already proven legal — the freshly inserted copy is
-/// Public, so `mark_received` is always safe; the source's
-/// visibility is one of `{public, private, private_to_sysop}`
-/// (Deleted is filtered upstream), so `transition_to(Deleted)`
-/// is always in the legal matrix.
+/// Panics if the source mail is already soft-deleted —
+/// [`Mail::soft_delete`] rejects a `Deleted` receiver. Deleted
+/// sources are filtered upstream (the read/list flows never
+/// surface deleted mail), so reaching the panic is an internal
+/// bug.
 pub fn move_mail(
     user: &User,
     source: &mut dyn MailStore,
@@ -86,56 +84,23 @@ pub fn move_mail(
     };
 
     // 1) Create the new mail in the target. The store allocates the
-    //    next number and persists. We then patch the fields the
-    //    insert path doesn't see (received_at, visibility, attachments)
-    //    and save again.
-    let mut copy = target.insert(MailDraft {
-        visibility: MailVisibility::Public, // patched below before save
-        from_name: original.from_name().to_string(),
-        to_name: original.to_name().to_string(),
-        broadcast_to: original.broadcast_to(),
-        subject: original.subject().to_string(),
-        posted_at: original.posted_at(),
-        author_slot: original.author_slot(),
-        addressee_slot: original.addressee_slot(),
-        body: original.body().to_string(),
-    })?;
-    // Carry received_at forward (the insert path sets it to None).
-    if let Some(when) = original.received_at() {
-        // `mark_received` rejects already-deleted mail; the freshly
-        // inserted copy is Public, so this is always safe.
-        copy.mark_received(when)
-            .expect("freshly-inserted mail is not deleted");
-    }
-    // Reattach the attachments. The spec models this as
-    // "MailAttachment.created(mail: target_msgbase, ...)" per row.
-    for attachment in original.attachments() {
-        copy.push_attachment(MailAttachment::new(
-            attachment.file_name().to_string(),
-            attachment.file_size(),
-        ));
-    }
-    // Carry the source visibility forward (the freshly-inserted copy
-    // is Public; bring it back in line if the source was Private
-    // or PrivateToSysop). Deleted sources are explicitly disallowed
-    // by the spec's transition matrix (deleted is terminal) — but
-    // a sysop moving a deleted mail isn't in scope either; the
-    // typical workflow moves a live message off and the source
-    // becomes deleted afterwards.
-    if !matches!(original.visibility(), MailVisibility::Public) {
-        copy.transition_to(original.visibility())
-            .expect("source visibility is in the legal-from-Public set");
-    }
+    //    next number and persists; `to_draft` carries every header
+    //    field including the source visibility (spec: `visibility:
+    //    mail.visibility`). We then carry over the two fields a
+    //    draft cannot express (received_at, attachments) and save
+    //    again.
+    let mut copy = target.insert(original.to_draft())?;
+    copy.carry_state_from(&original);
     target.save(&copy)?;
 
     // 2) Soft-delete the source. The source row's body file is
-    //    removed by the storage layer (per spec comment); we just
-    //    mark it Deleted here. The clear_attachments is a domain
-    //    effect — the rows now belong to the new mail.
+    //    removed by the storage layer (per spec comment); the domain
+    //    consequents (visibility, attachments, received_at) are owned
+    //    by `Mail::soft_delete` — the attachment rows now belong to
+    //    the new mail.
     original
-        .transition_to(MailVisibility::Deleted)
-        .expect("public/private/private_to_sysop transitions to deleted");
-    original.clear_attachments();
+        .soft_delete()
+        .expect("Deleted sources are filtered upstream");
     source.save(&original)?;
 
     Ok(copy)
@@ -253,6 +218,36 @@ mod tests {
             move_mail(&sysop, &mut source, &mut target, original.number()).expect("happy path");
 
         assert_eq!(moved.visibility(), MailVisibility::Private);
+    }
+
+    #[test]
+    fn moving_a_private_to_sysop_mail_preserves_visibility() {
+        // Spec consequent: `visibility: mail.visibility`. A censored
+        // (PrivateToSysop) source moves over unchanged. Before the
+        // to_draft/carry_state_from refactor this panicked: the copy
+        // was inserted Public and Public -> PrivateToSysop is outside
+        // the spec's transition matrix.
+        let sysop = make_user_with_level(1, 255);
+        let mut source = InMemoryMailStore::new(MessageBaseRef::new(2, 1));
+        let mut target = InMemoryMailStore::new(MessageBaseRef::new(3, 4));
+        let original = source
+            .insert(MailDraft {
+                visibility: MailVisibility::PrivateToSysop,
+                from_name: "alice".to_string(),
+                to_name: "bob".to_string(),
+                broadcast_to: BroadcastTo::None,
+                subject: "censored".to_string(),
+                posted_at: t(50),
+                author_slot: 2,
+                addressee_slot: Some(3),
+                body: "redacted".to_string(),
+            })
+            .expect("insert");
+
+        let moved =
+            move_mail(&sysop, &mut source, &mut target, original.number()).expect("happy path");
+
+        assert_eq!(moved.visibility(), MailVisibility::PrivateToSysop);
     }
 
     #[test]

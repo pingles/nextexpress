@@ -242,23 +242,6 @@ fn is_clear_family(token: &str) -> bool {
     matches!(chars.next(), Some('C' | 'c')) && matches!(chars.next(), None | Some(' '))
 }
 
-/// `addFlagToList` (`amiexpress/express.e:12523`): flags `name` under the
-/// session's current conference. The legacy keys flags by `(confNum,
-/// fileName)` with no area, so a name typed at the prompt carries no
-/// catalogue area — it is stored under area `0`. Returns `true` when a
-/// new file was flagged (legacy `RETURN 2`); `false` for a no-op — a
-/// name of one character or less (the `StrLen(fileName)>1` gate,
-/// `:12532`) or one already flagged (`isInFlaggedList`, `:12534`).
-fn flag_add(session: &mut MenuSession, name: &str) -> bool {
-    let name = name.trim();
-    if name.len() <= 1 {
-        return false;
-    }
-    let conference = session.current_conference_number().unwrap_or(0);
-    let key = crate::domain::files::flagged::FlaggedKey::new(conference, name);
-    session.flagged_files_mut().flag(key)
-}
-
 /// Internal control-flow signal returned by [`MenuFlow::dispatch`].
 ///
 /// The session remains borrowed in both cases. A confirmed logoff is an intent
@@ -539,11 +522,12 @@ where
         }
         // (`F`-from, express.e:12625, is deferred for slice D6b.)
         //
-        // A filename token: addFlagToList (express.e:12638). A newly
-        // flagged file returns RESULT_FAILURE (stat=2 -> -1), exiting the
-        // loop with no trailing line; a no-op (too short, or already
-        // flagged) falls through to RESULT_SUCCESS.
-        if flag_add(session, &answer) {
+        // A filename token: addFlagToList (express.e:12638), owned by
+        // `MenuSession::flag_file`. A newly flagged file returns
+        // RESULT_FAILURE (stat=2 -> -1), exiting the loop with no
+        // trailing line; a no-op (too short, or already flagged) falls
+        // through to RESULT_SUCCESS.
+        if session.flag_file(&answer) {
             Ok(FlagLoop::Exit)
         } else {
             Ok(FlagLoop::Done)

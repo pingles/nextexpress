@@ -306,6 +306,52 @@ impl Conference {
         self.msgbases.iter().find(|m| m.number() == msgbase_number)
     }
 
+    /// Returns this conference's primary [`MessageBase`]: the base
+    /// with `number == 1`, or the first declared base when no
+    /// number-1 base exists. Mirrors the spec's
+    /// `primary_msgbase_of(conference)` helper
+    /// (`conferences.allium`).
+    ///
+    /// [`Self::new`] enforces `AtLeastOneMessageBase`, so the
+    /// fallback is reachable only on legacy conferences that number
+    /// their bases starting at something other than 1.
+    ///
+    /// # Panics
+    /// Panics if the conference somehow holds an empty `msgbases`
+    /// collection. The constructor guarantees this never happens, so
+    /// the panic is a domain invariant guard rather than a reachable
+    /// error path.
+    #[must_use]
+    pub fn primary_msgbase(&self) -> &MessageBase {
+        self.find_msgbase(1)
+            .or_else(|| self.msgbases.first())
+            .expect("AtLeastOneMessageBase guarantees a non-empty msgbases collection")
+    }
+
+    /// Returns the name of the message base to display alongside this
+    /// conference's name — `Some(_)` only when the conference holds
+    /// more than one base (a lone base's name disambiguates nothing).
+    /// This is the legacy `getConfMsgBaseCount(conf)>1` rule applied
+    /// by `joinConf` (`amiexpress/express.e:5069`/`:5077`) and
+    /// `displayMenuPrompt` (`amiexpress/express.e:28413`).
+    ///
+    /// # Parameters
+    /// - `msgbase_number`: 1-indexed base number within this
+    ///   conference (typically the session's current base).
+    ///
+    /// # Returns
+    /// The base's name when the conference is multi-base and holds a
+    /// base with `msgbase_number`; `None` for single-base conferences
+    /// or when no base with that number exists.
+    #[must_use]
+    pub fn disambiguating_msgbase_name(&self, msgbase_number: u32) -> Option<&str> {
+        if self.msgbases.len() > 1 {
+            self.find_msgbase(msgbase_number).map(MessageBase::name)
+        } else {
+            None
+        }
+    }
+
     /// Returns the [`NameType`] this conference expects for posters'
     /// display names (spec: `core.allium:Conference.accepted_name_type`).
     #[must_use]
@@ -368,6 +414,25 @@ pub enum ScanFlag {
     Zoom,
 }
 
+/// The per-conference scan-preference flags as one value (the M/A/F/Z
+/// columns of the `CF` command), carried whole because the flags are
+/// edited as a set and last-writer-wins is acceptable for them.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "mirrors the membership row's four independent flag columns"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanFlagSettings {
+    /// `M` — include in the new-mail scan.
+    pub mail_scan: bool,
+    /// `A` — scan all messages, not just those addressed to the caller.
+    pub mailscan_all: bool,
+    /// `F` — include in the new-files scan.
+    pub file_scan: bool,
+    /// `Z` — include in the ZOOM/QWK gather.
+    pub zoom_scan: bool,
+}
+
 impl ConferenceMembership {
     /// Constructs a new membership row.
     ///
@@ -395,6 +460,44 @@ impl ConferenceMembership {
             file_scan: true,
             zoom_scan: false,
         }
+    }
+
+    /// Rehydrates a membership row from persisted storage — the
+    /// membership analogue of `User::from_persisted` (designs/USERS.md
+    /// round-trip convention). Infallible, unlike the user-level
+    /// constructor: `pointers` rows enforced their own
+    /// `ReadDoesNotExceedScanned` invariant at construction, so there
+    /// is nothing left to reject here.
+    ///
+    /// # Parameters
+    /// - `conference_number`: 1-indexed conference the row belongs to.
+    /// - `granted`: stored access flag ([`Self::is_granted`]).
+    /// - `messages_posted`: stored per-conference posted counter,
+    ///   restored directly rather than replayed through the
+    ///   [`Self::bump_messages_posted`] event mutator.
+    /// - `scan_flags`: the stored M/A/F/Z columns, overriding the
+    ///   fresh-membership Design-D2 defaults.
+    /// - `pointers`: stored per-msgbase [`ReadPointers`] rows, each
+    ///   upserted so the one-row-per-msgbase invariant holds even if
+    ///   storage hands back duplicates.
+    ///
+    /// # Returns
+    /// The rehydrated membership.
+    #[must_use]
+    pub fn from_persisted(
+        conference_number: u32,
+        granted: bool,
+        messages_posted: u32,
+        scan_flags: ScanFlagSettings,
+        pointers: Vec<ReadPointers>,
+    ) -> Self {
+        let mut membership = Self::new(conference_number, granted);
+        membership.messages_posted = messages_posted;
+        membership.set_scan_flags(scan_flags);
+        for row in pointers {
+            membership.upsert_pointers(row);
+        }
+        membership
     }
 
     /// Returns whether the per-conference [`ScanFlag`] is set (spec:
@@ -426,6 +529,21 @@ impl ConferenceMembership {
         self.set_scan_flag(flag, !self.scan_flag(flag));
     }
 
+    /// Sets all four scan flags at once from a [`ScanFlagSettings`]
+    /// value — the flags are edited as a set (the `CF` command,
+    /// `conferences.allium:EditConferenceScanFlags`) and persisted as
+    /// a set, so writers carrying a whole set apply it in one call.
+    ///
+    /// # Parameters
+    /// - `flags`: the new value for every M/A/F/Z flag
+    ///   (last-writer-wins).
+    pub fn set_scan_flags(&mut self, flags: ScanFlagSettings) {
+        self.mail_scan = flags.mail_scan;
+        self.mailscan_all = flags.mailscan_all;
+        self.file_scan = flags.file_scan;
+        self.zoom_scan = flags.zoom_scan;
+    }
+
     /// Returns the running count of messages this user has posted to
     /// the conference (spec:
     /// `core.allium:ConferenceMembership.messages_posted`).
@@ -437,7 +555,18 @@ impl ConferenceMembership {
     /// Increments [`Self::messages_posted`] by one. Used by
     /// `messaging.allium:PostMail` (Slice 42).
     pub fn bump_messages_posted(&mut self) {
-        self.messages_posted = self.messages_posted.saturating_add(1);
+        self.add_messages_posted(1);
+    }
+
+    /// Adds `n` to [`Self::messages_posted`], saturating at
+    /// `u32::MAX`. The additive primitive shared by the single-post
+    /// bump and the patch appliers' `messages_posted_delta` merges
+    /// (`MembershipPatch`).
+    ///
+    /// # Parameters
+    /// - `n`: number of newly recorded posts.
+    pub fn add_messages_posted(&mut self, n: u32) {
+        self.messages_posted = self.messages_posted.saturating_add(n);
     }
 
     /// Returns the 1-indexed conference number this membership
@@ -704,6 +833,66 @@ mod tests {
         .expect("valid")
     }
 
+    fn make_conf_with_bases(number: u32, bases: Vec<(u32, &str)>) -> Conference {
+        let mbs = bases
+            .into_iter()
+            .map(|(n, name)| MessageBase::new(number, n, name.to_string()))
+            .collect();
+        Conference::new(number, format!("Conf {number}"), mbs).expect("valid")
+    }
+
+    #[test]
+    fn primary_msgbase_returns_number_one_when_present() {
+        let conf = make_conf_with_bases(3, vec![(1, "main"), (2, "tech")]);
+        let mb = conf.primary_msgbase();
+        assert_eq!(mb.number(), 1);
+        assert_eq!(mb.name(), "main");
+    }
+
+    #[test]
+    fn primary_msgbase_falls_back_to_first_when_no_number_one_base() {
+        // Defensive fallback for legacy conferences that number from
+        // 2 upward; AtLeastOneMessageBase guarantees `.first()` is
+        // safe.
+        let conf = make_conf_with_bases(3, vec![(7, "weird"), (8, "even-weirder")]);
+        let mb = conf.primary_msgbase();
+        assert_eq!(mb.number(), 7);
+    }
+
+    #[test]
+    fn primary_msgbase_finds_number_one_regardless_of_position() {
+        // The number-1 walk must not degrade to "first element": a
+        // conference listing its bases out of order still joins main.
+        let conf = make_conf_with_bases(3, vec![(2, "tech"), (1, "main")]);
+        let mb = conf.primary_msgbase();
+        assert_eq!(mb.number(), 1);
+        assert_eq!(mb.name(), "main");
+    }
+
+    #[test]
+    fn disambiguating_msgbase_name_names_the_base_in_multi_base_conferences() {
+        // Mirrors `getConfMsgBaseCount(conf)>1 = true` in legacy
+        // `joinConf` (`amiexpress/express.e:5069`): the base name is
+        // needed to say which of several bases the user landed in.
+        let conf = make_conf_with_bases(3, vec![(1, "main"), (2, "tech")]);
+        assert_eq!(conf.disambiguating_msgbase_name(2), Some("tech"));
+        assert_eq!(conf.disambiguating_msgbase_name(1), Some("main"));
+    }
+
+    #[test]
+    fn disambiguating_msgbase_name_is_none_for_single_base_conferences() {
+        // `getConfMsgBaseCount(conf)>1 = false`: the lone base's name
+        // disambiguates nothing and the legacy omits it.
+        let conf = make_conf_with_bases(7, vec![(1, "main")]);
+        assert!(conf.disambiguating_msgbase_name(1).is_none());
+    }
+
+    #[test]
+    fn disambiguating_msgbase_name_is_none_for_unknown_base_numbers() {
+        let conf = make_conf_with_bases(3, vec![(1, "main"), (2, "tech")]);
+        assert!(conf.disambiguating_msgbase_name(99).is_none());
+    }
+
     #[test]
     fn membership_round_trips_conference_number_and_granted_flag() {
         let m = ConferenceMembership::new(7, true);
@@ -871,6 +1060,99 @@ mod tests {
         let mut m = ConferenceMembership::new(5, true);
         m.upsert_pointers(ReadPointers::fresh(2, std::time::SystemTime::UNIX_EPOCH));
         assert!(m.pointers_for_mut(99).is_none());
+    }
+
+    #[test]
+    fn from_persisted_round_trips_a_mutated_membership() {
+        // The rehydration convention (designs/USERS.md; mirrors
+        // `to_persisted_then_from_persisted_round_trips_an_existing_user`):
+        // a membership mutated through its event API equals one
+        // rebuilt from the same persisted-shape values.
+        let mut live = ConferenceMembership::new(7, true);
+        live.bump_messages_posted();
+        live.bump_messages_posted();
+        live.set_scan_flag(ScanFlag::MailScan, false);
+        live.set_scan_flag(ScanFlag::MailScanAll, true);
+        live.set_scan_flag(ScanFlag::Zoom, true);
+        live.upsert_pointers(
+            ReadPointers::new(1, 4, 9, std::time::SystemTime::UNIX_EPOCH).expect("valid"),
+        );
+
+        let rebuilt = ConferenceMembership::from_persisted(
+            7,
+            true,
+            2,
+            ScanFlagSettings {
+                mail_scan: false,
+                mailscan_all: true,
+                file_scan: true,
+                zoom_scan: true,
+            },
+            vec![ReadPointers::new(1, 4, 9, std::time::SystemTime::UNIX_EPOCH).expect("valid")],
+        );
+        assert_eq!(rebuilt, live);
+    }
+
+    #[test]
+    fn from_persisted_upserts_duplicate_pointer_rows() {
+        // Storage should never hand back two rows for one msgbase, but
+        // the constructor still upholds the one-row-per-msgbase
+        // invariant by upserting: the later row wins.
+        let m = ConferenceMembership::from_persisted(
+            1,
+            true,
+            0,
+            ScanFlagSettings {
+                mail_scan: true,
+                mailscan_all: false,
+                file_scan: true,
+                zoom_scan: false,
+            },
+            vec![
+                ReadPointers::new(3, 1, 1, std::time::SystemTime::UNIX_EPOCH).expect("valid"),
+                ReadPointers::new(3, 5, 8, std::time::SystemTime::UNIX_EPOCH).expect("valid"),
+            ],
+        );
+        assert_eq!(m.pointers().len(), 1);
+        let row = m.pointers_for(3).expect("present");
+        assert_eq!((row.last_read(), row.last_scanned()), (5, 8));
+    }
+
+    #[test]
+    fn set_scan_flags_overwrites_all_four_flags_as_a_set() {
+        let mut m = ConferenceMembership::new(2, true);
+        m.set_scan_flags(ScanFlagSettings {
+            mail_scan: false,
+            mailscan_all: true,
+            file_scan: false,
+            zoom_scan: true,
+        });
+        assert!(!m.scan_flag(ScanFlag::MailScan));
+        assert!(m.scan_flag(ScanFlag::MailScanAll));
+        assert!(!m.scan_flag(ScanFlag::FileScan));
+        assert!(m.scan_flag(ScanFlag::Zoom));
+
+        m.set_scan_flags(ScanFlagSettings {
+            mail_scan: true,
+            mailscan_all: false,
+            file_scan: true,
+            zoom_scan: false,
+        });
+        assert!(m.scan_flag(ScanFlag::MailScan));
+        assert!(!m.scan_flag(ScanFlag::MailScanAll));
+        assert!(m.scan_flag(ScanFlag::FileScan));
+        assert!(!m.scan_flag(ScanFlag::Zoom));
+    }
+
+    #[test]
+    fn add_messages_posted_is_additive_and_saturates() {
+        let mut m = ConferenceMembership::new(5, true);
+        m.add_messages_posted(5);
+        assert_eq!(m.messages_posted(), 5);
+        m.add_messages_posted(0);
+        assert_eq!(m.messages_posted(), 5);
+        m.add_messages_posted(u32::MAX);
+        assert_eq!(m.messages_posted(), u32::MAX, "saturates, never wraps");
     }
 
     #[test]

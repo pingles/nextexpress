@@ -4,8 +4,8 @@ use std::time::SystemTime;
 
 use crate::domain::conference::{first_accessible_conference, Conference, NameType};
 use crate::domain::conference_visit::{
-    next_accessible_conference_after, primary_msgbase_of, resolve_auto_rejoin,
-    resolve_explicit_join, ConferenceScan, ConferenceVisit, ExplicitJoinResolution, JoinResolution,
+    next_accessible_conference_after, resolve_auto_rejoin, resolve_explicit_join, ConferenceScan,
+    ConferenceVisit, ExplicitJoinResolution, JoinResolution,
 };
 
 use super::{
@@ -223,7 +223,7 @@ impl Session {
         };
 
         let first_number = first_conference.number();
-        let mb = primary_msgbase_of(first_conference);
+        let mb = first_conference.primary_msgbase();
         let msgbase_number = mb.number();
         let conference_name_type = first_conference.accepted_name_type();
         user.record_join(first_conference, mb);
@@ -270,7 +270,7 @@ impl Session {
 
         if let Some(next) = next_accessible_conference_after(user, conferences, current_number) {
             let next_number = next.number();
-            let mb = primary_msgbase_of(next);
+            let mb = next.primary_msgbase();
             let msgbase_number = mb.number();
             let conference_name_type = next.accepted_name_type();
             user.record_join(next, mb);

@@ -4,7 +4,7 @@
 //! Private to the `domain::user` module. The [`User`] aggregate
 //! delegates to these methods through its public accessors.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::domain::password::PasswordHashKind;
 use crate::domain::user::{requires_salt, UserError};
@@ -68,6 +68,29 @@ impl Credentials {
 
     pub(super) fn set_reset_required(&mut self, value: bool) {
         self.reset = value;
+    }
+
+    /// `session.allium:ForcePasswordReset` (Slice 15): sets the
+    /// reset-required flag when the stored password has expired.
+    ///
+    /// Expired means more than `expiry_days` days have elapsed between
+    /// [`Self::last_updated`] and `now` (strict comparison); clock skew
+    /// (`now` before `last_updated`) counts as not expired. Setting an
+    /// already-set flag is a no-op, so a sysop-requested reset is
+    /// preserved.
+    ///
+    /// # Parameters
+    /// - `expiry_days`: `core/config.password_expiry_days`; `0`
+    ///   disables expiry.
+    /// - `now`: the time of the check.
+    pub(super) fn flag_reset_if_expired(&mut self, expiry_days: u32, now: SystemTime) {
+        let expired = expiry_days > 0
+            && now
+                .duration_since(self.last_updated)
+                .is_ok_and(|d| d > Duration::from_secs(u64::from(expiry_days) * 86_400));
+        if expired {
+            self.reset = true;
+        }
     }
 
     pub(super) fn record_change(
