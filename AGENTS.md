@@ -158,5 +158,8 @@ enforces this. Rust consts carrying re-encoded glyphs are `&str`.
 
 Formatting (`cargo fmt`) and clippy (`cargo clippy -- -D warnings`) run
 automatically via Claude Code hooks defined in `.claude/settings.json` — fmt
-runs after every Rust edit, clippy runs at session stop and blocks if there are
-warnings.
+runs after every Rust edit, and again in the session-stop gate (before clippy,
+which blocks if there are warnings). The per-edit hook only fires for the
+Write/Edit tools: **if you rewrite `.rs` files from a script or shell command,
+run `cargo fmt` yourself afterwards** — clippy does not check formatting, so
+nothing else will catch it until the stop gate.
