@@ -47,7 +47,7 @@ use crate::app::session_presenter::{
 };
 use crate::app::session_terminal::{preserve_phase, SessionFlowResult, SessionTerminalError};
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::IDLE_TIMEOUT_LINE;
+use crate::app::wire_text::{IDLE_TIMEOUT_LINE, TIME_EXPIRED_LINE};
 use crate::domain::conference::NameType;
 use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
@@ -353,6 +353,20 @@ where
                 let (logging_off, ()) = preserve_phase(
                     logging_off,
                     crate::app::terminal::write_and_flush(&mut self.terminal, IDLE_TIMEOUT_LINE),
+                )
+                .await?;
+                Ok(logging_off)
+            }
+            MenuExit::TimeExpired => {
+                // The per-call budget ran out (item 27b). Like idle
+                // timeout, this writes its own self-contained notice
+                // (which carries its own goodbye) and never reaches the
+                // normal logoff tail. Flag persistence on a forced exit
+                // remains a shared gap with idle/carrier — see SYSTEM.md.
+                let logging_off = menu.expire_time();
+                let (logging_off, ()) = preserve_phase(
+                    logging_off,
+                    crate::app::terminal::write_and_flush(&mut self.terminal, TIME_EXPIRED_LINE),
                 )
                 .await?;
                 Ok(logging_off)

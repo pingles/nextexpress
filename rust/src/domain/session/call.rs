@@ -174,20 +174,24 @@ impl AuthenticatedCall {
     /// - `now`: the current instant from the application clock.
     ///
     /// # Returns
-    /// `true` when the per-call budget is now exhausted.
+    /// `true` when this accrual pushed the budget **past** zero — the
+    /// legacy expires on `timeLimit < 0` (`amiexpress/express.e:557`), so
+    /// consuming exactly to zero is not yet expiry (a fresh caller with a
+    /// zero allowance still gets the current interaction), and a
+    /// `< 1 min` elapse never expires.
     pub(super) fn accrue_elapsed(&mut self, now: SystemTime) -> bool {
         let elapsed = now
             .duration_since(self.last_tick_at)
             .unwrap_or(Duration::ZERO);
         // Whole elapsed minutes only; the sub-minute remainder is left
         // on the anchor by advancing it by exactly what we consume, so
-        // it carries into the next accrual. A `< 1 min` elapse consumes
-        // zero and leaves every field untouched.
+        // it carries into the next accrual.
         let consumed = Duration::from_secs(elapsed.as_secs() / 60 * 60);
         self.user.add_time_used_today(consumed);
+        let exhausted = consumed > self.time_remaining;
         self.time_remaining = self.time_remaining.saturating_sub(consumed);
         self.last_tick_at += consumed;
-        self.time_remaining.is_zero()
+        exhausted
     }
 }
 

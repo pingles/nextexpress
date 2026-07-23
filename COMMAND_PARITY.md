@@ -165,7 +165,12 @@ Both systems follow the same skeleton — name prompt -> masked password -> auto
 ### Menu prompt (mins. left)
 - Both render `\x1b[0m\x1b[35m<bbsName> \x1b[0m[\x1b[36m<n>\x1b[34m:\x1b[36m<name>\x1b[0m] Menu (\x1b[33m<mins>\x1b[0m mins. left): ` (AE `displayMenuPrompt` `express.e:28417-28419`; Rust `render_menu_prompt` `wire_text.rs:920`). Same `ESC[35m/36m/34m/33m` codes, same brackets, same `mins. left): ` suffix.
 - The minutes value differs (AE `599`, Rust dev seed `30`). Both compute `(timeTotal - timeUsed)/60` and both now *accrue* — the budget falls as the call spends wall-clock time (Rust: item 27a, `budget::accrue_time` driven each menu-loop iteration off the `Clock` port; the seeded sysop's `time_limit_per_call` is a real 30 min, `seed.rs`). Earlier the Rust value was frozen at `0` (seed `Duration::ZERO`); that behavioural gap is closed. The remaining difference is the starting value, which is per-deployment config.
-- **MATCH** (format and live accrual); the differing starting number is **COSMETIC** (seed/config data). The expiry-logoff transition when the budget reaches zero is item 27b (not yet landed on the Rust side).
+- **MATCH** (format and live accrual); the differing starting number is **COSMETIC** (seed/config data). Budget exhaustion now logs the caller off (item 27b) — see [Time-limit expiry](#time-limit-expiry-item-27b) below.
+
+### Time-limit expiry (item 27b)
+- **AmiExpress** `checkTimeUsed` (`express.e:556-568`) expires a call when `timeLimit < 0` and the caller lacks `ACS_OVERRIDE_TIMELIMIT`: it renders `SCREEN_LOGON24` if that asset exists, otherwise the three `aePuts` lines `You have exceeded your time limit\b\n` / `Goodbye\b\n\b\n` / `Disconnecting..\b\n`, then `saveFlagged()` and disconnects.
+- **NextExpress** accrues the budget each menu-loop iteration (`budget::accrue_time`) and, on exhaustion for a caller without `Right::OverrideTimeLimit` (sysop-only, item 24), returns `MenuExit::TimeExpired`; the driver moves the session to `LoggingOff`/`OutOfTime` and writes `TIME_EXPIRED_LINE` — the same three lines, `\b\n` re-encoded to `\r\n`. Exhaustion fires on the same `timeLimit < 0` boundary (consuming exactly to zero is not expiry), so a zero-allowance caller still gets the current interaction.
+- **MATCH (behaviour + wire), EXTRAPOLATED-FROM-SOURCE** — the fallback literals are read from `express.e:558-560`, not captured live; no `Logon24hrs` asset ships in this repo so the fallback is the wire form. **Residual gap:** unlike the legacy, the expiry path does not yet run `saveFlagged()`, so a timed-out caller's flagged files are not persisted — a pre-existing forced-exit gap shared with idle-timeout (SYSTEM.md item 27).
 
 ---
 

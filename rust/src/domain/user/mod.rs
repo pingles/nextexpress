@@ -602,11 +602,20 @@ impl User {
     /// For validated accounts the per-tier mapping from `access_level`
     /// to specific rights is not yet modelled; later phases narrow
     /// this down. Until then a validated user is treated as having
-    /// every right.
+    /// every right — with one provisional exception (item 24):
+    /// [`Right::OverrideTimeLimit`] is granted to sysops only, so time
+    /// expiry (item 27b) does not become unreachable for every
+    /// validated caller the moment it lands. The legacy resolves this
+    /// right from per-deployment ACS config
+    /// (`checkSecurity(ACS_OVERRIDE_TIMELIMIT)`,
+    /// `amiexpress/express.e:557`), which the file-config surface will
+    /// model later; the sysop-only rule is the accepted interim.
     #[must_use]
     pub fn has_access(&self, right: Right) -> bool {
         if self.is_new_user() {
             matches!(right, Right::ReadMessage | Right::CommentToSysop)
+        } else if right == Right::OverrideTimeLimit {
+            self.is_sysop()
         } else {
             true
         }
@@ -1417,17 +1426,34 @@ mod tests {
     }
 
     #[test]
-    fn existing_user_has_every_right_until_per_tier_modelling_lands() {
+    fn validated_non_sysop_has_every_right_except_the_time_override() {
         // Slice 21 only models the new-user tier; for validated users
         // every right is granted until later phases narrow the mapping
-        // from `access_level` to specific rights.
-        let user = make_user(2, Some("salt".to_string())).unwrap();
+        // from `access_level` to specific rights — except
+        // `OverrideTimeLimit`, which item 24's provisional rule grants
+        // to sysops only.
+        let user = make_user(2, Some("salt".to_string())).unwrap(); // slot 2 => not sysop
         assert!(!user.is_new_user());
+        assert!(!user.is_sysop());
         for right in Right::all() {
-            assert!(
+            let expected = right != Right::OverrideTimeLimit;
+            assert_eq!(
                 user.has_access(right),
-                "existing user should have {right:?}"
+                expected,
+                "validated non-sysop, {right:?}"
             );
+        }
+    }
+
+    #[test]
+    fn validated_sysop_has_every_right_including_the_time_override() {
+        // The sysop (slot 1) keeps the all-rights grant, and item 24
+        // additionally reaches them for `OverrideTimeLimit`.
+        let user = make_user(1, Some("salt".to_string())).unwrap(); // slot 1 => sysop
+        assert!(!user.is_new_user());
+        assert!(user.is_sysop());
+        for right in Right::all() {
+            assert!(user.has_access(right), "sysop should have {right:?}");
         }
     }
 

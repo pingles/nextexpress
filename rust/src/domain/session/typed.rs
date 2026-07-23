@@ -430,6 +430,20 @@ impl MenuSession {
         }
     }
 
+    /// Consumes the menu session into logging-off because the per-call
+    /// time budget is exhausted (item 27b,
+    /// `session.allium:TimeExpired`). The driver invokes this after the
+    /// menu loop observed [`super::super::MenuExit`]-style exhaustion.
+    #[must_use]
+    pub(crate) fn expire_time(mut self) -> LoggingOffSession {
+        self.session
+            .expire_time_budget()
+            .expect("Menu -> LoggingOff is total via TimeExpired");
+        LoggingOffSession {
+            session: self.session,
+        }
+    }
+
     /// Resolves the explicit-join path of
     /// `conferences.allium:JoinConference` (Slice 32 / Tier C C2 /
     /// C4a) for a `J <num>` — or message-base-targeted `J <a>.<b>` /

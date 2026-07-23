@@ -460,6 +460,114 @@ async fn menu_prompt_minutes_decrement_as_the_call_spends_time() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn a_non_sysop_is_logged_off_when_the_time_budget_runs_out() {
+    // Item 27b — when a caller without the time-limit override exhausts
+    // the per-call budget, the menu loop logs them off with the legacy
+    // `checkTimeUsed` notice (`express.e:558-560`).
+    use nextexpress::adapters::system_clock::ManualClock;
+    use nextexpress::domain::conference::ConferenceMembership;
+    use nextexpress::domain::password::{PasswordHashKind, PasswordHasher};
+    use nextexpress::domain::user::User;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    let clock = Arc::new(ManualClock::set_to(SystemTime::UNIX_EPOCH));
+    let conferences = vec![Conference::new(
+        1,
+        "Main".to_string(),
+        vec![MessageBase::new(1, 1, "main".to_string())],
+    )
+    .expect("valid conference")];
+    let fixture = TestRuntime::new(
+        std::env::current_dir().expect("cwd"),
+        conferences,
+        support::empty_mail_stores(),
+        support::empty_file_repo(),
+    )
+    .with_clock(clock.clone())
+    .with_user(|hasher| {
+        let pw = hasher
+            .compute_password_hash("regular", PasswordHashKind::Pbkdf210000)
+            .expect("hash regular password");
+        let mut regular = User::new(
+            3,
+            "regular".to_string(),
+            PasswordHashKind::Pbkdf210000,
+            pw.hash,
+            pw.salt,
+            SystemTime::UNIX_EPOCH,
+            100,
+        )
+        .expect("valid regular user");
+        regular.upsert_membership(ConferenceMembership::new(1, true));
+        // A one-minute allowance so a two-minute advance exhausts it.
+        regular.set_time_limits(Duration::from_mins(1), Duration::from_hours(1));
+        regular
+    });
+    let addr = support::spawn_seeded_sysop(fixture).await;
+
+    let mut stream = support::sign_in(&addr, b"regular", b"regular").await;
+    clock.advance(Duration::from_mins(2));
+    // The next loop iteration accrues past the budget and expires.
+    write_line(&mut stream, b"?").await;
+    let out = drain_until(&mut stream, b"Disconnecting..\r\n").await;
+    assert!(
+        contains(
+            &out,
+            b"You have exceeded your time limit\r\nGoodbye\r\n\r\nDisconnecting..\r\n"
+        ),
+        "expected the expiry notice, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+}
+
+#[tokio::test]
+async fn a_sysop_is_not_logged_off_when_the_time_budget_runs_out() {
+    // Item 24 + 27b — the sysop holds `OverrideTimeLimit`, so an
+    // exhausted budget shows `0 mins. left` but never expires the call
+    // (`checkTimeUsed`'s `ACS_OVERRIDE_TIMELIMIT` bypass).
+    use nextexpress::adapters::system_clock::ManualClock;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    let clock = Arc::new(ManualClock::set_to(SystemTime::UNIX_EPOCH));
+    let conferences = vec![Conference::new(
+        1,
+        "Main".to_string(),
+        vec![MessageBase::new(1, 1, "main".to_string())],
+    )
+    .expect("valid conference")];
+    let fixture = TestRuntime::new(
+        std::env::current_dir().expect("cwd"),
+        conferences,
+        support::empty_mail_stores(),
+        support::empty_file_repo(),
+    )
+    .with_clock(clock.clone())
+    .with_sysop(|sysop| {
+        sysop.set_time_limits(Duration::from_mins(1), Duration::from_hours(1));
+    });
+    let addr = support::spawn_seeded_sysop(fixture).await;
+
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+    clock.advance(Duration::from_mins(5));
+    write_line(&mut stream, b"?").await;
+    let out = drain_until(&mut stream, b"mins. left): ").await;
+    assert!(
+        contains(&out, b"0\x1b[0m mins. left"),
+        "the sysop budget accrues to zero, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        !contains(&out, b"exceeded your time limit"),
+        "the sysop override must suppress expiry, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// Builds a `Runtime` with an in-memory user repo, the seeded sysop,
 /// a single `Main` conference, an empty mail store, and an in-memory
 /// caller log, then binds a [`TelnetListener`] on an ephemeral port

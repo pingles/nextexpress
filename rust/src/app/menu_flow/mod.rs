@@ -261,6 +261,9 @@ pub(crate) enum MenuExit {
     CarrierLost,
     /// No input arrived before the session input timeout.
     IdleTimedOut,
+    /// The per-call time budget reached zero for a caller without the
+    /// time-limit override (item 27b, `session.allium:TimeExpired`).
+    TimeExpired,
 }
 
 /// Internal error propagated through every nested menu prompt.
@@ -375,10 +378,15 @@ where
         loop {
             // Accrue wall-clock time spent since the last iteration
             // against the per-call budget so the prompt's "mins. left"
-            // decrements (item 27a). The exhausted flag drives the
-            // expiry logoff in item 27b; here we only refresh the
-            // displayed budget, so it is deliberately unused.
-            let _budget_exhausted = session.accrue_time(self.services.clock.now());
+            // decrements (item 27a). When the budget is exhausted the
+            // caller is logged off with `OutOfTime` (item 27b) — unless
+            // they hold the time-limit override (`checkTimeUsed`'s
+            // `ACS_OVERRIDE_TIMELIMIT` gate, `amiexpress/express.e:557`),
+            // for whom time still accrues but expiry is bypassed.
+            let budget_exhausted = session.accrue_time(self.services.clock.now());
+            if budget_exhausted && !session.user().has_access(Right::OverrideTimeLimit) {
+                return Ok(MenuExit::TimeExpired);
+            }
             // Tier A quickwin A6: in expert mode the menu screen is not
             // auto-displayed before the prompt — the user requests it
             // with `?` (legacy `displayMenuPrompt` gate at

@@ -1455,6 +1455,50 @@ mod time_budget {
     }
 
     #[test]
+    fn expire_time_budget_moves_to_logging_off_with_out_of_time() {
+        let mut s = onboarded_with_budget(Duration::from_mins(1));
+        s.enter_menu(SystemTime::UNIX_EPOCH).unwrap();
+        s.expire_time_budget().expect("menu may expire");
+        assert_eq!(s.state(), SessionState::LoggingOff);
+        assert_eq!(s.logoff_reason(), Some(LogoffReason::OutOfTime));
+    }
+
+    #[test]
+    fn expire_time_budget_outside_onboarded_or_menu_errors() {
+        let mut s = new_session(LogonChannel::Remote);
+        assert!(s.expire_time_budget().is_err());
+    }
+
+    #[test]
+    fn accrue_time_at_exactly_zero_is_not_yet_exhausted() {
+        // Legacy `checkTimeUsed` expires on `timeLimit < 0`, so consuming
+        // exactly to the budget is not expiry — the next whole minute is.
+        let mut s = onboarded_with_budget(Duration::from_mins(2));
+        assert!(!accrue_time(
+            &mut s,
+            SystemTime::UNIX_EPOCH + Duration::from_mins(2)
+        ));
+        assert_eq!(s.time_remaining(), Duration::ZERO);
+        assert!(accrue_time(
+            &mut s,
+            SystemTime::UNIX_EPOCH + Duration::from_mins(3)
+        ));
+    }
+
+    #[test]
+    fn accrue_time_zero_budget_survives_until_a_minute_elapses() {
+        // A zero allowance is not immediately expired (0 is not < 0): the
+        // caller still gets the current interaction, then the first whole
+        // elapsed minute expires them.
+        let mut s = onboarded_with_budget(Duration::ZERO);
+        assert!(!accrue_time(&mut s, SystemTime::UNIX_EPOCH));
+        assert!(accrue_time(
+            &mut s,
+            SystemTime::UNIX_EPOCH + Duration::from_mins(1)
+        ));
+    }
+
+    #[test]
     fn accrue_time_backwards_clock_is_a_noop() {
         let mut s = onboarded_with_budget(Duration::from_mins(30));
         // `now` earlier than the anchor (clock skew): no change.

@@ -129,6 +129,29 @@ impl Session {
         Ok(())
     }
 
+    /// `session.allium:TimeExpired` (item 27b): the per-call time budget
+    /// reached zero for a caller without the time-limit override.
+    ///
+    /// Transitions [`SessionState::Onboarded`] or [`SessionState::Menu`]
+    /// to [`SessionState::LoggingOff`] with [`LogoffReason::OutOfTime`].
+    /// Unlike the accrual itself ([`super::budget::accrue_time`]) this is
+    /// the driver-owned lifecycle move — the domain never flips the phase
+    /// from under a borrowed `MenuSession` mid-loop.
+    ///
+    /// # Errors
+    /// Returns [`SessionTransitionError`] if the session is not in
+    /// `onboarded` or `menu`.
+    pub fn expire_time_budget(&mut self) -> Result<(), SessionTransitionError> {
+        if !matches!(self.state(), SessionState::Onboarded | SessionState::Menu) {
+            return Err(SessionTransitionError {
+                from: self.state(),
+                to: SessionState::LoggingOff,
+            });
+        }
+        self.move_to_logging_off(Some(LogoffReason::OutOfTime));
+        Ok(())
+    }
+
     /// `session.allium:FinaliseLogoff` rule.
     ///
     /// Updates `user.last_call`, appends the goodbye line to the

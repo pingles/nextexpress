@@ -27,10 +27,10 @@ and file counts are the review verifiers' adjusted estimates.
 | 12 | **UTF-8 policy re-scope + echo-hole fix** (19) | **Echo-hole half landed 2026-07-23**; policy half before D-T1 | The Latin-1 inbound echo hole (a lone 0xA9 typed at the pre-auth prompt put invalid UTF-8 on the wire) is closed: the codec assembles UTF-8 multibyte input and Latin-1-re-encodes stray high bytes, and the e2e gate is now hostile-client. The policy re-scope (arbitrary bytes only in item 20's negotiated binary window) is still open — its first test is the first D-T1 sub-slice. | ~4 (2 docs + codec + test) | ~0.5 day |
 | 13 | **Raw binary channel on `Terminal`** (20) | Opening sub-slice of D-T1 | The stack destroys binary in both directions (lossy decode, dropped `IAC IAC`, no 0xFF doubling, ANSI stripping). `read_bytes`/`write_raw` with BINARY negotiation is the one seam all transfer slices flow through. | ~5–8 | 1–3 days |
 | 14 | **Sans-IO Zmodem engine** (21) | Shapes D-T1 | The accepted sans-IO shape keeps frame/state logic independent of sockets and lets the smoke harness use the same engine as an embedded peer. Porting `zmodem.e`'s callback-into-serial shape would weld protocol logic to live I/O and force a second implementation. | engine lands inside D-T1..T5 | 1–2 wks in-slice |
-| 15 | **Real `has_access` narrowing** (24) | Sysop-only time override before item 27; remaining rights with first refusal | The stub grants every right to any validated account, which would make every validated caller immune to time expiry. The accepted provisional rule grants `OverrideTimeLimit` only to sysops; narrow other variants with their first captured refusing slice. | ~3–6 | 0.5–2 days, staged |
+| 15 | **Real `has_access` narrowing** (24) | **Sysop-only time override landed 2026-07-23** (with item 27b); remaining rights with first refusal | `has_access` now grants `OverrideTimeLimit` to sysops only (`is_sysop()`), so the time-expiry logoff (item 27b) is not unreachable for every validated caller. Every other right stays granted; narrow the rest with their first captured refusing slice (FM/US, D/U eligibility, Tier G/H). | ~3–6 | 0.5–2 days, staged |
 | 16 | **`NodePool` → presence registry** (25) | Immediately before WHO | Today nothing can answer "who is online" — no registry, dead `LoggedOn` transitions, pool unreachable from handlers. `NodePresence` + `snapshot_all` is the read-side seam for WHO/WHD, Tier G's node monitor, and the place delivery handles later hang. | ~8–12 | 1–2 days |
 | 17 | **Terminal-delivery `SessionSignal` channel** (26) | **Landed** 2026-07-03 (pulled forward; OLM/page add the send side) | The landed one-variant `Deliver(Vec<u8>)` lane can wake a session blocked on terminal input without losing partially typed text. It is deliberately **delivery-only**: it cannot mutate session state or preserve typed logoff reasons for kick/suspend/time changes. Row 23 records the missing control plane. | ~5–7 | ~3 days |
-| 18 | **Activate the time budget** (27) | **Accrual half landed 2026-07-23**; expiry half before D-T3 | The frozen "mins. left" is fixed: `budget::accrue_time` (driven off the `Clock` port each menu-loop iteration) decrements the per-call budget by whole elapsed minutes, and the seeded sysop carries a real 30-min allowance. Still open: the expiry-logoff transition + its notice (27b, needs a capture) and item 24's sysop-only `OverrideTimeLimit` that rides with it. | ~4–6 + FS-UAE capture | 1–2 days |
+| 18 | **Activate the time budget** (27) | **Landed 2026-07-23** (27a + 27b) | The frozen "mins. left" is fixed and expiry works: `budget::accrue_time` decrements the per-call budget each menu-loop iteration off the `Clock` port, and on exhaustion a caller without `OverrideTimeLimit` is logged off with `OutOfTime` and the `checkTimeUsed` notice (`MenuExit::TimeExpired` → driver, cloned from idle-timeout). Expiry fires on the legacy `timeLimit < 0` boundary. Notice extrapolated-from-source (no `SCREEN_LOGON24` asset ships). Flag-persist-on-forced-exit remains a shared gap with idle/carrier. | ~4–6 | 1–2 days |
 | 19 | **Stable file identity + transfer transaction boundary** (28) | **Design accepted**; implementation spans D2s/D-T1/D-T2 | Add stable `FileId` and one durable SQLite metadata database/pool whose unit-of-work atomically updates transfer, file, user and membership projections; ephemeral mode implements the same boundary in memory. Stable configuration area keys preserve identity across renumbering. | ~8–15 | implementation in-slice |
 | 20 | **NextScan listed-file index** (29) | **Landed** 2026-07-10 (D10) | The scan-wide `Vec<ListedRow>` incorrectly retained repeated numbers across areas/reloads. A private dense `DisplayedSelectionIndex(Vec<FlaggedKey>)` now replaces identity at each directory/reload boundary and resolves `R n` by direct `n - 1` lookup; captured legacy names deliberately bypass catalogue lookup. The ordered current-page `Vec` remains solely for redraw geometry, and staged flags commit only after terminal output succeeds. | 4 src/test + 4 docs/evidence | capture + 1 day |
 | 21 | **Complete flagged-file identity/order lifecycle** (30) | **Design accepted**; implement before D/DS, purge before D-S2 | Allow duplicate names across areas, resolve legacy keys in configured area order to `FileId`, preserve insertion order with sequence + membership index, enforce 1000 entries, persist command deltas, and quarantine/report migration overflow. | ~6–10 | 2–4 days |
@@ -1690,9 +1690,15 @@ schema-growth rule forbids adding the fields earlier).**
 
 ### 24. Replace the `has_access` all-rights stub
 
-`User::has_access` grants every `Right` — including `Download`,
-`Upload`, `OverrideTimeLimit` and `EditFiles` — to any validated
-account (`user/mod.rs:580-586`); the doc comment at `:575-578`
+**First variant landed 2026-07-23** (with item 27b): `has_access` now
+grants `Right::OverrideTimeLimit` to sysops only (`is_sysop()`), so the
+time-expiry logoff is not immediately unreachable for every validated
+caller. Every other right is still granted to any validated account.
+The rest of this entry describes the remaining, still-open narrowing.
+
+`User::has_access` grants every other `Right` — including `Download`,
+`Upload` and `EditFiles` — to any validated
+account; the doc comment
 concedes the per-tier mapping is "not yet modelled". Harmless while
 every gated surface was a messaging command any validated user may
 use; load-bearing the moment a command must REFUSE a validated user —
@@ -1834,18 +1840,28 @@ domain under a borrowed `MenuSession`. No new wire surface (the prompt
 bytes were already pinned), so no capture was needed; pinned by domain
 unit tests plus a `ManualClock`-driven e2e smoke.
 
-**Expiry half (27b) still open.** Consume `accrue_time`'s exhausted flag:
-return a new `MenuExit::TimeExpired` to the driver (cloned from the
-`IdleTimedOut` arm), which consumes `MenuSession` into the logging-off
-phase and renders the expiry notice — a NEW wire surface needing an
-FS-UAE capture (`express.e:558` renders `SCREEN_LOGON24` only if the
-asset exists; no such file is in this repo, so the three literals are
-the fallback). Preserve `ACS_OVERRIDE_TIMELIMIT` (`express.e:557`):
-callers with `Right::OverrideTimeLimit` never expire, so 27b lands
-**with** item 24's sysop-only provisional grant (item 24 has no other
-consumer, so it rides here rather than standalone). Usage time still
-accrues for an override holder; only the expiry transition is bypassed.
-Then remove the now-dead `tick_minute`/`consume_minute`.
+**Expiry half (27b) landed 2026-07-23.** The menu loop consumes
+`accrue_time`'s exhausted flag: when the budget is spent and the caller
+lacks `Right::OverrideTimeLimit`, it returns `MenuExit::TimeExpired`. The
+driver's arm (cloned from `IdleTimedOut`) consumes `MenuSession` via
+`Session::expire_time_budget` into `LoggingOff`/`OutOfTime` and writes
+`TIME_EXPIRED_LINE`. Exhaustion fires on the legacy `timeLimit < 0`
+boundary (`express.e:557`): consuming exactly to zero is not yet expiry,
+so a zero-allowance caller still gets the current interaction — this is
+also why the existing 0-budget test users are not kicked on menu entry.
+The notice is the `checkTimeUsed` fallback (`express.e:558-560`,
+`You have exceeded your time limit` / `Goodbye` / `Disconnecting..`),
+extrapolated from source because no `SCREEN_LOGON24` asset ships in this
+repo; recorded in COMMAND_PARITY.md, no live capture taken. Item 24's
+sysop-only `OverrideTimeLimit` grant landed with it (its only consumer),
+so usage still accrues for an override holder while expiry is bypassed.
+
+Still open under item 27: the now-dead `tick_minute`/`consume_minute`
+(superseded by `accrue_time` + `expire_time_budget`) can be removed, and
+flag persistence on a forced exit (idle / expiry / carrier) remains a
+shared gap — none of those paths runs the `G`-logoff `saveFlagged`, so a
+timed-out caller's flags are not persisted (a pre-existing idle-timeout
+gap, now shared by expiry).
 **Trigger: before D-T3.** Download eligibility and transfer preflight
 must read a live budget; waiting for Tier E/G would build transfer
 rules on known-stale state.
@@ -2125,13 +2141,13 @@ binary transfer window; and a provisional sysop-only time override.
 1. **Close current correctness gaps.** Landed: item 29's current-directory
    lookup index; item 33's direct counter restoration (2026-07-17);
    item 34's repository parity fix (case-folding half, 2026-07-23);
-   item 27's elapsed-time accrual (27a, 2026-07-23); and item 19's
-   Latin-1 echo hole (half i, 2026-07-23). Still open: item 24's minimal
-   `OverrideTimeLimit` mapping and item 27's expiry-logoff transition
-   (27b, before D-T3 — they land together, item 24 being 27b's only
-   consumer); item 34's indexing half; and item 19's text/binary policy
-   re-scope (gated on item 20's raw channel). Each new wire surface
-   remains capture-pinned.
+   item 27's elapsed-time accrual and expiry logoff (27a + 27b,
+   2026-07-23) with item 24's sysop-only `OverrideTimeLimit`; and item
+   19's Latin-1 echo hole (half i, 2026-07-23). Still open: the rest of
+   item 24's rights narrowing (with each first-refusing slice); item 34's
+   indexing half; item 19's text/binary policy re-scope (gated on item
+   20's raw channel); and the dead-`tick_minute` cleanup. Each new wire
+   surface remains capture-pinned.
 2. **Prepare persisted and per-call state.** Item 23a's
    `AuthenticatedCall` plus its post-authentication `CallId` landed
    2026-07-17; item 22's SQLite migrations and uniform connection setup

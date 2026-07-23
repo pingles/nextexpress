@@ -28,6 +28,15 @@ pub(crate) const ANSI_PROMPT: &[u8] = b"ANSI Graphics (Y/n)? ";
 /// Sent immediately before the connection closes on idle timeout.
 pub(crate) const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
 
+/// Sent when the per-call time budget is exhausted (item 27b,
+/// `checkTimeUsed`, `amiexpress/express.e:556-560`). The legacy renders
+/// `SCREEN_LOGON24` when that asset exists, otherwise these three
+/// `aePuts` lines; no `Logon24hrs` asset ships in this repo, so the
+/// fallback is the wire form. Extrapolated from source (no live
+/// capture) — recorded in `COMMAND_PARITY.md`.
+pub(crate) const TIME_EXPIRED_LINE: &[u8] =
+    b"You have exceeded your time limit\r\nGoodbye\r\n\r\nDisconnecting..\r\n";
+
 /// Sent when the post-auth cluster rejects the logon for insufficient
 /// access.
 pub(crate) const LOGON_REJECTED_LINE: &[u8] = b"Logon rejected. Goodbye.\r\n";
