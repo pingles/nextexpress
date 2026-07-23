@@ -62,8 +62,13 @@ pub(super) struct AuthenticatedCall {
     /// When authentication completed.
     pub(super) authenticated_at: SystemTime,
     /// Per-call time budget: set by `initialise_daily_budget`,
-    /// decremented by `tick_minute`.
+    /// decremented by [`Self::accrue_elapsed`].
     pub(super) time_remaining: Duration,
+    /// The instant the per-call budget was last accounted against.
+    /// Wall-clock elapsed since here is what [`Self::accrue_elapsed`]
+    /// converts into consumed minutes; it advances by whole minutes so
+    /// a sub-minute remainder carries to the next accrual.
+    pub(super) last_tick_at: SystemTime,
 }
 
 impl AuthenticatedCall {
@@ -87,6 +92,7 @@ impl AuthenticatedCall {
             user,
             authenticated_at,
             time_remaining: Duration::ZERO,
+            last_tick_at: authenticated_at,
         }
     }
 
@@ -122,6 +128,9 @@ impl AuthenticatedCall {
             DailyBudgetOutcome::SameDay => self.user.bump_times_called_today(),
         }
         self.reset_time_budget();
+        // Accounting starts now: elapsed time is measured from the
+        // moment the fresh budget was granted.
+        self.last_tick_at = now;
         outcome
     }
 
@@ -147,6 +156,37 @@ impl AuthenticatedCall {
         let minute = Duration::from_mins(1);
         self.user.add_time_used_today(minute);
         self.time_remaining = self.time_remaining.saturating_sub(minute);
+        self.time_remaining.is_zero()
+    }
+
+    /// Accrues wall-clock time since [`Self::last_tick_at`] against the
+    /// per-call budget (`session.allium:UpdateTimeUsed`): decrements
+    /// `time_remaining` (saturating) and adds to the user's daily total,
+    /// one whole minute at a time. The tick anchor advances by the
+    /// minutes consumed, so a sub-minute remainder carries forward and a
+    /// clock that appears to move backwards is a no-op.
+    ///
+    /// This does **not** transition the session — the expiry-logoff
+    /// decision is the caller's (item 27b), which consults the returned
+    /// flag together with the `OverrideTimeLimit` right.
+    ///
+    /// # Parameters
+    /// - `now`: the current instant from the application clock.
+    ///
+    /// # Returns
+    /// `true` when the per-call budget is now exhausted.
+    pub(super) fn accrue_elapsed(&mut self, now: SystemTime) -> bool {
+        let elapsed = now
+            .duration_since(self.last_tick_at)
+            .unwrap_or(Duration::ZERO);
+        // Whole elapsed minutes only; the sub-minute remainder is left
+        // on the anchor by advancing it by exactly what we consume, so
+        // it carries into the next accrual. A `< 1 min` elapse consumes
+        // zero and leaves every field untouched.
+        let consumed = Duration::from_secs(elapsed.as_secs() / 60 * 60);
+        self.user.add_time_used_today(consumed);
+        self.time_remaining = self.time_remaining.saturating_sub(consumed);
+        self.last_tick_at += consumed;
         self.time_remaining.is_zero()
     }
 }

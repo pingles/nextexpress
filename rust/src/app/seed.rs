@@ -11,7 +11,7 @@
 //!
 //! [repo]: crate::domain::user_repository::UserRepository
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use time::macros::datetime;
 use time::OffsetDateTime;
@@ -52,7 +52,7 @@ pub fn default_sysop(hasher: &dyn PasswordHasher) -> Result<User, SeedError> {
     let computed = hasher
         .compute_password_hash("sysop", kind)
         .map_err(SeedError::Hash)?;
-    User::new(
+    let mut user = User::new(
         1,
         "sysop".to_string(),
         kind,
@@ -61,7 +61,14 @@ pub fn default_sysop(hasher: &dyn PasswordHasher) -> Result<User, SeedError> {
         SystemTime::UNIX_EPOCH,
         255,
     )
-    .map_err(SeedError::User)
+    .map_err(SeedError::User)?;
+    // A real per-call allowance so the menu prompt's "mins. left" is a
+    // live, decrementing budget (item 27a) instead of a frozen zero.
+    // The dev seed reuses the spec's `CompleteNewUserRegistration`
+    // default (30 min/call, 1 hr/day); real per-account limits arrive
+    // with the H1 account editor / deployment config.
+    user.set_time_limits(Duration::from_mins(30), Duration::from_hours(1));
+    Ok(user)
 }
 
 /// One demo-catalogue row: name, size, upload-writer check byte,

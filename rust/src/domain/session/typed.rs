@@ -293,6 +293,14 @@ impl MenuSession {
         self.session.time_remaining()
     }
 
+    /// Accrues wall-clock time spent in the call against the per-call
+    /// budget (item 27a), so the next [`Self::time_remaining`] read — and
+    /// the menu prompt's "mins. left" — reflects it. Returns whether the
+    /// budget is now exhausted (item 27b's expiry consults this).
+    pub(crate) fn accrue_time(&mut self, now: SystemTime) -> bool {
+        super::accrue_time(&mut self.session, now)
+    }
+
     /// Whether this session is a quick logon (spec
     /// `session.allium:Session.quick_logon`). The logon conference scan
     /// is skipped for quick logons, mirroring the legacy `confScan`

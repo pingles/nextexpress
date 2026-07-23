@@ -30,7 +30,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 15 | **Real `has_access` narrowing** (24) | Sysop-only time override before item 27; remaining rights with first refusal | The stub grants every right to any validated account, which would make every validated caller immune to time expiry. The accepted provisional rule grants `OverrideTimeLimit` only to sysops; narrow other variants with their first captured refusing slice. | ~3–6 | 0.5–2 days, staged |
 | 16 | **`NodePool` → presence registry** (25) | Immediately before WHO | Today nothing can answer "who is online" — no registry, dead `LoggedOn` transitions, pool unreachable from handlers. `NodePresence` + `snapshot_all` is the read-side seam for WHO/WHD, Tier G's node monitor, and the place delivery handles later hang. | ~8–12 | 1–2 days |
 | 17 | **Terminal-delivery `SessionSignal` channel** (26) | **Landed** 2026-07-03 (pulled forward; OLM/page add the send side) | The landed one-variant `Deliver(Vec<u8>)` lane can wake a session blocked on terminal input without losing partially typed text. It is deliberately **delivery-only**: it cannot mutate session state or preserve typed logoff reasons for kick/suspend/time changes. Row 23 records the missing control plane. | ~5–7 | ~3 days |
-| 18 | **Activate the time budget** (27) | **Before D-T3** | `tick_minute` has zero callers — "mins. left" is frozen and `OutOfTime` unreachable (a parity gap now). D-T3's transfer eligibility must not read a frozen budget; Tier G's time +/- and Tier I accounting depend on the same live accrual. | ~4–6 + FS-UAE capture | 1–2 days |
+| 18 | **Activate the time budget** (27) | **Accrual half landed 2026-07-23**; expiry half before D-T3 | The frozen "mins. left" is fixed: `budget::accrue_time` (driven off the `Clock` port each menu-loop iteration) decrements the per-call budget by whole elapsed minutes, and the seeded sysop carries a real 30-min allowance. Still open: the expiry-logoff transition + its notice (27b, needs a capture) and item 24's sysop-only `OverrideTimeLimit` that rides with it. | ~4–6 + FS-UAE capture | 1–2 days |
 | 19 | **Stable file identity + transfer transaction boundary** (28) | **Design accepted**; implementation spans D2s/D-T1/D-T2 | Add stable `FileId` and one durable SQLite metadata database/pool whose unit-of-work atomically updates transfer, file, user and membership projections; ephemeral mode implements the same boundary in memory. Stable configuration area keys preserve identity across renumbering. | ~8–15 | implementation in-slice |
 | 20 | **NextScan listed-file index** (29) | **Landed** 2026-07-10 (D10) | The scan-wide `Vec<ListedRow>` incorrectly retained repeated numbers across areas/reloads. A private dense `DisplayedSelectionIndex(Vec<FlaggedKey>)` now replaces identity at each directory/reload boundary and resolves `R n` by direct `n - 1` lookup; captured legacy names deliberately bypass catalogue lookup. The ordered current-page `Vec` remains solely for redraw geometry, and staged flags commit only after terminal output succeeds. | 4 src/test + 4 docs/evidence | capture + 1 day |
 | 21 | **Complete flagged-file identity/order lifecycle** (30) | **Design accepted**; implement before D/DS, purge before D-S2 | Allow duplicate names across areas, resolve legacy keys in configured area order to `FileId`, preserve insertion order with sequence + membership index, enforce 1000 entries, persist command deltas, and quarantine/report migration overflow. | ~6–10 | 2–4 days |
@@ -1817,29 +1817,35 @@ needed by WHO/WHD; resist landing it with item 25.**
 
 ### 27. Activate the inert time budget
 
-`budget::tick_minute` — the only code that decrements
-`time_remaining`, accrues `user.time_used_today`, and fires
-`LogoffReason::OutOfTime` (`session/budget.rs:74-98`) — has **zero
-production callers**; the only budget fn wired in is
-`initialise_daily_budget` (from `on_enter_onboarded`,
-`lifecycle.rs:231`). So the menu prompt's "mins. left" is frozen for
-the whole call and time expiry is unreachable — a live legacy-parity
-gap today, and Tier I's daily accounting would otherwise launch on
-data that was never recorded. Fix without a ticker task or channels:
-track a last-tick timestamp beside `last_input_at` and, at each
-menu-loop iteration, apply `tick_minute` once per whole elapsed minute; on
-`TickMinuteOutcome::TimeExpired`, return a new lifecycle exit to the driver,
-which consumes `MenuSession` into the appropriate logging-off phase before
-rendering the expiry notice. Every read is already bounded by the 5-minute
-input timeout, so
-expiry fires at worst one idle-timeout late (time spent inside
-sub-flows accrues retroactively on return) — acceptable until Tier G,
-when precise mid-read expiry can ride item 26's select deadline. The
-expiry notice is a NEW wire surface: FS-UAE capture + type-at-it check
-required. Preserve the `ACS_OVERRIDE_TIMELIMIT` behaviour
-(`express.e:557`): callers granted `Right::OverrideTimeLimit` never expire;
-item 24 first implements the accepted sysop-only provisional grant because the
-current stub grants it to every validated caller. 1–2 days.
+**Accrual half (27a) landed 2026-07-23.** `budget::tick_minute` had
+**zero production callers**, so the menu prompt's "mins. left" was
+frozen for the whole call. It is now live: `AuthenticatedCall` carries a
+`last_tick_at` anchor set when the budget is granted
+(`begin_daily_budget`), and `budget::accrue_time` — applied at the top
+of every menu-loop iteration off the `Clock` port — converts whole
+elapsed minutes into consumed budget (`accrue_elapsed`, saturating, with
+the sub-minute remainder carried and a backwards clock a no-op). The
+seeded sysop now carries a real 30-min per-call allowance (`seed.rs`)
+instead of `Duration::ZERO`, so the prompt shows a decrementing number.
+Crucially `accrue_time` performs **no** lifecycle transition — it
+returns the exhausted flag for the driver to act on — which sidesteps
+`tick_minute`'s trap of calling `move_to_logging_off` from inside the
+domain under a borrowed `MenuSession`. No new wire surface (the prompt
+bytes were already pinned), so no capture was needed; pinned by domain
+unit tests plus a `ManualClock`-driven e2e smoke.
+
+**Expiry half (27b) still open.** Consume `accrue_time`'s exhausted flag:
+return a new `MenuExit::TimeExpired` to the driver (cloned from the
+`IdleTimedOut` arm), which consumes `MenuSession` into the logging-off
+phase and renders the expiry notice — a NEW wire surface needing an
+FS-UAE capture (`express.e:558` renders `SCREEN_LOGON24` only if the
+asset exists; no such file is in this repo, so the three literals are
+the fallback). Preserve `ACS_OVERRIDE_TIMELIMIT` (`express.e:557`):
+callers with `Right::OverrideTimeLimit` never expire, so 27b lands
+**with** item 24's sysop-only provisional grant (item 24 has no other
+consumer, so it rides here rather than standalone). Usage time still
+accrues for an override holder; only the expiry transition is bypassed.
+Then remove the now-dead `tick_minute`/`consume_minute`.
 **Trigger: before D-T3.** Download eligibility and transfer preflight
 must read a live budget; waiting for Tier E/G would build transfer
 rules on known-stale state.
@@ -2116,14 +2122,16 @@ area and call identity; command-persisted insertion-ordered flags; bounded
 blocking workers; full transfer accounting in its consuming D slices; a raw
 binary transfer window; and a provisional sysop-only time override.
 
-1. **Close current correctness gaps.** Item 29's current-directory lookup
-   index, item 33's direct counter restoration (landed 2026-07-17) and
-   item 34's repository parity fix (the case-folding half, landed
-   2026-07-23) are done. Still open: item 24's minimal `OverrideTimeLimit`
-   mapping, item 27's
-   elapsed-time accounting (before D-T3), item 34's indexing half, and
-   item 19's Latin-1 echo fix plus text/binary policy. Each new wire
-   surface remains capture-pinned.
+1. **Close current correctness gaps.** Landed: item 29's current-directory
+   lookup index; item 33's direct counter restoration (2026-07-17);
+   item 34's repository parity fix (case-folding half, 2026-07-23);
+   item 27's elapsed-time accrual (27a, 2026-07-23); and item 19's
+   Latin-1 echo hole (half i, 2026-07-23). Still open: item 24's minimal
+   `OverrideTimeLimit` mapping and item 27's expiry-logoff transition
+   (27b, before D-T3 — they land together, item 24 being 27b's only
+   consumer); item 34's indexing half; and item 19's text/binary policy
+   re-scope (gated on item 20's raw channel). Each new wire surface
+   remains capture-pinned.
 2. **Prepare persisted and per-call state.** Item 23a's
    `AuthenticatedCall` plus its post-authentication `CallId` landed
    2026-07-17; item 22's SQLite migrations and uniform connection setup

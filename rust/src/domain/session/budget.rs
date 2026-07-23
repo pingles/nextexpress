@@ -105,3 +105,26 @@ pub fn tick_minute(session: &mut Session) -> Result<TickMinuteOutcome, TickMinut
         Ok(TickMinuteOutcome::Continued)
     }
 }
+
+/// `session.allium:UpdateTimeUsed` accrual driven by wall-clock elapsed
+/// (item 27a). Applies [`super::call::AuthenticatedCall::accrue_elapsed`]
+/// to the active call so the menu prompt's "mins. left" reflects time
+/// actually spent, and is a no-op outside the onboarded/menu phases.
+///
+/// Unlike [`tick_minute`] this performs **no** lifecycle transition: it
+/// returns whether the budget is now exhausted so the driver can own the
+/// expiry logoff (item 27b), rather than mutating the phase from inside
+/// the domain under a borrowed `MenuSession`.
+///
+/// # Parameters
+/// - `session`: the session whose active call accrues time.
+/// - `now`: the current instant from the application clock.
+///
+/// # Returns
+/// `true` when the per-call budget is now exhausted.
+pub fn accrue_time(session: &mut Session, now: SystemTime) -> bool {
+    match &mut session.phase {
+        SessionPhase::Onboarded { call } | SessionPhase::Menu { call } => call.accrue_elapsed(now),
+        _ => false,
+    }
+}

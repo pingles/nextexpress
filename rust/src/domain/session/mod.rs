@@ -33,7 +33,7 @@ use conference_activity::ConferenceActivity;
 use lifecycle::OnboardedEntry;
 
 pub use crate::domain::session_policy::{PasswordFailureDecision, SessionPolicy};
-pub use budget::{daily_budget_outcome, initialise_daily_budget, tick_minute};
+pub use budget::{accrue_time, daily_budget_outcome, initialise_daily_budget, tick_minute};
 pub use call::CallId;
 pub use errors::{
     AcceptConnectionError, AutoRejoinError, CarrierLostError, CompleteNewUserRegistrationError,

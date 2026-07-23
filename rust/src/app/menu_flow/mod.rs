@@ -373,6 +373,12 @@ where
         session: &mut MenuSession,
     ) -> MenuFlowResult<MenuExit, T::Error> {
         loop {
+            // Accrue wall-clock time spent since the last iteration
+            // against the per-call budget so the prompt's "mins. left"
+            // decrements (item 27a). The exhausted flag drives the
+            // expiry logoff in item 27b; here we only refresh the
+            // displayed budget, so it is deliberately unused.
+            let _budget_exhausted = session.accrue_time(self.services.clock.now());
             // Tier A quickwin A6: in expert mode the menu screen is not
             // auto-displayed before the prompt — the user requests it
             // with `?` (legacy `displayMenuPrompt` gate at

@@ -415,6 +415,51 @@ async fn h_command_renders_bbs_help_asset_when_present() {
     end_session(&mut stream).await;
 }
 
+#[tokio::test]
+async fn menu_prompt_minutes_decrement_as_the_call_spends_time() {
+    // Item 27a — the per-call budget accrues wall-clock time, so the
+    // menu prompt's "(<n> mins. left)" falls as the session spends
+    // minutes. The seeded sysop starts with a 30-minute allowance; a
+    // driven `ManualClock` advances ten minutes between two prompts.
+    use nextexpress::adapters::system_clock::ManualClock;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    let clock = Arc::new(ManualClock::set_to(SystemTime::UNIX_EPOCH));
+    let conferences = vec![Conference::new(
+        1,
+        "Main".to_string(),
+        vec![MessageBase::new(1, 1, "main".to_string())],
+    )
+    .expect("valid conference")];
+    let addr = support::spawn_seeded_sysop(
+        TestRuntime::new(
+            std::env::current_dir().expect("cwd"),
+            conferences,
+            support::empty_mail_stores(),
+            support::empty_file_repo(),
+        )
+        .with_clock(clock.clone()),
+    )
+    .await;
+
+    // sign_in drains through the first prompt (the fresh 30-min budget).
+    let mut stream = sign_in_seeded_sysop(&addr).await;
+    clock.advance(Duration::from_mins(10));
+    // `?` redraws the menu and returns to the prompt; the loop accrues
+    // the ten elapsed minutes before rendering it.
+    write_line(&mut stream, b"?").await;
+    let out = drain_until(&mut stream, b"mins. left): ").await;
+    // The minutes field is ANSI-coloured (`<SGR>20<reset> mins. left`).
+    assert!(
+        contains(&out, b"20\x1b[0m mins. left"),
+        "after ten minutes the prompt must show 20 mins left, got {:?}",
+        String::from_utf8_lossy(&out)
+    );
+
+    end_session(&mut stream).await;
+}
+
 /// Builds a `Runtime` with an in-memory user repo, the seeded sysop,
 /// a single `Main` conference, an empty mail store, and an in-memory
 /// caller log, then binds a [`TelnetListener`] on an ephemeral port

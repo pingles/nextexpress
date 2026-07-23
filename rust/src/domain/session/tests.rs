@@ -1385,6 +1385,93 @@ mod time_budget {
         assert!(matches!(err, InitialiseDailyBudgetError::WrongState(_)));
     }
 
+    fn onboarded_with_budget(per_call: Duration) -> Session {
+        let mut s =
+            session_at_onboarded_with(user_with_time_limits(per_call, Duration::from_hours(2)));
+        initialise_daily_budget(&mut s, SystemTime::UNIX_EPOCH, DAILY_RESET_OFFSET).unwrap();
+        s
+    }
+
+    #[test]
+    fn accrue_time_decrements_by_whole_elapsed_minutes() {
+        let mut s = onboarded_with_budget(Duration::from_mins(30));
+        // 3 minutes 40 seconds elapsed: 3 whole minutes consumed.
+        let exhausted = accrue_time(&mut s, SystemTime::UNIX_EPOCH + Duration::from_secs(220));
+        assert!(!exhausted);
+        assert_eq!(s.time_remaining(), Duration::from_mins(27));
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::from_mins(3));
+    }
+
+    #[test]
+    fn accrue_time_under_one_minute_changes_nothing() {
+        let mut s = onboarded_with_budget(Duration::from_mins(30));
+        let exhausted = accrue_time(&mut s, SystemTime::UNIX_EPOCH + Duration::from_secs(59));
+        assert!(!exhausted);
+        assert_eq!(s.time_remaining(), Duration::from_mins(30));
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::ZERO);
+    }
+
+    #[test]
+    fn accrue_time_carries_the_sub_minute_remainder() {
+        let mut s = onboarded_with_budget(Duration::from_mins(30));
+        // Two 90-second steps: 1 min then (30s carried + 90s = 2 min),
+        // 3 minutes consumed over 180 seconds total.
+        accrue_time(&mut s, SystemTime::UNIX_EPOCH + Duration::from_secs(90));
+        assert_eq!(s.time_remaining(), Duration::from_mins(29));
+        accrue_time(&mut s, SystemTime::UNIX_EPOCH + Duration::from_mins(3));
+        assert_eq!(s.time_remaining(), Duration::from_mins(27));
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::from_mins(3));
+    }
+
+    #[test]
+    fn accrue_time_saturates_and_reports_exhausted() {
+        let mut s = onboarded_with_budget(Duration::from_mins(2));
+        let exhausted = accrue_time(&mut s, SystemTime::UNIX_EPOCH + Duration::from_mins(10));
+        assert!(exhausted);
+        assert_eq!(s.time_remaining(), Duration::ZERO);
+        // Only the elapsed minutes accrue to the daily total, even past
+        // the per-call budget.
+        assert_eq!(s.user().unwrap().time_used_today(), Duration::from_mins(10));
+    }
+
+    #[test]
+    fn accrue_time_measures_from_the_budget_grant_not_authentication() {
+        let mut s = session_at_onboarded_with(user_with_time_limits(
+            Duration::from_mins(30),
+            Duration::from_hours(2),
+        ));
+        // authenticated_at is UNIX_EPOCH, but the budget is granted five
+        // minutes later — accrual must anchor to the grant, not the
+        // authentication instant.
+        initialise_daily_budget(
+            &mut s,
+            SystemTime::UNIX_EPOCH + Duration::from_mins(5),
+            DAILY_RESET_OFFSET,
+        )
+        .unwrap();
+        accrue_time(&mut s, SystemTime::UNIX_EPOCH + Duration::from_mins(6));
+        // One minute since the grant, not six since authentication.
+        assert_eq!(s.time_remaining(), Duration::from_mins(29));
+    }
+
+    #[test]
+    fn accrue_time_backwards_clock_is_a_noop() {
+        let mut s = onboarded_with_budget(Duration::from_mins(30));
+        // `now` earlier than the anchor (clock skew): no change.
+        let exhausted = accrue_time(&mut s, SystemTime::UNIX_EPOCH);
+        assert!(!exhausted);
+        assert_eq!(s.time_remaining(), Duration::from_mins(30));
+    }
+
+    #[test]
+    fn accrue_time_outside_onboarded_or_menu_is_a_noop() {
+        let mut s = new_session(LogonChannel::Remote);
+        assert!(!accrue_time(
+            &mut s,
+            SystemTime::UNIX_EPOCH + Duration::from_mins(10)
+        ));
+    }
+
     #[test]
     fn tick_minute_decrements_remaining_and_accumulates_used() {
         let mut s = session_at_onboarded_with(user_with_time_limits(

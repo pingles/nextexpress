@@ -75,7 +75,7 @@ The `amiexpress/express.e` E source and the Rust `wire_text.rs` / `menu_flow` mo
 |---|---|---|
 | Login (password label) | `PassWord: ` | `Password: ` |
 | Login (menu art) | Fixed small ASCII block + figlet "Main Menu"; no "Now attending" trailer | Large per-conference ANSI art ending `Now attending to user: sysop` |
-| Login (mins. left) | Prompt shows `0` (seed `time_limit_per_call = 0`) | Prompt shows `599` |
+| Login (mins. left) | Prompt shows the seeded sysop's live per-call budget (dev seed `30`, decrementing as the call spends time — item 27a) | Prompt shows `599` (config value, decrementing) |
 | `VER` (product line) | `NextExpress 0.1.0 (93e5d36) Copyright ©2026 Paul Ingles` | `AmiExpress 5.6.0 (02-Jan-2024) Copyright ©2018-2023 Darren Coles` |
 | `VER` (lineage block) | Labelled `Based on Versions:`; folds extra `AmiExpress 5` line | Labelled `Original Version:`; Coles attribution in header |
 | `T` (trailing blank) | `\r\nIt is ...\r\n`, menu follows immediately | Trailing blank line after the time (`...\r\n\r\n`) |
@@ -164,8 +164,8 @@ Both systems follow the same skeleton — name prompt -> masked password -> auto
 
 ### Menu prompt (mins. left)
 - Both render `\x1b[0m\x1b[35m<bbsName> \x1b[0m[\x1b[36m<n>\x1b[34m:\x1b[36m<name>\x1b[0m] Menu (\x1b[33m<mins>\x1b[0m mins. left): ` (AE `displayMenuPrompt` `express.e:28417-28419`; Rust `render_menu_prompt` `wire_text.rs:920`). Same `ESC[35m/36m/34m/33m` codes, same brackets, same `mins. left): ` suffix.
-- The minutes value differs (AE `599`, Rust `0`). Both compute `(timeTotal - timeUsed)/60`; the Rust default sysop seed leaves `time_limit_per_call = Duration::ZERO` (`usage_accounting.rs:40`, `seed.rs`), so the prompt shows `0`. The rendering and arithmetic are identical.
-- **MATCH** (format); the differing number is **COSMETIC** (seed data), not behavioural.
+- The minutes value differs (AE `599`, Rust dev seed `30`). Both compute `(timeTotal - timeUsed)/60` and both now *accrue* — the budget falls as the call spends wall-clock time (Rust: item 27a, `budget::accrue_time` driven each menu-loop iteration off the `Clock` port; the seeded sysop's `time_limit_per_call` is a real 30 min, `seed.rs`). Earlier the Rust value was frozen at `0` (seed `Duration::ZERO`); that behavioural gap is closed. The remaining difference is the starting value, which is per-deployment config.
+- **MATCH** (format and live accrual); the differing starting number is **COSMETIC** (seed/config data). The expiry-logoff transition when the budget reaches zero is item 27b (not yet landed on the Rust side).
 
 ---
 
