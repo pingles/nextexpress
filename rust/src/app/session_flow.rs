@@ -79,7 +79,9 @@ pub enum FinaliseLogoffFlowError {
 
 /// Login-command literal that triggers the new-user registration
 /// branch of `session.allium:NameTyped`. The legacy `AmiExpress`
-/// source recognises this at the name prompt; keeping it next to the
+/// source recognises this at the name prompt case-insensitively
+/// (`StriCmp`, `amiexpress/express.e:29607`), so callers compare with
+/// [`str::eq_ignore_ascii_case`], not `==`. Keeping it next to the
 /// `name_typed` flow (rather than inside `UserRepository`) means
 /// repository adapters stay pure storage.
 pub const NEW_USER_REGISTRATION_LITERAL: &str = "NEW";
@@ -105,7 +107,7 @@ where
     R: UserRepository + ?Sized,
 {
     let trimmed = typed.trim();
-    if trimmed.is_empty() || trimmed == NEW_USER_REGISTRATION_LITERAL {
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case(NEW_USER_REGISTRATION_LITERAL) {
         return Ok(false);
     }
     Ok(matches!(
@@ -143,7 +145,7 @@ where
     R: UserRepository + ?Sized,
 {
     let mut inner = session.into_inner();
-    let outcome = if typed == NEW_USER_REGISTRATION_LITERAL {
+    let outcome = if typed.eq_ignore_ascii_case(NEW_USER_REGISTRATION_LITERAL) {
         let outcome = inner
             .record_new_user_request(gate.allow_new_users, gate.new_user_password.is_some(), now)
             .expect("IdentifyingSession guarantees Identifying state");
@@ -1086,6 +1088,41 @@ mod tests {
         };
         assert!(password_required);
         assert!(!session.into_inner().new_user_password_verified());
+    }
+
+    #[test]
+    fn name_typed_new_literal_folds_case() {
+        // express.e:29607 matches the NEW keyword with StriCmp, so a
+        // lower/mixed-case `new` enters registration rather than
+        // falling through to an "Unknown user." lookup.
+        for typed in ["new", "New", "nEw"] {
+            let repo = TestRepo::new(vec![alice()]);
+            let transition = name_typed(
+                identifying(),
+                typed,
+                &repo,
+                &open_gate(),
+                SystemTime::UNIX_EPOCH,
+            )
+            .expect("name typed");
+            assert!(
+                matches!(transition, NameTypedTransition::NewUserRegistering { .. }),
+                "typed {typed:?} must enter registration"
+            );
+        }
+    }
+
+    #[test]
+    fn handle_availability_rejects_new_literal_case_insensitively() {
+        // The reserved NEW keyword is unavailable as a handle in any
+        // case (same StriCmp parity), so registration cannot claim it.
+        let repo = TestRepo::new(vec![]);
+        for reserved in ["NEW", "new", "New", " new "] {
+            assert!(
+                !is_handle_available_for_registration(&repo, reserved).expect("availability check"),
+                "reserved literal {reserved:?} must not be available"
+            );
+        }
     }
 
     #[test]
