@@ -11,9 +11,9 @@ use crate::app::services::AppServices;
 use crate::app::session_flow::{
     self, CompletePasswordResetFlowError, CompletePasswordResetTransition, PasswordResetRejection,
 };
+use crate::app::session_terminal::IDLE_TIMEOUT_LINE;
 use crate::app::session_terminal::{preserve_phase, SessionFlowResult};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::IDLE_TIMEOUT_LINE;
 use crate::domain::password::PasswordHasher;
 use crate::domain::session::typed::{LoggingOffSession, OnboardedSession};
 use crate::domain::session::SessionPolicy;

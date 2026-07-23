@@ -11,13 +11,14 @@ mod tests;
 
 use std::collections::BTreeSet;
 
+use crate::app::login_flow::{ANSI_PROMPT, LOGON_REJECTED_LINE};
 use crate::app::services::AppServices;
 use crate::app::session_flow::{
     self, is_handle_available_for_registration, NewUserProfile, NewUserRegistrationFlow,
 };
+use crate::app::session_terminal::IDLE_TIMEOUT_LINE;
 use crate::app::session_terminal::{preserve_phase, SessionFlowResult};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{ANSI_PROMPT, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE};
 use crate::domain::session::typed::{
     LoggingOffSession, NewUserPasswordTransition, NewUserRegisteringSession,
     NewUserRegistrationResult, OnboardedSession,

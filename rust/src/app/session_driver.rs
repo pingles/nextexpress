@@ -11,9 +11,12 @@
 //! [`crate::app::menu_flow::MenuFlow`] command loop, and finalises the
 //! session.
 //!
-//! Wire-format byte constants live in [`crate::app::wire_text`];
-//! rendering helpers shared between the join paths live in
-//! [`crate::app::session_presenter`].
+//! User-facing byte constants live beside the code that emits them —
+//! the connect/onboarding lines in [`crate::app::login_flow`], the
+//! shared idle-exit line in [`crate::app::session_terminal`], and the
+//! lifecycle lines (copyright banner, no-access and time-expiry
+//! goodbyes) in this module. Rendering helpers shared between the join
+//! paths live in [`crate::app::session_presenter`].
 //!
 //! ## Phase types
 //! Each step of the workflow consumes and returns a phase wrapper
@@ -45,9 +48,9 @@ use crate::app::session_flow;
 use crate::app::session_presenter::{
     format_auto_rejoin_line, render_name_type_promotion, render_stats_screen,
 };
+use crate::app::session_terminal::IDLE_TIMEOUT_LINE;
 use crate::app::session_terminal::{preserve_phase, SessionFlowResult, SessionTerminalError};
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::{IDLE_TIMEOUT_LINE, TIME_EXPIRED_LINE};
 use crate::domain::conference::NameType;
 use crate::domain::session::typed::{
     AutoRejoinTransition, ConnectingSession, EndedSession, IdentifyingSession, LoggingOffSession,
@@ -79,6 +82,16 @@ const COPYRIGHT_LINES: &[u8] = concat!(
 /// conference the user has access to (Slice 30 / Slice 34a). The
 /// session terminates with `LogoffReason::NoConferenceAccess`.
 const NO_CONFERENCE_ACCESS_LINE: &[u8] = b"\r\nNo accessible conferences. Goodbye.\r\n";
+
+/// Sent when the per-call time budget is exhausted (item 27b,
+/// `checkTimeUsed`, `amiexpress/express.e:556-560`). The legacy renders
+/// `SCREEN_LOGON24` when that asset exists, otherwise these three
+/// `aePuts` lines; no `Logon24hrs` asset ships in this repo, so the
+/// fallback is the wire form. Extrapolated from source (no live
+/// capture) — recorded in `COMMAND_PARITY.md`. Emitted only by the
+/// driver's `MenuExit::TimeExpired` arm.
+const TIME_EXPIRED_LINE: &[u8] =
+    b"You have exceeded your time limit\r\nGoodbye\r\n\r\nDisconnecting..\r\n";
 
 /// App-layer session workflow over a terminal port.
 ///
@@ -1038,7 +1051,7 @@ mod tests {
             0
         );
         assert_eq!(
-            occurrences(&output, crate::app::wire_text::IDLE_TIMEOUT_LINE),
+            occurrences(&output, crate::app::session_terminal::IDLE_TIMEOUT_LINE),
             1,
             "idle timeout emits only the standard lifecycle notice"
         );

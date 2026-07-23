@@ -11,6 +11,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+/// The telnet line terminator (`\r\n`) — the one newline primitive the
+/// whole wire is built from. Standalone newline writes go through
+/// [`MenuFlow::write_newline`](crate::app::menu_flow); this constant is
+/// for composing it into larger byte sequences.
+pub(crate) const CRLF: &[u8] = b"\r\n";
+
 /// Future returned by [`Terminal`] operations.
 pub(crate) type TerminalFuture<'a, T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>;
 

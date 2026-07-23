@@ -14,8 +14,8 @@
 use std::collections::BTreeSet;
 
 use crate::app::menu_command::FileSpan;
+use crate::app::terminal::CRLF;
 use crate::app::terminal::{KeyEvent, Terminal};
-use crate::app::wire_text::CRLF;
 use crate::domain::files::area::{FileArea, FileAreaRef};
 use crate::domain::files::file::File;
 use crate::domain::files::flagged::{FlaggedFiles, FlaggedKey};

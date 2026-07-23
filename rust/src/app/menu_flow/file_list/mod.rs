@@ -16,7 +16,7 @@ mod wire;
 use self::scan::{DirectoryOrder, ScanFlow, ScanKind, ScanMode, ScanState};
 use crate::app::menu_command::{FileListArg, FileSpan, ZippyArg};
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::CRLF;
+use crate::app::terminal::CRLF;
 use crate::domain::files::area::{FileArea, FileAreaRef};
 use crate::domain::files::file::File;
 use crate::domain::files::repository::FileRepositoryError;

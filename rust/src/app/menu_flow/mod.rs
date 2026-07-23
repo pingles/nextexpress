@@ -41,8 +41,7 @@ use crate::app::mail_stores::{MailStoreGuard, MailStores};
 use crate::app::menu_command::{parse_menu_command, MenuCommand, NumberArg};
 use crate::app::services::AppServices;
 use crate::app::session_presenter::{format_menu_prompt, render_stats_screen};
-use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{CRLF, INVALID_MESSAGE_NUMBER_LINE};
+use crate::app::terminal::{KeyEvent, KeyRead, Terminal, TerminalEcho, TerminalRead, CRLF};
 use crate::app::yes_no::{yes_no, YesNo};
 use crate::domain::conference::{
     find_msgbase_in, AllowedAddressing, Conference, MessageBase, MessageBaseRef,
@@ -155,6 +154,11 @@ const FLAGGED_FILES_EXIST: &[u8] = b"\r\n** Flagged File(s) Exist **\r\n\x07\r\n
 /// (`comparison/transcripts/ae_tierd_g_empty.txt`). Persisting the flags
 /// themselves (the per-slot `flagged` file) is slice D5-persist.
 const AUTOSAVING_FILE_FLAGS: &[u8] = b"\r\n** AutoSaving File Flags **\r\n\x07\r\n";
+
+/// Sent when a numeric-argument command (`R <n>`, and the `3`/`4` sysop
+/// editors) can't parse its argument as a message/entry number. Shared
+/// with the [`sysop_admin`] submodule, which reuses the same notice.
+pub(crate) const INVALID_MESSAGE_NUMBER_LINE: &[u8] = b"\r\nInvalid message number.\r\n";
 
 /// `showFlags`'s empty-set line (`amiexpress/express.e:12488`), printed
 /// by `A` (slice D6a) when nothing is flagged. Live-captured in

@@ -14,6 +14,13 @@ use crate::domain::session::typed::{
     LoggingOffSession, MenuSession, NewUserRegisteringSession, OnboardedSession,
 };
 
+/// Sent immediately before the connection closes on idle timeout. The
+/// idle exit is written by every interactive flow (login, registration,
+/// password-reset) and by the menu driver, each threading it through
+/// [`preserve_phase`], so the line lives here beside that shared
+/// forced-exit machinery rather than in any one flow.
+pub(crate) const IDLE_TIMEOUT_LINE: &[u8] = b"Idle timeout. Goodbye.\r\n";
+
 /// Session ownership retained when a terminal operation fails.
 pub(crate) enum SessionAtTerminalFailure {
     /// Failure before the initial transition to name identification.

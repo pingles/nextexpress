@@ -1,10 +1,10 @@
+use crate::app::login_flow::ANSI_PROMPT;
 use crate::app::login_flow::PASSWORD_PROMPT;
 use crate::app::menu_flow::MENU_PROMPT_SUFFIX;
 use crate::app::registration_flow::{
     EMAIL_PROMPT, LINE_LENGTH_PROMPT, LOCATION_PROMPT, NEW_USER_PASSWORD_PROMPT, PHONE_PROMPT,
     REGISTRATION_HANDLE_PROMPT, REGISTRATION_PASSWORD_CONFIRM_PROMPT, REGISTRATION_PASSWORD_PROMPT,
 };
-use crate::app::wire_text::ANSI_PROMPT;
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -514,7 +514,7 @@ async fn spawn_listener_with_log(
 /// received: the connection banner, the graphics prompt, and the
 /// name prompt. Replaces the bare
 /// `drain_until(.., b"Enter your Name: ")` *initial* drain now that
-/// the graphics question (`app::wire_text::ANSI_PROMPT`) precedes
+/// the graphics question (`app::login_flow::ANSI_PROMPT`) precedes
 /// the name prompt. Name *re-prompts* (e.g. after an unknown
 /// handle) still use `drain_until` directly — the graphics question
 /// is asked once per connection.

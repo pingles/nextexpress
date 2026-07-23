@@ -8,13 +8,13 @@
 //! `MenuFlow` handlers below drive the prompt loops and render the
 //! outcomes.
 
+use super::INVALID_MESSAGE_NUMBER_LINE;
 use crate::app::mail_stores::{MailStorePairLockOutcome, MailStores};
 use crate::app::menu_flow::mail_text::{
     FORWARD_UNKNOWN_USER_LINE, MAIL_STORE_ERROR_LINE, NO_MAIL_BASE_LINE, POST_ABORTED_LINE,
     SOURCE_NOT_FOUND_LINE,
 };
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::INVALID_MESSAGE_NUMBER_LINE;
 use crate::domain::conference::{Conference, MessageBaseRef};
 use crate::domain::messaging::delete_mail::{delete_mail as delete_mail_rule, DeleteMailError};
 use crate::domain::messaging::edit_mail_header::{

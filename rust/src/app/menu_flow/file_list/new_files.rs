@@ -19,7 +19,7 @@ use super::wire;
 use crate::app::menu_command::{FileSpan, NewFilesArg, NewFilesSpec, ScanRequest};
 use crate::app::menu_flow::{AbortNotice, EmptyMeaning, PromptLine};
 use crate::app::terminal::Terminal;
-use crate::app::wire_text::CRLF;
+use crate::app::terminal::CRLF;
 use crate::domain::files::area::FileArea;
 use crate::domain::session::typed::MenuSession;
 

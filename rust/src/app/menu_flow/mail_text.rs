@@ -1,9 +1,9 @@
 //! Cross-mail-family wire text shared by the menu's mail commands.
 //!
-//! Lifted out of `wire_text` so the mail renderers (read, post, reply,
-//! forward, scan, sysop-admin) own the user-facing strings they emit
-//! rather than reaching across into the transport-shaped `wire_text`
-//! module.
+//! The mail renderers (read, post, reply, forward, scan, sysop-admin)
+//! own the user-facing strings they emit; this submodule holds only the
+//! lines several of them share, so no single command has to re-declare
+//! them.
 
 /// Sent when the current conference has no mail store configured.
 /// In a correctly-configured BBS every conference's `MsgBase/`

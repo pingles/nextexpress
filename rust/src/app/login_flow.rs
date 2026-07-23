@@ -11,14 +11,28 @@ mod tests;
 
 use crate::app::services::AppServices;
 use crate::app::session_flow::{self, VerifyPasswordFlowError};
+use crate::app::session_terminal::IDLE_TIMEOUT_LINE;
 use crate::app::session_terminal::{preserve_phase, SessionFlowResult};
 use crate::app::terminal::{Terminal, TerminalEcho, TerminalRead};
-use crate::app::wire_text::{ANSI_PROMPT, IDLE_TIMEOUT_LINE, LOGON_REJECTED_LINE};
 use crate::domain::session::typed::{
     AuthenticatingSession, EndedSession, IdentifyingSession, LoggingOffSession,
     NameTypedTransition, NewUserRegisteringSession, OnboardedSession,
     VerifyPasswordRejectionReason, VerifyPasswordTransition,
 };
+
+/// Prompt asking whether the user wants ANSI graphics, asked at connect
+/// before the name prompt. Simplified from
+/// `amiexpress/express.e:29528`'s `ANSI, RIP or No graphics (A/r/n)?` —
+/// RIP is dropped, so the choice collapses to ANSI (default) vs. ASCII.
+/// An answer beginning `n`/`N` selects ASCII and turns the terminal's
+/// live colour mode off, so subsequent screens render with ANSI SGR
+/// stripped. Shared with [`crate::app::registration_flow`], which
+/// re-asks it on the new-user path.
+pub(crate) const ANSI_PROMPT: &[u8] = b"ANSI Graphics (Y/n)? ";
+
+/// Sent when the post-auth cluster rejects the logon for insufficient
+/// access. Shared with [`crate::app::registration_flow`].
+pub(crate) const LOGON_REJECTED_LINE: &[u8] = b"Logon rejected. Goodbye.\r\n";
 
 /// Prompt sent before reading the user's handle. Mirrors the original
 /// `AmiExpress` wire format: a CRLF prefix and trailing space around the

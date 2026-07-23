@@ -36,5 +36,4 @@ pub mod session_flow;
 pub mod session_presenter;
 pub(crate) mod session_terminal;
 pub mod terminal;
-pub mod wire_text;
 pub(crate) mod yes_no;

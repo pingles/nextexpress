@@ -1,9 +1,8 @@
 //! Shared column-formatting helpers for the mail / list / scan
 //! listing tables.
 //!
-//! Lifted out of `wire_text` so the mail, list and scan renderers can
-//! share the one truncate-and-pad implementation without depending on
-//! the transport-shaped `wire_text` module.
+//! Holds the one truncate-and-pad implementation the mail, list and
+//! scan renderers share, so each command doesn't re-roll its own.
 
 /// The 7-character status column for a listing row
 /// (`amiexpress/express.e:11719`): only `Public` mail renders as

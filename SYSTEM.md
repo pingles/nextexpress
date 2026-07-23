@@ -246,7 +246,6 @@ flowchart LR
     Login --> SF["session_flow\n(typed-only use cases over ports)"]
     Registration --> SF
     Driver --> Presenter["session_presenter\n(menu-prompt / join / stats renderers)"]
-    Driver --> WireText["wire_text\n(shared cross-cutting primitives:\nCRLF, ANSI prompt, idle/logon goodbyes,\ninvalid-message-number notice)"]
 
     Menu --> Parse["menu_command::parse_menu_command"]
     Parse --> Cmds["MenuCommand (26 variants)\n{Logoff, Join, JoinMsgBase, Read, ScanAllMail,\nPost, CommentToSysop,\nShowTime, ShowVersion, ShowHelp,\nQuietToggle, ShowStats, ExpertToggle,\nShowMenu, TopicHelp, AnsiToggle,\nConferenceFlags,\nPrevConference, NextConference,\nPrevMsgBase, NextMsgBase,\nFileList, ZippySearch, NewFilesScan,\nAlterFlags, Unknown}"]
@@ -505,11 +504,15 @@ Rendering helpers shared by the auto-rejoin and explicit-join paths
 (`render_menu_prompt`, `auto_rejoin_line`, `explicit_join_line`,
 `render_stats_screen`) live in `app::session_presenter`. Each command's
 own user-facing text lives beside the module that emits it under
-`app::menu_flow/*`; the connect banner's `COPYRIGHT_LINES` (and
-`NO_CONFERENCE_ACCESS_LINE`) live in `app::session_driver`, the
-login/registration/password-reset text in the respective flow modules,
-and `app::wire_text` keeps only the handful of cross-cutting primitives
-no single command owns.
+`app::menu_flow/*`; the connect banner's `COPYRIGHT_LINES`,
+`NO_CONFERENCE_ACCESS_LINE` and the time-expiry goodbye live in
+`app::session_driver`, the login/registration/password-reset text
+(incl. the shared `ANSI_PROMPT` and `LOGON_REJECTED_LINE`) in the flow
+modules, the shared idle-exit line in `app::session_terminal`, the wire
+line terminator `CRLF` in `app::terminal`, and the
+invalid-message-number notice in `app::menu_flow::mod`. There is no
+longer a catch-all wire-text module — every user-facing constant sits
+beside its emitter.
 
 ### Phase 6–8 messaging behaviour
 
@@ -607,10 +610,10 @@ now **test** modules: the inline test blocks of `file_list`, `join` and
 (refactoring 13), so each command/adapter's production `mod.rs` is small
 (`file_list/mod.rs` 434 after the item-17 engine extraction,
 `join/mod.rs` 605, `telnet_listener/mod.rs` 214) while its co-located
-test sibling rises to the top. `app/wire_text.rs`
-no longer appears: the per-command text it once accumulated now lives
-beside each command (refactoring 9 below), leaving it at 36 lines of
-shared cross-cutting primitives.
+test sibling rises to the top. `app/wire_text.rs` is **gone**: the
+per-command text it once accumulated now lives beside each command, and
+the last few cross-cutting primitives moved to their emitters too
+(refactoring 9 below), so the module was deleted.
 
 | File | Lines | Notes |
 |---|---|---|
@@ -621,7 +624,7 @@ shared cross-cutting primitives.
 | `app/menu_command.rs` | ~1740 | `parse_menu_command` if-chain + the 26-variant `MenuCommand` enum + the parse/reject test battery + the `advertised_token` safety net. |
 | `domain/user/mod.rs` | 1527 | `User` aggregate, cross-VO invariants, co-located tests. Private value objects now live in sibling files (`account_status.rs`, `conference_access.rs`, `credentials.rs`, `profile.rs`, `ratio_policy.rs`, `usage_accounting.rs`) plus the public DTOs (`draft.rs`, `persisted.rs`). |
 | `app/session_flow.rs` | 1496 | Login-path use cases over the phase wrappers + `(UserRepository, PasswordHasher, CallerLogAppender)` plus the registration-flow facade (refactoring 5 deleted the twin layer). |
-| `app/session_driver.rs` | 1390 | Per-connection orchestrator + logon-order tests; now also owns `COPYRIGHT_LINES` / `NO_CONFERENCE_ACCESS_LINE` (wire_text migration). |
+| `app/session_driver.rs` | 1390 | Per-connection orchestrator + logon-order tests; owns the lifecycle lines `COPYRIGHT_LINES` / `NO_CONFERENCE_ACCESS_LINE` / `TIME_EXPIRED_LINE` (last of the wire_text migration). |
 | `adapters/file_mail_store.rs` | 1350 | Per-msgbase JSON store + lock + tests. |
 | `adapters/sqlite_user_repository.rs` | 1205 | Schema init + row codec + queries + ~30 tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
 | `adapters/file_screen_repository.rs` | 1019 | File-backed screen assets with caching + tests. Flat-file `tests.rs` promotion candidate (refactoring 13). |
@@ -631,7 +634,7 @@ shared cross-cutting primitives.
 | `domain/messaging/post_mail.rs` | 886 | Post rule + helpers + tests. |
 | `app/menu_flow/post_mail.rs` | 789 | The `E`/`C` editor command module (core fns + editor handlers + co-located mail-entry/editor wire text + tests). |
 | `domain/session/typed.rs` | 650 | Phase-typed wrappers and their constructors. |
-| `app/menu_flow/mod.rs` | 631 | `MenuFlow` dispatch + shared base helpers + the menu-command consts colocated by the wire_text migration (`VERSION_BANNER`, toggle lines, `GOODBYE_LINE`, `render_time_line`, …). |
+| `app/menu_flow/mod.rs` | 631 | `MenuFlow` dispatch + shared base helpers + the menu-command consts colocated by the wire_text migration (`VERSION_BANNER`, toggle lines, `GOODBYE_LINE`, `render_time_line`, `INVALID_MESSAGE_NUMBER_LINE`, …). |
 
 ## Idiomatic-Rust read
 
@@ -1092,15 +1095,20 @@ The end state:
   `app::menu_flow::table` (shared column helpers `left_field`,
   `scan_row_status`, which this item had flagged as needing
   `pub(crate)` widening).
-- `app/wire_text.rs` is **slimmed to 36 lines** of five genuinely
-  cross-cutting primitives: `CRLF`, `ANSI_PROMPT`, `IDLE_TIMEOUT_LINE`,
-  `LOGON_REJECTED_LINE`, `INVALID_MESSAGE_NUMBER_LINE`.
+- `app/wire_text.rs` is **deleted** (2026-07-23). The final handful of
+  "cross-cutting" primitives moved to their emitters too: `CRLF` →
+  `app::terminal`, `ANSI_PROMPT` / `LOGON_REJECTED_LINE` →
+  `app::login_flow` (registration imports them), `IDLE_TIMEOUT_LINE` →
+  `app::session_terminal` (the shared `preserve_phase` home every
+  forced-exit flow already depends on), `TIME_EXPIRED_LINE` →
+  `app::session_driver` (its sole emitter), and
+  `INVALID_MESSAGE_NUMBER_LINE` → `app::menu_flow::mod`.
 
-The per-command growth concern is resolved by co-location: `wire_text.rs`
-is no longer a mandatory stop on every command's tour, and it no longer
-grows ~100–200 lines per command. This was never the skip-listed
-"rewriting `wire_text.rs`" — no shared constant changed and no string
-changed; the text simply moved to where it is emitted.
+The per-command growth concern is resolved by co-location: there is no
+longer a mandatory wire-text stop on every command's tour. This was never
+the skip-listed "rewriting `wire_text.rs`" — no shared constant changed
+and no string changed; the text simply moved to where it is emitted, and
+the now-empty module was removed.
 
 ### 10. One parameterised line reader + pure outcome-to-bytes functions
 
@@ -2117,9 +2125,9 @@ D-T6, whichever comes first.**
   wire contract and stay verbatim: nothing about their content is a
   refactoring target. (Refactoring 9 — co-locating each command's text
   with its command, now landed — moved the strings to where they are
-  emitted without changing any of them; `app/wire_text.rs` is left at 36
-  lines of cross-cutting primitives. That was a placement policy, not a
-  rewrite.)
+  emitted without changing any of them; `app/wire_text.rs` was
+  ultimately deleted once its last cross-cutting primitives moved to
+  their emitters. That was a placement policy, not a rewrite.)
 - **Moving the flag sub-mode (the `A` loop, `G` confirm + autosave,
   logon restore) out of `menu_flow/mod.rs` into a sibling module.**
   Checked by the July 2026 review: a pure ~2–4 h code move with no
