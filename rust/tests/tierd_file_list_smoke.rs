@@ -331,6 +331,12 @@ async fn utf8_gate_every_session_byte_decodes() {
     all.extend(drain_until(&mut stream, b"mins. left): ").await);
     write_line(&mut stream, b"F A NS").await;
     all.extend(drain_until(&mut stream, b"mins. left): ").await);
+    // Hostile-client input: a raw Latin-1 high byte (0xA9 `©`) typed at
+    // the prompt must be echoed as valid UTF-8 (0xC2 0xA9), not a lone
+    // 0xA9. Before the inbound codec fix this put invalid UTF-8 on the
+    // wire pre-nothing — the server-output-only gate could not see it.
+    write_line(&mut stream, b"\xa9").await;
+    all.extend(drain_until(&mut stream, b"mins. left): ").await);
     assert!(
         std::str::from_utf8(&all).is_ok(),
         "session stream contains non-UTF-8 bytes: {:?}",

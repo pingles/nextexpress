@@ -54,6 +54,17 @@ pub(crate) enum EchoMode {
 /// one stopped (the per-byte echo has already been written). The
 /// buffer is drained (`mem::take`) whenever a line is returned.
 ///
+/// High bytes (`0x80..=0xFF`) are handled so the echoed stream stays
+/// valid UTF-8, honouring the project's always-valid-UTF-8 wire
+/// contract even for an 8-bit client. A well-formed UTF-8 multibyte
+/// character is assembled across reads and echoed once whole; a byte
+/// that cannot be part of a valid sequence is re-encoded as Latin-1
+/// (`0xA9` `©` → `0xC2 0xA9`), matching the outbound wire-encoding rule.
+/// A modern UTF-8 client's accented input round-trips; a legacy 8-bit
+/// client's Latin-1 byte is restated as the same code point — a
+/// deliberate departure from the legacy board, which passes raw 8-bit
+/// bytes straight through (`COMMAND_PARITY.md`).
+///
 /// Returns `Ok(Some(line))` on success, `Ok(None)` on EOF before any
 /// terminator was seen.
 pub(crate) async fn read_telnet_line(
@@ -62,14 +73,48 @@ pub(crate) async fn read_telnet_line(
     buf: &mut Vec<u8>,
     echo: EchoMode,
 ) -> io::Result<Option<String>> {
+    // Bytes of an in-progress UTF-8 multibyte character: filled as
+    // continuation bytes arrive, committed once the sequence is valid,
+    // and re-encoded as Latin-1 if it turns out it never can be. Empty
+    // for all-ASCII input (the common case), so no allocation happens
+    // until a high byte is typed.
+    let mut pending: Vec<u8> = Vec::new();
     loop {
         let Some(b) = read_one(stream, pushback).await? else {
+            // EOF: restate any half-typed high byte as Latin-1 so it is
+            // not silently dropped (no echo — the peer has closed).
+            for pb in std::mem::take(&mut pending) {
+                buf.extend_from_slice(&latin1_to_utf8(pb));
+            }
             return if buf.is_empty() {
                 Ok(None)
             } else {
                 Ok(Some(take_line(buf)))
             };
         };
+
+        // Mid-character: route UTF-8 continuation bytes into `pending`.
+        if !pending.is_empty() {
+            if (0x80..=0xBF).contains(&b) {
+                pending.push(b);
+                match std::str::from_utf8(&pending) {
+                    // Sequence complete and valid — commit the character.
+                    Ok(_) => {
+                        let done = std::mem::take(&mut pending);
+                        commit_accepted(stream, buf, &done, echo).await?;
+                    }
+                    // Still a valid prefix — wait for the next byte.
+                    Err(error) if error.error_len().is_none() => {}
+                    // Can never become valid (overlong / bad continuation).
+                    Err(_) => flush_pending_latin1(stream, buf, &mut pending, echo).await?,
+                }
+                continue;
+            }
+            // A non-continuation byte truncates the sequence: emit what
+            // we held as Latin-1, then process `b` below on its own.
+            flush_pending_latin1(stream, buf, &mut pending, echo).await?;
+        }
+
         match b {
             0xFF => {
                 // IAC. Delegate to the shared helper that handles
@@ -94,27 +139,22 @@ pub(crate) async fn read_telnet_line(
                 return Ok(Some(take_line(buf)));
             }
             0x08 | 0x7F
-                // Backspace / DEL: drop the previous byte if any and
-                // erase one column on the user's terminal with the
-                // classic <BS><SPACE><BS> triplet.
-                if buf.pop().is_some() =>
+                // Backspace / DEL: drop the previous whole character if
+                // any and erase one column on the user's terminal with
+                // the classic <BS><SPACE><BS> triplet.
+                if pop_last_char(buf) =>
             {
                 stream.write_all(b"\x08 \x08").await?;
             }
-            b if b >= 0x20 => {
-                if buf.len() >= MAX_TERMINAL_LINE_BYTES {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "terminal input line exceeds maximum length",
-                    ));
-                }
-                buf.push(b);
-                let echoed = match echo {
-                    EchoMode::Visible => b,
-                    EchoMode::Masked => b'*',
-                };
-                stream.write_all(&[echoed]).await?;
-            }
+            // Plain ASCII: accept and echo verbatim (or masked).
+            0x20..=0x7F => commit_accepted(stream, buf, &[b], echo).await?,
+            // High byte: either the lead of a UTF-8 character (buffer it,
+            // echo nothing until it completes) or a lone/invalid byte we
+            // read as Latin-1 right away.
+            0x80..=0xFE => match std::str::from_utf8(&[b]) {
+                Err(error) if error.error_len().is_none() => pending.push(b),
+                _ => commit_accepted(stream, buf, &latin1_to_utf8(b), echo).await?,
+            },
             // Other control bytes (Ctrl-* etc.): silently ignored,
             // matching `lineInput`'s `IF (ch>31)` guard.
             _ => {}
@@ -125,6 +165,86 @@ pub(crate) async fn read_telnet_line(
 /// Drains the caller-owned line buffer into the returned line.
 fn take_line(buf: &mut Vec<u8>) -> String {
     String::from_utf8_lossy(&std::mem::take(buf)).into_owned()
+}
+
+/// Re-encodes one high byte (`0x80..=0xFF`) as its two-byte UTF-8 form,
+/// reading the byte as an ISO-8859-1 (Latin-1) code point — `0xA9` `©`
+/// becomes `0xC2 0xA9`. This is the inbound analogue of the outbound
+/// wire-encoding rule (AGENTS.md "Wire encoding"): the legacy Amiga
+/// board's world is Latin-1, so a lone high byte the client typed is a
+/// Latin-1 character, restated in UTF-8 so the wire stays valid.
+///
+/// Mutation note: `cargo mutants` leaves the two `| -> ^` mutants here
+/// alive; they are equivalent. `0xC0` shares no set bit with `b >> 6`
+/// (which occupies bits 0–1) and `0x80` shares none with `b & 0x3F`
+/// (bits 0–5), so `^` produces byte-identical output to `|`.
+fn latin1_to_utf8(b: u8) -> [u8; 2] {
+    [0xC0 | (b >> 6), 0x80 | (b & 0x3F)]
+}
+
+/// Pushes `bytes` onto the line buffer (enforcing the length cap) and
+/// echoes them: the bytes verbatim under [`EchoMode::Visible`], or a
+/// single `*` for the whole unit under [`EchoMode::Masked`] (one masked
+/// column per typed character, multibyte included).
+///
+/// # Errors
+/// Returns [`io::ErrorKind::InvalidData`] when the addition would push
+/// the line past [`MAX_TERMINAL_LINE_BYTES`], or the underlying
+/// transport error on echo failure.
+async fn commit_accepted(
+    stream: &mut TcpStream,
+    buf: &mut Vec<u8>,
+    bytes: &[u8],
+    echo: EchoMode,
+) -> io::Result<()> {
+    if buf.len() + bytes.len() > MAX_TERMINAL_LINE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "terminal input line exceeds maximum length",
+        ));
+    }
+    buf.extend_from_slice(bytes);
+    match echo {
+        EchoMode::Visible => stream.write_all(bytes).await,
+        EchoMode::Masked => stream.write_all(b"*").await,
+    }
+}
+
+/// Emits an in-progress multibyte sequence that can no longer become
+/// valid UTF-8, re-encoding each held byte as Latin-1. Leaves `pending`
+/// empty.
+async fn flush_pending_latin1(
+    stream: &mut TcpStream,
+    buf: &mut Vec<u8>,
+    pending: &mut Vec<u8>,
+    echo: EchoMode,
+) -> io::Result<()> {
+    for b in std::mem::take(pending) {
+        commit_accepted(stream, buf, &latin1_to_utf8(b), echo).await?;
+    }
+    Ok(())
+}
+
+/// Removes the last whole UTF-8 character from a valid-UTF-8 line
+/// buffer, walking back over continuation bytes (`0x80..=0xBF`).
+/// Returns `false` (a no-op) when the buffer is empty.
+///
+/// Mutation note: `cargo mutants` leaves the `start > 0` -> `start >= 0`
+/// mutant alive; it is equivalent. `buf` only ever holds valid UTF-8
+/// (every byte enters through [`commit_accepted`] as ASCII, a complete
+/// character, or a Latin-1 re-encoding), so `buf[0]` is never a lone
+/// continuation byte — the `(0x80..=0xBF)` check therefore fails at
+/// `start == 0` regardless of the bound, and the `start -= 1` underflow
+/// the `> 0` guard prevents is unreachable.
+fn pop_last_char(buf: &mut Vec<u8>) -> bool {
+    let Some(mut start) = buf.len().checked_sub(1) else {
+        return false;
+    };
+    while start > 0 && (0x80..=0xBF).contains(&buf[start]) {
+        start -= 1;
+    }
+    buf.truncate(start);
+    true
 }
 
 /// Returns one byte from `pushback` if any, otherwise blocks reading
@@ -331,6 +451,194 @@ mod tests {
         let client = TcpStream::connect(addr).await.unwrap();
         let (server, _) = listener.accept().await.unwrap();
         (server, client)
+    }
+
+    #[tokio::test]
+    async fn visible_echo_of_a_latin1_byte_stays_valid_utf8() {
+        // A Latin-1 client types `©` (lone byte 0xA9). The wire must
+        // carry valid UTF-8 (0xC2 0xA9), and the returned line must be
+        // the `©` code point, not U+FFFD.
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"\xa9\r").await.unwrap();
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let line = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible)
+            .await
+            .unwrap()
+            .expect("line");
+        assert_eq!(line, "\u{a9}");
+        drop(server);
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert!(
+            std::str::from_utf8(&echoed).is_ok(),
+            "echo must be valid UTF-8, got {echoed:?}"
+        );
+        assert_eq!(echoed, "\u{a9}\r\n".as_bytes());
+    }
+
+    #[tokio::test]
+    async fn visible_echo_of_a_utf8_multibyte_char_round_trips() {
+        // A modern UTF-8 client types `é` (0xC3 0xA9): it must round-trip
+        // to the line and echo whole (never a lone lead byte on the wire).
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all("é\r".as_bytes()).await.unwrap();
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let line = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible)
+            .await
+            .unwrap()
+            .expect("line");
+        assert_eq!(line, "é");
+        drop(server);
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(echoed, "é\r\n".as_bytes());
+    }
+
+    #[tokio::test]
+    async fn multibyte_char_assembles_across_split_segments() {
+        // The three bytes of `€` (0xE2 0x82 0xAC) arrive in separate
+        // segments, so assembly must span several awaited reads.
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let read = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible);
+        let write = async {
+            for chunk in [&b"\xe2"[..], b"\x82", b"\xac", b"\r"] {
+                client.write_all(chunk).await.unwrap();
+                client.flush().await.unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            client
+        };
+        let (line, mut client) = tokio::join!(read, write);
+        assert_eq!(line.unwrap().expect("line"), "€");
+        drop(server);
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(echoed, "€\r\n".as_bytes());
+    }
+
+    #[tokio::test]
+    async fn backspace_removes_the_whole_multibyte_char() {
+        // BS after `é` must erase the whole character — not leave a
+        // dangling lead byte that take_line would turn into U+FFFD.
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all("é\x08x\r".as_bytes()).await.unwrap();
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let line = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible)
+            .await
+            .unwrap()
+            .expect("line");
+        assert_eq!(line, "x");
+    }
+
+    #[tokio::test]
+    async fn masked_mode_emits_one_star_per_character() {
+        // Masked mode keeps the real characters in the line (the password
+        // is compared as a string) but echoes exactly one `*` per typed
+        // character, a multibyte character included.
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all("aé\r".as_bytes()).await.unwrap();
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let line = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Masked)
+            .await
+            .unwrap()
+            .expect("line");
+        assert_eq!(line, "aé");
+        drop(server);
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert_eq!(echoed, b"**\r\n");
+    }
+
+    #[tokio::test]
+    async fn a_truncated_lead_byte_falls_back_to_latin1() {
+        // A lead byte (0xC3) immediately followed by ASCII can never
+        // complete, so the lead is re-read as Latin-1 (`Ã`) and the ASCII
+        // byte accepted after it; the wire stays valid UTF-8.
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        client.write_all(b"\xc3A\r").await.unwrap();
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let line = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible)
+            .await
+            .unwrap()
+            .expect("line");
+        assert_eq!(line, "ÃA");
+        drop(server);
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.unwrap();
+        assert!(std::str::from_utf8(&echoed).is_ok());
+        assert_eq!(echoed, "ÃA\r\n".as_bytes());
+    }
+
+    #[tokio::test]
+    async fn a_lone_latin1_byte_echoes_at_the_keypress() {
+        // The Latin-1 re-encoding happens the moment a byte is known not
+        // to be a UTF-8 lead — not deferred until a terminator. A lone
+        // 0xA9 echoes 0xC2 0xA9 before any CR is sent.
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let read = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible);
+        let drive = async {
+            client.write_all(b"\xa9").await.unwrap();
+            client.flush().await.unwrap();
+            let mut echo = [0u8; 2];
+            tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                client.read_exact(&mut echo),
+            )
+            .await
+            .expect("echo must arrive before any terminator")
+            .unwrap();
+            client.write_all(b"\r").await.unwrap();
+            client.flush().await.unwrap();
+            echo
+        };
+        let (line, echo) = tokio::join!(read, drive);
+        assert_eq!(&echo, "\u{a9}".as_bytes());
+        assert_eq!(line.unwrap().expect("line"), "\u{a9}");
+    }
+
+    #[tokio::test]
+    async fn an_invalid_continuation_flushes_at_the_offending_byte() {
+        // 0xE0 then 0x80 is overlong: the moment 0x80 makes the sequence
+        // un-completable, both held bytes flush as Latin-1 — they are not
+        // held waiting for a third byte (which would defer the echo).
+        use tokio::io::AsyncReadExt;
+        let (mut server, mut client) = connected_pair().await;
+        let mut pushback = None;
+        let mut buf = Vec::new();
+        let read = read_telnet_line(&mut server, &mut pushback, &mut buf, EchoMode::Visible);
+        let drive = async {
+            client.write_all(b"\xe0\x80").await.unwrap();
+            client.flush().await.unwrap();
+            let mut echo = [0u8; 4]; // à (C3 A0) + U+0080 (C2 80)
+            tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                client.read_exact(&mut echo),
+            )
+            .await
+            .expect("invalid sequence must flush at the offending byte")
+            .unwrap();
+            client.write_all(b"\r").await.unwrap();
+            client.flush().await.unwrap();
+            echo
+        };
+        let (line, echo) = tokio::join!(read, drive);
+        assert_eq!(&echo, "\u{e0}\u{80}".as_bytes());
+        assert_eq!(line.unwrap().expect("line"), "\u{e0}\u{80}");
     }
 
     #[tokio::test]

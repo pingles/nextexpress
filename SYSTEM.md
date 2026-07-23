@@ -24,7 +24,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 9 | **Command-style user writes** (1) | **Landed** 2026-07-03 (pulled ahead of N — disjoint file sets, and two of its fixes were live defects: the bare-save tear and same-account lost updates) | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
 | 10 | **SQLite schema migrations** (22) | Before D2s or any schema change | No mechanism can alter an existing `users.db`; D-T2's first new column would break every login after upgrade, and D2s must not launch another unversioned durable schema. Versioned migrations make later accounting and `row_version` changes routine. | 3–5 | 0.5–1 day |
 | 11 | **`AuthenticatedCall` struct** (23a) | **Landed** 2026-07-17 | The per-call payload was duplicated in `Onboarded`/`Menu` and Option-scattered across the terminal phases, with two 8-arm salvage matches; every new field cost ~7 sites. Now `Onboarded`/`Menu` carry one `AuthenticatedCall` and `LoggingOff`/`Ended` carry the `CallSalvage` enum (`Unidentified \| Identified(User) \| Authenticated(AuthenticatedCall)`), so a per-call field is a single-site addition — proven by the first one, the opaque `CallId` stamped at authentication (app-generated entropy passed in like `now`; `Session::call_id()` survives teardown for the D-T1 ledger). | ~6–7 + ~10 test files (call-site sweep) | 0.5–1 day |
-| 12 | **UTF-8 policy re-scope + echo-hole fix** (19) | Before D-T1 | The accepted contract keeps interactive text valid UTF-8 and permits arbitrary bytes only in a negotiated binary-transfer window. Implement it in AGENTS/tests before the first Zmodem frame and close today's Latin-1 echo hole. | ~4 (2 docs + codec + test) | ~0.5 day |
+| 12 | **UTF-8 policy re-scope + echo-hole fix** (19) | **Echo-hole half landed 2026-07-23**; policy half before D-T1 | The Latin-1 inbound echo hole (a lone 0xA9 typed at the pre-auth prompt put invalid UTF-8 on the wire) is closed: the codec assembles UTF-8 multibyte input and Latin-1-re-encodes stray high bytes, and the e2e gate is now hostile-client. The policy re-scope (arbitrary bytes only in item 20's negotiated binary window) is still open — its first test is the first D-T1 sub-slice. | ~4 (2 docs + codec + test) | ~0.5 day |
 | 13 | **Raw binary channel on `Terminal`** (20) | Opening sub-slice of D-T1 | The stack destroys binary in both directions (lossy decode, dropped `IAC IAC`, no 0xFF doubling, ANSI stripping). `read_bytes`/`write_raw` with BINARY negotiation is the one seam all transfer slices flow through. | ~5–8 | 1–3 days |
 | 14 | **Sans-IO Zmodem engine** (21) | Shapes D-T1 | The accepted sans-IO shape keeps frame/state logic independent of sockets and lets the smoke harness use the same engine as an embedded peer. Porting `zmodem.e`'s callback-into-serial shape would weld protocol logic to live I/O and force a second implementation. | engine lands inside D-T1..T5 | 1–2 wks in-slice |
 | 15 | **Real `has_access` narrowing** (24) | Sysop-only time override before item 27; remaining rights with first refusal | The stub grants every right to any validated account, which would make every validated caller immune to time expiry. The accepted provisional rule grants `OverrideTimeLimit` only to sysops; narrow other variants with their first captured refusing slice. | ~3–6 | 0.5–2 days, staged |
@@ -1553,21 +1553,34 @@ so the accepted policy is: **interactive text-mode traffic is valid
 UTF-8; arbitrary bytes are permitted only between item 20's negotiated
 raw-channel entry and exit**. Implement that policy in AGENTS.md and the
 wire gates before D-T1; the existing `F` gate survives unchanged and new
-tests assert UTF-8 immediately before and after a binary window. Two adjacent facts: (a) a
-pre-existing hole — in `EchoMode::Visible` the codec echoes any
-accepted byte ≥ 0x20 raw (`telnet_line.rs:97-109`), so a Latin-1
-client typing `©` (lone 0xA9) puts invalid UTF-8 on the wire *today*;
-fix alongside item 20 and record the COMMAND_PARITY.md row. (b)
-`file_screen_repository.rs:154-157` serves operator screen files as
-raw bytes with no validation — text-mode assets must be validated or
-decoded to UTF-8 rather than treated as a binary exception. Binary test
-primitives (`read_exact_n` with deadline, raw
+tests assert UTF-8 immediately before and after a binary window.
+
+**Echo-hole half (i) landed 2026-07-23.** In `EchoMode::Visible` the
+codec echoed any accepted byte ≥ 0x20 raw, so a Latin-1 client typing
+`©` (lone 0xA9) put invalid UTF-8 on the wire pre-authentication. The
+line codec (`adapters/telnet_line.rs`) now assembles a well-formed UTF-8
+multibyte character across reads and echoes it whole, and re-encodes any
+byte that cannot be part of a valid sequence as Latin-1 (`0xA9` →
+`0xC2 0xA9`) — the inbound analogue of the outbound wire rule; Backspace
+became whole-character aware in the same change. The
+`utf8_gate_every_session_byte_decodes` e2e gate now also sends a raw high
+byte as input (it was server-output-only, so blind to this hole).
+Recorded in AGENTS.md "Wire encoding" and a COMMAND_PARITY.md row.
+
+**Policy half (ii) still open** and correctly deferred: it names item
+20's negotiated raw-channel window, which does not exist yet, so its
+first failing test is the first D-T1 sub-slice test, not an item-19 one.
+One adjacent live hole remains under the same policy:
+`file_screen_repository.rs` serves operator screen files as raw bytes
+with no validation — text-mode assets must be validated or decoded to
+UTF-8 rather than treated as a binary exception (separate fix site, not
+bundled here). Binary test primitives (`read_exact_n` with deadline, raw
 write, an IAC escape/unescape helper so expected frames are stated
 unescaped, frame-level pins plus before/after-window UTF-8 asserts)
 land inside the first slice that exchanges binary bytes — earlier
-would be speculation before the raw seam exists. Policy ~1 hour; echo
-fix ~0.5 day; primitives 0.5–1 day. **Trigger: policy recorded before
-D-T1 starts and implemented before its first binary exchange.**
+would be speculation before the raw seam exists. Policy ~1 hour;
+primitives 0.5–1 day. **Trigger: policy recorded before D-T1 starts and
+implemented before its first binary exchange.**
 
 ### 20. Raw binary channel on the `Terminal` port
 

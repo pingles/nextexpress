@@ -124,8 +124,18 @@ ISO-8859-1 (Amiga) bytes; when porting captured output, re-encode each
 high-bit byte to the same code point in UTF-8 (`\xa9` → `\u{a9}`) and
 record the departure as a COMMAND_PARITY.md row. Never emit raw bytes
 ≥ 0x80 outside a valid UTF-8 sequence — the e2e UTF-8 gate
-(`tierd_file_list_smoke.rs::utf8_gate_every_session_byte_decodes`)
+(`tierd_file_list_smoke.rs::utf8_gate_every_session_byte_decodes`, now
+also a hostile-client gate that sends a raw high byte as input)
 enforces this. Rust consts carrying re-encoded glyphs are `&str`.
+
+The **same rule applies to echoed input**. The line codec
+(`adapters/telnet_line.rs`) assembles a well-formed UTF-8 multibyte
+character across reads and echoes it whole; a byte that cannot be part
+of a valid sequence is re-encoded as Latin-1 (`0xA9` → `0xC2 0xA9`) — the
+inbound analogue of the rule above — so a lone high byte the client
+types never reaches the wire raw. This is a deliberate departure from
+the legacy board (which passes raw 8-bit bytes through in both
+directions); it is recorded in COMMAND_PARITY.md.
 
 ## System Design
 
