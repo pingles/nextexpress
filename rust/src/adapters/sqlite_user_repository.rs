@@ -978,6 +978,16 @@ mod tests {
         }
 
         #[test]
+        fn find_by_handle_folds_case() {
+            contract::find_by_handle_folds_case(make);
+        }
+
+        #[test]
+        fn create_user_rejects_case_variant_duplicate() {
+            contract::create_user_rejects_case_variant_duplicate(make);
+        }
+
+        #[test]
         fn mismatch_bumps_additively() {
             contract::mismatch_bumps_additively(make);
         }
@@ -1103,20 +1113,6 @@ mod tests {
         assert_eq!(user.slot_number(), 1);
         assert!(matches!(
             repo.find_by_handle("alice"),
-            Ok(NameLookupResult::Found(_))
-        ));
-    }
-
-    #[test]
-    fn find_by_handle_is_case_insensitive_on_stored_handle() {
-        let repo = SqliteUserRepository::in_memory().expect("open");
-        repo.create_user(draft_with("Alice")).expect("create");
-        assert!(matches!(
-            repo.find_by_handle("alice"),
-            Ok(NameLookupResult::Found(_))
-        ));
-        assert!(matches!(
-            repo.find_by_handle("ALICE"),
             Ok(NameLookupResult::Found(_))
         ));
     }

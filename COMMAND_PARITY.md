@@ -122,6 +122,11 @@ Both systems follow the same skeleton — name prompt -> masked password -> auto
 - Both: `Enter your Name: ` (AE `namePrompt` default at `express.e:31774` + trailing space; Rust `NAME_PROMPT = b"\r\nEnter your Name: "`).
 - **MATCH.**
 
+### Name matching — case folding (EXTRAPOLATED-FROM-SOURCE, not captured)
+- **AmiExpress** resolves the typed name case-insensitively: the default login path is `chooseAName` → `findUserFromName` → `nameCompare` (`express.e:11218`), which with wildcards toggled on (`ACP.e:2663` defaults `TOGGLES_USEWILDCARDS` on) dispatches to `stringCompare` (`amiexpress/MiscFuncs.e:126-154`), folding both sides through `LowerChar`. The reserved `NEW` registration keyword is matched with `StriCmp` (`express.e:29607`), also case-insensitive.
+- **NextExpress** folds ASCII case in `UserRepository::find_by_handle`, the `create_user` duplicate check, and the `NEW`-literal test at the name prompt (`session_flow.rs`). Landed 2026-07-23. Before that fix the in-memory adapter (the default when `user_storage` is unset) compared handles with `==`, so `SYSOP` / `New` failed on a fresh install while succeeding under SQLite — an intra-product divergence that also diverged from the legacy default.
+- **MATCH (case folding), extrapolated-from-source** — the legacy accept was read from `express.e`/`MiscFuncs.e`/`ACP.e`, not from a live FS-UAE capture (per the command-slice hardening checklist §10.2 uncapturable/extrapolated escape). **Residual departure:** the legacy default path additionally *expands* `*`/`?` wildcards in the typed name (`express.e:11535-11548`), which the NextExpress port deliberately rejects (`find_by_handle` returns `NotFound`); folding does not close that half.
+
 ### Password prompt label
 - **AmiExpress:** `Password: ` (`express.e:31778`). (Inconsistently, AE's failure path still says `Invalid PassWord`, `express.e:29209`.)
 - **Rust:** `PassWord: ` (`wire_text.rs:19`).

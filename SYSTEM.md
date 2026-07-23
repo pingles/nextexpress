@@ -23,7 +23,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 8 | **Error-boundary pass** (2 remainder) | **Landed** 2026-07-03 (`UserRepositoryError` folds into row 9) | Port errors diverge four ways; D2s will copy whichever template it finds, and today the prominent one leaks adapter vocabulary into the domain. Pins one opaque-`Backend` convention before the port family doubles. | 12–15 (mostly mechanical) | ~1 day |
 | 9 | **Command-style user writes** (1) | **Landed** 2026-07-03 (pulled ahead of N — disjoint file sets, and two of its fixes were live defects: the bare-save tear and same-account lost updates) | The whole-aggregate upsert silently reverts any concurrent writer and isn't transactional. D-T2's ledger deltas are the first second-writer path; Tier G/H sysop edits and Tier I accounting all depend on delta/patch writes existing. The biggest single item. | ~10–14 incl. tests | 4–6 days |
 | 10 | **SQLite schema migrations** (22) | Before D2s or any schema change | No mechanism can alter an existing `users.db`; D-T2's first new column would break every login after upgrade, and D2s must not launch another unversioned durable schema. Versioned migrations make later accounting and `row_version` changes routine. | 3–5 | 0.5–1 day |
-| 11 | **`AuthenticatedCall` struct** (23a) | **Landed** 2026-07-16 | The per-call payload was duplicated in `Onboarded`/`Menu` and Option-scattered across the terminal phases, with two 8-arm salvage matches; every new field cost ~7 sites. Now `Onboarded`/`Menu` carry one `AuthenticatedCall` and `LoggingOff`/`Ended` carry the `CallSalvage` enum (`Unidentified \| Identified(User) \| Authenticated(AuthenticatedCall)`), so a per-call field is a single-site addition — proven by the first one, the opaque `CallId` stamped at authentication (app-generated entropy passed in like `now`; `Session::call_id()` survives teardown for the D-T1 ledger). | ~6–7 + ~10 test files (call-site sweep) | 0.5–1 day |
+| 11 | **`AuthenticatedCall` struct** (23a) | **Landed** 2026-07-17 | The per-call payload was duplicated in `Onboarded`/`Menu` and Option-scattered across the terminal phases, with two 8-arm salvage matches; every new field cost ~7 sites. Now `Onboarded`/`Menu` carry one `AuthenticatedCall` and `LoggingOff`/`Ended` carry the `CallSalvage` enum (`Unidentified \| Identified(User) \| Authenticated(AuthenticatedCall)`), so a per-call field is a single-site addition — proven by the first one, the opaque `CallId` stamped at authentication (app-generated entropy passed in like `now`; `Session::call_id()` survives teardown for the D-T1 ledger). | ~6–7 + ~10 test files (call-site sweep) | 0.5–1 day |
 | 12 | **UTF-8 policy re-scope + echo-hole fix** (19) | Before D-T1 | The accepted contract keeps interactive text valid UTF-8 and permits arbitrary bytes only in a negotiated binary-transfer window. Implement it in AGENTS/tests before the first Zmodem frame and close today's Latin-1 echo hole. | ~4 (2 docs + codec + test) | ~0.5 day |
 | 13 | **Raw binary channel on `Terminal`** (20) | Opening sub-slice of D-T1 | The stack destroys binary in both directions (lossy decode, dropped `IAC IAC`, no 0xFF doubling, ANSI stripping). `read_bytes`/`write_raw` with BINARY negotiation is the one seam all transfer slices flow through. | ~5–8 | 1–3 days |
 | 14 | **Sans-IO Zmodem engine** (21) | Shapes D-T1 | The accepted sans-IO shape keeps frame/state logic independent of sockets and lets the smoke harness use the same engine as an embedded peer. Porting `zmodem.e`'s callback-into-serial shape would weld protocol logic to live I/O and force a second implementation. | engine lands inside D-T1..T5 | 1–2 wks in-slice |
@@ -37,7 +37,7 @@ and file counts are the review verifiers' adjusted estimates.
 | 22 | **Bounded blocking-work boundary** (31) | **Design accepted**; implement before D2s/D-T1 | Put async application facades over bounded blocking workers, with one serialized SQLite writer and a small read pool. Keep pure domain rules synchronous, isolate password/extraction capacity, and stream file bytes with backpressure. | ~8–15 | 3–6 days, staged |
 | 23 | **Typed session control plane** (32) | **DECISION REQUIRED before any file mutation that invalidates active flags, or state-changing Tier E/G slices** | Terminal delivery cannot implement flag reconciliation, kick reason, suspend/reserve, time adjustment or chat state. Choose one typed lane owned by the session driver or separate notification/control lanes; terminal `Deliver` may remain the text wake-up mechanism. | design + ~6–12 | decision: 0.5–1 day; implementation with first consumer |
 | 24 | **Direct persisted-counter restoration** (33) | **Landed** 2026-07-17 (tell-don't-ask campaign) | SQLite loading replayed `messages_posted` one `bump` at a time — a potential billion-iteration login path. `ConferenceMembership::from_persisted` now restores rows directly (scan flags via `ScanFlagSettings`, pointers upserted internally) and `MembershipPatch::apply_to` applies deltas through the saturating `add_messages_posted` — the counter-API precedent later accounting inherits. | ~3–5 | 0.5–1 day |
-| 25 | **In-memory user adapter parity + indices** (34) | Now | Ephemeral mode remains supported under the accepted common unit-of-work contract. Match SQLite's folded-handle uniqueness, and use a slot map plus normalized-handle index to remove repeated scans and prepare H1 queries. | ~2–5 | 0.5–2 days |
+| 25 | **In-memory user adapter parity + indices** (34) | **Parity half landed 2026-07-23**; indexing when H1 needs it | Handle lookup + duplicate check now fold ASCII case (the live default-config login defect: `SYSOP` and `new` failed only on the in-memory adapter), pinned by two shared `user_repository_contract` functions. The slot-map + normalized-handle index that removes the remaining `Vec` scans and prepares H1 queries is still open. | ~2–5 | 0.5–2 days |
 | 26 | **Mail header/visibility index** (35) | With the next mail-scale slice | `FileMailStore` caches only the highest number; finding the lowest undeleted message and listing headers repeatedly reparses whole JSON bodies. Cache ordered undeleted numbers and header projections, with an explicit rebuild policy. | ~4–7 | 1–3 days |
 | 27 | **Ordered collection wrappers and one-pass walks** (36) | Opportunistically before I1 | Conference/catalogue/membership pointer collections need deterministic order but repeatedly perform nested scans. Sorted-vector wrappers with binary search enforce uniqueness without replacing ordered data with blind hash maps; conference activity can use its last-visit invariant directly. | ~6–12 | 2–4 days, staged |
 | 28 | **Server task supervisor** (37) | Before G4 shutdown or D-T6 background work | The listener detaches every session task and has no cancellation/drain path. Track session/background tasks, propagate shutdown, and surface release failures before commands depend on coordinated stop or workers. | ~5–9 | 2–4 days |
@@ -51,7 +51,7 @@ independent current correctness tidies; rows 26–28 wait for their named
 consumers. Row 9 landed
 schema-free as its dependency note required (10 had not landed
 first). Rows 10–14 and 18–22 form the pre-transfer block (row 11
-landed 2026-07-16); row 23 waits
+landed 2026-07-17); row 23 waits
 for its first state-changing cross-session consumer.
 
 ## Current Shape
@@ -1642,7 +1642,7 @@ alters the existing user schema.**
 
 ### 23. Pre-commit the transfer-accounting domain shape
 
-Two halves. (a) **`AuthenticatedCall` struct — LANDED 2026-07-16.**
+Two halves. (a) **`AuthenticatedCall` struct — LANDED 2026-07-17.**
 The authenticated-call triple
 `(user, authenticated_at, time_remaining)` was duplicated verbatim
 across `SessionPhase::Onboarded` and `::Menu` and Option-scattered
@@ -1966,19 +1966,35 @@ tests.
 `InMemoryUserRepository` is the default when `user_storage` is unset, so
 it is a real fresh-install adapter rather than only a test fake. It scans a
 `Vec<User>` for every slot update, handle login, sysop lookup and duplicate
-check, allocates slots with `max()`, and compares handles case-sensitively.
+check, allocates slots with `max()`, and compared handles case-sensitively.
 SQLite instead stores a unique folded handle and resolves it
-case-insensitively, so the same login/registration behaves differently by
+case-insensitively, so the same login/registration behaved differently by
 configuration.
 
-Fix case-insensitive lookup and duplicate handling now through the shared
-repository contract. Ephemeral mode remains a supported implementation under
-item 28, so use a small adapter-private table: `BTreeMap<slot, User>`,
-`HashMap<NormalizedHandle, slot>`, and `next_slot`. Validate normalized
-duplicates at construction and update both indices atomically when a
-future H1 edit permits handle changes.
-**Trigger: parity and indexing now; ephemeral mode is retained by the accepted
-topology.**
+**Parity half landed 2026-07-23.** `find_by_handle` and the `create_user`
+duplicate check now fold ASCII case (`eq_ignore_ascii_case`), matching
+SQLite's folded handle and the legacy login path
+(`amiexpress/MiscFuncs.e:126-154` `stringCompare` via `express.e:11218`
+`nameCompare`; the wildcard *expansion* the same path performs remains a
+deliberate departure, as the port already rejects `*`/`?`). The two
+folding rules were promoted into the shared `user_repository_contract`
+module (`find_by_handle_folds_case`, `create_user_rejects_case_variant_duplicate`),
+so an in-memory install can no longer reach a two-row state the SQLite
+`handle_folded UNIQUE` constraint forbids. The sibling `NEW`-registration
+literal at the same prompt was folded too (`session_flow.rs`,
+`StriCmp` parity `express.e:29607`). Provenance is recorded in
+COMMAND_PARITY.md as extrapolated-from-source (no board capture taken).
+
+**Indexing half still open.** Ephemeral mode remains a supported
+implementation under item 28, so use a small adapter-private table:
+`BTreeMap<slot, User>`, `HashMap<NormalizedHandle, slot>`, and `next_slot`,
+removing the remaining `Vec` scans (`find_sysop` still scans, no index
+proposed) and preparing H1 queries. Decide at that point whether `new`
+stays infallible (first-wins on a collided seed, preserving today's
+`Vec` semantics) or becomes fallible to validate normalized duplicates at
+construction, and update both indices atomically when a future H1 edit
+permits handle changes.
+**Trigger: parity landed; indexing when H1 needs the query shape.**
 
 ### 35. Index mail headers and undeleted numbers
 
@@ -2088,15 +2104,16 @@ blocking workers; full transfer accounting in its consuming D slices; a raw
 binary transfer window; and a provisional sysop-only time override.
 
 1. **Close current correctness gaps.** Item 29's current-directory lookup
-   index has landed; next implement item 24's minimal `OverrideTimeLimit`
+   index, item 33's direct counter restoration (landed 2026-07-17) and
+   item 34's repository parity fix (the case-folding half, landed
+   2026-07-23) are done. Still open: item 24's minimal `OverrideTimeLimit`
    mapping, item 27's
-   elapsed-time accounting (before D-T3), item 33's direct counter
-   restoration, item 34's repository parity fix, and item 19's Latin-1
-   echo fix plus text/binary policy. Each new wire surface remains
-   capture-pinned.
+   elapsed-time accounting (before D-T3), item 34's indexing half, and
+   item 19's Latin-1 echo fix plus text/binary policy. Each new wire
+   surface remains capture-pinned.
 2. **Prepare persisted and per-call state.** Item 23a's
    `AuthenticatedCall` plus its post-authentication `CallId` landed
-   2026-07-16; item 22's SQLite migrations and uniform connection setup
+   2026-07-17; item 22's SQLite migrations and uniform connection setup
    remain (they precede D2s).
 3. **Install the bounded adapter boundary.** Implement item 31's async
    application facade, serialized metadata writer, small read pool and
@@ -2139,7 +2156,7 @@ touches the doubles.
 
 ### Historical landing record
 
-- Item 23a landed 2026-07-16: `AuthenticatedCall` (with the `CallId`
+- Item 23a landed 2026-07-17: `AuthenticatedCall` (with the `CallId`
   stamped at authentication as its first field) carried by
   `Onboarded`/`Menu`, and the `CallSalvage` enum carried by
   `LoggingOff`/`Ended` in place of the two 8-arm salvage matches.

@@ -54,7 +54,10 @@ impl InMemoryUserRepository {
 impl UserRepository for InMemoryUserRepository {
     fn find_by_handle(&self, typed: &str) -> Result<NameLookupResult, UserRepositoryError> {
         let users = self.users.lock().expect("user repository mutex");
-        if let Some(user) = users.iter().find(|u| u.handle() == typed) {
+        if let Some(user) = users
+            .iter()
+            .find(|u| u.handle().eq_ignore_ascii_case(typed))
+        {
             Ok(NameLookupResult::Found(Box::new(user.clone())))
         } else {
             Ok(NameLookupResult::NotFound)
@@ -92,7 +95,10 @@ impl UserRepository for InMemoryUserRepository {
 
     fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError> {
         let mut users = self.users.lock().expect("user repository mutex");
-        if users.iter().any(|u| u.handle() == draft.handle) {
+        if users
+            .iter()
+            .any(|u| u.handle().eq_ignore_ascii_case(&draft.handle))
+        {
             return Err(UserCreationError::DuplicateUser {
                 handle: draft.handle.clone(),
             });
@@ -248,6 +254,16 @@ mod tests {
 
         fn make(users: Vec<User>) -> InMemoryUserRepository {
             InMemoryUserRepository::new(users)
+        }
+
+        #[test]
+        fn find_by_handle_folds_case() {
+            contract::find_by_handle_folds_case(make);
+        }
+
+        #[test]
+        fn create_user_rejects_case_variant_duplicate() {
+            contract::create_user_rejects_case_variant_duplicate(make);
         }
 
         #[test]

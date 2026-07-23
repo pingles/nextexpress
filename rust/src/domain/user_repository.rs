@@ -115,11 +115,22 @@ impl UserCreationError {
 
 /// Port over the user database.
 ///
+/// Handle matching folds ASCII case in both directions: a lookup or a
+/// duplicate check resolves the stored handle regardless of the case
+/// either side was typed or stored in. The legacy login path folds the
+/// same way (`amiexpress/MiscFuncs.e:126-154` `stringCompare`, reached
+/// via `express.e:11218` `nameCompare`). One consequence is that
+/// [`create_user`][UserRepository::create_user] must treat a
+/// case-variant of an existing handle as a duplicate, so no adapter can
+/// hold two rows whose handles differ only by case.
+///
 /// Implementations are expected to reject inputs containing wildcards
 /// (the legacy `AmiExpress` code rejects `'*'` early) by returning
-/// [`NameLookupResult::NotFound`].
+/// [`NameLookupResult::NotFound`]. The wildcard *expansion* the legacy
+/// login path also performs is a deliberate `NextExpress` departure.
 pub trait UserRepository {
-    /// Resolves `typed` to a [`NameLookupResult`].
+    /// Resolves `typed` to a [`NameLookupResult`], folding ASCII case
+    /// against the stored handle.
     ///
     /// # Parameters
     /// - `typed`: handle exactly as the user typed it.
@@ -224,13 +235,16 @@ pub trait UserRepository {
     /// underlying store requires so two concurrent registrations do not
     /// observe the same free slot.
     ///
+    /// The duplicate-handle check folds ASCII case, so `alice` collides
+    /// with a stored `Alice` (see the trait-level note).
+    ///
     /// Returns the freshly persisted [`User`] on success.
     ///
     /// # Errors
     /// - [`UserCreationError::Build`] when the domain constructor
     ///   rejects `draft` (the repository has not modified its state).
     /// - [`UserCreationError::DuplicateUser`] when the draft's handle
-    ///   is already taken.
+    ///   is already taken (case-insensitively).
     /// - [`UserCreationError::Storage`] when the backing store cannot
     ///   allocate or persist the row.
     fn create_user(&self, draft: NewUserDraft) -> Result<User, UserCreationError>;

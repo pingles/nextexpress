@@ -15,10 +15,12 @@ use crate::domain::conference::{ConferenceMembership, MessageBaseRef, ScanFlag};
 use crate::domain::messaging::read_pointers::ReadPointers;
 use crate::domain::password::PasswordHashKind;
 use crate::domain::user::{
-    AuthOutcome, DailyBudgetOutcome, MembershipPatch, PasswordChange, PersistedUser, PointerPatch,
-    RatioMode, ScanFlagSettings, User, UserPatch,
+    AuthOutcome, DailyBudgetOutcome, MembershipPatch, NewUserDraft, PasswordChange, PersistedUser,
+    PointerPatch, RatioMode, ScanFlagSettings, User, UserPatch,
 };
-use crate::domain::user_repository::{NameLookupResult, UserRepository, UserRepositoryError};
+use crate::domain::user_repository::{
+    NameLookupResult, UserCreationError, UserRepository, UserRepositoryError,
+};
 
 const EPOCH: SystemTime = SystemTime::UNIX_EPOCH;
 
@@ -81,11 +83,71 @@ pub(crate) fn seeded_user_with(
     User::from_persisted(snapshot).expect("valid persisted user")
 }
 
+/// A registration draft with the fixed non-identity fields the
+/// creation-path contracts need; only `handle` varies per assertion.
+pub(crate) fn seeded_draft(handle: &str) -> NewUserDraft {
+    NewUserDraft {
+        handle: handle.to_string(),
+        location: None,
+        phone_number: None,
+        email: None,
+        password_hash: "hash".to_string(),
+        password_salt: Some("salt".to_string()),
+        password_hash_kind: PasswordHashKind::Pbkdf210000,
+        line_length: 0,
+        ansi_colour: false,
+        flags: BTreeSet::new(),
+        ratio_mode: RatioMode::Disabled,
+        ratio_value: 0,
+        now: EPOCH,
+    }
+}
+
 fn stored<R: UserRepository>(repo: &R, handle: &str) -> PersistedUser {
     match repo.find_by_handle(handle).expect("lookup succeeds") {
         NameLookupResult::Found(user) => user.to_persisted(),
         NameLookupResult::NotFound => panic!("user {handle} should exist"),
     }
+}
+
+/// Handle lookup folds ASCII case: the stored mixed-case handle
+/// resolves whatever case the caller types, and a non-matching handle
+/// still misses. Mirrors the legacy login path, whose default
+/// `stringCompare` (`amiexpress/MiscFuncs.e:126-154`, reached via
+/// `express.e:11218` `nameCompare` with wildcards toggled on by
+/// `ACP.e:2663`) folds both sides through `LowerChar`. The wildcard
+/// expansion that same legacy path performs is a deliberate
+/// `NextExpress` departure (the port rejects `*`/`?`), so folding alone
+/// is the parity surface these adapters share.
+pub(crate) fn find_by_handle_folds_case<R: UserRepository>(make: impl Fn(Vec<User>) -> R) {
+    let repo = make(vec![seeded_user(7, "Alice")]);
+    for typed in ["Alice", "alice", "ALICE", "aLiCe"] {
+        assert!(
+            matches!(
+                repo.find_by_handle(typed).expect("lookup succeeds"),
+                NameLookupResult::Found(_)
+            ),
+            "typed {typed:?} must resolve the stored handle \"Alice\""
+        );
+    }
+    assert!(matches!(
+        repo.find_by_handle("alicia").expect("lookup succeeds"),
+        NameLookupResult::NotFound
+    ));
+}
+
+/// Registration uniqueness folds ASCII case: once `Alice` exists, a
+/// draft for `alice` is a duplicate. Without this an in-memory install
+/// can reach a two-row state the `SQLite` `handle_folded UNIQUE`
+/// constraint forbids — i.e. data the durable schema cannot represent.
+pub(crate) fn create_user_rejects_case_variant_duplicate<R: UserRepository>(
+    make: impl Fn(Vec<User>) -> R,
+) {
+    let repo = make(vec![seeded_user(7, "Alice")]);
+    let err = repo
+        .create_user(seeded_draft("alice"))
+        .expect_err("case-variant duplicate must be rejected");
+    assert!(matches!(err, UserCreationError::DuplicateUser { .. }));
 }
 
 pub(crate) fn mismatch_bumps_additively<R: UserRepository>(make: impl Fn(Vec<User>) -> R) {
